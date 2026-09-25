@@ -38,6 +38,7 @@ androidXMultiplatform {
         namespace = "androidx.compose.material3.adaptive"
     }
     desktop()
+    linux()
     mac()
     ios()
     js()

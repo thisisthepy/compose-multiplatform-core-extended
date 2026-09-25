@@ -35,6 +35,7 @@ androidXMultiplatform {
         namespace = "androidx.compose.ui.geometry"
     }
     desktop()
+    linux()
     mac()
     ios()
     js()

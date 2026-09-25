@@ -29,6 +29,7 @@ androidXMultiplatform {
         namespace = "androidx.compose.ui.backhandler"
     }
     desktop()
+    linux()
     mac()
     ios()
     js()

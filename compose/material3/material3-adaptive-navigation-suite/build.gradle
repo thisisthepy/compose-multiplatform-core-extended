@@ -38,6 +38,7 @@ androidXMultiplatform {
         compileSdk = 35
     }
     desktop()
+    linux()
     mac()
     ios()
     js()

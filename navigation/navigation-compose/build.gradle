@@ -33,6 +33,7 @@ androidXMultiplatform {
         androidResources.enable = true
     }
     desktop()
+    linux()
     mac()
     ios()
     js()
