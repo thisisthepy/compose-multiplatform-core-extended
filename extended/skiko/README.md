@@ -10,6 +10,8 @@ will not need publishing for a long time, and a fork is a repository to keep ali
 | `0001-mingw-x64-target.patch` | A `mingwX64` target that builds skiko's Kotlin half only |
 | `extend-skiko-root.py` | Adds the mingw_x64 variants to skiko's root module metadata |
 | `build-skiko-mingw.sh` | Applies the patch, publishes to the local Maven repository, compiles the C++ half |
+| `build-skiko-static-jvm.sh` | skiko's JVM natives as a static archive, for a native image that links Skia in |
+| `static_jawt.c` | Replaces skiko's `jawt.o` in that archive: calls the linked-in `JAWT_GetAWT` instead of opening `<java.home>/lib/libjawt` by path |
 
 ## The pin
 
@@ -35,3 +37,14 @@ the executable, not to skiko, and is not handled here.
 1. `build-skiko-mingw.sh <work-dir>`
 2. This fork's Compose modules for mingwX64, which read skiko from the local Maven
    repository before Maven Central (`buildSrc/repos.gradle`).
+
+## skiko linked into a native image (JVM, macOS arm64)
+
+`build-skiko-static-jvm.sh` archives the same objects skiko's JVM shared library is linked
+from, so a GraalVM native image can link Skia in rather than load it from a file. It gives
+two things to link, and they have to be linked differently:
+
+- `libskiko-static.a`, skiko's own bindings, with `-force_load`: a JNI entry point is reached
+  by name, so ordinary archive semantics would drop all of them.
+- `skia/*.a`, as ordinary archives: JetBrains' module archives (skottie, sksg, svg) each
+  carry their own copy of Skia's core objects, and forcing them in defines those twice.
