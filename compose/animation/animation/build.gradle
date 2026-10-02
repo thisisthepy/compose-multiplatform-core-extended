@@ -43,6 +43,7 @@ androidXMultiplatform {
         }
     }
     desktop()
+    linux()
     mac()
     ios()
     js()
