@@ -125,9 +125,23 @@ if [[ "$host" == "macos" ]]; then
     nm -g "$archive" > "$out/symbols.txt" 2>/dev/null || true
     prefix="_"
 elif [[ "$host" == "linux" ]]; then
+    # skiko and AWT's libawt each define a global `JavaVM *jvm`, set to the same VM by their
+    # JNI_OnLoad. Linked into one executable they collide; skiko's is made weak, so the two
+    # are one variable, which AWT's initialisation sets before skiko draws.
+    staged="$out/objects"
+    rm -rf "$staged" && mkdir -p "$staged"
+    linked_objects=()
+    index=0
+    for object in "${objects[@]}"; do
+        copy="$staged/$index-$(basename "$object")"
+        objcopy --weaken-symbol=jvm "$object" "$copy"
+        linked_objects+=("$copy")
+        index=$((index + 1))
+    done
     archive="$out/libskiko-static.a"
     rm -f "$archive"
-    ar rcs "$archive" "${objects[@]}" "$jawt_object"
+    ar rcs "$archive" "${linked_objects[@]}" "$jawt_object"
+    rm -rf "$staged"
     nm -g --defined-only "$archive" > "$out/symbols.txt" 2>/dev/null || true
     prefix=""
 else
