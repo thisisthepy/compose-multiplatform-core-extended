@@ -65,6 +65,10 @@ esac
 mkdir -p "$WORK"
 checkout="$WORK/skiko"
 [[ -d "$checkout/.git" ]] || git clone --quiet --no-checkout "$UPSTREAM" "$checkout"
+# skiko has test screenshots whose names pass Windows' 260 character limit once this work
+# directory is prefixed. GitHub's Windows runners allow long paths globally; a developer's
+# git may not, and the operating system's own setting is not enough for git.
+if [[ "$host" == "windows" ]]; then git -C "$checkout" config core.longpaths true; fi
 git -C "$checkout" cat-file -e "$REVISION^{commit}" 2>/dev/null || git -C "$checkout" fetch --quiet origin "$REVISION"
 git -C "$checkout" -c advice.detachedHead=false checkout --quiet --force "$REVISION"
 
