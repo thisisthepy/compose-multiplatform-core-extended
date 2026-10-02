@@ -88,7 +88,8 @@ else
     cl.exe //nologo //O2 //MT //c "//I$(cygpath -w "$JAVA_HOME/include")" "//I$(cygpath -w "$JAVA_HOME/include/win32")" \
         "$(cygpath -w "$HERE/static_jawt.c")" "//Fo$(cygpath -w "$out/static_jawt.obj")"
     jawt_object="$out/static_jawt.obj"
-    suffix="obj"
+    # skiko compiles with clang-cl on Windows and names its objects .o there too.
+    suffix="o"
 fi
 
 objects=()
