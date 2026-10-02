@@ -18,7 +18,7 @@
 #   libskiko-static.a   skiko's own bindings. Link with -force_load: a JNI entry point is
 #                       reached by name and nothing refers to it by symbol, so ordinary
 #                       archive semantics would drop every one of them.
-#   skia/*.a            Skia, as JetBrains builds it. Link these as ordinary archives, never
+#   skia/*.a, *.lib     Skia, as JetBrains builds it. Link these as ordinary archives, never
 #                       forced: its module archives (skottie, sksg, svg) each carry their own
 #                       copy of Skia's core objects, and forcing them in defines those twice.
 #
@@ -103,7 +103,13 @@ done
 skia="$(find "$checkout/skiko/dependencies/skia" -type d -name "$skia_glob" -print -quit)"
 [[ -n "$skia" ]] || die "no unpacked Skia under $checkout/skiko/dependencies/skia"
 rm -rf "$out/skia" && mkdir -p "$out/skia"
-cp "$skia"/out/*/*.a "$out/skia/"
+# JetBrains names Skia's archives .a on macOS and .lib on Windows.
+skia_archives=()
+while IFS= read -r -d '' file; do
+    skia_archives+=("$file")
+done < <(find "$skia/out" -mindepth 2 -maxdepth 2 \( -name "*.a" -o -name "*.lib" \) -print0)
+[[ ${#skia_archives[@]} -gt 0 ]] || die "no Skia archives under $skia/out"
+cp "${skia_archives[@]}" "$out/skia/"
 
 if [[ "$host" == "macos" ]]; then
     archive="$out/libskiko-static.a"
