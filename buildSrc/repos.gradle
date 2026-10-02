@@ -66,6 +66,15 @@ def addMavenRepositories(RepositoryHandler handler) {
     }
     */
     if (true /* In JetBrains Fork */) {
+        // skiko from the local repository first, and nothing else from it. skiko publishes
+        // no mingwX64 target; the one built for this is published locally under the same
+        // version, with the root metadata extended to name it. Found later, after Maven
+        // Central, the root that does not name it would win and mingwX64 would not resolve.
+        handler.mavenLocal {
+            content {
+                includeGroup("org.jetbrains.skiko")
+            }
+        }
         handler.mavenCentral()
         handler.google {
             content {

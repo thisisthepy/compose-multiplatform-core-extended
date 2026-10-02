@@ -41,6 +41,7 @@ androidXMultiplatform {
     }
     desktop()
     linux()
+    mingwX64()
     mac()
     ios()
     js()
