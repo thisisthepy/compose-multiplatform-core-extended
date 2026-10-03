@@ -5,8 +5,11 @@
 # skiko publishes its JVM natives only as a shared library inside a jar, which the desktop
 # loader unpacks and opens by absolute path. A single executable cannot carry a second file,
 # so this archives the same objects that shared library is linked from: skiko's C++ bindings,
-# its Objective-C ones on macOS, and the prebuilt Skia skiko's build downloads. Nothing in
-# skiko's build is modified; its compile tasks run and their outputs are archived.
+# its Objective-C ones on macOS, and the prebuilt Skia skiko's build downloads. skiko's build
+# itself is not modified; its compile tasks run and their outputs are archived.
+#
+# Its sources gain one thing: Compose's window procedure for Windows (windows-chrome/), and
+# a call from the Direct3D swap into it (0002-compose-window-chrome-present-hook.patch).
 #
 # One object is replaced. skiko's jawt.cc opens <java.home>/lib/libjawt.<ext> by path to
 # find JAWT_GetAWT, and a native image has no java.home. In this archive Skiko_GetAWT calls
@@ -90,6 +93,15 @@ checkout="$WORK/skiko"
 if [[ "$host" == "windows" ]]; then git -C "$checkout" config core.longpaths true; fi
 git -C "$checkout" cat-file -e "$REVISION^{commit}" 2>/dev/null || git -C "$checkout" fetch --quiet origin "$REVISION"
 git -C "$checkout" -c advice.detachedHead=false checkout --quiet --force "$REVISION"
+
+# What a Compose window on Windows needs from its window procedure (the caption band, the
+# live resize held for its frame, the per-monitor DPI declaration, the executable's icon)
+# lives in windows-chrome/ and is compiled with skiko's own Windows sources, because a native
+# image links skiko's JNI methods statically and these are reached the same way. The patch
+# makes the swap report each presented frame to it. Copied and applied on every host so the
+# tree is the same everywhere; only a Windows build compiles that directory.
+cp "$HERE"/windows-chrome/*.cc "$HERE"/windows-chrome/*.h "$checkout/skiko/src/awtMain/cpp/windows/"
+git -C "$checkout" apply --whitespace=nowarn "$HERE/0002-compose-window-chrome-present-hook.patch"
 
 echo "==> compiling skiko's JVM bindings for $platform (Skia is downloaded prebuilt)"
 (
@@ -190,6 +202,8 @@ entry_points="$(grep -c " T ${prefix}Java_org_jetbrains_ski" "$out/symbols.txt" 
 grep -q " T ${prefix}Skiko_GetAWT\$" "$out/symbols.txt" || die "the archive has no Skiko_GetAWT"
 if [[ "$host" == "windows" ]]; then
     grep -q "SkLoadICU" "$out/symbols.txt" || die "the archive has no SkLoadICU, so Skia would look for icudtl.dat"
+    grep -q "Java_org_jetbrains_skiko_compose_WindowsWindowChrome_install" "$out/symbols.txt" ||
+        die "the archive has no Compose window procedure, so Compose windows would keep the system caption"
 fi
 
 echo "$archive: $(wc -c < "$archive" | tr -d ' ') bytes, $entry_points JNI entry points"

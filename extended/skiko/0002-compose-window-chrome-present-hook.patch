@@ -1,0 +1,35 @@
+Subject: Tell a Compose window when a frame has been presented into it
+
+A Compose window on Windows holds each step of a live resize until a frame at
+the new size has been presented, so that the edge of the window and what is
+inside it reach the screen together. The swap is the one place that knows a
+frame is on its way to the screen and at what size, so it reports both.
+
+composeWindowChromePresented and the window procedure that waits on it are in
+extended/skiko/windows-chrome/ in compose-multiplatform-core-extended, copied
+beside this file by build-skiko-static-jvm.sh before the patch is applied.
+
+diff --git a/skiko/src/awtMain/cpp/windows/directXRedrawer.cc b/skiko/src/awtMain/cpp/windows/directXRedrawer.cc
+index 00c9abf..6757bdd 100644
+--- a/skiko/src/awtMain/cpp/windows/directXRedrawer.cc
++++ b/skiko/src/awtMain/cpp/windows/directXRedrawer.cc
+@@ -13,6 +13,7 @@
+ #include "include/gpu/ganesh/SkSurfaceGanesh.h"
+ #include "interop.hh"
+ #include "DCompLibrary.h"
++#include "composeWindowChromeHook.h"
+ 
+ #include "ganesh/d3d/GrD3DTypes.h"
+ #include <d3d12sdklayers.h>
+@@ -459,6 +460,11 @@ extern "C"
+             const UINT64 fenceValue = d3dDevice->fenceValues[d3dDevice->bufferIndex];
+             d3dDevice->swapChain->Present((int)isVsyncEnabled, 0);
+             d3dDevice->queue->Signal(d3dDevice->fence.get(), fenceValue);
++            // A Compose window holding a live resize waits for the frame at its new size.
++            DXGI_SWAP_CHAIN_DESC1 presentedDesc = {};
++            if (SUCCEEDED(d3dDevice->swapChain->GetDesc1(&presentedDesc))) {
++                composeWindowChromePresented(d3dDevice->hWnd, (int32_t)presentedDesc.Width, (int32_t)presentedDesc.Height);
++            }
+         }
+         __except(EXCEPTION_EXECUTE_HANDLER) {
+             auto code = GetExceptionCode();
