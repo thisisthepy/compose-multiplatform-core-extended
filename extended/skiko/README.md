@@ -74,3 +74,64 @@ reaches these natives through `org.jetbrains.skiko.compose.WindowsWindowChrome`,
 package because a native image links skiko's packages' JNI methods statically from this
 archive. skiko's library from Maven Central does not have them; a JVM run with it keeps the
 system caption and AWT's resize, and says so with `-Dcompose.windows.chrome.debug=true`.
+
+## Checks on a real display (Windows)
+
+CI builds hello and runs it once on a runner, which has no GPU and no person looking. These
+are the checks only a Windows machine with a display can make. Each one records a screenshot
+under `.scratch/window-chrome/<scale>/` on that machine and its numbers in the report.
+
+**Build.** On the Windows machine, from compose-multiplatform-extended at
+`feature/hello-dark-check` (hello with `HELLO_DARK`), with this branch's
+`build-skiko-static-jvm.sh` output as `SKIKO_STATIC` and this branch's ui-desktop published to
+the local Maven repository as 1.11.1 (the `ui-desktop-maven` artifact of the
+"Windows window chrome" workflow, unpacked into
+`%USERPROFILE%\.m2\repository\org\jetbrains\compose\ui\ui-desktop\`), run
+`gradlew packageNativeImage` in `extended/native-image/hello`. Start the executable as
+`native-image-hello.exe -Dcompose.windows.chrome.debug=true` from a console and keep its
+standard error: the first line must read `installed=true caption=true liveResize=true`.
+
+Do every check below twice: with Settings > Display > Scale at **100%**, then at **200%**
+(sign out and in after changing it). Record the scale and the `dpiAwareness=` value from the
+debug line with each screenshot.
+
+1. **Sharp, not stretched.** Screenshot the window at 100% of its size (Win+Shift+S, window
+   mode). Text and the button glyphs have single-pixel edges at 200%; a blurred, twice-wide
+   edge means the process is not per-monitor aware.
+2. **Light band.** Run without `HELLO_DARK`. The strip across the top, where the system title
+   bar was, is the content's own surface colour, with no seam between strip and content.
+   Sample a pixel 8 px below the window's top edge and one 100 px below it, in the same
+   column away from the text: they must be equal. The three buttons sit at the right edge,
+   46 x 32 (92 x 64 at 200%), glyphs dark on light. Screenshot `light.png`.
+3. **Dark band.** Run with `set HELLO_DARK=1`. Same two samples, equal and dark; glyphs light
+   on dark. Screenshot `dark.png`. No system title bar colour appears anywhere in either.
+4. **Buttons and caption behaviour.** Hover each button: minimise and maximise get a faint
+   fill, close turns red (#C42B1C) with a white glyph. Click minimise, restore from the
+   taskbar; click maximise (glyph becomes restore, the band stays fully on screen, its top
+   is the monitor's top), click again to restore. Double click the empty band: maximises.
+   Right click it: the system menu. Drag it: the window moves, and dragging to the screen's
+   top edge snaps. Hover the maximise button: there is no Snap Layouts flyout (known, see
+   "what is not done"). Close quits the application. Narrator (Win+Ctrl+Enter) reads the
+   three as "Minimize button", "Maximize button" ("Restore" when maximised), "Close button".
+5. **Frame kept.** The window has the system drop shadow and rounded corners (Windows 11), and
+   resizes from all four edges and four corners, including the top edge, where the cursor
+   turns into the vertical resize arrow within the top few pixels.
+6. **Live resize lag.** The measurement on darkpyonix/compose-rust#26: drag the
+   bottom-right corner with `SendInput` (55 steps of 16 px, one step per 16 ms, button held),
+   and after each step capture the window with `PrintWindow`/`BitBlt` of the screen area.
+   For each capture, the lag is the distance between the window's client rectangle edge
+   (`GetClientRect` mapped to the screen) and the edge of what was drawn (the last column and
+   row whose pixels are hello's surface colour rather than the stale/black area). Record min,
+   max and mean in width and height, and how many steps had no lag. Run it with
+   `.scratch/drag-resize-probe.ps1` from #26 on that machine, three times:
+   - this build: expected lag 0 on most steps, never more than one step width;
+   - this build with `-Dcompose.windows.liveResize=false`: should reproduce #26's numbers
+     (max about 30 px, no step without lag), which shows the difference is this change;
+   - optionally hello from `extended` before this change, as #26 measured it.
+   Keep both CSVs and a few frame captures per run.
+7. **Opt-outs.** `-Dcompose.windows.caption=system` gives back the ordinary system title bar
+   with nothing drawn by Compose in it. `-Dcompose.windows.caption=content` takes the strip
+   but draws no band and no buttons: hello's content starts at the window's top.
+
+Report: the debug line, the scale, the screenshots, the three lag summaries, and every step
+above that did not hold, with what was seen.
