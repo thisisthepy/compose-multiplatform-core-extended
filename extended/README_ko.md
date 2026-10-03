@@ -19,6 +19,7 @@ English: [README.md](https://github.com/thisisthepy/compose-multiplatform-core-e
 | Windows 정적 아카이브에 컴파일해 넣은 Skia 의 ICU 데이터 | 구현 | `extended/skiko/embedded_icu.cpp` |
 | Windows 용 Compose 창 프로시저 (캡션, 제목 표시줄, 아이콘) | 계획 | 브랜치 [`feature/windows-window-chrome`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/feature/windows-window-chrome), [DarkPyonix/compose-rust#26](https://github.com/DarkPyonix/compose-rust/issues/26) |
 | `org.thisisthepy.compose` 좌표 | 계획 | 브랜치 [`chore/thisisthepy-coordinates`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/chore/thisisthepy-coordinates) |
+| compose-rust에 있던 그대로의 디자인 시스템 일곱 개와 Liquid Glass 재질 | 가져옴 | [`extended/design-systems`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/design-systems/README.md) |
 | `org.thisisthepy.compose.*` 라이브러리로 나오는 디자인 시스템 | 계획 | [DarkPyonix/compose-rust#39](https://github.com/DarkPyonix/compose-rust/issues/39) |
 
 ### Linux 타깃
@@ -70,9 +71,11 @@ Windows 에서 Skia 는 실행 파일 옆의 `icudtl.dat` 를 찾고, 없으면 
 가장자리에서든 최소 크기를 지키며, 소유자 없는 창에 애플리케이션 아이콘이 붙습니다. 아직 `extended` 에
 병합되지 않았습니다.
 
-### 디자인 시스템 (계획)
+### 디자인 시스템
 
-디자인 시스템은 이 포크의 라이브러리로 들어올 예정이며,
+compose-rust가 `design-systems/` 디렉터리에 두던 디자인 시스템은 바뀐 것 없이
+[`extended/design-systems`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/design-systems/README.md) 에 있습니다. 자기 래퍼와 자기 워크플로를 가진 독립 Amper 프로젝트이고,
+이 저장소의 모듈이 아니라 배포된 Compose를 대상으로 빌드합니다. 여기서부터 라이브러리가 되며,
 [DarkPyonix/compose-rust#39](https://github.com/DarkPyonix/compose-rust/issues/39) 에서 추적합니다.
 
 - `org.thisisthepy.compose.designsystem`: 공통 계약 (`DesignSystem` 인터페이스, 역할 enum, 토큰).

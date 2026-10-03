@@ -19,6 +19,7 @@ Korean: [README_ko.md](https://github.com/thisisthepy/compose-multiplatform-core
 | Skia's ICU data compiled into the Windows static archive | implemented | `extended/skiko/embedded_icu.cpp` |
 | Compose's window procedure for Windows (caption, title bar, icon) | planned | branch [`feature/windows-window-chrome`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/feature/windows-window-chrome), [DarkPyonix/compose-rust#26](https://github.com/DarkPyonix/compose-rust/issues/26) |
 | `org.thisisthepy.compose` coordinates | planned | branch [`chore/thisisthepy-coordinates`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/chore/thisisthepy-coordinates) |
+| Seven design systems and the Liquid Glass material, as compose-rust had them | imported | [`extended/design-systems`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/design-systems/README.md) |
 | Design systems as `org.thisisthepy.compose.*` libraries | planned | [DarkPyonix/compose-rust#39](https://github.com/DarkPyonix/compose-rust/issues/39) |
 
 ### Linux targets
@@ -69,9 +70,12 @@ static skiko archive. With it, content runs under the caption and draws its own 
 undecorated window keeps its minimum size from every edge, and ownerless windows carry the
 application's icon. It is not merged into `extended` yet.
 
-### Design systems (planned)
+### Design systems
 
-Design systems will arrive as libraries in this fork, tracked in
+The design systems compose-rust used to hold in its `design-systems/` directory are in
+[`extended/design-systems`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/design-systems/README.md), unchanged: a standalone Amper project with its own wrapper and
+its own workflow, which builds against published Compose rather than the modules in this
+repository. From there they become libraries, tracked in
 [DarkPyonix/compose-rust#39](https://github.com/DarkPyonix/compose-rust/issues/39):
 
 - `org.thisisthepy.compose.designsystem`: the shared contract (the `DesignSystem` interface,
