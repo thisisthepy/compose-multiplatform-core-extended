@@ -106,6 +106,7 @@ if [[ "$host" == "macos" ]]; then
     "${CC:-cc}" -c -O2 -arch arm64 -I"$JAVA_HOME/include" -I"$JAVA_HOME/include/darwin" \
         "$HERE/static_jawt.c" -o "$out/static_jawt.o"
     jawt_object="$out/static_jawt.o"
+    extra_objects=()
     suffix="o"
 elif [[ "$host" == "linux" ]]; then
     "${CC:-cc}" -c -O2 -fPIC -I"$JAVA_HOME/include" -I"$JAVA_HOME/include/linux" \
@@ -116,6 +117,15 @@ else
     cl.exe //nologo //O2 //MT //c "//I$(cygpath -w "$JAVA_HOME/include")" "//I$(cygpath -w "$JAVA_HOME/include/win32")" \
         "$(cygpath -w "$HERE/static_jawt.c")" "//Fo$(cygpath -w "$out/static_jawt.obj")"
     jawt_object="$out/static_jawt.obj"
+    # Skia on Windows reads its ICU data from icudtl.dat beside the module and stops without
+    # it. The data is compiled into the archive instead (embedded_icu.cpp), with clang-cl
+    # for #embed, from the icudtl.dat in the same Skia distribution the archive links.
+    icu_data="$(find "$checkout/skiko/dependencies/skia" -path "*-windows-Release-x64*" -name icudtl.dat -print -quit)"
+    [[ -n "$icu_data" ]] || die "no icudtl.dat in the Windows Skia distribution"
+    clang-cl.exe //nologo //O2 //MT //c //std:c++latest -Wno-c23-extensions \
+        "//clang:--embed-dir=$(cygpath -w "$(dirname "$icu_data")")" \
+        "$(cygpath -w "$HERE/embedded_icu.cpp")" "//Fo$(cygpath -w "$out/embedded_icu.obj")"
+    extra_objects=("$out/embedded_icu.obj")
     # skiko compiles with clang-cl on Windows and names its objects .o there too.
     suffix="o"
 fi
@@ -170,7 +180,7 @@ else
     rm -f "$archive"
     response="$out/objects.rsp"
     : > "$response"
-    for object in "${objects[@]}" "$jawt_object"; do echo "\"$(cygpath -w "$object")\"" >> "$response"; done
+    for object in "${objects[@]}" "$jawt_object" "${extra_objects[@]}"; do echo "\"$(cygpath -w "$object")\"" >> "$response"; done
     lib.exe //nologo "//OUT:$(cygpath -w "$archive")" "@$(cygpath -w "$response")"
     dumpbin.exe //nologo //linkermember:1 "$(cygpath -w "$archive")" | awk 'NF == 2 {print "0 T " $2}' > "$out/symbols.txt"
     prefix=""
@@ -178,5 +188,8 @@ fi
 entry_points="$(grep -c " T ${prefix}Java_org_jetbrains_ski" "$out/symbols.txt" || true)"
 [[ "$entry_points" -gt 0 ]] || die "the archive has no JNI entry points in it"
 grep -q " T ${prefix}Skiko_GetAWT\$" "$out/symbols.txt" || die "the archive has no Skiko_GetAWT"
+if [[ "$host" == "windows" ]]; then
+    grep -q "SkLoadICU" "$out/symbols.txt" || die "the archive has no SkLoadICU, so Skia would look for icudtl.dat"
+fi
 
 echo "$archive: $(wc -c < "$archive" | tr -d ' ') bytes, $entry_points JNI entry points"
