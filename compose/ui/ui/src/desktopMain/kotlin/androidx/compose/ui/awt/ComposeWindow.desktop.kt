@@ -28,6 +28,10 @@ import androidx.compose.ui.window.FrameWindowScope
 import androidx.compose.ui.window.UndecoratedWindowResizer
 import androidx.compose.ui.window.WindowExceptionHandler
 import androidx.compose.ui.window.WindowPlacement
+import androidx.compose.ui.window.WindowsCaptionBand
+import androidx.compose.ui.window.WindowsCaptionButtons
+import androidx.compose.ui.window.WindowsChromeSettings
+import androidx.compose.ui.window.WindowsWindowChrome
 import androidx.savedstate.SavedState
 import java.awt.Component
 import java.awt.ComponentOrientation
@@ -70,11 +74,19 @@ class ComposeWindow @ExperimentalComposeUiApi constructor(
     private val composePanel = ComposeWindowPanel(
         window = this,
         isUndecorated = ::isUndecorated,
+        // The window procedure can only be taken over once the window has a native peer,
+        // and the panel is given its peer right after the window is.
+        onAddNotify = { windowsChrome?.update(fullscreen = isFullscreen) },
         skiaLayerAnalytics = skiaLayerAnalytics,
         savedState = savedState,
         coroutineContext = coroutineContext
     )
     private val undecoratedWindowResizer = UndecoratedWindowResizer(this)
+
+    // The caption band, the live resize and the icon on Windows. Null everywhere else, so
+    // nothing about the window or its content changes off Windows.
+    private val windowsChrome: WindowsWindowChrome? =
+        if (WindowsChromeSettings.read().any) WindowsWindowChrome(this) else null
 
     internal val windowContext by composePanel::windowContext
     internal var rootForTestListener by composePanel::rootForTestListener
@@ -173,7 +185,13 @@ class ComposeWindow @ExperimentalComposeUiApi constructor(
             onPreviewKeyEvent = onPreviewKeyEvent,
             onKeyEvent = onKeyEvent,
         ) {
-            scope.content()
+            val chrome = windowsChrome
+            if (chrome != null) {
+                WindowsCaptionBand({ chrome.captionTaken }) { scope.content() }
+                WindowsCaptionButtons(chrome)
+            } else {
+                scope.content()
+            }
             undecoratedWindowResizer.Content(
                 modifier = Modifier.layoutId("UndecoratedWindowResizer")
             )
@@ -247,7 +265,13 @@ class ComposeWindow @ExperimentalComposeUiApi constructor(
     /**
      * `true` if the window is in fullscreen mode, `false` otherwise
      */
-    private var isFullscreen: Boolean by composePanel::fullscreen
+    private var isFullscreen: Boolean
+        get() = composePanel.fullscreen
+        set(value) {
+            composePanel.fullscreen = value
+            // A full screen window shows no caption, so it gives the band back.
+            windowsChrome?.update(fullscreen = value)
+        }
 
     /**
      * `true` if the window is maximized to fill all available screen space, `false` otherwise

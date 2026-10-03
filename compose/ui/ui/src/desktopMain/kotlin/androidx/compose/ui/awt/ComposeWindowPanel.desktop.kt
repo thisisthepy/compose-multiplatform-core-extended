@@ -44,6 +44,7 @@ import org.jetbrains.skiko.transparentWindowBackgroundHack
 internal class ComposeWindowPanel(
     private val window: Window,
     private val isUndecorated: () -> Boolean,
+    private val onAddNotify: () -> Unit = {},
     skiaLayerAnalytics: SkiaLayerAnalytics,
     savedState: SavedState? = null,
     coroutineContext: CoroutineContext = EmptyCoroutineContext,
@@ -132,6 +133,7 @@ internal class ComposeWindowPanel(
         super.addNotify()
         _composeContainer?.addNotify()
         _composeContainer?.contentComponent?.requestFocus()
+        onAddNotify()
     }
 
     override fun removeNotify() {
