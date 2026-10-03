@@ -47,10 +47,13 @@ jobs:
             runs-on: macos-latest
             test: false
           # Compiled, not run: a browser test loads skiko's wasm module, which arrives
-          # truncated on this runner.
+          # truncated on this runner. Built one module at a time, because every module's
+          # wasm test app unpacks skiko's runtime into the same directory, and two of them
+          # doing it at once fail with FileAlreadyExistsException.
           - platform: wasmJs
             runs-on: ubuntu-latest
             test: false
+            one-module-at-a-time: true
           - platform: android
             runs-on: ubuntu-latest
             test: true
@@ -76,7 +79,18 @@ jobs:
             design-systems-${{ matrix.platform }}-${{ runner.os }}-
 
       - name: Build
-        run: ./kotlin build -p ${{ matrix.platform }}
+        run: |
+          if [ "${{ matrix.one-module-at-a-time }}" = true ]; then
+            modules="$(sed -n 's/^  - \([a-z0-9-]*\)$/\1/p' project.yaml)"
+            [ -n "$modules" ] || { echo "project.yaml lists no modules" >&2; exit 1; }
+            for module in $modules; do
+              echo "::group::$module"
+              ./kotlin build -p ${{ matrix.platform }} -m "$module"
+              echo "::endgroup::"
+            done
+          else
+            ./kotlin build -p ${{ matrix.platform }}
+          fi
 
       - name: Test
         if: matrix.test
