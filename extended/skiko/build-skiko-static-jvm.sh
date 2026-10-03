@@ -106,7 +106,8 @@ git -C "$checkout" apply --whitespace=nowarn "$HERE/0002-compose-window-chrome-p
 echo "==> compiling skiko's JVM bindings for $platform (Skia is downloaded prebuilt)"
 (
     cd "$checkout/skiko"
-    ./gradlew --no-daemon --quiet "${tasks[@]}"
+    # --warn rather than --quiet: skiko reports a file that failed to compile as a warning.
+    ./gradlew --no-daemon --warn "${tasks[@]}"
 )
 
 out="$WORK/out/$platform"
