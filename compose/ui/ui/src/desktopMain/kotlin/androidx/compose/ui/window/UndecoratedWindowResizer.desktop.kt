@@ -34,6 +34,7 @@ import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.MouseInfo
 import java.awt.Point
+import java.awt.Rectangle
 import java.awt.Window
 
 internal class UndecoratedWindowResizer(
@@ -52,14 +53,14 @@ internal class UndecoratedWindowResizer(
 
         Layout(
             {
-                Side(Cursor.W_RESIZE_CURSOR, Side.Left)
-                Side(Cursor.E_RESIZE_CURSOR, Side.Right)
-                Side(Cursor.N_RESIZE_CURSOR, Side.Top)
-                Side(Cursor.S_RESIZE_CURSOR, Side.Bottom)
-                Side(Cursor.NW_RESIZE_CURSOR, Side.Left or Side.Top)
-                Side(Cursor.NE_RESIZE_CURSOR, Side.Right or Side.Top)
-                Side(Cursor.SW_RESIZE_CURSOR, Side.Left or Side.Bottom)
-                Side(Cursor.SE_RESIZE_CURSOR, Side.Right or Side.Bottom)
+                Side(Cursor.W_RESIZE_CURSOR, ResizerSide.Left)
+                Side(Cursor.E_RESIZE_CURSOR, ResizerSide.Right)
+                Side(Cursor.N_RESIZE_CURSOR, ResizerSide.Top)
+                Side(Cursor.S_RESIZE_CURSOR, ResizerSide.Bottom)
+                Side(Cursor.NW_RESIZE_CURSOR, ResizerSide.Left or ResizerSide.Top)
+                Side(Cursor.NE_RESIZE_CURSOR, ResizerSide.Right or ResizerSide.Top)
+                Side(Cursor.SW_RESIZE_CURSOR, ResizerSide.Left or ResizerSide.Bottom)
+                Side(Cursor.SE_RESIZE_CURSOR, ResizerSide.Right or ResizerSide.Bottom)
             },
             modifier = modifier,
             measurePolicy = { measurables, constraints ->
@@ -132,40 +133,64 @@ internal class UndecoratedWindowResizer(
         pointerHoverIcon(PointerIcon(Cursor(awtCursorId)))
 
     private fun resize(sides: Int, pointPos: Point) {
-        val diffX = pointPos.x - initialPointPos.x
-        val diffY = pointPos.y - initialPointPos.y
-        var newXPos = window.x
-        var newYPos = window.y
-        var newWidth = window.width
-        var newHeight = window.height
-
-        fun Int.contains(value: Int) = this and value == value
-
-        if (sides.contains(Side.Left)) {
-            newWidth = initialWindowSize.width - diffX
-            newWidth = newWidth.coerceAtLeast(window.minimumSize.width)
-            newXPos = initialWindowPos.x + initialWindowSize.width - newWidth
-        } else if (sides.contains(Side.Right)) {
-            newWidth = initialWindowSize.width + diffX
-        }
-        if (sides.contains(Side.Top)) {
-            newHeight = initialWindowSize.height - diffY
-            newHeight = newHeight.coerceAtLeast(window.minimumSize.height)
-            newYPos = initialWindowPos.y + initialWindowSize.height - newHeight
-        } else if (sides.contains(Side.Bottom)) {
-            newHeight = initialWindowSize.height + diffY
-        }
-        window.setLocation(newXPos, newYPos)
-        window.setSize(newWidth, newHeight)
+        val bounds = resizedWindowBounds(
+            sides = sides,
+            initial = Rectangle(initialWindowPos, initialWindowSize),
+            current = window.bounds,
+            diffX = pointPos.x - initialPointPos.x,
+            diffY = pointPos.y - initialPointPos.y,
+            minimum = window.minimumSize,
+        )
+        window.setLocation(bounds.x, bounds.y)
+        window.setSize(bounds.width, bounds.height)
     }
+}
 
-    @Suppress("ConstPropertyName")
-    private object Side {
-        const val Left = 0x0001
-        const val Top = 0x0010
-        const val Right = 0x0100
-        const val Bottom = 0x1000
+@Suppress("ConstPropertyName")
+internal object ResizerSide {
+    const val Left = 0x0001
+    const val Top = 0x0010
+    const val Right = 0x0100
+    const val Bottom = 0x1000
+}
+
+/**
+ * Where a window dragged by [sides] ends up, [diffX] and [diffY] pixels from where the drag
+ * began on a window that had [initial] bounds then and has [current] bounds now.
+ *
+ * A leading edge moves the window as well as sizing it, and the two have to agree or the
+ * opposite edge creeps. The window never goes below [minimum] on either axis, whichever edge
+ * is pulled: a trailing edge pulled past it stops there too, rather than leaving the size to
+ * the toolkit, which on some platforms takes it below the minimum before correcting it.
+ */
+internal fun resizedWindowBounds(
+    sides: Int,
+    initial: Rectangle,
+    current: Rectangle,
+    diffX: Int,
+    diffY: Int,
+    minimum: Dimension,
+): Rectangle {
+    var x = current.x
+    var y = current.y
+    var width = current.width
+    var height = current.height
+
+    fun Int.contains(value: Int) = this and value == value
+
+    if (sides.contains(ResizerSide.Left)) {
+        width = (initial.width - diffX).coerceAtLeast(minimum.width)
+        x = initial.x + initial.width - width
+    } else if (sides.contains(ResizerSide.Right)) {
+        width = (initial.width + diffX).coerceAtLeast(minimum.width)
     }
+    if (sides.contains(ResizerSide.Top)) {
+        height = (initial.height - diffY).coerceAtLeast(minimum.height)
+        y = initial.y + initial.height - height
+    } else if (sides.contains(ResizerSide.Bottom)) {
+        height = (initial.height + diffY).coerceAtLeast(minimum.height)
+    }
+    return Rectangle(x, y, width, height)
 }
 
 /**
