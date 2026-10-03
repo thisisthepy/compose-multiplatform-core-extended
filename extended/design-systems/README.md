@@ -1,7 +1,7 @@
 # Design systems
 
-Seven design systems for Compose Multiplatform and the Liquid Glass material, as a
-standalone Amper project:
+Design systems for Compose Multiplatform, as a standalone Amper project: six component
+systems, and the Liquid Glass material that makes the seventh, Apple's current look:
 
 | Module | What it is |
 |---|---|
