@@ -16,6 +16,7 @@
 
 package org.jetbrains.androidx.build
 
+import androidx.build.Version
 import org.gradle.api.Project
 import org.gradle.api.services.BuildService
 import org.gradle.api.services.BuildServiceParameters
@@ -23,19 +24,37 @@ import org.jetbrains.androidx.build.JetBrainsPublication.isLibraryRegistered
 
 private const val ARGUMENT_PREFIX = "jetbrains.publication.version."
 
-private fun Project.parseJetBrainsVersions() = JetBrainsVersions(
-    properties.keys
-        .filter { it.startsWith(ARGUMENT_PREFIX) }
-        .associate { propertyName ->
-            val library = propertyName.replace(ARGUMENT_PREFIX, "")
-            require(isLibraryRegistered(library)) {
-                "$propertyName points to a non registered library in the " +
-                    "JetBrainsPublication class"
+/**
+ * Set to `true` for a local build that is not a release: every version gets `-dev`, so what
+ * it leaves in a local Maven repository cannot be mistaken for, or shadow, the release of the
+ * same number.
+ */
+private const val DEVELOPMENT_BUILD_PROPERTY = "extended.publication.dev"
+
+private fun Project.parseJetBrainsVersions(): JetBrainsVersions {
+    val development = findProperty(DEVELOPMENT_BUILD_PROPERTY)?.toString() == "true"
+    return JetBrainsVersions(
+        properties.keys
+            .filter { it.startsWith(ARGUMENT_PREFIX) }
+            .associate { propertyName ->
+                val library = propertyName.replace(ARGUMENT_PREFIX, "")
+                require(isLibraryRegistered(library)) {
+                    "$propertyName points to a non registered library in the " +
+                        "JetBrainsPublication class"
+                }
+                val declared = project.properties[propertyName] as String
+                require(Version(declared).forkRelease != null) {
+                    "$propertyName is $declared, which is a version JetBrains could publish too. " +
+                        "This fork publishes as <upstream version>-ext.<N>, for example " +
+                        "1.11.1-ext.1, or -ext.<N>-dev for a local build (extended/COORDINATES.md)."
+                }
+                val version =
+                    if (development && !Version(declared).isForkDevelopmentBuild()) "$declared-dev"
+                    else declared
+                library to version
             }
-            val version = project.properties[propertyName] as String
-            library to version
-        }
-)
+    )
+}
 
 abstract class JetBrainsVersionsService :
     BuildService<JetBrainsVersionsService.Params> {

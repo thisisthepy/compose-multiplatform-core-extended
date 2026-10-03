@@ -58,6 +58,55 @@ class VersionTest {
     }
 
     @Test
+    fun forkReleaseOfAStableVersionIsStillStable() {
+        val version = Version("1.11.1-ext.1")
+        assertEquals(1, version.major)
+        assertEquals(11, version.minor)
+        assertEquals(1, version.patch)
+        assertEquals(null, version.preRelease)
+        assertEquals("ext.1", version.forkRelease)
+        assert(version.isStable())
+        assert(!version.isForkDevelopmentBuild())
+        assertEquals("1.11.1-ext.1", version.toString())
+    }
+
+    @Test
+    fun forkReleaseOfAPreReleaseKeepsThePreRelease() {
+        val version = Version("1.11.0-alpha07-ext.2")
+        assertEquals("alpha07", version.preRelease)
+        assertEquals(7, version.preReleaseIteration)
+        assertEquals("ext.2", version.forkRelease)
+        assert(version.isAlpha())
+        assertEquals("1.11.0-alpha07-ext.2", version.toString())
+    }
+
+    @Test
+    fun forkDevelopmentBuildRoundTrips() {
+        val version = Version("1.11.1-ext.1-dev")
+        assertEquals("ext.1-dev", version.forkRelease)
+        assert(version.isStable())
+        assert(version.isForkDevelopmentBuild())
+        assertEquals("1.11.1-ext.1-dev", version.toString())
+        assertEquals("1.11.1", Version.upstreamPart("1.11.1-ext.1-dev"))
+    }
+
+    @Test
+    fun forkReleasesOrderByTheirNumber() {
+        assert(Version("1.11.1") < Version("1.11.1-ext.1-dev"))
+        assert(Version("1.11.1-ext.1-dev") < Version("1.11.1-ext.1"))
+        assert(Version("1.11.1-ext.1") < Version("1.11.1-ext.2"))
+        assert(Version("1.11.1-ext.9") < Version("1.11.1-ext.10"))
+        assert(Version("1.11.1-ext.10") < Version("1.11.2-ext.1"))
+    }
+
+    @Test
+    fun versionsWithoutAForkReleaseAreUntouched() {
+        assertEquals(null, Version("1.12.10-alpha01+dev4472").forkRelease)
+        assertEquals("1.12.10-alpha01+dev4472", Version("1.12.10-alpha01+dev4472").toString())
+        assertEquals("27.0.0-SNAPSHOT", Version("27.0.0-SNAPSHOT").toString())
+    }
+
+    @Test
     fun testParsingDependencyRanges() {
         assert(Version.isDependencyRange("[1.0.0]") == false)
         assert(Version.isDependencyRange("[1.0.0,2.0.0]") == true)
