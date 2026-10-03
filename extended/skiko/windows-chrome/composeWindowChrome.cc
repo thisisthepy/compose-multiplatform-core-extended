@@ -303,9 +303,21 @@ static int composeDeclareDpiAwareness() {
 // A dynamic initialiser, so the C runtime runs it before main and no compiler drops it.
 static const int composeDpiDeclared = composeDeclareDpiAwareness();
 
-// The first icon group in the executable's resources, or NULL.
+// The first icon group in the executable's resources. A string name is only valid during
+// the enumeration, so it is copied; a numbered one is the number itself.
+struct ComposeIconName {
+    LPCWSTR name;
+    wchar_t text[256];
+};
+
 static BOOL CALLBACK composeFirstIcon(HMODULE, LPCWSTR, LPWSTR name, LONG_PTR found) {
-    *(LPCWSTR *)found = name;
+    ComposeIconName *icon = (ComposeIconName *)found;
+    if (IS_INTRESOURCE(name)) {
+        icon->name = name;
+    } else {
+        lstrcpynW(icon->text, name, 256);
+        icon->name = icon->text;
+    }
     return FALSE;
 }
 
@@ -391,8 +403,9 @@ JNIEXPORT jboolean JNICALL Java_org_jetbrains_skiko_compose_WindowsWindowChrome_
     if (window == NULL || executable == NULL) {
         return JNI_FALSE;
     }
-    LPCWSTR group = NULL;
-    EnumResourceNamesW(executable, RT_GROUP_ICON, composeFirstIcon, (LONG_PTR)&group);
+    ComposeIconName icon = {};
+    EnumResourceNamesW(executable, RT_GROUP_ICON, composeFirstIcon, (LONG_PTR)&icon);
+    LPCWSTR group = icon.name;
     if (group == NULL) {
         return JNI_FALSE;
     }
