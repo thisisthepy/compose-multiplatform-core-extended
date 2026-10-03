@@ -68,6 +68,16 @@ case "$(uname -s)-$(uname -m)" in
     *) die "this builds macOS arm64, Linux x64 and Windows x64 only so far (this is $(uname -s) $(uname -m))" ;;
 esac
 
+# skiko compiles its Windows bindings with clang-cl, which Visual Studio's C++ workload does
+# not install by default. GitHub's Windows runners carry LLVM; a developer's machine may not.
+if [[ "$host" == "windows" ]]; then
+    command -v clang-cl.exe >/dev/null ||
+        die "clang-cl.exe is not on PATH" \
+            "skiko compiles its Windows bindings with it. Install LLVM (winget install LLVM.LLVM)" \
+            "and put C:\\Program Files\\LLVM\\bin on PATH, or add Visual Studio's" \
+            "\"C++ Clang Compiler for Windows\" component."
+fi
+
 [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/java" ]] ||
     die "JAVA_HOME does not name a JDK" "skiko's Gradle build needs a JDK 17 or 21."
 
