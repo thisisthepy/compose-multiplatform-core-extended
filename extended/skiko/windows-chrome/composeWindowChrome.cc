@@ -10,7 +10,9 @@
 // because a GraalVM native image links skiko's JNI methods statically by that package
 // prefix, and this file is linked with them.
 
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <Windows.h>
 #include <windowsx.h>
 #include <jni.h>
@@ -404,7 +406,9 @@ JNIEXPORT jboolean JNICALL Java_org_jetbrains_skiko_compose_WindowsWindowChrome_
         return JNI_FALSE;
     }
     ComposeIconName icon = {};
-    EnumResourceNamesW(executable, RT_GROUP_ICON, composeFirstIcon, (LONG_PTR)&icon);
+    // Cast because the SDK's declaration of the callback's parameters differs between its
+    // versions (LPWSTR or LPCWSTR for the name); the calling convention is the same.
+    EnumResourceNamesW(executable, RT_GROUP_ICON, (ENUMRESNAMEPROCW)(void *)composeFirstIcon, (LONG_PTR)&icon);
     LPCWSTR group = icon.name;
     if (group == NULL) {
         return JNI_FALSE;
