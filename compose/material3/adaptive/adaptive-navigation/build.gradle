@@ -37,7 +37,6 @@ androidXMultiplatform {
         namespace = "androidx.compose.material3.adaptive.navigation"
     }
     desktop()
-    linux()
     mingwX64()
     mac()
     ios()
