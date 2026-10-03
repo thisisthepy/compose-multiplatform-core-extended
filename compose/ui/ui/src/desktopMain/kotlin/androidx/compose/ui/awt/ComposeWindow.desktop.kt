@@ -24,6 +24,7 @@ import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.semantics.SemanticsOwner
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.window.ApplicationIcon
 import androidx.compose.ui.window.FrameWindowScope
 import androidx.compose.ui.window.UndecoratedWindowResizer
 import androidx.compose.ui.window.WindowExceptionHandler
@@ -110,6 +111,10 @@ class ComposeWindow @ExperimentalComposeUiApi constructor(
 
     init {
         contentPane.add(composePanel)
+        // Window.setIconImages reports every change under this name.
+        addPropertyChangeListener("iconImage") {
+            ApplicationIcon.windowIconChanged(this, iconImages.orEmpty())
+        }
     }
 
     override fun add(component: Component) = composePanel.add(component)
@@ -215,6 +220,7 @@ class ComposeWindow @ExperimentalComposeUiApi constructor(
     }
 
     override fun dispose() {
+        ApplicationIcon.windowDisposed(this)
         super.dispose()
         composePanel.dispose()
     }
