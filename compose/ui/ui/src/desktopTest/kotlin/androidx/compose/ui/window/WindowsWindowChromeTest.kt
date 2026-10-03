@@ -19,6 +19,9 @@ package androidx.compose.ui.window
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.captionBar
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,6 +34,7 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.google.common.truth.Truth.assertThat
@@ -109,6 +113,42 @@ class WindowsWindowChromeTest {
                 WindowsChromeSettings.ExecutableIconProperty to "false",
             ).any
         ).isFalse()
+    }
+
+    @Test
+    fun `content mode takes the caption and leaves the band to the content`() {
+        fun read(value: String?) =
+            WindowsChromeSettings.read("Windows 11") { if (it == WindowsChromeSettings.CaptionProperty) value else null }
+
+        assertThat(read("content").takeCaption).isTrue()
+        assertThat(read("content").contentUnderCaption).isTrue()
+        assertThat(read("Content").contentUnderCaption).isTrue()
+        assertThat(read(null).contentUnderCaption).isFalse()
+        assertThat(read("system").contentUnderCaption).isFalse()
+    }
+
+    @Test
+    fun `content under the caption is told its height as the caption and system bar insets`() {
+        var caption = -1
+        var systemBars = -1
+        var contentTop = -1f
+        val scene = ImageComposeScene(200, 120, Density(1f)) {
+            WindowsCaptionBand(taken = { false }) {
+                WindowsCaptionInsets(underCaption = { true }) {
+                    caption = WindowInsets.captionBar.getTop(LocalDensity.current)
+                    systemBars = WindowInsets.systemBars.getTop(LocalDensity.current)
+                    Box(Modifier.fillMaxSize().onGloballyPositioned { contentTop = it.positionInRoot().y })
+                }
+            }
+        }
+        try {
+            scene.render()
+        } finally {
+            scene.close()
+        }
+        assertThat(caption).isEqualTo(32)
+        assertThat(systemBars).isEqualTo(32)
+        assertThat(contentTop).isEqualTo(0f)
     }
 
     @Test

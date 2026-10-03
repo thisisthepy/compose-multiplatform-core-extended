@@ -17,10 +17,12 @@
 package androidx.compose.ui.window
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.InternalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.draw.drawWithContent
@@ -35,6 +37,11 @@ import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalPlatformWindowInsets
+import androidx.compose.ui.platform.PlatformInsets
+import androidx.compose.ui.platform.PlatformWindowInsets
+import androidx.compose.ui.platform.union
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
@@ -98,6 +105,11 @@ internal fun toggledMaximised(state: Int): Int =
  * other two:
  *
  * - `compose.windows.caption=system` keeps the system caption.
+ * - `compose.windows.caption=content` takes the caption strip but draws no band and no
+ *   buttons there: the content runs to the top of the window, is told the strip's height as
+ *   the caption bar and system bar insets, and draws whatever it wants under the caption,
+ *   its own window buttons included. For an application, or a framework on top of Compose,
+ *   that lays out its own title bar.
  * - `compose.windows.liveResize=false` stops holding a live resize for the frame.
  * - `compose.windows.executableIcon=false` keeps the toolkit's icon on a window with none.
  *
@@ -107,6 +119,7 @@ internal data class WindowsChromeSettings(
     val takeCaption: Boolean,
     val syncResize: Boolean,
     val executableIcon: Boolean,
+    val contentUnderCaption: Boolean = false,
 ) {
     val any: Boolean get() = takeCaption || syncResize || executableIcon
 
@@ -123,8 +136,10 @@ internal data class WindowsChromeSettings(
             property: (String) -> String? = System::getProperty,
         ): WindowsChromeSettings {
             if (!osName.startsWith("Windows")) return Off
+            val caption = property(CaptionProperty)
             return WindowsChromeSettings(
-                takeCaption = !property(CaptionProperty).equals("system", ignoreCase = true),
+                takeCaption = !caption.equals("system", ignoreCase = true),
+                contentUnderCaption = caption.equals("content", ignoreCase = true),
                 syncResize = !property(LiveResizeProperty).equals("false", ignoreCase = true),
                 executableIcon = !property(ExecutableIconProperty).equals("false", ignoreCase = true),
             )
@@ -169,6 +184,12 @@ internal class WindowsWindowChrome(private val window: ComposeWindow) {
     /** True once the window procedure has given the caption strip to the client area. */
     var captionTaken: Boolean by mutableStateOf(false)
         private set
+
+    /** The band and its buttons are drawn here. */
+    val bandDrawn: Boolean get() = captionTaken && !settings.contentUnderCaption
+
+    /** The content runs under the caption and draws its own; it is told the strip's height. */
+    val contentUnderCaption: Boolean get() = captionTaken && settings.contentUnderCaption
 
     var maximised: Boolean by mutableStateOf(false)
         private set
@@ -338,7 +359,7 @@ internal fun WindowsCaptionBand(taken: () -> Boolean, content: @Composable () ->
  */
 @Composable
 internal fun WindowsCaptionButtons(chrome: WindowsWindowChrome?, modifier: Modifier = Modifier) {
-    if (chrome == null || !chrome.captionTaken) return
+    if (chrome == null || !chrome.bandDrawn) return
     Layout(
         modifier = modifier,
         content = {
@@ -461,4 +482,30 @@ private fun DrawScope.drawCaptionButton(
             drawLine(ink, Offset(left, bottom), Offset(right, top), stroke, blendMode = blend)
         }
     }
+}
+
+/**
+ * Tells [content] how high the caption strip it runs under is, as the caption bar and system
+ * bar insets, while [underCaption] says it does. Everything else the platform reports is
+ * passed through.
+ */
+@OptIn(InternalComposeUiApi::class)
+@Composable
+internal fun WindowsCaptionInsets(underCaption: () -> Boolean, content: @Composable () -> Unit) {
+    val platform = LocalPlatformWindowInsets.current
+    val density = LocalDensity.current
+    val insets = remember(platform, density) {
+        val caption = PlatformInsets(
+            getTop = { if (underCaption()) with(density) { WindowsCaption.Height.roundToPx() } else 0 }
+        )
+        object : PlatformWindowInsets by platform {
+            override val captionBar: PlatformInsets get() = caption
+            override val systemBars: PlatformInsets get() = platform.systemBars.union(caption)
+
+            // The strip is a safe inset like the system bars, so excluding those excludes it.
+            override fun excluding(safeInsets: Boolean, ime: Boolean): PlatformWindowInsets =
+                if (safeInsets) platform.excluding(safeInsets, ime) else this
+        }
+    }
+    CompositionLocalProvider(LocalPlatformWindowInsets provides insets, content = content)
 }

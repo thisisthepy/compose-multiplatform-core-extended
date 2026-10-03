@@ -31,6 +31,7 @@ import androidx.compose.ui.window.WindowExceptionHandler
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowsCaptionBand
 import androidx.compose.ui.window.WindowsCaptionButtons
+import androidx.compose.ui.window.WindowsCaptionInsets
 import androidx.compose.ui.window.WindowsChromeSettings
 import androidx.compose.ui.window.WindowsWindowChrome
 import androidx.savedstate.SavedState
@@ -192,7 +193,9 @@ class ComposeWindow @ExperimentalComposeUiApi constructor(
         ) {
             val chrome = windowsChrome
             if (chrome != null) {
-                WindowsCaptionBand({ chrome.captionTaken }) { scope.content() }
+                WindowsCaptionBand({ chrome.bandDrawn }) {
+                    WindowsCaptionInsets({ chrome.contentUnderCaption }) { scope.content() }
+                }
                 WindowsCaptionButtons(chrome)
             } else {
                 scope.content()

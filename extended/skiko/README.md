@@ -60,6 +60,7 @@ with no new API. Each has a system property that turns it off.
 | Behaviour | Off with |
 |---|---|
 | The caption strip becomes a band Compose draws, in the colour of the content's top edge, with its own minimise, maximise and close buttons. The frame stays whole: shadow, resize border and Snap are the system's. Content is laid out below the band | `-Dcompose.windows.caption=system` |
+| The same caption strip, with no band and no buttons drawn: content runs to the top of the window and is told the strip's height as the caption bar and system bar insets, for an application or framework that draws its own title bar and buttons | on with `-Dcompose.windows.caption=content` |
 | Each step of a live resize waits, at most 50 ms, until a frame at the new size has been presented, so the content does not trail the window's edge | `-Dcompose.windows.liveResize=false` |
 | In a native image, a window with no icon wears the executable's icon instead of the toolkit's | `-Dcompose.windows.executableIcon=false` |
 
