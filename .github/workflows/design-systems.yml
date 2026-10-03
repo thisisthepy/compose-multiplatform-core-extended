@@ -1,0 +1,83 @@
+# The design systems under extended/design-systems: build every platform, run the tests.
+#
+# A standalone Amper project with its own wrapper, unrelated to the Gradle build at the root
+# of this repository, so only that directory is checked out. The rest of this repository's
+# workflows are upstream's and do not build it.
+
+name: Design systems
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - extended/design-systems/**
+      - .github/workflows/design-systems.yml
+  push:
+    branches:
+      - extended
+    paths:
+      - extended/design-systems/**
+      - .github/workflows/design-systems.yml
+
+concurrency:
+  group: design-systems-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Design systems (${{ matrix.platform }})
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: jvm
+            runs-on: macos-latest
+            test: true
+          - platform: iosSimulatorArm64
+            runs-on: macos-latest
+            test: true
+          # The device slice is linked, never run: running it needs a signed app on real
+          # hardware.
+          - platform: iosArm64
+            runs-on: macos-latest
+            test: false
+          # Compiled, not run: a browser test loads skiko's wasm module, which arrives
+          # truncated on this runner.
+          - platform: wasmJs
+            runs-on: ubuntu-latest
+            test: false
+          - platform: android
+            runs-on: ubuntu-latest
+            test: true
+    defaults:
+      run:
+        working-directory: extended/design-systems
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extended/design-systems
+          filter: blob:none
+
+      - name: Cache the Kotlin toolchain, konan and Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/JetBrains/Kotlin
+            ~/.cache/JetBrains/Kotlin
+            ~/.konan
+            ~/.m2/repository
+          key: design-systems-${{ matrix.platform }}-${{ runner.os }}-${{ hashFiles('extended/design-systems/**/module.yaml', 'extended/design-systems/libs.versions.toml', 'extended/design-systems/kotlin') }}
+          restore-keys: |
+            design-systems-${{ matrix.platform }}-${{ runner.os }}-
+
+      - name: Build
+        run: ./kotlin build -p ${{ matrix.platform }}
+
+      - name: Test
+        if: matrix.test
+        run: ./kotlin test -p ${{ matrix.platform }}
