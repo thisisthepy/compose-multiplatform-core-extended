@@ -1,0 +1,248 @@
+# A Compose window on Windows: its caption band, its live resize, its icon and its DPI.
+#
+# Three jobs, from cheapest to dearest:
+#
+#   decisions     the C decisions in extended/skiko/windows-chrome/ and the native method
+#                 names, with any C compiler (extended/skiko/tests/compose-window-chrome.test.sh)
+#   compose-ui    the Kotlin tests for the pure parts (caption metrics and settings, the band's
+#                 layout and colour, the undecorated resizer's bounds, the application icon),
+#                 then compose/ui/ui's desktop artifact published under the version the plugin
+#                 asks for, kept for the next job
+#   hello         on windows-latest: skiko's static archive with windows-chrome compiled in,
+#                 the plugin from compose-multiplatform-extended, and its native-image hello
+#                 built by packageNativeImage against this fork's ui-desktop. The executable is
+#                 run once: it has to open its window with the caption taken and the live
+#                 resize on, and draw its self-check
+#
+# What CI cannot check is what a person sees: the band's colour against the content, the
+# buttons, and a drag of the window's edge on a real display. Those are the manual checks in
+# extended/skiko/README.md's section on Compose windows.
+
+name: Windows window chrome
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin_ref:
+        description: compose-multiplatform-extended ref for the plugin and hello
+        default: extended
+  push:
+    branches: [ feature/windows-window-chrome ]
+    paths:
+      - extended/skiko/**
+      - compose/ui/ui/src/desktopMain/**
+      - compose/ui/ui/src/desktopTest/kotlin/androidx/compose/ui/window/**
+      - .github/workflows/windows-window-chrome.yml
+
+concurrency:
+  group: windows-window-chrome-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  decisions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            extended/skiko
+            compose/ui/ui/src/desktopMain/kotlin/org/jetbrains/skiko
+      - name: Caption band and live resize decisions
+        run: bash extended/skiko/tests/compose-window-chrome.test.sh
+
+  compose-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost \
+            /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/share/powershell \
+            /usr/local/lib/node_modules /usr/local/julia* /opt/microsoft /opt/google
+          sudo docker image prune --all --force >/dev/null || true
+          df -h /
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'corretto'
+
+      - name: Point the build at the JDK
+        run: |
+          echo "ANDROIDX_JDK21=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=${ANDROID_HOME:?the runner image has no Android SDK}"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+
+      - name: Configure Gradle for this runner
+        run: |
+          mkdir -p ~/.gradle
+          cat > ~/.gradle/gradle.properties <<EOF
+          org.gradle.workers.max=4
+          org.gradle.jvmargs=-Xmx11g -XX:MaxMetaspaceSize=2g -XX:+UseParallelGC -XX:+HeapDumpOnOutOfMemoryError -Dlint.nullness.ignore-deprecated=true -Dfile.encoding=UTF-8
+          kotlin.compiler.execution.strategy=in-process
+          EOF
+
+      - name: Kotlin tests for the pure parts
+        run: |
+          ./gradlew --no-daemon --no-configuration-cache --stacktrace :compose:ui:ui:desktopTest \
+            --tests 'androidx.compose.ui.window.WindowsWindowChromeTest' \
+            --tests 'androidx.compose.ui.window.UndecoratedWindowResizerBoundsTest' \
+            --tests 'androidx.compose.ui.window.ApplicationIconTest'
+
+      - name: Keep the test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-ui-test-reports
+          path: |
+            out/**/compose/ui/ui/build/test-results/desktopTest/
+            out/**/compose/ui/ui/build/reports/tests/desktopTest/
+          if-no-files-found: ignore
+
+      - name: Publish ui-desktop under the version the plugin asks for
+        run: |
+          rm -rf ~/.m2/repository/org/jetbrains/compose
+          ./gradlew --no-daemon --no-configuration-cache \
+            -Pjetbrains.publication.version.COMPOSE=1.11.1 \
+            :compose:ui:ui:publishDesktopPublicationToMavenLocal
+          find ~/.m2/repository/org/jetbrains/compose -type f | sort
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-desktop-maven
+          path: ~/.m2/repository/org/jetbrains/compose/ui/ui-desktop/
+          if-no-files-found: error
+          retention-days: 7
+
+  hello:
+    needs: [ decisions, compose-ui ]
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      NIK_URL: https://github.com/bell-sw/LibericaNIK/releases/download/25.0.4.1+1-25.0.4.1+2/bellsoft-liberica-vm-full-openjdk25.0.4.1+2-25.0.4.1+1-windows-amd64.zip
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: core
+          sparse-checkout: |
+            extended/skiko
+
+      - name: The plugin and hello from compose-multiplatform-extended
+        uses: actions/checkout@v4
+        with:
+          repository: thisisthepy/compose-multiplatform-extended
+          ref: ${{ inputs.plugin_ref || 'extended' }}
+          path: plugin
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: This fork's ui-desktop in the local repository
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-desktop-maven
+          path: ${{ runner.temp }}/ui-desktop
+
+      - name: Install it where Gradle looks first
+        run: |
+          repo="$(cygpath -u "$USERPROFILE")/.m2/repository/org/jetbrains/compose/ui/ui-desktop"
+          mkdir -p "$repo"
+          cp -r "$(cygpath -u "$RUNNER_TEMP")/ui-desktop/." "$repo/"
+          find "$repo" -type f | sort
+
+      - name: Liberica NIK 25 Full
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/nik.zip" "$NIK_URL"
+          unzip -q "$RUNNER_TEMP/nik.zip" -d "$RUNNER_TEMP/nik"
+          home="$(ls -d "$RUNNER_TEMP"/nik/*/ | head -1)"
+          echo "GRAALVM_HOME=${home%/}" >> "$GITHUB_ENV"
+          "${home}bin/native-image.cmd" --version
+
+      - name: skiko's static archive with the Compose window procedure
+        run: |
+          bash core/extended/skiko/build-skiko-static-jvm.sh "$(cygpath -u "$RUNNER_TEMP")/skiko-static"
+          out="$(cygpath -u "$RUNNER_TEMP")/skiko-static/out/windows-x64"
+          grep -E "WindowsWindowChrome|composeWindowChromePresented" "$out/symbols.txt"
+          echo "SKIKO_STATIC=$(cygpath -w "$out")" >> "$GITHUB_ENV"
+
+      - name: Plugin to the local repository
+        working-directory: plugin/gradle-plugins
+        run: ./gradlew --no-daemon -q :compose:publishToMavenLocal -Pdeploy.version=1.11.1-extended-dev -Pcompose.version=1.11.1
+
+      - name: hello on the JVM, with the tracing agent
+        working-directory: plugin/extended/native-image/hello
+        run: |
+          mkdir -p build/check
+          # skiko's library from Maven Central has no Compose window procedure, so this run
+          # keeps the system caption and says so.
+          HELLO_SELF_CHECK="$(cygpath -w "$PWD/build/check/jvm.png")" \
+            JAVA_TOOL_OPTIONS="-Dcompose.windows.chrome.debug=true" \
+            ./gradlew --no-daemon -q runNativeImageAgent 2>&1 | tee build/check/jvm.log
+          ls -la build/check
+
+      - name: hello as one executable
+        working-directory: plugin/extended/native-image/hello
+        run: ./gradlew --no-daemon --info packageNativeImage > build/check/package.log 2>&1 || { tail -80 build/check/package.log; exit 1; }
+
+      - name: Run it, and take a picture of its window
+        working-directory: plugin/extended/native-image/hello
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path build/compose/native-image/main/native-image-hello.exe
+          $check = Join-Path $PWD 'build/check'
+          $env:HELLO_SELF_CHECK = Join-Path $check 'native.png'
+          $p = Start-Process -FilePath $exe -ArgumentList '-Dcompose.windows.chrome.debug=true' `
+            -RedirectStandardError (Join-Path $check 'native.err') -RedirectStandardOutput (Join-Path $check 'native.out') -PassThru
+          Start-Sleep -Milliseconds 1100
+          # A picture of the desktop while the window is up. Best effort: a runner's session
+          # may have no screen to copy, and the checks below do not depend on it.
+          try {
+            Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $shot = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+            $g = [System.Drawing.Graphics]::FromImage($shot)
+            $g.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+            $shot.Save((Join-Path $check 'screen.png'))
+          } catch {
+            "no screenshot: $_"
+          }
+          if (-not $p.WaitForExit(90000)) { $p.Kill(); throw 'hello did not exit' }
+          "exit code $($p.ExitCode)"
+          Get-Content (Join-Path $check 'native.err')
+          if ($p.ExitCode -ne 0) { throw "hello exited with $($p.ExitCode)" }
+
+      - name: The window was taken over and the self-check drew
+        working-directory: plugin/extended/native-image/hello
+        run: |
+          cat build/check/native.err
+          grep -q "installed=true caption=true liveResize=true" build/check/native.err ||
+            { echo "the window kept the system caption or the live resize is off" >&2; exit 1; }
+          [[ -s build/check/native.png ]] || { echo "the self-check drew nothing" >&2; exit 1; }
+          ls -la build/compose/native-image/main/
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hello-windows
+          path: |
+            plugin/extended/native-image/hello/build/check/
+            plugin/extended/native-image/hello/build/compose/native-image/main/
+          if-no-files-found: ignore
+          retention-days: 7
