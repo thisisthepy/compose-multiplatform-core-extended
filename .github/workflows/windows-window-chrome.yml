@@ -140,6 +140,11 @@ jobs:
           sparse-checkout: |
             extended/skiko
 
+      # The plugin's test projects pass Windows' 260 character limit once checked out under
+      # a subdirectory of the workspace.
+      - name: Allow long paths in git
+        run: git config --global core.longpaths true
+
       - name: The plugin and hello from compose-multiplatform-extended
         uses: actions/checkout@v4
         with:
