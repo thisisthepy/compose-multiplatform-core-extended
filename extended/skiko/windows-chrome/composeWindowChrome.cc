@@ -406,9 +406,10 @@ JNIEXPORT jboolean JNICALL Java_org_jetbrains_skiko_compose_WindowsWindowChrome_
         return JNI_FALSE;
     }
     ComposeIconName icon = {};
-    // Cast because the SDK's declaration of the callback's parameters differs between its
-    // versions (LPWSTR or LPCWSTR for the name); the calling convention is the same.
-    EnumResourceNamesW(executable, RT_GROUP_ICON, (ENUMRESNAMEPROCW)(void *)composeFirstIcon, (LONG_PTR)&icon);
+    // RT_GROUP_ICON is spelled out because skiko builds without UNICODE, where the SDK's
+    // macro is the narrow form. The callback is cast because the SDK's declaration of its
+    // parameters differs between versions; the calling convention is the same.
+    EnumResourceNamesW(executable, MAKEINTRESOURCEW(14) /* RT_GROUP_ICON */, (ENUMRESNAMEPROCW)(void *)composeFirstIcon, (LONG_PTR)&icon);
     LPCWSTR group = icon.name;
     if (group == NULL) {
         return JNI_FALSE;
