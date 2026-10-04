@@ -90,10 +90,13 @@ internal fun ClipEntry.hasTransferableText(): Boolean {
 // Here we rely on the NativeClipboard directly instead of using ClipEntry,
 // because getClipEntry is a suspend function, but in ContextMenu.desktop.kt we have older code
 // expecting a synchronous execution.
-internal fun Clipboard.nativeClipboardHasText(): Boolean {
+internal fun Clipboard.awtNativeClipboardHasText(): Boolean {
     val awtClipboard = awtClipboard ?: return false
     return awtClipboard.isDataFlavorAvailable(DataFlavor.stringFlavor)
 }
+
+internal fun Clipboard.awtNativeClipboardHasData(): Boolean =
+    awtClipboard?.availableDataFlavors?.isNotEmpty() ?: false
 
 // Derived from StringSelection
 @VisibleForTesting
