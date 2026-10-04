@@ -37,6 +37,13 @@ object AwtFreeClipEntryProbe {
         check(runBlocking { entry.readAnnotatedString() }?.text == "hello")
         check(!entry.hasAnnotatedString())
         check(runBlocking { ClipEntry("").readText() } == "")
+        val clipboard = object : androidx.compose.ui.platform.Clipboard {
+            override val nativeClipboard: androidx.compose.ui.platform.NativeClipboard = "text"
+            override suspend fun getClipEntry(): ClipEntry? = ClipEntry("text")
+            override suspend fun setClipEntry(clipEntry: ClipEntry?) = Unit
+        }
+        check(clipboard.nativeClipboardHasText())
+        check(runBlocking { clipboard.hasAnyData() })
         println("probe-ok")
     }
 }

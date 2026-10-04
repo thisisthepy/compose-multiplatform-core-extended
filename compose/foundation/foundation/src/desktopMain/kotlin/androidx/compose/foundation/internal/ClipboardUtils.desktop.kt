@@ -51,3 +51,31 @@ internal actual fun ClipEntry?.hasText(): Boolean {
 
 internal actual fun Clipboard.isReadSupported(): Boolean = true
 internal actual fun Clipboard.isWriteSupported(): Boolean = true
+
+// True only for the AWT system clipboard. The superclass chain is compared by name, so asking
+// an embedder's clipboard never loads a java.awt.datatransfer class.
+private fun Any.isAwtClipboard(): Boolean {
+    var type: Class<*>? = javaClass
+    while (type != null) {
+        if (type.name == "java.awt.datatransfer.Clipboard") return true
+        type = type.superclass
+    }
+    return false
+}
+
+// Here we rely on the NativeClipboard directly instead of using ClipEntry,
+// because getClipEntry is a suspend function, but in ContextMenu.desktop.kt we have older code
+// expecting a synchronous execution. An embedder clipboard whose nativeClipboard is a String
+// exposes its current plain text there; any other non-AWT value reports no text.
+internal fun Clipboard.nativeClipboardHasText(): Boolean {
+    val native = nativeClipboard
+    if (native is String) return native.isNotEmpty()
+    if (!native.isAwtClipboard()) return false
+    return awtNativeClipboardHasText()
+}
+
+/** Whether the clipboard holds anything, read through getClipEntry for a non-AWT clipboard. */
+internal suspend fun Clipboard.hasAnyData(): Boolean {
+    if (!nativeClipboard.isAwtClipboard()) return getClipEntry() != null
+    return awtNativeClipboardHasData()
+}
