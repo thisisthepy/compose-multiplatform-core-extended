@@ -1,0 +1,34 @@
+/*
+ * Copyright 2025 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+@file:OptIn(ExperimentalComposeUiApi::class)
+
+package androidx.compose.foundation.internal
+
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.platform.ClipEntry
+
+// Extended hook: an embedder that supplies its own Clipboard (no AWT display, no
+// java.awt.datatransfer) wraps plain text as `ClipEntry("text")`. A ClipEntry whose
+// nativeClipEntry is a String is plain text and is read without touching Transferable or
+// DataFlavor. Every other nativeClipEntry keeps the Transferable path in ClipboardUtils.
+// The public API is unchanged: the constructor already accepts Any.
+
+/** True when this entry holds a plain [String] instead of a Transferable. */
+internal fun ClipEntry.isPlainText(): Boolean = nativeClipEntry is String
+
+/** The text of a plain-text entry, or null when the entry is not plain text. */
+internal fun ClipEntry.plainTextOrNull(): String? = nativeClipEntry as? String

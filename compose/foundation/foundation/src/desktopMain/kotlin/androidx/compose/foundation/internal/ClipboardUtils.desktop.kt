@@ -18,109 +18,36 @@
 
 package androidx.compose.foundation.internal
 
-import androidx.annotation.VisibleForTesting
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.Clipboard
-import androidx.compose.ui.platform.asAwtTransferable
-import androidx.compose.ui.platform.awtClipboard
 import androidx.compose.ui.text.AnnotatedString
-import java.awt.datatransfer.ClipboardOwner
-import java.awt.datatransfer.DataFlavor
-import java.awt.datatransfer.Transferable
-import java.awt.datatransfer.UnsupportedFlavorException
-import java.io.IOException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
-// This implementation detail is used by Jewel.
-// When removing it, please provide an alternative of retrieving an annotated string,
-// and notify a Jewel developer that they need to change the implementation.
-private val annotatedStringFlavor: DataFlavor =
-    DataFlavor(AnnotatedString::class.java, "AnnotatedString")
+// A plain-text ClipEntry is answered here. Anything else is handed to AwtClipEntry.desktop.kt,
+// the only file that loads java.awt.datatransfer classes.
 
-internal actual suspend fun ClipEntry.readText(): String? {
-    if (!hasText()) return null
+internal actual suspend fun ClipEntry.readText(): String? =
+    plainTextOrNull() ?: readTransferableText()
 
-    val transferable = asAwtTransferable
-    return withContext(Dispatchers.IO) {
-        try {
-            transferable?.getTransferData(DataFlavor.stringFlavor) as? String
-        } catch (_: IOException) {
-            // the data is no longer available in the requested flavor
-            null
-        }
-    }
-}
-
-internal actual suspend fun ClipEntry.readAnnotatedString(): AnnotatedString? {
-    if (!hasAnnotatedString()) {
-        if (!hasText()) return null
-        return readText()?.let { AnnotatedString(it) }
-    }
-
-    val transferable = asAwtTransferable
-    return withContext(Dispatchers.IO) {
-        try {
-            transferable?.getTransferData(annotatedStringFlavor) as? AnnotatedString
-        } catch (_: IOException) {
-            // the data is no longer available in the requested flavor
-            null
-        }
-    }
-}
+internal actual suspend fun ClipEntry.readAnnotatedString(): AnnotatedString? =
+    plainTextOrNull()?.let { AnnotatedString(it) } ?: readTransferableAnnotatedString()
 
 internal actual fun AnnotatedString?.toClipEntry(): ClipEntry? {
     if (this == null) return null
-    val transferable = AnnotatedStringTransferable(this)
-    return ClipEntry(transferable)
+    return toTransferableClipEntry()
 }
 
 internal fun ClipEntry?.hasAnnotatedString(): Boolean {
     if (this == null) return false
-    val transferable = asAwtTransferable ?: return false
-    return transferable.isDataFlavorSupported(annotatedStringFlavor)
+    if (isPlainText()) return false
+    return hasTransferableAnnotatedString()
 }
 
 internal actual fun ClipEntry?.hasText(): Boolean {
     if (this == null) return false
-    val transferable = asAwtTransferable ?: return false
-    return transferable.isDataFlavorSupported(DataFlavor.stringFlavor)
+    if (isPlainText()) return true
+    return hasTransferableText()
 }
 
 internal actual fun Clipboard.isReadSupported(): Boolean = true
 internal actual fun Clipboard.isWriteSupported(): Boolean = true
-
-// Here we rely on the NativeClipboard directly instead of using ClipEntry,
-// because getClipEntry is a suspend function, but in ContextMenu.desktop.kt we have older code
-// expecting a synchronous execution.
-internal fun Clipboard.nativeClipboardHasText(): Boolean {
-    val awtClipboard = awtClipboard ?: return false
-    return awtClipboard.isDataFlavorAvailable(DataFlavor.stringFlavor)
-}
-
-// Derived from StringSelection
-@VisibleForTesting
-internal class AnnotatedStringTransferable(
-    private val data: AnnotatedString
-) : Transferable, ClipboardOwner {
-    override fun getTransferDataFlavors(): Array<DataFlavor?> = supportedFlavors
-
-    override fun isDataFlavorSupported(flavor: DataFlavor): Boolean =
-        flavor in supportedFlavors
-
-    override fun getTransferData(flavor: DataFlavor): Any =
-        when (flavor) {
-            annotatedStringFlavor -> data
-            DataFlavor.stringFlavor -> data.text
-            else -> throw UnsupportedFlavorException(flavor)
-        }
-
-    override fun lostOwnership(clipboard: java.awt.datatransfer.Clipboard?, contents: Transferable?) {
-        // Empty
-    }
-
-    companion object {
-        private val supportedFlavors = arrayOf(annotatedStringFlavor, DataFlavor.stringFlavor)
-    }
-}
