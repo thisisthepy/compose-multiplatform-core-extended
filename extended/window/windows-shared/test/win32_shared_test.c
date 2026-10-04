@@ -10,6 +10,9 @@
 
 static int failures;
 
+// The toasts ask the renderer for a frame; the renderer is not part of this check.
+void compose_rust_renderer_request_frame(void) {}
+
 #define CHECK(condition) \
     do { if (!(condition)) { printf("fail: %s (line %d)\n", #condition, __LINE__); failures++; } } while (0)
 
