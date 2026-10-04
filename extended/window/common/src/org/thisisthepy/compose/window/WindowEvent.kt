@@ -40,5 +40,12 @@ data class WindowEvent(
         const val PREEDIT_START = 13
         const val PREEDIT_DRAW = 14
         const val PREEDIT_DONE = 15
+
+        /**
+         * Text was pasted from the primary selection with the middle button. The text is held
+         * whole by the window and taken in one call, because it can be far longer than an event
+         * holds; the event only says one is waiting.
+         */
+        const val TEXT_PASTE = 16
     }
 }
