@@ -1,6 +1,7 @@
 package org.thisisthepy.compose.window.linux
 // Local copy of the D-Bus wire types: replaced by the common D-Bus types once common part 2 lands.
 
+/**
  * One connection to the session bus, already authenticated, that carries whole messages.
  *
  * Two renderers open one: the native image on Linux, through a Java socket channel, and the
@@ -18,6 +19,7 @@ interface BusConnection {
     fun receive(timeoutMillis: Int): ByteArray?
 
     fun close()
+}
 
 /** Who a call goes to. */
 class Destination(val name: String, val path: String, val interfaceName: String)
