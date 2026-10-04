@@ -5,23 +5,27 @@
 # local Maven repository, and then builds and tests the window project against them. The
 # inherited upstream workflows do not build extended/window and are not the gate for it.
 
-name: extended window
+name: Extended window linux
 
 on:
   workflow_dispatch:
   pull_request:
     paths:
-      - extended/window/**
-      - .github/workflows/extended-window.yml
+      - extended/window/common/**
+      - extended/window/native/linux/**
+      - extended/window/project.yaml
+      - .github/workflows/extended-window-linux.yml
   push:
     branches:
       - extended
     paths:
-      - extended/window/**
-      - .github/workflows/extended-window.yml
+      - extended/window/common/**
+      - extended/window/native/linux/**
+      - extended/window/project.yaml
+      - .github/workflows/extended-window-linux.yml
 
 concurrency:
-  group: extended-window-${{ github.ref }}
+  group: extended-window-linux-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -67,7 +71,9 @@ jobs:
           path: |
             ~/.konan
             ~/.cache/JetBrains/Kotlin
-          key: extended-window-linux-${{ hashFiles('extended/window/**/module.yaml', 'extended/window/libs.versions.toml', 'extended/window/kotlin') }}
+          key: extended-window-linux-${{ hashFiles('extended/window/common/**
+      - extended/window/native/linux/**
+      - extended/window/project.yaml/module.yaml', 'extended/window/libs.versions.toml', 'extended/window/kotlin') }}
           restore-keys: |
             extended-window-linux-
 
