@@ -55,5 +55,5 @@ jobs:
       - name: Compile and test the Kotlin
         working-directory: extended/window
         run: |
-          ./kotlin build
-          ./kotlin test
+          ./kotlin build -m linux -p jvm
+          ./kotlin test -m linux -p jvm
