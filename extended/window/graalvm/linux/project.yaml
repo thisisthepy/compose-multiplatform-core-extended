@@ -1,0 +1,5 @@
+# The GraalVM native-image X11 window layer: x11_window.c and the Kotlin that declares it.
+# A standalone Amper project, like extended/design-systems, so it builds without the Gradle
+# build at the root of this repository.
+modules:
+  - .
