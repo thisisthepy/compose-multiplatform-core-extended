@@ -1,0 +1,57 @@
+# extended/window/native/macos: build the Kotlin/Native macOS window and run its tests.
+#
+# A standalone Amper project with its own wrapper, unrelated to the Gradle build at the root
+# of this repository, so only that directory is checked out.
+
+name: Extended window (macOS)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window-macos.yml
+  push:
+    branches:
+      - extended
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window-macos.yml
+
+concurrency:
+  group: extended-window-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Window macosArm64
+    runs-on: macos-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: extended/window
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extended/window
+          filter: blob:none
+
+      - name: Cache the Kotlin toolchain, konan and Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/JetBrains/Kotlin
+            ~/.konan
+            ~/.m2/repository
+          key: extended-window-macos-${{ runner.os }}-${{ hashFiles('extended/window/**/module.yaml', 'extended/window/libs.versions.toml', 'extended/window/kotlin') }}
+          restore-keys: |
+            extended-window-macos-${{ runner.os }}-
+
+      - name: Build
+        run: ./kotlin build -p macosArm64 -m macos
+
+      - name: Test
+        run: ./kotlin test -p macosArm64 -m macos

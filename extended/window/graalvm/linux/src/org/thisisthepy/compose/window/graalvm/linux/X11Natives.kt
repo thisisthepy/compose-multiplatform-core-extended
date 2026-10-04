@@ -64,6 +64,14 @@ internal object X11Natives {
     external fun setIcon(rgba: CCharPointer?, width: Int, height: Int)
 
     @JvmStatic
+    @CFunction("dxc_native_set_title")
+    external fun setTitle(title: CCharPointer?)
+
+    @JvmStatic
+    @CFunction("dxc_native_set_min_size")
+    external fun setMinSize(width: Int, height: Int)
+
+    @JvmStatic
     @CFunction("dxc_native_set_ime_spot")
     external fun setImeSpot(x: Float, y: Float)
 

@@ -1,7 +1,9 @@
 # The window modules, one standalone Amper project like extended/design-systems.
 # Each window PR adds its own module line.
+# Nothing here may depend on the renderer, its wire protocol or its node table.
 modules:
   - common
   - graalvm/linux
+  - native/macos
   - graalvm/macos
   - native/linux
