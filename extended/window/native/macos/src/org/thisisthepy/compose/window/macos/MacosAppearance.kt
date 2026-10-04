@@ -6,9 +6,10 @@ import platform.AppKit.NSApplication
 import platform.AppKit.NSAppearanceNameAqua
 import platform.AppKit.NSAppearanceNameDarkAqua
 import platform.AppKit.effectiveAppearance
-import platform.Foundation.NSKeyValueObservingOptionNew
-import platform.Foundation.addObserver
-import platform.darwin.NSObject
+import platform.Foundation.NSDistributedNotificationCenter
+import platform.Foundation.NSOperationQueue
+import platform.darwin.dispatch_async
+import platform.darwin.dispatch_get_main_queue
 
 /** The application's effective appearance, read now. */
 fun systemIsDark(): Boolean {
@@ -20,31 +21,21 @@ fun systemIsDark(): Boolean {
 }
 
 /**
- * Watches `effectiveAppearance` of the application with key-value observing, which is the
- * one signal that fires for the switch in System Settings, the automatic day and night
- * change, and an appearance the application was given.
+ * Watches the system's appearance through the distributed notification the system posts for
+ * the switch in System Settings and the automatic day and night change.
+ *
+ * Kotlin/Native cannot override `observeValueForKeyPath`, which is declared in a category,
+ * so key-value observing of `effectiveAppearance` is not available. The answer is read on
+ * the next turn of the main queue, after the application's appearance has caught up.
  */
 fun observeSystemAppearance(onChange: () -> Unit) {
-    val observer = AppearanceObserver(onChange)
-    NSApplication.sharedApplication().addObserver(
-        observer,
-        forKeyPath = "effectiveAppearance",
-        options = NSKeyValueObservingOptionNew,
-        context = null,
-    )
-    // Held for the life of the process: the application does not retain its observers.
+    val observer = NSDistributedNotificationCenter.defaultCenter().addObserverForName(
+        name = "AppleInterfaceThemeChangedNotification",
+        `object` = null,
+        queue = NSOperationQueue.mainQueue,
+    ) { _ -> dispatch_async(dispatch_get_main_queue()) { onChange() } }
+    // Held for the life of the process.
     retainedObservers += observer
 }
 
-private val retainedObservers = mutableListOf<AppearanceObserver>()
-
-private class AppearanceObserver(private val onChange: () -> Unit) : NSObject() {
-    override fun observeValueForKeyPath(
-        keyPath: String?,
-        ofObject: Any?,
-        change: Map<Any?, *>?,
-        context: kotlinx.cinterop.COpaquePointer?,
-    ) {
-        if (keyPath == "effectiveAppearance") onChange()
-    }
-}
+private val retainedObservers = mutableListOf<Any>()
