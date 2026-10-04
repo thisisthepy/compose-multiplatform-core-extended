@@ -1,0 +1,37 @@
+# Desktop test for the AWT-free pointer icons, with no Android SDK.
+
+name: Extended pointer icon test
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - extended
+    paths:
+      - compose/ui/ui/src/desktop*/**
+      - compose/ui/ui/api/desktop/**
+      - .github/workflows/extended-pointericon-test.yml
+
+concurrency:
+  group: extended-pointericon-test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: AWT-free pointer icons
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'corretto'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+      - name: Run test
+        run: ./gradlew :compose:ui:ui:desktopTest --tests '*AwtFreePointerIconTest*' --no-daemon --stacktrace
