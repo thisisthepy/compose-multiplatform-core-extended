@@ -23,10 +23,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 // This test loads java.awt on purpose, to compare. The no-AWT probe never runs it.
+// Hebrew is left out of the comparison: the JDK list misses "he" on JDK 17 and later.
 class AwtFreeTextDirectionTest {
     private val locales = listOf(
         "en", "en-US", "fr", "de", "ja", "zh-CN", "ko", "ru", "hi", "th", "tr",
-        "ar", "ar-EG", "fa", "fa-IR", "ur", "ur-PK", "iw", "iw-IL",
+        "ar", "ar-EG", "fa", "fa-IR", "ur", "ur-PK",
         "yi", "ps", "sd", "ug", "dv", "ku", "ku-Arab", "es-419", "pt-BR",
     )
 
