@@ -11,3 +11,15 @@ product:
 
 test-dependencies:
   - $kotlin.test
+
+settings:
+  publishing:
+    enabled: true
+    group: org.thisisthepy.compose.window
+    artifactId: common
+    version: 0.1.0
+
+repositories:
+  - id: mavenLocal
+    url: mavenLocal
+    publish: true
