@@ -41,6 +41,12 @@ jobs:
           - name: AWT-free ClipEntry
             task: :compose:foundation:foundation:desktopTest
             filter: '*AwtFreeClipEntryTest*'
+          - name: AWT-free text direction
+            task: :compose:ui:ui:desktopTest
+            filter: '*AwtFreeTextDirectionTest*'
+          - name: Embedder main dispatcher
+            task: :compose:ui:ui:desktopTest
+            filter: '*AwtFreeMainDispatcherTest*'
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v4
