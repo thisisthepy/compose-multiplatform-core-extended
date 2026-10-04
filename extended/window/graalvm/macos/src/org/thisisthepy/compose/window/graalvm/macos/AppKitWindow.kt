@@ -18,7 +18,7 @@ import org.graalvm.word.WordFactory
 // The C side owns the window, the view, the layer, the Metal device and the queue, and
 // answers with pointers. Nothing there draws. This file declares the entry points with
 // `@CFunction` and reads the event queue the window fills; it names no toolkit type and
-// no Compose type, so it compiles on a JVM with no `java.awt` on the path.
+// no Compose type, so it compiles on a JVM with no AWT on the path.
 
 @CFunction("dxc_native_window_open")
 private external fun openWindow(
