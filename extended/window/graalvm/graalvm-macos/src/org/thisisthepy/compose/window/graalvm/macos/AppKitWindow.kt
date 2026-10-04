@@ -508,6 +508,9 @@ private external fun nativeSetImeSpot(x: Float, y: Float)
 @CFunction("dxc_native_context_menu")
 private external fun nativeContextMenu(view: Pointer?, items: CCharPointer?): Int
 
+@CFunction("dxc_native_set_text_menu")
+private external fun nativeSetTextMenu(spec: CCharPointer?)
+
 /** Puts a title on the window. */
 fun NativeWindow.setTitle(title: String) {
     val holder = CTypeConversion.toCString(title)
@@ -541,6 +544,25 @@ fun NativeWindow.showContextMenu(packed: String): Int {
     val holder = CTypeConversion.toCString(packed)
     try {
         return nativeContextMenu(WordFactory.pointer(view), holder.get())
+    } finally {
+        holder.close()
+    }
+}
+
+/**
+ * Describes the text edit menu the window puts up itself on a right click, in the form
+ * [showContextMenu] takes, or removes it when [packed] is null.
+ *
+ * The entry the reader picks comes back as an event of kind `WindowEvent.MENU_COMMAND`.
+ */
+fun setTextMenu(packed: String?) {
+    if (packed == null) {
+        nativeSetTextMenu(WordFactory.nullPointer<CCharPointer>())
+        return
+    }
+    val holder = CTypeConversion.toCString(packed)
+    try {
+        nativeSetTextMenu(holder.get())
     } finally {
         holder.close()
     }
