@@ -9,7 +9,7 @@ product:
   platforms: [ macosArm64 ]
 
 dependencies:
-  - ../common
+  - ../../common
   - $compose.runtime
   - $compose.foundation
   - $compose.ui
