@@ -158,6 +158,9 @@ static Atom dxc_a_xdnd_aware, dxc_a_xdnd_enter, dxc_a_xdnd_position, dxc_a_xdnd_
 static char *dxc_clip_text;
 static size_t dxc_clip_length;
 static int dxc_owns_clipboard;
+static int dxc_owns_primary;
+// The most a paste can carry: what one property read returns, which is 4 MiB.
+#define DXC_PASTE_BYTES (4 << 20)
 
 // Set from any thread to ask the window to come forward; acted on in the next turn, which
 // is on the thread Xlib is used from.
@@ -229,6 +232,7 @@ static int32_t dxc_key_code(KeySym key) {
         case XK_BackSpace: return 0x33;
         case XK_Escape: return 0x35;
         case XK_Delete: return 0x75;
+        case XK_Insert: return 0x72;
         case XK_Left: return 0x7B;
         case XK_Right: return 0x7C;
         case XK_Down: return 0x7D;
@@ -454,15 +458,18 @@ static unsigned char *dxc_read_property(Window window, Atom property, unsigned l
     return data;
 }
 
-/** The clipboard's text as UTF-8 copied into [out], and its length; zero where none. */
-int32_t dxc_native_clipboard_read(char *out, int32_t capacity) {
+/**
+ * The text of [selection] as UTF-8 copied into [out], and its length; zero where none.
+ * [owned] says this window holds the selection, in which case its own copy answers.
+ */
+static int32_t dxc_read_selection(Atom selection, int owned, char *out, int32_t capacity) {
     if (dxc_display == NULL) return 0;
-    if (dxc_owns_clipboard && dxc_clip_text != NULL) {
+    if (owned && dxc_clip_text != NULL) {
         if ((int32_t)dxc_clip_length > capacity) return 0;
         memcpy(out, dxc_clip_text, dxc_clip_length);
         return (int32_t)dxc_clip_length;
     }
-    XConvertSelection(dxc_display, dxc_a_clipboard, dxc_a_utf8, dxc_a_property, dxc_window,
+    XConvertSelection(dxc_display, selection, dxc_a_utf8, dxc_a_property, dxc_window,
                       CurrentTime);
     XFlush(dxc_display);
     // The owner answers with an event, which this waits for without reading the others:
@@ -493,6 +500,50 @@ int32_t dxc_native_clipboard_read(char *out, int32_t capacity) {
     return 0;
 }
 
+/*
+ * Text waiting to be delivered as commit events. A paste can be far longer than one event
+ * holds, so it is kept whole here and handed out a piece at a time as the renderer asks for
+ * events, each piece cut at a character boundary. Nothing is dropped and the event queue,
+ * which is small, never has to hold more than one piece of it.
+ */
+static char *dxc_pending_text;
+static size_t dxc_pending_length, dxc_pending_at;
+
+/* Reads [selection] and queues all of it to be typed into the focused field. */
+static void dxc_paste_selection(Atom selection, int owned) {
+    free(dxc_pending_text);
+    dxc_pending_text = NULL;
+    dxc_pending_length = dxc_pending_at = 0;
+    char *buffer = (char *)malloc(DXC_PASTE_BYTES);
+    if (buffer == NULL) return;
+    int32_t length = dxc_read_selection(selection, owned, buffer, DXC_PASTE_BYTES);
+    if (length <= 0) { free(buffer); return; }
+    dxc_pending_text = buffer;
+    dxc_pending_length = (size_t)length;
+}
+
+/* Moves the next piece of a waiting paste into the event queue. */
+static void dxc_feed_pending(void) {
+    if (dxc_pending_text == NULL) return;
+    size_t left = dxc_pending_length - dxc_pending_at;
+    size_t take = left < DXC_TEXT_BYTES - 1 ? left : DXC_TEXT_BYTES - 1;
+    while (take > 0 && take < left &&
+           ((unsigned char)dxc_pending_text[dxc_pending_at + take] & 0xC0) == 0x80) {
+        take--;
+    }
+    dxc_push_text(DXC_EVENT_TEXT_COMMIT, dxc_pending_text + dxc_pending_at, take);
+    dxc_pending_at += take;
+    if (take == 0 || dxc_pending_at >= dxc_pending_length) {
+        free(dxc_pending_text);
+        dxc_pending_text = NULL;
+    }
+}
+
+/** The clipboard's text as UTF-8 copied into [out], and its length; zero where none. */
+int32_t dxc_native_clipboard_read(char *out, int32_t capacity) {
+    return dxc_read_selection(dxc_a_clipboard, dxc_owns_clipboard, out, capacity);
+}
+
 /** Puts [text] on the clipboard and the primary selection, and answers for them. */
 void dxc_native_clipboard_write(const char *text) {
     if (dxc_display == NULL || text == NULL) return;
@@ -504,6 +555,7 @@ void dxc_native_clipboard_write(const char *text) {
     XSetSelectionOwner(dxc_display, dxc_a_clipboard, dxc_window, CurrentTime);
     XSetSelectionOwner(dxc_display, dxc_a_primary, dxc_window, CurrentTime);
     dxc_owns_clipboard = 1;
+    dxc_owns_primary = 1;
     XFlush(dxc_display);
 }
 
@@ -860,6 +912,14 @@ static void dxc_pump_events(void) {
                     int32_t bit = button == 1 ? 1 : button == 3 ? 2 : button == 2 ? 4 : 0;
                     if (event.type == ButtonPress) record.buttons |= bit;
                     else record.buttons &= ~bit;
+                    if (event.type == ButtonPress && button == 2) {
+                        // The middle button pastes the primary selection, the way every X
+                        // program does: what was last selected, with no copy asked for.
+                        record.modifiers = dxc_modifiers(event.xbutton.state);
+                        dxc_push_event(record);
+                        dxc_paste_selection(dxc_a_primary, dxc_owns_primary);
+                        continue;
+                    }
                 }
                 record.modifiers = dxc_modifiers(event.xbutton.state);
                 break;
@@ -888,6 +948,12 @@ static void dxc_pump_events(void) {
                 record.kind = event.type == KeyPress ? DXC_EVENT_KEY_DOWN : DXC_EVENT_KEY_UP;
                 record.key_code = dxc_key_code(symbol);
                 record.modifiers = dxc_modifiers(event.xkey.state);
+                if (symbol == XK_Delete && (event.xkey.state & (ShiftMask | ControlMask | Mod1Mask | Mod4Mask)) == ShiftMask) {
+                    // Shift and Delete cut on every X desktop. Compose has no such shortcut,
+                    // so the key arrives as the one it has: control and X.
+                    record.key_code = 0x07;
+                    record.modifiers = dxc_modifiers(ControlMask);
+                }
                 if (count == 1 && (unsigned char)bytes[0] >= 32 && (unsigned char)bytes[0] < 127) {
                     record.code_point = (unsigned char)bytes[0];
                 }
@@ -913,7 +979,8 @@ static void dxc_pump_events(void) {
                 dxc_answer_selection_request(&event.xselectionrequest);
                 continue;
             case SelectionClear:
-                dxc_owns_clipboard = 0;
+                if (event.xselectionclear.selection == dxc_a_clipboard) dxc_owns_clipboard = 0;
+                if (event.xselectionclear.selection == dxc_a_primary) dxc_owns_primary = 0;
                 continue;
             case SelectionNotify:
                 if (event.xselection.selection == dxc_a_xdnd_selection) {
@@ -1118,6 +1185,7 @@ int32_t dxc_notify_next_event(char *key, int32_t capacity, int32_t *value) {
 }
 
 int32_t dxc_native_poll_event(struct dxc_event *out) {
+    if (dxc_event_count == 0) dxc_feed_pending();
     if (dxc_event_count == 0) return 0;
     *out = dxc_events[dxc_event_head];
     dxc_event_head = (dxc_event_head + 1) % DXC_EVENT_CAPACITY;
