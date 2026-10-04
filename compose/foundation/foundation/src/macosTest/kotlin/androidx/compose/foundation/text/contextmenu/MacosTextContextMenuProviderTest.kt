@@ -21,6 +21,7 @@ package androidx.compose.foundation.text.contextmenu
 import androidx.compose.foundation.text.contextmenu.internal.ProvideDefaultPlatformTextContextMenuProviders
 import androidx.compose.foundation.text.contextmenu.internal.menuLocation
 import androidx.compose.foundation.text.contextmenu.provider.LocalTextContextMenuDropdownProvider
+import androidx.compose.foundation.text.contextmenu.provider.LocalTextContextMenuToolbarProvider
 import androidx.compose.foundation.text.contextmenu.provider.TextContextMenuDataProvider
 import androidx.compose.foundation.text.contextmenu.provider.TextContextMenuProvider
 import androidx.compose.runtime.CompositionLocalProvider
@@ -31,6 +32,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNotSame
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.useContents
@@ -57,6 +59,23 @@ class MacosTextContextMenuProviderTest {
         }
         waitForIdle()
         assertSame(AppProvider, seen)
+    }
+
+    @Test
+    fun fr33_toolbar_override_leaves_no_system_menu() = runSkikoComposeUiTest {
+        var dropdown: TextContextMenuProvider? = null
+        var toolbar: TextContextMenuProvider? = null
+        setContent {
+            CompositionLocalProvider(LocalTextContextMenuToolbarProvider provides AppProvider) {
+                ProvideDefaultPlatformTextContextMenuProviders(Modifier) {
+                    dropdown = LocalTextContextMenuDropdownProvider.current
+                    toolbar = LocalTextContextMenuToolbarProvider.current
+                }
+            }
+        }
+        waitForIdle()
+        assertSame(AppProvider, toolbar)
+        assertNull(dropdown)
     }
 
     @Test

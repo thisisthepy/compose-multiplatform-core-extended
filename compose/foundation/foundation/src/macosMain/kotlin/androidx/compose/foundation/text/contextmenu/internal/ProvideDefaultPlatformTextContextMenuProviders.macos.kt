@@ -62,9 +62,11 @@ internal actual fun ProvideDefaultPlatformTextContextMenuProviders(
     modifier: Modifier,
     content: @Composable () -> Unit,
 ) {
-    // An application that gave its own menu keeps it: the system's is the default, not a
-    // second menu on top of the one asked for.
-    if (LocalTextContextMenuDropdownProvider.current != null) {
+    // An application that gave its own menu, dropdown or toolbar, keeps it alone: the
+    // system's is the default, not a second menu on top of the one asked for.
+    if (LocalTextContextMenuDropdownProvider.current != null ||
+        LocalTextContextMenuToolbarProvider.current != null
+    ) {
         androidx.compose.foundation.layout.Box(modifier, propagateMinConstraints = true) {
             content()
         }
