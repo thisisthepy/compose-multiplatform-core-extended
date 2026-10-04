@@ -7,3 +7,4 @@ modules:
   - native/macos
   - graalvm/graalvm-macos
   - graalvm/graalvm-linux
+  - scene

@@ -1,0 +1,34 @@
+# Hosts a Compose scene in a window opened through WindowPlatform: no ComposeWindow, no
+# java.awt, no toolkit. It runs the frame loop, presents each frame through
+# FramePresentRecord, and routes pointer, key and input method text to the scene through
+# Compose's platform text input.
+#
+# Apart from common because it needs Compose UI, and common stays stdlib only. The pixels
+# a frame is drawn into (Metal on macOS, GL on Linux) belong to the platform layers, which
+# hand them over as a WindowSurface.
+product:
+  type: lib
+  platforms: [ jvm, macosArm64 ]
+
+dependencies:
+  - ../common
+  - $compose.runtime
+  - $compose.foundation
+  - $compose.ui
+
+test-dependencies:
+  - $kotlin.test
+
+settings:
+  compose:
+    enabled: true
+  publishing:
+    enabled: true
+    group: org.thisisthepy.compose.window
+    artifactId: scene
+    version: 0.1.0
+
+repositories:
+  - id: mavenLocal
+    url: mavenLocal
+    publish: true
