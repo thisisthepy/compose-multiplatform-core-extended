@@ -15,6 +15,8 @@ data class WindowConfig(
     val minHeight: Int = 0,
     val decorated: Boolean = true,
     val transparent: Boolean = false,
+    /** False holds the window to the size it opens at. */
+    val resizable: Boolean = true,
 )
 
 /** The system's light or dark setting. */
