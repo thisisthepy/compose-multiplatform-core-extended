@@ -5,6 +5,7 @@ package org.thisisthepy.compose.window.macos
 import platform.AppKit.NSApplication
 import platform.AppKit.NSAppearanceNameAqua
 import platform.AppKit.NSAppearanceNameDarkAqua
+import platform.AppKit.effectiveAppearance
 import platform.Foundation.NSKeyValueObservingOptionNew
 import platform.Foundation.addObserver
 import platform.darwin.NSObject
