@@ -6,7 +6,9 @@ name: extended skiko static (Windows x64)
 on:
   workflow_dispatch:
   push:
-    branches: [ extended, feat/skiko-static-ci ]
+    branches: [ extended ]
+    # Only when what the archive is built from changes: the skiko build scripts, patches and
+    # sources under extended/skiko, and this workflow. Run it by hand for anything else.
     paths:
       - 'extended/skiko/**'
       - '.github/workflows/extended-skiko-static.yml'
