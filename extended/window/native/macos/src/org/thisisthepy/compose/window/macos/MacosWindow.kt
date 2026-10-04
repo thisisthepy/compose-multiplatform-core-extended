@@ -8,6 +8,11 @@ package org.thisisthepy.compose.window.macos
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.unit.dp
+import org.thisisthepy.compose.window.WindowEvent
+import org.thisisthepy.compose.window.EditMenuId
+import org.thisisthepy.compose.window.editMenuItems
+import org.thisisthepy.compose.window.CaretRect
+import org.thisisthepy.compose.window.candidateSpot
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asComposeCanvas
 import androidx.compose.ui.input.pointer.PointerButton
@@ -230,6 +235,18 @@ class MacosWindow(
         // and can say where it is. Asked before, every control answers with an empty
         // rectangle and a reader finds the screen stacked in one corner.
         if (readerIsListening) semantics.pushIfChanged(afterDrawing = true)
+        followCaret()
+    }
+
+    /**
+     * Keeps the input method's candidate window at the caret. Asked after each frame, which
+     * is when the field has been laid out and the caret has moved, and again whenever the
+     * spot differs, so a session that has just started is placed on its first frame.
+     */
+    private fun followCaret() {
+        if (!textInput.isActive) return
+        val spot = caretSpot() ?: return
+        if (spot != imeSpot) setImeSpot(spot.first, spot.second)
     }
 
     /** Asks for a frame, which is drawn where AppKit next draws the view. */
@@ -422,7 +439,7 @@ class MacosWindow(
 
         override fun insertText(string: Any, replacementRange: CValue<NSRange>) {
             marked = ""
-            textInput.commit(string.asText())
+            emit(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, string.asText()))
         }
 
         override fun setMarkedText(
@@ -431,12 +448,12 @@ class MacosWindow(
             replacementRange: CValue<NSRange>,
         ) {
             marked = string.asText()
-            textInput.compose(marked)
+            emit(WindowEvent(WindowEvent.TEXT_COMPOSE, 0f, 0f, 0, 0, 0, 0, marked))
         }
 
         override fun unmarkText() {
             marked = ""
-            textInput.compose("")
+            emit(WindowEvent(WindowEvent.TEXT_COMPOSE, 0f, 0f, 0, 0, 0, 0, ""))
         }
 
         override fun hasMarkedText(): Boolean = marked.isNotEmpty()
@@ -468,8 +485,15 @@ class MacosWindow(
             range: CValue<NSRange>,
             actualRange: NSRangePointer?,
         ): CValue<CGRect> {
-            val origin = window?.frame?.useContents { CGRectMake(origin.x, origin.y, 0.0, 0.0) }
-            return origin ?: CGRectMake(0.0, 0.0, 0.0, 0.0)
+            val w = window ?: return CGRectMake(0.0, 0.0, 0.0, 0.0)
+            val spot = imeSpot ?: return w.frame.useContents { CGRectMake(origin.x, origin.y, 0.0, 0.0) }
+            // The spot is in the scene's pixels from the top left; the view counts points up
+            // from the bottom. Converted to the window and then to the screen, which is what
+            // the input method places its candidate window in.
+            val scale = w.backingScaleFactor
+            val height = frame.useContents { size.height }
+            val inView = CGRectMake(spot.first / scale, height - spot.second / scale, 0.0, 0.0)
+            return w.convertRectToScreen(convertRect(inView, toView = null))
         }
 
         override fun characterIndexForPoint(point: CValue<CGPoint>): ULong =
@@ -570,55 +594,56 @@ class MacosWindow(
             // move and the input method would otherwise go on building a syllable at a
             // place the reader has left, which shows up as the letters coming apart.
             if (hasMarkedText()) inputContext?.discardMarkedText()
-            send(event, PointerEventType.Press, PointerButton.Primary)
+            emit(pointer(WindowEvent.POINTER_DOWN, event, BUTTON_PRIMARY))
         }
 
-        override fun mouseUp(event: NSEvent) =
-            send(event, PointerEventType.Release, PointerButton.Primary)
+        override fun mouseUp(event: NSEvent) {
+            emit(pointer(WindowEvent.POINTER_UP, event, BUTTON_PRIMARY))
+        }
 
         override fun rightMouseDown(event: NSEvent) {
-            send(event, PointerEventType.Press, PointerButton.Secondary)
-            // Put up ourselves rather than left to the view's own handling. What asks a
-            // view for its menu is the default `rightMouseDown`, and this one is
-            // overridden to reach the scene: with no call back to it, the menu was built
-            // and never asked for.
+            emit(pointer(WindowEvent.POINTER_DOWN, event, BUTTON_SECONDARY))
+            // Put up ourselves rather than left to the view's own handling, which this
+            // override replaces.
             NSMenu.popUpContextMenu(editingMenu(), withEvent = event, forView = this)
             // The menu's tracking swallows the release, so it is sent here: without it the
             // scene goes on believing the button is held.
-            send(event, PointerEventType.Release, PointerButton.Secondary)
+            emit(pointer(WindowEvent.POINTER_UP, event, BUTTON_SECONDARY))
         }
 
         override fun rightMouseUp(event: NSEvent) = Unit
 
-        override fun mouseMoved(event: NSEvent) = send(event, PointerEventType.Move)
+        override fun mouseMoved(event: NSEvent) { emit(pointer(WindowEvent.POINTER_MOVE, event, 0)) }
 
-        override fun mouseDragged(event: NSEvent) = send(event, PointerEventType.Move)
+        override fun mouseDragged(event: NSEvent) { emit(pointer(WindowEvent.POINTER_MOVE, event, BUTTON_PRIMARY)) }
 
-        override fun scrollWheel(event: NSEvent) = send(event, PointerEventType.Scroll)
+        override fun scrollWheel(event: NSEvent) {
+            // The record has one pair of numbers, so the position goes first as a move and
+            // the scroll carries the distance.
+            emit(pointer(WindowEvent.POINTER_MOVE, event, 0))
+            emit(
+                WindowEvent(
+                    WindowEvent.SCROLL, event.deltaX.toFloat(), event.deltaY.toFloat(),
+                    0, event.modifierFlags.toInt(), 0, 0, "",
+                ),
+            )
+        }
 
         // And the same menu wherever else AppKit asks for one, which is Control held with
         // the pointer and whatever a trackpad is set to.
-        //
-        // Compose draws one of its own on some platforms and not on this one: with the
-        // path that would turned on, the menu came up at the window's top left corner
-        // instead of under the pointer and every item in it was dead.
         override fun menuForEvent(event: NSEvent): NSMenu? = editingMenu()
 
         override fun keyDown(event: NSEvent) {
-            // Both, and in this order. The scene reads the key as a key: arrows, Enter,
-            // backspace and whatever shortcut the screen has bound. The input method
-            // reads the same key as text, and hands back a letter or a syllable being
-            // built through the methods above.
-            //
-            // Handed to the input context rather than interpreted. Interpreting also
-            // turns keys into editing commands for a text system this window does not
-            // have, and the keys have already gone to the scene, which has its own.
-            scene.sendKeyEvent(event.compose(KeyEventType.KeyDown))
+            // Both, and in this order. The scene reads the key as a key; the input method
+            // reads the same key as text and hands back a letter or a syllable being built
+            // through the methods above, which also arrive as events.
+            emit(keyRecord(WindowEvent.KEY_DOWN, event))
             inputContext?.handleEvent(event)
         }
 
         override fun keyUp(event: NSEvent) {
-            if (!scene.sendKeyEvent(event.compose(KeyEventType.KeyUp))) super.keyUp(event)
+            // Keys the scene did not take are AppKit's, which keeps system key handling.
+            if (!emit(keyRecord(WindowEvent.KEY_UP, event))) super.keyUp(event)
         }
     }
 
@@ -729,35 +754,98 @@ class MacosWindow(
         val menu = NSMenu()
         // Enabled is decided by the list, not by AppKit asking the target.
         menu.autoenablesItems = false
-        for (entry in textContextMenu(clipboardHasText())) {
-            val command = entry.command
-            if (command == null) {
-                menu.addItem(NSMenuItem.separatorItem())
-                continue
-            }
+        for (entry in editMenuItems(canCut = true, canCopy = true, canPaste = clipboardHasText(), canSelectAll = true)) {
             val item = NSMenuItem()
-            item.setTitle(command.title)
+            item.setTitle(entry.label)
             item.setEnabled(entry.enabled)
-            item.setTarget(
-                MenuShortcut {
-                    command.perform { scene.sendKeyEvent(it) }
-                },
-            )
+            item.setTarget(MenuShortcut { chooseEditItem(entry.id) })
             item.setAction(platform.darwin.sel_registerName("perform"))
             menu.addItem(item)
+            if (entry.separatorAfter) menu.addItem(NSMenuItem.separatorItem())
         }
         return menu
     }
 
-    private fun send(event: NSEvent, kind: PointerEventType, button: PointerButton? = null) {
-        scene.sendPointerEvent(
-            eventType = kind,
-            position = event.offsetInView,
-            scrollDelta = Offset(event.deltaX.toFloat(), event.deltaY.toFloat()),
-            nativeEvent = event,
-            button = button,
-        )
+    /**
+     * Every event this window hears leaves through here as a [WindowEvent], and the scene
+     * hears it the same way anyone else does: from whoever consumes [eventSink].
+     */
+    var eventSink: ((WindowEvent) -> Boolean)? = null
+
+    /** Told which entry of the edit menu was chosen. */
+    var menuChosen: ((Int) -> Unit)? = null
+
+    /** True when the scene took the event, which a key-up needs to know to leave the rest to AppKit. */
+    private fun emit(event: WindowEvent): Boolean {
+        val sink = eventSink
+        return if (sink != null) sink(event) else feed(event)
     }
+
+    /** Where the input method puts its candidate window, in the scene's pixels from the top left. */
+    var imeSpot: Pair<Int, Int>? = null
+        private set
+
+    fun setImeSpot(x: Int, y: Int) {
+        imeSpot = x to y
+        view.inputContext?.invalidateCharacterCoordinates()
+    }
+
+    /** The size of the last frame drawn, in pixels. */
+    val drawnSizeInPixels: IntSize get() = measured
+
+    /** The scene's own caret, as the focused field last reported it, as a spot for [setImeSpot]. */
+    fun caretSpot(): Pair<Int, Int>? = candidateSpot(textInput.caret(), 1f)
+
+    private fun chooseEditItem(id: Int) {
+        menuChosen?.invoke(id)
+        editChord(id)?.forEach { scene.sendKeyEvent(it) }
+    }
+
+    private var lastPointer = Offset.Zero
+
+    /** Delivers an event to the scene. The one place a [WindowEvent] becomes Compose input. */
+    fun feed(event: WindowEvent): Boolean {
+        var taken = true
+        when (event.kind) {
+            WindowEvent.POINTER_MOVE -> {
+                lastPointer = Offset(event.x, event.y)
+                scene.sendPointerEvent(eventType = PointerEventType.Move, position = lastPointer)
+            }
+            WindowEvent.POINTER_DOWN -> {
+                lastPointer = Offset(event.x, event.y)
+                scene.sendPointerEvent(
+                    eventType = PointerEventType.Press, position = lastPointer, button = event.pointerButton(),
+                )
+            }
+            WindowEvent.POINTER_UP -> {
+                lastPointer = Offset(event.x, event.y)
+                scene.sendPointerEvent(
+                    eventType = PointerEventType.Release, position = lastPointer, button = event.pointerButton(),
+                )
+            }
+            WindowEvent.SCROLL -> scene.sendPointerEvent(
+                eventType = PointerEventType.Scroll,
+                position = lastPointer,
+                scrollDelta = Offset(event.x, event.y),
+            )
+            WindowEvent.KEY_DOWN -> taken = scene.sendKeyEvent(event.composeKey(KeyEventType.KeyDown))
+            WindowEvent.KEY_UP -> taken = scene.sendKeyEvent(event.composeKey(KeyEventType.KeyUp))
+            WindowEvent.TEXT_COMMIT -> textInput.commit(event.text)
+            WindowEvent.TEXT_COMPOSE -> textInput.compose(event.text)
+        }
+        return taken
+    }
+
+    private fun WindowEvent.pointerButton(): PointerButton =
+        if (buttons and BUTTON_SECONDARY != 0) PointerButton.Secondary else PointerButton.Primary
+
+    private fun pointer(kind: Int, event: NSEvent, buttons: Int): WindowEvent {
+        val at = event.offsetInView
+        return WindowEvent(kind, at.x, at.y, buttons, event.modifierFlags.toInt(), 0, 0, "")
+    }
+
+    private fun keyRecord(kind: Int, event: NSEvent): WindowEvent =
+        WindowEvent(kind, 0f, 0f, 0, event.modifierFlags.toInt(), event.keyCode.toInt(), 0, "")
 
     // The window's coordinates count up from the bottom and the scene's count down from
     // the top, so one is the other subtracted from the height. In pixels on both sides:
@@ -772,24 +860,21 @@ class MacosWindow(
         }
 
     // Built from parts rather than converted: what converts a platform key event is
-    // internal to Compose, and the parts are the same ones the native image path builds
-    // from because it has no platform event to convert either.
-    private fun NSEvent.compose(type: KeyEventType): KeyEvent =
-        KeyEvent(
-            key = composeKey(keyCode.toInt()),
+    // internal to Compose. The code point is nothing, deliberately: the input method is
+    // already putting printable text in through the text events, and sending it here as well
+    // types every letter twice.
+    private fun WindowEvent.composeKey(type: KeyEventType): KeyEvent {
+        val flags = modifiers.toULong()
+        return KeyEvent(
+            key = composeKey(keyCode),
             type = type,
-            // Nothing, deliberately. This platform reads a key as typed text when it
-            // carries a printable character, and the input method is already putting
-            // that text in through `insertText`: sending it here as well types every
-            // letter twice and pushes a syllable along as it is being built. What the
-            // scene is for here is the keys that are not text, and those carry no
-            // printable character anyway.
             codePoint = 0,
-            isAltPressed = modifierFlags and NSEventModifierFlagOption != 0uL,
-            isCtrlPressed = modifierFlags and NSEventModifierFlagControl != 0uL,
-            isMetaPressed = modifierFlags and NSEventModifierFlagCommand != 0uL,
-            isShiftPressed = modifierFlags and NSEventModifierFlagShift != 0uL,
+            isAltPressed = flags and NSEventModifierFlagOption != 0uL,
+            isCtrlPressed = flags and NSEventModifierFlagControl != 0uL,
+            isMetaPressed = flags and NSEventModifierFlagCommand != 0uL,
+            isShiftPressed = flags and NSEventModifierFlagShift != 0uL,
         )
+    }
 }
 
 /** What a reader calls the kind of control this is. */
@@ -804,6 +889,9 @@ private val Int.readerRole: String
     } ?: NSAccessibilityGroupRole ?: "AXGroup"
 
 /** Holds the closure a menu item runs, because a menu item calls a selector on a target. */
+const val BUTTON_PRIMARY = 1
+const val BUTTON_SECONDARY = 2
+
 class MenuShortcut(private val run: () -> Unit) : platform.darwin.NSObject() {
     @kotlinx.cinterop.ObjCAction
     fun perform() = run()

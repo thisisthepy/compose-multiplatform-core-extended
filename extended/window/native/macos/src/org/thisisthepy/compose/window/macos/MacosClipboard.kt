@@ -3,6 +3,10 @@
 package org.thisisthepy.compose.window.macos
 
 import androidx.compose.ui.platform.ClipEntry
+import org.thisisthepy.compose.window.TextPasteboard
+import org.thisisthepy.compose.window.copyText
+import org.thisisthepy.compose.window.hasText
+import org.thisisthepy.compose.window.pasteText
 import androidx.compose.ui.platform.Clipboard
 import androidx.compose.ui.platform.ClipboardManager
 import androidx.compose.ui.platform.NativeClipboard

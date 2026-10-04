@@ -3,6 +3,7 @@
 package org.thisisthepy.compose.window.macos
 
 import platform.AppKit.NSApplication
+import org.thisisthepy.compose.window.isDarkAppearanceName
 import platform.AppKit.NSAppearanceNameAqua
 import platform.AppKit.NSAppearanceNameDarkAqua
 import platform.AppKit.effectiveAppearance

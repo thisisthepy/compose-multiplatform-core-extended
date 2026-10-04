@@ -5,6 +5,7 @@ package org.thisisthepy.compose.window.macos
 import androidx.compose.runtime.Composable
 import kotlinx.cinterop.useContents
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.contentMinimum
 import org.thisisthepy.compose.window.FramePresentLog
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.SystemTheme
@@ -54,16 +55,22 @@ class MacosWindowPlatform(
     private val pasteboard = GeneralPasteboard()
 
     /** Where the input method was last told the caret is, in points from the content's top left. */
-    var imeSpot: Pair<Int, Int> = 0 to 0
-        private set
+    val imeSpot: Pair<Int, Int>? get() = window?.imeSpot
+
+    /** The AppKit window, for a caller that needs to move or size it. Null before [open]. */
+    val nativeWindow: platform.AppKit.NSWindow? get() = window?.window
+
+    /** The size of the last frame drawn, in points, which is what [present] is given. */
+    fun drawnSize(): Pair<Int, Int> {
+        val w = window ?: return 0 to 0
+        val scale = w.window.backingScaleFactor
+        val px = w.drawnSizeInPixels
+        return (px.width / scale).toInt() to (px.height / scale).toInt()
+    }
 
     override fun open(config: WindowConfig, listener: WindowListener): Boolean {
         this.listener = listener
-        val minimum = if (config.minWidth > 0 || config.minHeight > 0) {
-            config.minWidth.coerceAtLeast(0).toDouble() to config.minHeight.coerceAtLeast(0).toDouble()
-        } else {
-            null
-        }
+        val minimum = contentMinimum(config.minWidth, config.minHeight)
         val created = MacosWindow(
             name = config.title,
             width = config.width,
@@ -72,6 +79,14 @@ class MacosWindowPlatform(
             clipboardHasText = { pasteboard.hasText() },
         )
         created.setContent(content)
+        // The one event path: every event leaves the window as a record, goes to the
+        // listener, and reaches the scene through the adapter until the scene layer
+        // consumes the listener itself.
+        created.eventSink = { event ->
+            listener.onEvent(event)
+            created.feed(event)
+        }
+        created.menuChosen = { id -> listener.onContextMenuChosen(id) }
         window = created
         observeSystemAppearance { listener.onThemeChanged(systemTheme()) }
         return true
@@ -130,7 +145,7 @@ class MacosWindowPlatform(
     override fun writeClipboardText(text: String) = pasteboard.copyText(text)
 
     override fun setImeSpot(x: Int, y: Int) {
-        imeSpot = x to y
+        window?.setImeSpot(x, y)
     }
 
     override fun showContextMenu(items: List<ContextMenuItem>) {

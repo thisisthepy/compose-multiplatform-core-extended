@@ -27,6 +27,12 @@ class NativeTextInput {
 
     private var session: PlatformTextInputMethodRequest? = null
 
+    /** Where the focused field's caret is, in the scene's pixels, or null before it has been laid out. */
+    fun caret(): org.thisisthepy.compose.window.CaretRect? {
+        val r = session?.focusedRectInRoot?.invoke() ?: return null
+        return org.thisisthepy.compose.window.CaretRect(r.left, r.top, r.right, r.bottom)
+    }
+
     /** True where some field is waiting to be typed into. */
     val isActive: Boolean get() = session != null
 
