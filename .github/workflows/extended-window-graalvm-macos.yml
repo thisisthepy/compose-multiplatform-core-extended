@@ -1,4 +1,4 @@
-# extended/window/graalvm/macos: the AppKit window for the GraalVM native-image path.
+# extended/window/graalvm/graalvm-macos: the AppKit window for the GraalVM native-image path.
 #
 # Compiles appkit_window.m into a static library, runs the pure C tests of the resize
 # counters, compiles the Kotlin wrapper and runs its tests, and fails if the module names
@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   build:
-    name: graalvm/macos (compile and test)
+    name: graalvm/graalvm-macos (compile and test)
     runs-on: macos-latest
     timeout-minutes: 60
     defaults:
@@ -42,17 +42,17 @@ jobs:
 
       - name: The module names no java.awt
         run: |
-          if grep -rEn 'java\.awt|javax\.swing|sun\.awt' graalvm/macos/src graalvm/macos/module.yaml; then
-            echo "graalvm/macos must not reference java.awt" >&2
+          if grep -rEn 'java\.awt|javax\.swing|sun\.awt' graalvm/graalvm-macos/src graalvm/graalvm-macos/module.yaml; then
+            echo "graalvm/graalvm-macos must not reference java.awt" >&2
             exit 1
           fi
 
       - name: The upcall table is generated and current
-        run: graalvm/macos/tools/gen-upcalls.sh --check
+        run: graalvm/graalvm-macos/tools/gen-upcalls.sh --check
 
       - name: No runtime reflection in the module
         run: |
-          if grep -rEn 'java\.lang\.reflect|Class\.forName|::class\.java|getDeclared|\.javaClass' graalvm/macos/src; then
+          if grep -rEn 'java\.lang\.reflect|Class\.forName|::class\.java|getDeclared|\.javaClass' graalvm/graalvm-macos/src; then
             echo "upcalls go through the generated table, not reflection" >&2
             exit 1
           fi
@@ -61,7 +61,7 @@ jobs:
         run: |
           mkdir -p build/native
           for arch in arm64 x86_64; do
-            cc -c -O2 -fobjc-arc -arch "$arch" -o "build/native/appkit_window-$arch.o" graalvm/macos/native/appkit_window.m
+            cc -c -O2 -fobjc-arc -arch "$arch" -o "build/native/appkit_window-$arch.o" graalvm/graalvm-macos/native/appkit_window.m
           done
           lipo -create build/native/appkit_window-arm64.o build/native/appkit_window-x86_64.o -output build/native/appkit_window.o
           ar rcs build/native/libappkit_window.a build/native/appkit_window.o
@@ -78,7 +78,7 @@ jobs:
             extended-window-${{ runner.os }}-
 
       - name: Compile the Kotlin wrapper
-        run: ./kotlin build -p jvm
+        run: ./kotlin build -p jvm -m graalvm-macos
 
       - name: Test
-        run: ./kotlin test -p jvm
+        run: ./kotlin test -p jvm -m graalvm-macos

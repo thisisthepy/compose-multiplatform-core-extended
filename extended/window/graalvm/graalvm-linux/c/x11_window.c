@@ -1432,3 +1432,44 @@ void dxc_native_set_min_size(int32_t width, int32_t height) {
     XSetWMNormalHints(dxc_display, dxc_window, &hints);
     XFlush(dxc_display);
 }
+
+/**
+ * Shows, hides, minimizes or fullscreens the window: 0 hidden, 1 visible, 2 minimized,
+ * 3 fullscreen. Fullscreen is the window manager's own state, asked through the root window.
+ */
+static void dxc_set_fullscreen(int on) {
+    XEvent message;
+    memset(&message, 0, sizeof message);
+    message.xclient.type = ClientMessage;
+    message.xclient.window = dxc_window;
+    message.xclient.message_type = XInternAtom(dxc_display, "_NET_WM_STATE", False);
+    message.xclient.format = 32;
+    message.xclient.data.l[0] = on ? 1 : 0;
+    message.xclient.data.l[1] = (long)XInternAtom(dxc_display, "_NET_WM_STATE_FULLSCREEN", False);
+    message.xclient.data.l[3] = 1; /* sent by an application */
+    XSendEvent(dxc_display, DefaultRootWindow(dxc_display), False,
+               SubstructureNotifyMask | SubstructureRedirectMask, &message);
+}
+
+void dxc_native_set_visibility(int32_t visibility) {
+    if (dxc_display == NULL || dxc_window == None) return;
+    switch (visibility) {
+    case 0:
+        XUnmapWindow(dxc_display, dxc_window);
+        break;
+    case 1:
+        dxc_set_fullscreen(0);
+        XMapRaised(dxc_display, dxc_window);
+        break;
+    case 2:
+        XIconifyWindow(dxc_display, dxc_window, DefaultScreen(dxc_display));
+        break;
+    case 3:
+        XMapRaised(dxc_display, dxc_window);
+        dxc_set_fullscreen(1);
+        break;
+    default:
+        break;
+    }
+    XFlush(dxc_display);
+}
