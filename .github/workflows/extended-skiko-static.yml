@@ -6,7 +6,7 @@ name: extended skiko static (Windows x64)
 on:
   workflow_dispatch:
   push:
-    branches: [ extended ]
+    branches: [ extended, feat/skiko-static-ci ]
     paths:
       - 'extended/skiko/**'
       - '.github/workflows/extended-skiko-static.yml'
