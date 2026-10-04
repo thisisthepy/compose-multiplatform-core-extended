@@ -7,6 +7,7 @@ import org.graalvm.nativeimage.c.type.CFloatPointer
 import org.graalvm.nativeimage.c.type.CTypeConversion
 import org.graalvm.word.Pointer
 import org.graalvm.word.WordFactory
+import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.ContextMenuItem
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.SystemTheme
@@ -149,6 +150,49 @@ class X11Window : WindowPlatform {
 
     /** Read the way the Kotlin/Native X11 window reads it: from `GTK_THEME`. */
     override fun systemTheme(): SystemTheme = X11Theme.fromGtkTheme(System.getenv("GTK_THEME"))
+
+    /**
+     * Makes the window's GL context current for the frame about to be drawn. False where
+     * there is nothing to draw into, which is a closed window or one with no pixels; the
+     * frame is then skipped rather than waited for.
+     */
+    fun beginFrame(): Boolean = X11Natives.frameBegin(WordFactory.pointer<Pointer>(windowPointer)) == 0
+
+    /**
+     * Sets the shape of the pointer over the window. [shape] is one of the small numbers the
+     * renderer and `x11_window.c` agree on: 0 arrow, 1 hand, 2 text, 3 crosshair, 4 resize
+     * left and right, 5 resize up and down.
+     */
+    fun setCursor(shape: Int) = X11Natives.setCursor(shape)
+
+    /**
+     * Hands the window what it would tell a reader who cannot see it, as the records
+     * `x11_window.c` holds for an AT-SPI bridge to read. Capped at [X11Layout.MAX_ELEMENTS].
+     */
+    fun setAccessibility(elements: List<AccessibleElement>) {
+        val capped = if (elements.size > X11Layout.MAX_ELEMENTS) elements.take(X11Layout.MAX_ELEMENTS) else elements
+        val records = UnmanagedMemory.calloc<Pointer>(X11Layout.MAX_ELEMENTS * X11Layout.ELEMENT_BYTES)
+        try {
+            for ((index, element) in capped.withIndex()) {
+                val at = index * X11Layout.ELEMENT_BYTES
+                records.writeInt(at, element.role)
+                records.writeFloat(at + 4, element.x)
+                records.writeFloat(at + 8, element.y)
+                records.writeFloat(at + 12, element.width)
+                records.writeFloat(at + 16, element.height)
+                val bytes = element.label.encodeToByteArray()
+                var length = 0
+                while (length < bytes.size && length < X11Layout.EVENT_TEXT_BYTES - 1) {
+                    records.writeByte(at + X11Layout.ELEMENT_LABEL_OFFSET + length, bytes[length])
+                    length++
+                }
+                records.writeByte(at + X11Layout.ELEMENT_LABEL_OFFSET + length, 0)
+            }
+            X11Natives.setAccessibility(records, capped.size, WordFactory.pointer<Pointer>(windowPointer))
+        } finally {
+            UnmanagedMemory.free(records)
+        }
+    }
 
     override fun setTitle(title: String) {
         val holder = CTypeConversion.toCString(title)

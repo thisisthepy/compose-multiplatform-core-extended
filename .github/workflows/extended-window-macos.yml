@@ -19,8 +19,8 @@ on:
       - .github/workflows/extended-window-macos.yml
 
 concurrency:
-  group: extended-window-macos-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
