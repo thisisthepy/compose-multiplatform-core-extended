@@ -2,3 +2,4 @@
 # Each window PR adds its own module line.
 modules:
   - graalvm/linux
+  - graalvm/macos
