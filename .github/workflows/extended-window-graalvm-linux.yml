@@ -1,0 +1,62 @@
+# The GraalVM X11 window layer under extended/window/graalvm/linux: compile the C and the
+# Kotlin on Linux. A standalone Amper project, so only that directory is checked out.
+name: extended window graalvm linux
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window-graalvm-linux.yml
+  push:
+    branches: [ extended ]
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window-graalvm-linux.yml
+
+concurrency:
+  group: extended-window-graalvm-linux-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extended/window
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: X11 and GL headers
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxext-dev libgl-dev
+
+      - name: Compile the C
+        working-directory: extended/window/graalvm/linux
+        run: |
+          mkdir -p build
+          cc -c -O2 -fPIC -Wall -o build/x11_window.o c/x11_window.c
+
+      - name: The Kotlin module has no java.awt
+        working-directory: extended/window/graalvm/linux
+        run: |
+          if grep -rn "java\.awt\|javax\.swing" src test; then
+            echo "java.awt is not allowed in this module" >&2
+            exit 1
+          fi
+
+      - name: Compile and test the Kotlin
+        working-directory: extended/window
+        run: |
+          # The shared project lists two modules both named macos, which Amper rejects, so
+          # this job builds the project made of the modules it needs.
+          printf 'modules:\n  - common\n  - graalvm/linux\n' > project.yaml
+          ./kotlin build -m linux -p jvm
+          ./kotlin test -m linux -p jvm

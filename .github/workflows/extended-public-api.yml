@@ -1,0 +1,88 @@
+# Guards the upstream public API. Fork-only API belongs in modules under extended/, which have
+# no upstream dump. An upstream *.api change is allowed only in its own commit whose subject
+# starts with "Api: ", so a reviewer sees it.
+name: extended public api
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ extended ]
+
+concurrency:
+  group: extended-public-api-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  public-api:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch the base branch
+        run: git fetch origin "${{ github.base_ref || 'extended' }}:refs/remotes/origin/base"
+
+      - name: Upstream .api files change only in "Api:" commits
+        run: |
+          set -u
+          fail=0
+          for c in $(git rev-list --no-merges origin/base..HEAD); do
+            files=$(git diff-tree --no-commit-id --name-only -r "$c" | grep -E '\.api$' | grep -v '^extended/' || true)
+            [ -z "$files" ] && continue
+            subject=$(git log -1 --format=%s "$c")
+            case "$subject" in
+              "Api: "*) ;;
+              *)
+                echo "::error::commit $c changes upstream API dumps but its subject does not start with 'Api: ': $subject"
+                echo "$files" | sed 's/^/  /'
+                fail=1 ;;
+            esac
+          done
+          echo "== Signatures added (+) or removed (-) in upstream .api files, against the base =="
+          git diff -U0 origin/base...HEAD -- '*.api' ':!extended' \
+            | grep -E '^(\+\+\+|---|[+-][^+-])' || echo "(none)"
+          exit $fail
+
+      - name: Find the changed upstream modules
+        id: modules
+        run: |
+          set -u
+          changed=$(git diff --name-only origin/base...HEAD | grep -v -E '^(extended/|\.github/|docs/)' || true)
+          echo "changed upstream files:"; echo "$changed" | sed 's/^/  /'
+          all=0
+          tasks=""
+          for f in $changed; do
+            case "$f" in
+              buildSrc/*|mpp/*|gradle/*|settings.gradle|build.gradle|gradle.properties|libraryversions.toml) all=1; continue ;;
+            esac
+            d=$(dirname "$f")
+            while [ "$d" != "." ] && [ ! -f "$d/build.gradle" ] && [ ! -f "$d/build.gradle.kts" ]; do d=$(dirname "$d"); done
+            [ "$d" = "." ] && continue
+            ls "$d"/api/desktop/*.api >/dev/null 2>&1 || continue
+            t=":$(echo "$d" | tr / :):desktopApiCheck"
+            case " $tasks " in *" $t "*) ;; *) tasks="$tasks $t" ;; esac
+          done
+          if [ "$all" = 1 ]; then tasks="jbApiCheck"; fi
+          echo "tasks=$tasks" >> "$GITHUB_OUTPUT"
+          echo "gradle tasks: ${tasks:-none}"
+
+      - uses: actions/setup-java@v4
+        if: steps.modules.outputs.tasks != ''
+        with:
+          distribution: corretto
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.modules.outputs.tasks != ''
+        with:
+          cache-read-only: true
+
+      # Desktop (jvm) targets only. No Android SDK is installed, so Android must stay off.
+      - name: apiCheck against the committed dumps
+        if: steps.modules.outputs.tasks != ''
+        run: ./gradlew ${{ steps.modules.outputs.tasks }} -Pcompose.platforms=jvm --no-daemon --stacktrace
