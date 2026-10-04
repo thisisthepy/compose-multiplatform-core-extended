@@ -31,8 +31,12 @@ jobs:
         run: |
           set -u
           fail=0
+          # Only files whose net change against the base is non-empty count. A commit that
+          # adds a line another commit reverts leaves no net change and is ignored.
+          net=$(git diff --name-only origin/base...HEAD -- '*.api' ':!extended' || true)
           for c in $(git rev-list --no-merges origin/base..HEAD); do
-            files=$(git diff-tree --no-commit-id --name-only -r "$c" | grep -E '\.api$' | grep -v '^extended/' || true)
+            [ -z "$net" ] && break
+            files=$(git diff-tree --no-commit-id --name-only -r "$c" | grep -x -F "$net" || true)
             [ -z "$files" ] && continue
             subject=$(git log -1 --format=%s "$c")
             case "$subject" in

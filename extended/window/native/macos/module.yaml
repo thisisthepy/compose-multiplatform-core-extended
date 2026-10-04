@@ -17,9 +17,19 @@ test-dependencies:
   - $kotlin.test
 
 settings:
+  publishing:
+    enabled: true
+    group: org.thisisthepy.compose.window
+    artifactId: native-macos
+    version: 0.1.0
   compose:
     enabled: true
   kotlin:
     optIns:
       - kotlinx.cinterop.ExperimentalForeignApi
       - kotlinx.cinterop.BetaInteropApi
+
+repositories:
+  - id: mavenLocal
+    url: mavenLocal
+    publish: true
