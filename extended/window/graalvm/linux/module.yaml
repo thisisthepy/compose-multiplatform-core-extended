@@ -15,3 +15,6 @@ settings:
     group: org.thisisthepy.compose.window
     name: graalvm-linux
     version: 0.1.0
+
+repositories:
+  - mavenLocal

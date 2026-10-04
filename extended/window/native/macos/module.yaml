@@ -28,3 +28,6 @@ settings:
     optIns:
       - kotlinx.cinterop.ExperimentalForeignApi
       - kotlinx.cinterop.BetaInteropApi
+
+repositories:
+  - mavenLocal
