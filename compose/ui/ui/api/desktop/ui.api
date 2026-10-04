@@ -16,6 +16,10 @@ public abstract interface class androidx/compose/ui/Alignment {
 	public abstract fun align-KFBX0sM (JJLandroidx/compose/ui/unit/LayoutDirection;)J
 }
 
+public final class androidx/compose/ui/Actuals_desktopKt {
+	public static final fun apiGuardProbe ()I
+}
+
 public final class androidx/compose/ui/Alignment$Companion {
 	public final fun getBottom ()Landroidx/compose/ui/Alignment$Vertical;
 	public final fun getBottomCenter ()Landroidx/compose/ui/Alignment;

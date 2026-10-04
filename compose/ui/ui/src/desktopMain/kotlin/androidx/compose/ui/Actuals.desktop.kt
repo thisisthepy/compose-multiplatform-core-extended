@@ -21,3 +21,5 @@ import org.jetbrains.skiko.MainUIDispatcher
 
 internal actual val PostDelayedDispatcher: CoroutineContext
     get() = MainUIDispatcher
+
+fun apiGuardProbe(): Int = 1
