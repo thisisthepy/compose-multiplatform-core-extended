@@ -15,7 +15,7 @@ repositories:
   - mavenLocal
 
 dependencies:
-  - ../common
+  - ../../common
   - $compose.runtime
 
 dependencies@linuxX64:
