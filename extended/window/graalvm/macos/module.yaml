@@ -19,7 +19,7 @@ settings:
   publishing:
     enabled: true
     group: org.thisisthepy.compose.window
-    name: graalvm-macos
+    artifactId: graalvm-macos
     version: 0.1.0
 
 repositories:

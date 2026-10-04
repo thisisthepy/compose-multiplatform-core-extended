@@ -16,7 +16,7 @@ settings:
   publishing:
     enabled: true
     group: org.thisisthepy.compose.window
-    name: common
+    artifactId: common
     version: 0.1.0
 
 repositories:

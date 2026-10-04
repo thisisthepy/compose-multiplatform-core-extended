@@ -20,7 +20,7 @@ settings:
   publishing:
     enabled: true
     group: org.thisisthepy.compose.window
-    name: native-macos
+    artifactId: native-macos
     version: 0.1.0
   compose:
     enabled: true
