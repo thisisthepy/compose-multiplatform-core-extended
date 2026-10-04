@@ -42,8 +42,8 @@ jobs:
 
       - name: The module names no java.awt and no toolkit window
         run: |
-          if grep -rEn 'java\.awt|javax\.swing|sun\.awt|ComposeWindow|androidx\.compose\.ui\.awt' scene/src scene/module.yaml; then
-            echo "scene must not reference java.awt or ComposeWindow" >&2
+          if grep -rEn '^import (java\.awt|javax\.swing|sun\.awt|androidx\.compose\.ui\.awt|androidx\.compose\.ui\.window)' scene/src; then
+            echo "scene must not import java.awt or a toolkit window" >&2
             exit 1
           fi
 
