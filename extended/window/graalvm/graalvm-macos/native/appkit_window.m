@@ -381,6 +381,9 @@ static void dxc_native_resize_report(void) {
  * in it costs a call rather than the whole of [seconds].
  */
 void dxc_native_pump(double seconds) {
+    // A native image on macOS runs main on a thread of its own and leaves the first thread
+    // in a run loop, and AppKit refuses to take events from any thread but that one.
+    dxc_on_main(^{
     @autoreleasepool {
         // The wait is done here, by the application, with a date in the future. That is
         // what reaches out to the window server for what has been pressed: asking only
@@ -401,6 +404,7 @@ void dxc_native_pump(double seconds) {
             until = NSDate.distantPast;
         }
     }
+    });
 }
 
 /*
