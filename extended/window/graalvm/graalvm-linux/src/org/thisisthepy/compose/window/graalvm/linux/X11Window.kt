@@ -45,9 +45,18 @@ class X11Window : WindowPlatform {
     /** Whether a frame was asked for since the last [present]; [requestFrame] coalesces. */
     val frameRequested: Boolean get() = frameWanted
 
+    /** Whether the window may be resized, set before [open]. */
+    var resizable: Boolean = true
+
+    /** Whether the window shows what is behind it, set before [open]. */
+    var backdrop: Boolean = false
+
     override fun open(config: WindowConfig, listener: WindowListener): Boolean {
         this.listener = listener
-        X11Natives.windowConfigure(1, config.minWidth, config.minHeight, if (config.decorated) 1 else 0, 0)
+        X11Natives.windowConfigure(
+            if (resizable) 1 else 0, config.minWidth, config.minHeight, if (config.decorated) 1 else 0,
+            if (backdrop) 1 else 0,
+        )
         val title = CTypeConversion.toCString(config.title)
         val out = UnmanagedMemory.calloc<Pointer>(X11Layout.WINDOW_BYTES)
         try {
