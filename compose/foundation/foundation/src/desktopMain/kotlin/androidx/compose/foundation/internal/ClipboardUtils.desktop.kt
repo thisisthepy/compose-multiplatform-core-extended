@@ -36,10 +36,12 @@ import kotlinx.coroutines.withContext
 // This implementation detail is used by Jewel.
 // When removing it, please provide an alternative of retrieving an annotated string,
 // and notify a Jewel developer that they need to change the implementation.
-private val annotatedStringFlavor: DataFlavor =
+private val annotatedStringFlavor: DataFlavor by lazy(LazyThreadSafetyMode.PUBLICATION) {
     DataFlavor(AnnotatedString::class.java, "AnnotatedString")
+}
 
 internal actual suspend fun ClipEntry.readText(): String? {
+    plainTextOrNull()?.let { return it }
     if (!hasText()) return null
 
     val transferable = asAwtTransferable
@@ -54,6 +56,7 @@ internal actual suspend fun ClipEntry.readText(): String? {
 }
 
 internal actual suspend fun ClipEntry.readAnnotatedString(): AnnotatedString? {
+    plainTextOrNull()?.let { return AnnotatedString(it) }
     if (!hasAnnotatedString()) {
         if (!hasText()) return null
         return readText()?.let { AnnotatedString(it) }
@@ -78,12 +81,14 @@ internal actual fun AnnotatedString?.toClipEntry(): ClipEntry? {
 
 internal fun ClipEntry?.hasAnnotatedString(): Boolean {
     if (this == null) return false
+    if (isPlainText()) return false
     val transferable = asAwtTransferable ?: return false
     return transferable.isDataFlavorSupported(annotatedStringFlavor)
 }
 
 internal actual fun ClipEntry?.hasText(): Boolean {
     if (this == null) return false
+    if (isPlainText()) return true
     val transferable = asAwtTransferable ?: return false
     return transferable.isDataFlavorSupported(DataFlavor.stringFlavor)
 }
