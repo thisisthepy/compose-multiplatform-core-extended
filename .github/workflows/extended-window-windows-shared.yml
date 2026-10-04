@@ -52,15 +52,16 @@ jobs:
           cl /nologo /c /O2 /std:c11 /W3 /Foout\win32_window.obj c\win32_window.c
           cl /nologo /c /O2 /std:c11 /W3 /Foout\win32_notifications.obj c\win32_notifications.c
           cl /nologo /c /O2 /std:c11 /W3 /Foout\win32_platform.obj c\win32_platform.c
+          cl /nologo /c /O2 /std:c++17 /GR- /EHs-c- /W3 /Foout\win32_dcomp.obj c\win32_dcomp.cpp
 
       - name: Package the static library
         working-directory: extended/window/windows-shared
-        run: lib /nologo /OUT:out\dxc_win32_window.lib out\win32_window.obj out\win32_notifications.obj out\win32_platform.obj
+        run: lib /nologo /OUT:out\dxc_win32_window.lib out\win32_window.obj out\win32_notifications.obj out\win32_platform.obj out\win32_dcomp.obj
 
       - name: Link and run the check against the library
         working-directory: extended/window/windows-shared
         run: |
-          cl /nologo /std:c11 /Ic /Foout\ test\win32_shared_test.c /Feout\win32_shared_test.exe /link out\dxc_win32_window.lib d3d12.lib dxgi.lib dxguid.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib
+          cl /nologo /std:c11 /Ic /Foout\ test\win32_shared_test.c /Feout\win32_shared_test.exe /link out\dxc_win32_window.lib d3d12.lib dxgi.lib dxguid.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib dcomp.lib
           out\win32_shared_test.exe
 
       - uses: actions/upload-artifact@v4
