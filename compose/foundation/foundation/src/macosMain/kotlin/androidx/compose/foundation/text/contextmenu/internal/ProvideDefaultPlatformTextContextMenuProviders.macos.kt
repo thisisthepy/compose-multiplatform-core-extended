@@ -30,16 +30,20 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalWindowInfo
+import kotlinx.cinterop.CValue
 import kotlinx.cinterop.useContents
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import platform.AppKit.NSApplication
+import platform.AppKit.NSEvent
 import platform.AppKit.NSMenu
 import platform.AppKit.NSMenuItem
 import platform.AppKit.NSView
+import platform.CoreGraphics.CGPoint
 import platform.CoreGraphics.CGPointMake
 import platform.darwin.NSObject
 import platform.darwin.sel_registerName
@@ -125,17 +129,45 @@ private class NativeTextContextMenuProvider(
                 return@suspendCancellableCoroutine
             }
 
-            // The position is in the layout's coordinates, which count down from its top
-            // left; the view's count up from its bottom left.
-            val local = dataProvider.position(coordinates)
-            val where = view.frame.useContents {
-                CGPointMake(local.x.toDouble(), size.height - local.y.toDouble())
-            }
+            // At the pointer, which is where a right click opens a menu on this platform.
+            // The layout's position is in pixels from the layout's own corner, and the view
+            // counts points from its corner, upward unless it is flipped: reading one as the
+            // other put the menu twice as far from the bottom as the click on a Retina
+            // screen, so it opened above the pointer instead of below it.
+            val where = menuLocationInView(
+                view = view,
+                screenPoint = NSEvent.mouseLocation,
+                fallback = dataProvider.position(coordinates),
+            )
             waiting.invokeOnCancellation { menu.cancelTracking() }
             // Returns when the menu closes, whichever way it closed.
             menu.popUpMenuPositioningItem(null, where, view)
             waiting.resume(Unit)
         }
+    }
+}
+
+/**
+ * Where in [view] a menu opened at [screenPoint] belongs, in the view's own points.
+ *
+ * AppKit converts from the screen to the window and from the window to the view, which
+ * accounts for where the view sits and for whether it is flipped. A view that is in no
+ * window has no screen to convert from, and then [fallback], a position from the top left
+ * of the content, is used, turned the right way up for a view that is not flipped.
+ */
+internal fun menuLocationInView(
+    view: NSView,
+    screenPoint: CValue<CGPoint>,
+    fallback: Offset,
+): CValue<CGPoint> {
+    val window = view.window
+    if (window != null) {
+        return view.convertPoint(window.convertPointFromScreen(screenPoint), fromView = null)
+    }
+    return view.frame.useContents {
+        val x = fallback.x.toDouble()
+        val y = fallback.y.toDouble()
+        CGPointMake(x, if (view.isFlipped()) y else size.height - y)
     }
 }
 
