@@ -223,4 +223,31 @@ class ComposeWindowHostTest {
         assertTrue(heard.all { it.key == Key.C && it.isMetaPressed })
         host.close()
     }
+
+    @Test
+    fun fr33_6_a_platform_with_no_native_menu_gets_the_scenes_menu_on_a_right_press() {
+        val platform = FakePlatform().also { it.name = "graalvm-linux-x11" }
+        val host = host(platform, FakeSurface()) { Box(Modifier.fillMaxSize()) }
+        assertTrue(host.open())
+        host.turn(0)
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 30f, 20f, 2, 0, 0, 0, ""))
+        host.turn(0)
+        assertEquals(androidx.compose.ui.unit.IntOffset(30, 20), host.editMenuAt)
+        platform.chosen.add(EditMenuId.SELECT_ALL)
+        host.turn(0)
+        assertEquals(null, host.editMenuAt, "a choice closes the menu")
+        host.close()
+    }
+
+    @Test
+    fun fr33_6_a_platform_with_its_own_menu_does_not_get_a_second_one() {
+        val platform = FakePlatform().also { it.name = "appkit-graalvm" }
+        val host = host(platform, FakeSurface()) { Box(Modifier.fillMaxSize()) }
+        assertTrue(host.open())
+        host.turn(0)
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 30f, 20f, 2, 0, 0, 0, ""))
+        host.turn(0)
+        assertEquals(null, host.editMenuAt)
+        host.close()
+    }
 }

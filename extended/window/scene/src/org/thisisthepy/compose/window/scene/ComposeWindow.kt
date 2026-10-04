@@ -3,6 +3,7 @@
 package org.thisisthepy.compose.window.scene
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -103,6 +104,10 @@ class ComposeWindowHost(
     private var surface: WindowSurface? = null
     private var frames: WindowFrames? = null
     private var theme by mutableStateOf(SystemTheme.Light)
+
+    /** Where the drawn edit menu is open, in pixels, or null while it is closed. */
+    internal var editMenuAt by mutableStateOf<IntOffset?>(null)
+        private set
     private var size = IntSize.Zero
     private var painted = false
 
@@ -113,11 +118,23 @@ class ComposeWindowHost(
                 WindowEvent.PREEDIT_DRAW -> ime.preeditDraw(event.keyCode, event.codePoint, event.text, event.x.toInt())
                 WindowEvent.PREEDIT_DONE -> ime.preeditDone()
                 WindowEvent.TEXT_COMMIT -> ime.commit(event.text)
-                else -> log.heard(event)
+                else -> {
+                    // A platform with no menu of its own (showContextMenu answers -1) gets
+                    // the scene's: a secondary press opens it at the pointer.
+                    if (event.kind == WindowEvent.POINTER_DOWN && event.buttons and 2 != 0 &&
+                        !platform.hasNativeEditMenu()
+                    ) {
+                        editMenuAt = IntOffset(event.x.toInt(), event.y.toInt())
+                    } else if (event.kind == WindowEvent.POINTER_DOWN) {
+                        editMenuAt = null
+                    }
+                    log.heard(event)
+                }
             }
         }
 
         override fun onContextMenuChosen(id: Int) {
+            editMenuAt = null
             val chord = editChord(id, usesCommandKey(platform.name)) ?: return
             for (press in chord) scene?.sendKeyEvent(press)
         }
@@ -154,7 +171,10 @@ class ComposeWindowHost(
             platformContext = ScenePlatformContext({ size }, textInput),
         )
         created.setContent {
-            CompositionLocalProvider(LocalSystemTheme provides theme) { content() }
+            CompositionLocalProvider(LocalSystemTheme provides theme) {
+                content()
+                DrawnEditMenu(editMenuAt, onChosen = { listener.onContextMenuChosen(it) }, onDismiss = { editMenuAt = null })
+            }
         }
         scene = created
         frames = WindowFrames({ platform.measure() }) { width, height, scale -> paint(width, height, scale) }
