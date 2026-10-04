@@ -3,7 +3,7 @@
     kotlinx.cinterop.ExperimentalForeignApi::class,
 )
 
-package dev.darkpyonix.composerust.ui.platform
+package org.thisisthepy.compose.window.linux
 
 import androidx.compose.ui.input.key.Key
 import kotlin.test.Test

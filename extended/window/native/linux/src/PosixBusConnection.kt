@@ -1,6 +1,6 @@
 @file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 
-package dev.darkpyonix.composerust.ui.platform
+package org.thisisthepy.compose.window.linux
 
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.addressOf
@@ -34,7 +34,7 @@ import unixsocket.dxc_connect_unix
  * said without waiting, and a call waits for its own answer, so nothing on this socket is
  * ever read from two places.
  */
-internal class PosixBusConnection private constructor(private val socket: Int) : BusConnection {
+class PosixBusConnection private constructor(private val socket: Int) : BusConnection {
     /** Bytes read that do not yet make a whole message. */
     private var pending = ByteArray(0)
     private var open = true

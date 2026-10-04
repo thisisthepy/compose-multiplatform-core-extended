@@ -1,0 +1,15 @@
+# The AppKit window for the GraalVM native-image path: the Kotlin side of
+# native/appkit_window.m. It declares the C entry points with @CFunction, reads the event
+# queue the window fills and registers the generated upcall table. It names no toolkit
+# type, so it compiles with no AWT on the path.
+
+product:
+  type: jvm/lib
+
+dependencies:
+  # Annotations and C interop types. Supplied by the native-image builder at image build
+  # time, so they are not bundled into the jar.
+  - org.graalvm.sdk:nativeimage:25.0.1: compile-only
+
+test-dependencies:
+  - $kotlin.test

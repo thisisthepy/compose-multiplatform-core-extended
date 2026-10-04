@@ -1,8 +1,11 @@
 @file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 
-package dev.darkpyonix.composerust.ui.platform
+package org.thisisthepy.compose.window.linux
 
 import kotlin.test.Test
+import org.thisisthepy.compose.window.WindowConfig
+import org.thisisthepy.compose.window.WindowEvent
+import org.thisisthepy.compose.window.WindowListener
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlinx.cinterop.toKString
@@ -22,7 +25,7 @@ import platform.posix.unsetenv
  * the moved edge is a fact about what a compositor showed. `ResizeSyncTest` and
  * `WindowEventLogTest` on the JVM cover the two ways the code can get that wrong.
  */
-class LinuxWindowTest {
+class X11WindowTest {
 
     /**
      * A window opens where there is a display server to open it on.
@@ -40,7 +43,7 @@ class LinuxWindowTest {
     @Test
     fun nfr1_a_window_opens_where_there_is_a_display_server() {
         if (getenv("DISPLAY")?.toKString().isNullOrEmpty()) return
-        val window = LinuxWindow.open(title = "opens", width = 320, height = 240)
+        val window = openWindow("opens", 320, 240)
         assertNotNull(
             window,
             "a display server is present and the window did not open: the visual, the colormap, " +
@@ -55,10 +58,18 @@ class LinuxWindowTest {
         // no X server actually has is this one.
         unsetenv("DISPLAY")
         assertNull(
-            LinuxWindow.open(title = "no display", width = 520, height = 360),
+            openWindow("no display", 520, 360),
             "a window with no display server to open on answers null rather than throwing, " +
                 "because what called in is a C entry point and a Kotlin exception must not " +
                 "cross back over it",
         )
+    }
+
+    private fun openWindow(title: String, width: Int, height: Int): X11Window? {
+        val window = X11Window()
+        val listener = object : WindowListener {
+            override fun onEvent(event: WindowEvent) {}
+        }
+        return if (window.open(WindowConfig(title, width, height), listener)) window else null
     }
 }

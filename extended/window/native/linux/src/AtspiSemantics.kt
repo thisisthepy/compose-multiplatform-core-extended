@@ -1,6 +1,6 @@
 @file:OptIn(androidx.compose.ui.InternalComposeUiApi::class)
 
-package dev.darkpyonix.composerust.ui.platform
+package org.thisisthepy.compose.window.linux
 
 import androidx.compose.ui.platform.PlatformContext
 import androidx.compose.ui.semantics.Role
@@ -22,7 +22,7 @@ import androidx.compose.ui.semantics.getOrNull
  * Everything runs on the thread that draws. The bus is read on that thread too, so an action
  * arrives between frames and nothing here is shared.
  */
-internal class AtspiSemanticsSource : PlatformContext.SemanticsOwnerListener {
+class AtspiSemanticsSource : PlatformContext.SemanticsOwnerListener {
 
     private val owners = ArrayList<SemanticsOwner>()
     private var changed = true

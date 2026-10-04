@@ -1,4 +1,4 @@
-package dev.darkpyonix.composerust.ui.platform
+package org.thisisthepy.compose.window.linux
 
 // The objects a reader asks questions of, answered from the tree the window last published.
 //
@@ -12,7 +12,7 @@ package dev.darkpyonix.composerust.ui.platform
 // is told about and where a reader starts. Its only child is the window, `.../window`, and the
 // window's children are the controls, `.../n<id>` under Compose's own id for each.
 
-internal interface AtspiActions {
+interface AtspiActions {
     /** Presses the control. False where it is gone or cannot be pressed. */
     fun click(id: Int): Boolean
 
@@ -23,7 +23,7 @@ internal interface AtspiActions {
     fun windowOrigin(): Pair<Int, Int>
 }
 
-internal class AtspiServer(
+class AtspiServer(
     private val applicationName: String,
     private val actions: AtspiActions,
 ) {
@@ -491,7 +491,7 @@ internal class AtspiServer(
  * what a single line field holds for anything larger, which a line, a sentence and a paragraph
  * all are there.
  */
-internal fun textRangeAt(points: List<Int>, offset: Int, granularity: Long): Pair<Int, Int> {
+fun textRangeAt(points: List<Int>, offset: Int, granularity: Long): Pair<Int, Int> {
     if (points.isEmpty()) return 0 to 0
     val at = offset.coerceIn(0, points.size - 1)
     return when (granularity) {

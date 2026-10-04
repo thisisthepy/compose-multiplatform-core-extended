@@ -1,6 +1,8 @@
 @file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 
-package dev.darkpyonix.composerust.ui.platform
+package org.thisisthepy.compose.window.linux
+
+import org.thisisthepy.compose.window.WindowEvent
 
 import androidx.compose.ui.geometry.Rect
 import x11.ControlMask
@@ -30,7 +32,8 @@ import x11.Mod4Mask
  * points and not in UTF-16 units, because that is what the protocol counts: a Hangul syllable
  * is one, and so is a character outside the Basic Multilingual Plane, which is two units.
  */
-internal class PreeditBuffer {
+// Local copy: replaced by the common ImeComposition type (PreeditBuffer) once common part 2 lands.
+class PreeditBuffer {
     private val points = ArrayList<Int>()
 
     /** Where the input method says the caret is inside the run, in characters. */
@@ -72,7 +75,8 @@ internal class PreeditBuffer {
  * server, from inside the one call that reads it, so nothing here is ever re-entered and
  * nothing needs a lock.
  */
-internal class ImeSession(private val emit: (WindowEvent) -> Unit) {
+// Local copy: replaced by the common ImeComposition type (ImeSession) once common part 2 lands.
+class ImeSession(private val emit: (WindowEvent) -> Unit) {
     private val preedit = PreeditBuffer()
 
     /** Whether something is being composed, which is what a click has to finish. */
@@ -112,7 +116,7 @@ internal class ImeSession(private val emit: (WindowEvent) -> Unit) {
 }
 
 /** A record for something an input method said: no position, no key, only the text. */
-internal fun imeEvent(kind: Int, text: String) = WindowEvent(
+fun imeEvent(kind: Int, text: String) = WindowEvent(
     kind = kind,
     x = 0f,
     y = 0f,
@@ -141,7 +145,7 @@ internal fun imeEvent(kind: Int, text: String) = WindowEvent(
  *   committed, produces the commit and no key event: there is nothing for a shortcut to
  *   see, and a key with no name pressed in a text field would only confuse a handler.
  */
-internal fun keyEventsFor(
+fun keyEventsFor(
     press: Boolean,
     state: UInt,
     keysym: KeySym,
@@ -176,7 +180,7 @@ internal fun keyEventsFor(
  * The scene's density is one point to a pixel (see the window's note on it), so no scale
  * is applied; [density] is there so that changing that changes one place.
  */
-internal fun candidateSpot(caret: Rect?, density: Float): Pair<Int, Int>? {
+fun candidateSpot(caret: Rect?, density: Float): Pair<Int, Int>? {
     if (caret == null || caret.isEmpty) return null
     return (caret.left * density).toInt() to (caret.bottom * density).toInt()
 }
@@ -193,7 +197,7 @@ internal fun candidateSpot(caret: Rect?, density: Float): Pair<Int, Int>? {
  * Null when it offers none of these, which is an input method this window cannot be typed
  * through at all.
  */
-internal fun chooseInputStyle(
+fun chooseInputStyle(
     offered: List<Long>,
     preeditCallbacks: Long,
     preeditNothing: Long,
@@ -213,7 +217,7 @@ internal fun chooseInputStyle(
 }
 
 /** Whether a locale name says the text it carries is UTF-8. */
-internal fun isUtf8Locale(name: String?): Boolean {
+fun isUtf8Locale(name: String?): Boolean {
     if (name == null) return false
     val lower = name.lowercase()
     return lower.endsWith(".utf-8") || lower.endsWith(".utf8") || ".utf-8@" in lower || ".utf8@" in lower
@@ -222,7 +226,7 @@ internal fun isUtf8Locale(name: String?): Boolean {
 private const val FIRST_PRINTABLE = 32
 private const val DELETE_CHARACTER = 0x7F
 
-internal fun StringBuilder.appendPoint(point: Int) {
+fun StringBuilder.appendPoint(point: Int) {
     if (point < 0x10000) {
         append(point.toChar())
     } else {
@@ -233,7 +237,7 @@ internal fun StringBuilder.appendPoint(point: Int) {
 }
 
 /** The code points of a string, with a pair of surrogates read as the one character it is. */
-internal fun codePointsOf(text: String): List<Int> {
+fun codePointsOf(text: String): List<Int> {
     val points = ArrayList<Int>(text.length)
     var index = 0
     while (index < text.length) {

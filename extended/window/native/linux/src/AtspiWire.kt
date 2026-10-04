@@ -1,4 +1,4 @@
-package dev.darkpyonix.composerust.ui.platform
+package org.thisisthepy.compose.window.linux
 
 // The messages an accessibility client sends this process, and the ones this process answers
 // with.
@@ -10,7 +10,7 @@ package dev.darkpyonix.composerust.ui.platform
 // writer are the same ones, so there is one implementation of the format's alignment rules.
 
 /** A method call as it arrived. */
-internal class IncomingCall(
+class IncomingCall(
     val serial: Long,
     val sender: String?,
     val path: String,
@@ -26,7 +26,7 @@ internal class IncomingCall(
     fun arguments(): DBusReader = DBusReader(bytes, bodyStart)
 }
 
-internal object AtspiWire {
+object AtspiWire {
     private const val FLAG_NO_REPLY_EXPECTED = 1
 
     /** Null for anything that is not a method call this side can read. */
@@ -149,36 +149,36 @@ internal object AtspiWire {
 }
 
 /** An object reference as AT-SPI writes one: the bus name that owns it, and its path. */
-internal fun DBusWriter.reference(name: String, path: String) = struct {
+fun DBusWriter.reference(name: String, path: String) = struct {
     string(name)
     string(path)
 }
 
 /** A boolean on the wire is a 32-bit word. */
-internal fun DBusWriter.boolean(value: Boolean) = u32(if (value) 1L else 0L)
+fun DBusWriter.boolean(value: Boolean) = u32(if (value) 1L else 0L)
 
 /** A 16-bit signed integer, which the writer has no method for. */
-internal fun DBusWriter.i16(value: Int) {
+fun DBusWriter.i16(value: Int) {
     align(2)
     byte(value and 0xff)
     byte((value shr 8) and 0xff)
 }
 
 /** An IEEE double, eight bytes aligned to eight. */
-internal fun DBusWriter.double(value: Double) {
+fun DBusWriter.double(value: Double) {
     align(8)
     val bits = value.toRawBits()
     for (shift in 0 until 8) byte(((bits ushr (8 * shift)) and 0xff).toInt())
 }
 
 /** A variant: the type of what follows, then the value itself. */
-internal fun DBusWriter.variant(signature: String, value: DBusWriter.() -> Unit) {
+fun DBusWriter.variant(signature: String, value: DBusWriter.() -> Unit) {
     signature(signature)
     value()
 }
 
 /** One entry of a dictionary of strings to variants. */
-internal fun DBusWriter.entry(key: String, signature: String, value: DBusWriter.() -> Unit) {
+fun DBusWriter.entry(key: String, signature: String, value: DBusWriter.() -> Unit) {
     struct {
         string(key)
         variant(signature, value)
@@ -186,4 +186,4 @@ internal fun DBusWriter.entry(key: String, signature: String, value: DBusWriter.
 }
 
 /** Reads a 32-bit signed integer. */
-internal fun DBusReader.i32(): Int = u32().toInt()
+fun DBusReader.i32(): Int = u32().toInt()

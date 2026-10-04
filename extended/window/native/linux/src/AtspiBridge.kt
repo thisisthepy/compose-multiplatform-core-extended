@@ -1,4 +1,4 @@
-package dev.darkpyonix.composerust.ui.platform
+package org.thisisthepy.compose.window.linux
 
 /**
  * This window's presence on the accessibility bus.
@@ -16,7 +16,7 @@ package dev.darkpyonix.composerust.ui.platform
  * Failing to join is not an error. A machine with no accessibility bus has no screen reader
  * to serve, and the window carries on without one.
  */
-internal class AtspiBridge(
+class AtspiBridge(
     private val openSession: () -> BusConnection?,
     private val openAccessibility: (BusAddress) -> BusConnection?,
     private val userId: Long,

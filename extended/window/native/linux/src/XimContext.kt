@@ -1,6 +1,6 @@
 @file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 
-package dev.darkpyonix.composerust.ui.platform
+package org.thisisthepy.compose.window.linux
 
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.COpaquePointer
@@ -87,7 +87,7 @@ import x11.Window
  * Open fails softly. A machine with no input method, or one this locale cannot talk to,
  * answers null and the window types as it did before.
  */
-internal class XimContext private constructor(
+class XimContext private constructor(
     private val display: CPointer<Display>,
     private val method: XIM,
     private val context: XIC,

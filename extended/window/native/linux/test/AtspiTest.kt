@@ -1,4 +1,4 @@
-package dev.darkpyonix.composerust.ui.platform
+package org.thisisthepy.compose.window.linux
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

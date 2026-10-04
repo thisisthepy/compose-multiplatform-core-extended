@@ -1,6 +1,6 @@
 @file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 
-package dev.darkpyonix.composerust.ui.platform
+package org.thisisthepy.compose.window.linux
 
 import kotlinx.cinterop.CPointer
 import org.jetbrains.skia.BackendRenderTarget
@@ -34,7 +34,7 @@ private const val GL_RGBA8 = 0x8058
  * There is nothing in between to copy through, and the buffer is described to Skia rather
  * than allocated by it, which is what [BackendRenderTarget] means here.
  */
-internal class GlSurface(
+class GlSurface(
     private val display: CPointer<Display>,
     private val window: Window,
     private val context: GLXContext,

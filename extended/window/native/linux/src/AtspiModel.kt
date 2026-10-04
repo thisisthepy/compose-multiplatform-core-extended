@@ -1,4 +1,4 @@
-package dev.darkpyonix.composerust.ui.platform
+package org.thisisthepy.compose.window.linux
 
 // What the window tells a reader who cannot see it, in the words AT-SPI uses.
 //
@@ -14,7 +14,7 @@ package dev.darkpyonix.composerust.ui.platform
 // they are written out here and asserted by name in the tests.
 
 /** The roles this renderer announces. The values are `AtspiRole`'s. */
-internal object AtspiRole {
+object AtspiRole {
     const val CHECK_BOX = 7
     const val COMBO_BOX = 11
     const val FILLER = 20
@@ -61,7 +61,7 @@ internal object AtspiRole {
 }
 
 /** The states this renderer reports, as bit positions. The values are `AtspiStateType`'s. */
-internal object AtspiState {
+object AtspiState {
     const val ACTIVE = 1
     const val CHECKED = 4
     const val EDITABLE = 7
@@ -96,7 +96,7 @@ internal object AtspiState {
 }
 
 /** The one thing a control can be asked to do that this renderer offers. */
-internal const val ACTION_CLICK = "click"
+const val ACTION_CLICK = "click"
 
 /**
  * What the scene knows about one control, with nothing of the scene in it.
@@ -105,7 +105,7 @@ internal const val ACTION_CLICK = "click"
  * [describeFacts] reads them and nothing else. Strings rather than Compose's own types for the
  * role and the toggle, so that a test builds one without a scene.
  */
-internal data class NodeFacts(
+data class NodeFacts(
     /** Compose's `Role`, by name: Button, Checkbox, Switch, RadioButton, Tab, Image, DropdownList. */
     val composeRole: String? = null,
     /** The content description, else the text the control shows. */
@@ -130,7 +130,7 @@ internal data class NodeFacts(
 )
 
 /** What a control is announced as. */
-internal data class Description(
+data class Description(
     val role: Int,
     val name: String,
     val states: Long,
@@ -145,7 +145,7 @@ internal data class Description(
  * out and its children are attached to its parent. A group that carries a name or an action is
  * kept, because that is what the author said it is.
  */
-internal fun describeFacts(facts: NodeFacts): Description? {
+fun describeFacts(facts: NodeFacts): Description? {
     val editable = facts.editableText != null
     val name = facts.label ?: ""
     val hasName = facts.label != null
@@ -193,7 +193,7 @@ internal fun describeFacts(facts: NodeFacts): Description? {
 }
 
 /** One object in the tree a reader walks. */
-internal data class AtspiNode(
+data class AtspiNode(
     /** Compose's own id for the control, stable for as long as the control exists. */
     val id: Int,
     /** The id of the parent, or [AtspiTree.FRAME] for a child of the window. */
@@ -220,7 +220,7 @@ internal data class AtspiNode(
  * Equality is what decides whether anything is said: a frame that left the tree as it was
  * leaves the bus quiet.
  */
-internal data class AtspiTree(
+data class AtspiTree(
     val title: String,
     val nodes: Map<Int, AtspiNode>,
     /** The window's own children, in the order they are laid out. */

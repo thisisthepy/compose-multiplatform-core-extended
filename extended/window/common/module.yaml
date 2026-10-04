@@ -1,0 +1,13 @@
+# The window logic every platform layer shares: the WindowPlatform interface, the event,
+# state and policy types, and the rules that decide what a window does with what it hears.
+#
+# It names no platform and no toolkit: no AppKit, no Win32, no Xlib, no java.awt and no
+# Compose, so one source tree compiles for the JVM the GraalVM path uses and for the
+# Kotlin/Native targets. The OS layers under native/ and graalvm/ implement
+# WindowPlatform and leave every decision to this module.
+product:
+  type: kmp/lib
+  platforms: [ jvm, macosArm64, linuxX64, linuxArm64 ]
+
+test-dependencies:
+  - $kotlin.test

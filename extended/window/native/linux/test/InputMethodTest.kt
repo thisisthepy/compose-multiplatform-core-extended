@@ -1,6 +1,8 @@
 @file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 
-package dev.darkpyonix.composerust.ui.platform
+package org.thisisthepy.compose.window.linux
+
+import org.thisisthepy.compose.window.WindowEvent
 
 import androidx.compose.ui.geometry.Rect
 import kotlin.test.Test

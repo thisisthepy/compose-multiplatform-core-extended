@@ -1,6 +1,6 @@
 @file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 
-package dev.darkpyonix.composerust.ui.platform
+package org.thisisthepy.compose.window.linux
 
 import x11.Button1Mask
 import x11.Button2Mask
@@ -41,7 +41,7 @@ import x11.XK_space
 // something else. Both are tables, and a table is checkable.
 
 /** The buttons the shared reader knows about, in the bits it reads them from. */
-internal fun buttonsOf(state: UInt): Int {
+fun buttonsOf(state: UInt): Int {
     // Compared as Int, which is the width the masks come across as. Widening them to Long
     // first looks harmless and does not compile: a mask is a constant of the header's own
     // type, not a number this code chose.
@@ -59,7 +59,7 @@ internal fun buttonsOf(state: UInt): Int {
  * macOS puts Command, which is why it lands in Command's bit: a screen that binds one binds
  * the other, and neither platform has both.
  */
-internal fun modifiersOf(state: UInt): Int {
+fun modifiersOf(state: UInt): Int {
     val bits = state.toInt()
     return (if (bits and ShiftMask != 0) MODIFIER_SHIFT else 0) or
         (if (bits and ControlMask != 0) MODIFIER_CONTROL else 0) or
@@ -76,7 +76,8 @@ internal fun modifiersOf(state: UInt): Int {
  * meaning of its own (zero is the letter A in that numbering), which is most of them: a key that types a character carries the character
  * beside it and the scene reads that instead.
  */
-internal fun platformKey(keysym: KeySym): Int = when (keysym.toInt()) {
+// Local copy: replaced by the common X11Keys type once common part 2 lands.
+fun platformKey(keysym: KeySym): Int = when (keysym.toInt()) {
     XK_Return, XK_KP_Enter -> PLATFORM_ENTER
     XK_Tab, XK_ISO_Left_Tab -> PLATFORM_TAB
     XK_space -> PLATFORM_SPACE
@@ -100,7 +101,7 @@ internal fun platformKey(keysym: KeySym): Int = when (keysym.toInt()) {
  * A shape this does not have becomes the arrow, which is what a pointer over something
  * unremarkable looks like anyway.
  */
-internal fun cursorFont(shape: Int): Int =
+fun cursorFont(shape: Int): Int =
     CURSOR_FONTS[if (shape in CURSOR_FONTS.indices) shape else CURSOR_ARROW]
 
 /**
@@ -113,12 +114,12 @@ private val CURSOR_FONTS = intArrayOf(
 )
 
 /** How many shapes both sides agree a pointer may take. */
-internal const val CURSOR_SHAPES = 6
+const val CURSOR_SHAPES = 6
 
-internal const val CURSOR_ARROW = 0
-internal const val CURSOR_HAND = 1
-internal const val CURSOR_TEXT = 2
-internal const val CURSOR_CROSSHAIR = 3
+const val CURSOR_ARROW = 0
+const val CURSOR_HAND = 1
+const val CURSOR_TEXT = 2
+const val CURSOR_CROSSHAIR = 3
 
 /** From NSEvent.h. The bits the shared reader reads a modifier word's meaning out of. */
 private const val MODIFIER_SHIFT = 1 shl 17
@@ -144,11 +145,11 @@ private const val PLATFORM_PAGE_UP = 0x74
 private const val PLATFORM_PAGE_DOWN = 0x79
 
 /** A wheel arrives as a press and a release of a button that does not exist. */
-internal const val WHEEL_UP = 4
-internal const val WHEEL_DOWN = 5
-internal const val WHEEL_LEFT = 6
-internal const val WHEEL_RIGHT = 7
-internal val SCROLL_BUTTONS = WHEEL_UP..WHEEL_RIGHT
+const val WHEEL_UP = 4
+const val WHEEL_DOWN = 5
+const val WHEEL_LEFT = 6
+const val WHEEL_RIGHT = 7
+val SCROLL_BUTTONS = WHEEL_UP..WHEEL_RIGHT
 
 /** How far one notch of the wheel travels, in the lines every other application moves. */
-internal const val SCROLL_LINES = 3.0f
+const val SCROLL_LINES = 3.0f
