@@ -1,8 +1,9 @@
 # The window modules, one standalone Amper project like extended/design-systems.
-# Each window PR adds its own module line.
+# Module names are the directory names and must be unique, so the GraalVM layers are
+# graalvm-macos and graalvm-linux. native/linux is added by its own PR (#28).
 # Nothing here may depend on the renderer, its wire protocol or its node table.
 modules:
   - common
-  - graalvm/linux
   - native/macos
-  - graalvm/macos
+  - graalvm/graalvm-macos
+  - graalvm/graalvm-linux
