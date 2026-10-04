@@ -73,6 +73,10 @@ class X11Window : WindowPlatform {
         X11Natives.pump(timeoutMillis.coerceAtLeast(0) / 1000.0)
         if (eventBuffer == 0L) return
         while (X11Natives.pollEvent(WordFactory.pointer<Pointer>(eventBuffer)) != 0) {
+            if (WordFactory.pointer<Pointer>(eventBuffer).readInt(0) == EVENT_TEXT_PASTE) {
+                takePaste()?.let { listener?.onEvent(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, it)) }
+                continue
+            }
             listener?.onEvent(read(eventBuffer))
         }
         val scale = measure().scale
@@ -88,6 +92,17 @@ class X11Window : WindowPlatform {
         if (X11Natives.windowClosed() != 0 && listener?.onCloseRequested() != false) {
             close()
         }
+    }
+
+    /** The whole of a paste the window is holding, so that it lands as one edit. */
+    private fun takePaste(): String? {
+        if (textBuffer == 0L) return null
+        val buffer = WordFactory.pointer<Pointer>(textBuffer)
+        val length = X11Natives.takePaste(WordFactory.pointer<CCharPointer>(textBuffer), TEXT_CAPACITY)
+        if (length <= 0) return null
+        val bytes = ByteArray(length)
+        for (i in 0 until length) bytes[i] = buffer.readByte(i)
+        return bytes.decodeToString()
     }
 
     // Takes the address, not a word: native-image rejects a word passed as an argument to a
@@ -252,5 +267,6 @@ class X11Window : WindowPlatform {
         // 4 MiB, the most one X11 property read returns: a longer clipboard answers empty.
         const val TEXT_CAPACITY = 4 * 1024 * 1024
         const val ACTION_CLOSE = 2
+        const val EVENT_TEXT_PASTE = 13
     }
 }
