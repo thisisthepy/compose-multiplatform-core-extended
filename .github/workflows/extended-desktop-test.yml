@@ -42,7 +42,7 @@ jobs:
             task: :compose:foundation:foundation:desktopTest
             filter: '*AwtFreeClipEntryTest*'
           - name: AWT-free text direction
-            task: :compose:ui:ui:desktopTest
+            task: :compose:ui:ui-text:desktopTest
             filter: '*AwtFreeTextDirectionTest*'
           - name: Embedder main dispatcher
             task: :compose:ui:ui:desktopTest
