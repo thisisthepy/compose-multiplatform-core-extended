@@ -16,8 +16,8 @@ on:
       - .github/workflows/extended-window-publish.yml
 
 concurrency:
-  group: extended-window-publish-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

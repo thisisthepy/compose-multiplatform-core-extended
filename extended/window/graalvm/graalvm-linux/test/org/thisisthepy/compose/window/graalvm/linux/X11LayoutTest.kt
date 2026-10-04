@@ -13,4 +13,9 @@ class X11LayoutTest {
     fun windowRecordIsFivePointers() {
         assertEquals(5 * 8, X11Layout.WINDOW_BYTES)
     }
+
+    @Test
+    fun accessibilityElementIsFiveWordsThenLabel() {
+        assertEquals(116, X11Layout.ELEMENT_BYTES)
+    }
 }
