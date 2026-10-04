@@ -34,6 +34,7 @@ class X11KeysTest {
         assertEquals(0x33, x11KeyNumber(0xFF08L))
         assertEquals(0x35, x11KeyNumber(0xFF1BL))
         assertEquals(0x75, x11KeyNumber(0xFFFFL))
+        assertEquals(0x72, x11KeyNumber(0xFF63L))
         assertEquals(0x7B, x11KeyNumber(0xFF51L))
         assertEquals(0x7E, x11KeyNumber(0xFF52L))
     }
@@ -59,5 +60,16 @@ class X11KeysTest {
         assertEquals(true, x11IsShortcut(X11_MOD1_MASK))
         assertEquals(true, x11IsShortcut(X11_MOD4_MASK))
         assertEquals(false, x11IsShortcut(X11_SHIFT_MASK))
+    }
+
+    @Test
+    fun shift_delete_cuts_as_control_x_and_shift_insert_stays_insert() {
+        val down = keyEventsFor(press = true, state = X11_SHIFT_MASK, keysym = 0xFFFFL, text = "").single()
+        assertEquals(0x07, down.keyCode)
+        assertEquals(x11Modifiers(X11_CONTROL_MASK), down.modifiers)
+        val plain = keyEventsFor(press = true, state = 0, keysym = 0xFFFFL, text = "").single()
+        assertEquals(0x75, plain.keyCode)
+        val insert = keyEventsFor(press = true, state = X11_SHIFT_MASK, keysym = 0xFF63L, text = "").single()
+        assertEquals(0x72, insert.keyCode)
     }
 }
