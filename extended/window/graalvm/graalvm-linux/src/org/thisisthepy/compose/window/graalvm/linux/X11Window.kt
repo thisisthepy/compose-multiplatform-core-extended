@@ -32,10 +32,12 @@ class X11Window : WindowPlatform {
     private var listener: WindowListener? = null
     private var windowPointer: Long = 0
     private var queuePointer: Long = 0
-    private var eventBuffer: Pointer? = null
-    private var windowBuffer: Pointer? = null
-    private var textBuffer: Pointer? = null
-    private var sizeBuffer: Pointer? = null
+    // Addresses, with zero for none. A word value is never compared with null or put in a
+    // collection here, because native-image rejects both: a word is not an object.
+    private var eventBuffer: Long = 0
+    private var windowBuffer: Long = 0
+    private var textBuffer: Long = 0
+    private var sizeBuffer: Long = 0
     private var frameWanted = false
     private var lastScale = 0f
     private var lastTheme: SystemTheme? = null
@@ -56,12 +58,12 @@ class X11Window : WindowPlatform {
         } finally {
             title.close()
         }
-        windowBuffer = out
+        windowBuffer = out.rawValue()
         windowPointer = out.readWord<Pointer>(0).rawValue()
         queuePointer = out.readWord<Pointer>(24).rawValue()
-        eventBuffer = UnmanagedMemory.calloc<Pointer>(X11Layout.EVENT_BYTES)
-        textBuffer = UnmanagedMemory.calloc<Pointer>(TEXT_CAPACITY)
-        sizeBuffer = UnmanagedMemory.calloc<Pointer>(12)
+        eventBuffer = UnmanagedMemory.calloc<Pointer>(X11Layout.EVENT_BYTES).rawValue()
+        textBuffer = UnmanagedMemory.calloc<Pointer>(TEXT_CAPACITY).rawValue()
+        sizeBuffer = UnmanagedMemory.calloc<Pointer>(12).rawValue()
         lastScale = measure().scale
         lastTheme = systemTheme()
         return true
@@ -69,9 +71,9 @@ class X11Window : WindowPlatform {
 
     override fun pump(timeoutMillis: Long) {
         X11Natives.pump(timeoutMillis.coerceAtLeast(0) / 1000.0)
-        val record = eventBuffer ?: return
-        while (X11Natives.pollEvent(record) != 0) {
-            listener?.onEvent(read(record))
+        if (eventBuffer == 0L) return
+        while (X11Natives.pollEvent(WordFactory.pointer<Pointer>(eventBuffer)) != 0) {
+            listener?.onEvent(read(eventBuffer))
         }
         val scale = measure().scale
         if (scale != lastScale) {
@@ -88,7 +90,10 @@ class X11Window : WindowPlatform {
         }
     }
 
-    private fun read(record: Pointer): WindowEvent {
+    // Takes the address, not a word: native-image rejects a word passed as an argument to a
+    // method that is not inlined, so each read makes the word where it uses it.
+    private fun read(address: Long): WindowEvent {
+        val record = WordFactory.pointer<Pointer>(address)
         val bytes = ByteArray(X11Layout.EVENT_TEXT_BYTES)
         var length = 0
         while (length < bytes.size) {
@@ -109,12 +114,13 @@ class X11Window : WindowPlatform {
     }
 
     override fun measure(): WindowMeasurement {
-        val size = sizeBuffer ?: return WindowMeasurement(0, 0, 1f)
+        if (sizeBuffer == 0L) return WindowMeasurement(0, 0, 1f)
+        val size = WordFactory.pointer<Pointer>(sizeBuffer)
         X11Natives.windowSize(
             WordFactory.pointer<Pointer>(windowPointer),
-            size as CIntPointer,
-            size.add(4) as CIntPointer,
-            size.add(8) as CFloatPointer,
+            WordFactory.pointer<CIntPointer>(sizeBuffer),
+            WordFactory.pointer<CIntPointer>(sizeBuffer + 4),
+            WordFactory.pointer<CFloatPointer>(sizeBuffer + 8),
         )
         return WindowMeasurement(size.readInt(0), size.readInt(4), size.readFloat(8))
     }
@@ -195,8 +201,9 @@ class X11Window : WindowPlatform {
         X11Natives.setVisibility(X11Visibility.code(visibility))
 
     override fun readClipboardText(): String? {
-        val buffer = textBuffer ?: return null
-        val length = X11Natives.clipboardRead(buffer as CCharPointer, TEXT_CAPACITY)
+        if (textBuffer == 0L) return null
+        val buffer = WordFactory.pointer<Pointer>(textBuffer)
+        val length = X11Natives.clipboardRead(WordFactory.pointer<CCharPointer>(textBuffer), TEXT_CAPACITY)
         if (length <= 0) return null
         val bytes = ByteArray(length)
         for (i in 0 until length) bytes[i] = buffer.readByte(i)
@@ -227,11 +234,18 @@ class X11Window : WindowPlatform {
         X11Upcalls.clearFramePainter()
         X11Natives.windowAction(ACTION_CLOSE)
         X11Natives.pump(0.0)
-        listOf(eventBuffer, windowBuffer, textBuffer, sizeBuffer).forEach { it?.let(UnmanagedMemory::free) }
-        eventBuffer = null
-        windowBuffer = null
-        textBuffer = null
-        sizeBuffer = null
+        freeBuffer(eventBuffer)
+        freeBuffer(windowBuffer)
+        freeBuffer(textBuffer)
+        freeBuffer(sizeBuffer)
+        eventBuffer = 0
+        windowBuffer = 0
+        textBuffer = 0
+        sizeBuffer = 0
+    }
+
+    private fun freeBuffer(address: Long) {
+        if (address != 0L) UnmanagedMemory.free(WordFactory.pointer<Pointer>(address))
     }
 
     private companion object {
