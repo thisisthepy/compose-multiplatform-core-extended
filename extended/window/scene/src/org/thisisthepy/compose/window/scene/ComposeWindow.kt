@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.asComposeCanvas
 import androidx.compose.ui.scene.CanvasLayersComposeScene
+import androidx.compose.ui.scene.ComposeScene
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import kotlin.time.TimeSource
@@ -98,7 +99,7 @@ class ComposeWindowHost(
     private val started = clock.markNow()
     private val heard = ArrayList<WindowEvent>()
     private val ime = ImeSession { event -> log.heard(event) }
-    private var scene: CanvasLayersComposeScene? = null
+    private var scene: ComposeScene? = null
     private var surface: WindowSurface? = null
     private var frames: WindowFrames? = null
     private var theme by mutableStateOf(SystemTheme.Light)
