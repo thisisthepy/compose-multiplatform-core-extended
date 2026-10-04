@@ -1,0 +1,9 @@
+# Kotlin/Native (mingwX64) cinterop over the shared Win32 window.
+#
+# This reads the header only. The object that answers the calls is the one MSVC compiles
+# from `c/win32_window.c` and `c/win32_notifications.c`, and the application's MSVC link
+# puts it beside the MinGW object the renderer compiles to. Nothing is compiled here.
+headers = win32_window.h
+headerFilter = win32_window.h
+package = org.thisisthepy.compose.window.windows.c
+compilerOpts = -I../c
