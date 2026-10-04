@@ -14,6 +14,7 @@ on:
       - extended/window/common/**
       - extended/window/native/linux/**
       - extended/window/project.yaml
+      - extended/window/scripts/**
       - .github/workflows/extended-window-linux.yml
   push:
     branches:
@@ -22,6 +23,7 @@ on:
       - extended/window/common/**
       - extended/window/native/linux/**
       - extended/window/project.yaml
+      - extended/window/scripts/**
       - .github/workflows/extended-window-linux.yml
 
 concurrency:
@@ -112,6 +114,10 @@ jobs:
       - name: Build x64
         working-directory: extended/window
         run: ./kotlin build -p linuxX64
+
+      - name: Check that every window klib has a globally unique name
+        working-directory: extended/window
+        run: ./scripts/check-klib-names.sh --built .
 
       # Compiled only: the cross compile sysroot has no arm64 libX11, so the arm64 test
       # executable cannot be linked on an x86-64 runner.
