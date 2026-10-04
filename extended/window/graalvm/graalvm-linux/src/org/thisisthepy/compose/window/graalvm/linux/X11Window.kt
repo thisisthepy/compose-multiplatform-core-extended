@@ -70,6 +70,10 @@ class X11Window : WindowPlatform {
         X11Natives.pump(timeoutMillis.coerceAtLeast(0) / 1000.0)
         val record = eventBuffer ?: return
         while (X11Natives.pollEvent(record) != 0) {
+            if (record.readInt(0) == EVENT_TEXT_PASTE) {
+                takePaste()?.let { listener?.onEvent(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, it)) }
+                continue
+            }
             listener?.onEvent(read(record))
         }
         val scale = measure().scale
@@ -85,6 +89,16 @@ class X11Window : WindowPlatform {
         if (X11Natives.windowClosed() != 0 && listener?.onCloseRequested() != false) {
             close()
         }
+    }
+
+    /** The whole of a paste the window is holding, so that it lands as one edit. */
+    private fun takePaste(): String? {
+        val buffer = textBuffer ?: return null
+        val length = X11Natives.takePaste(buffer as CCharPointer, TEXT_CAPACITY)
+        if (length <= 0) return null
+        val bytes = ByteArray(length)
+        for (i in 0 until length) bytes[i] = buffer.readByte(i)
+        return bytes.decodeToString()
     }
 
     private fun read(record: Pointer): WindowEvent {
@@ -194,5 +208,6 @@ class X11Window : WindowPlatform {
         // 4 MiB, the most one X11 property read returns: a longer clipboard answers empty.
         const val TEXT_CAPACITY = 4 * 1024 * 1024
         const val ACTION_CLOSE = 2
+        const val EVENT_TEXT_PASTE = 13
     }
 }

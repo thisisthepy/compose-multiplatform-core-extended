@@ -56,6 +56,10 @@ internal object X11Natives {
     external fun pump(seconds: Double)
 
     @JvmStatic
+    @CFunction("dxc_native_take_paste")
+    external fun takePaste(out: CCharPointer?, capacity: Int): Int
+
+    @JvmStatic
     @CFunction("dxc_native_poll_event")
     external fun pollEvent(out: Pointer?): Int
 
