@@ -28,20 +28,25 @@ done < <(find "$root" -name module.yaml -not -path '*/build/*' | sort)
 
 if [[ "${1:-}" == "--built" ]]; then
   found=0
-  while IFS= read -r manifest; do
+  # Amper writes packed klibs (a zip with default/manifest) or, with -nopack, a directory.
+  while IFS= read -r klib; do
     found=1
-    name="$(sed -n 's/^unique_name=//p' "$manifest")"
+    if [[ -d "$klib" ]]; then
+      name="$(sed -n 's/^unique_name=//p' "$klib/default/manifest")"
+    else
+      name="$(unzip -p "$klib" default/manifest | sed -n 's/^unique_name=//p')"
+    fi
     case "$name" in
-      org.thisisthepy.compose.window:*) echo "ok: $name" ;;
-      *) case "$manifest" in
-           */_common_*|*/_macos_*|*/_linux_*)
-             echo "${manifest#$root/}: unique_name=$name is not globally unique" >&2
+      org.thisisthepy.compose.window:*) echo "ok: $name (${klib#$root/})" ;;
+      *) case "$klib" in
+           */_common_compile*|*/_macos_compile*|*/_linux_compile*)
+             echo "${klib#$root/}: unique_name=$name is not globally unique" >&2
              status=1 ;;
          esac ;;
     esac
-  done < <(find "$2/build/tasks" -path '*compile*' -name manifest 2>/dev/null)
+  done < <(find "$2/build/tasks" -path '*_compile*' -name '*.klib' 2>/dev/null)
   if [[ $found == 0 ]]; then
-    echo "no klib manifest under $2/build/tasks; build first" >&2
+    echo "no klib under $2/build/tasks; build first" >&2
     status=1
   fi
 fi
