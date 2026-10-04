@@ -72,9 +72,8 @@ class X11Window : WindowPlatform {
     override fun pump(timeoutMillis: Long) {
         X11Natives.pump(timeoutMillis.coerceAtLeast(0) / 1000.0)
         if (eventBuffer == 0L) return
-        val record = WordFactory.pointer<Pointer>(eventBuffer)
-        while (X11Natives.pollEvent(record) != 0) {
-            listener?.onEvent(read(record))
+        while (X11Natives.pollEvent(WordFactory.pointer<Pointer>(eventBuffer)) != 0) {
+            listener?.onEvent(read(eventBuffer))
         }
         val scale = measure().scale
         if (scale != lastScale) {
@@ -91,7 +90,10 @@ class X11Window : WindowPlatform {
         }
     }
 
-    private fun read(record: Pointer): WindowEvent {
+    // Takes the address, not a word: native-image rejects a word passed as an argument to a
+    // method that is not inlined, so each read makes the word where it uses it.
+    private fun read(address: Long): WindowEvent {
+        val record = WordFactory.pointer<Pointer>(address)
         val bytes = ByteArray(X11Layout.EVENT_TEXT_BYTES)
         var length = 0
         while (length < bytes.size) {
