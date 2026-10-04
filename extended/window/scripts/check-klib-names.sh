@@ -36,6 +36,7 @@ if [[ "${1:-}" == "--built" ]]; then
     else
       name="$(unzip -p "$klib" default/manifest | sed -n 's/^unique_name=//p')"
     fi
+    name="${name//\\/}" # the manifest is a properties file, so ':' is written as '\:'
     case "$name" in
       org.thisisthepy.compose.window:*) echo "ok: $name (${klib#$root/})" ;;
       *) case "$klib" in
