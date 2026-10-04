@@ -30,16 +30,16 @@ internal actual suspend fun ClipEntry.readText(): String? =
     plainTextOrNull() ?: readTransferableText()
 
 internal actual suspend fun ClipEntry.readAnnotatedString(): AnnotatedString? =
-    plainTextOrNull()?.let { AnnotatedString(it) } ?: readTransferableAnnotatedString()
+    annotatedStringOrNull() ?: readTransferableAnnotatedString()
 
 internal actual fun AnnotatedString?.toClipEntry(): ClipEntry? {
     if (this == null) return null
-    return toTransferableClipEntry()
+    return ClipEntry(this)
 }
 
 internal fun ClipEntry?.hasAnnotatedString(): Boolean {
     if (this == null) return false
-    if (isPlainText()) return false
+    if (isPlainText()) return nativeClipEntry is AnnotatedString
     return hasTransferableAnnotatedString()
 }
 
