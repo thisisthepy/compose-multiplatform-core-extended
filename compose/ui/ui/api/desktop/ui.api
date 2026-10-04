@@ -11,13 +11,13 @@ public final class androidx/compose/ui/AbsoluteAlignment {
 	public final fun getTopRight ()Landroidx/compose/ui/Alignment;
 }
 
+public final class androidx/compose/ui/Actuals_desktopKt {
+	public static final fun apiGuardProbe ()I
+}
+
 public abstract interface class androidx/compose/ui/Alignment {
 	public static final field Companion Landroidx/compose/ui/Alignment$Companion;
 	public abstract fun align-KFBX0sM (JJLandroidx/compose/ui/unit/LayoutDirection;)J
-}
-
-public final class androidx/compose/ui/Actuals_desktopKt {
-	public static final fun apiGuardProbe ()I
 }
 
 public final class androidx/compose/ui/Alignment$Companion {
