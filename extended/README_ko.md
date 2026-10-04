@@ -1,12 +1,33 @@
 # compose-multiplatform-core-extended
 
+GraalVM native-image 와 Kotlin/Native 에서 AWT 없이 동작하는 데스크톱 창을 갖춘 Compose Multiplatform 라이브러리입니다.
+
+English: [README.md](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/README.md)
+
+## 기능
+
+- 두 경로의 AWT 없는 데스크톱 창: GraalVM native-image 실행 파일과 Kotlin/Native 실행 파일이 JDK 의 AWT 가 아니라 플랫폼
+  자체 API 가 만든 창(macOS 는 AppKit 과 Metal, Linux 는 X11)에 그립니다.
+- 공유 창 모듈 `org.thisisthepy.compose.window`: 창 상태 기계, 최소 크기, 이벤트 정규화, 프레임 요청 병합, IME 조합 상태, 다크 모드와
+  DPI 가 Kotlin 표준 라이브러리에만 의존하는 공통 모듈에 있습니다. 두 경로가 이를 함께 쓰고, 패리티 테스트가 같은 검사를 양쪽에 실행합니다.
+- 디자인 시스템과 Liquid Glass: Material 3, Cupertino, Fluent, GNOME, Breeze, Deepin 테마와 Liquid Glass 소재를 독립 라이브러리로 제공합니다.
+- JAWT 없는 skiko: native image 가 링크하는 정적 skiko 아카이브로, JDK 의 `libjawt` 에 의존하지 않습니다.
+- AWT 없는 클립보드와 포인터 아이콘: AWT 없는 창도 복사, 붙여넣기, 커서 변경을 할 수 있습니다.
+- Compose UI 모듈의 Linux 와 Windows(`mingwX64`) Kotlin/Native 타깃.
+- 업스트림 공개 API 가드: 워크플로가 Compose 모듈의 공개 API 를 업스트림과 비교하므로 기존 Compose 코드가 계속 컴파일됩니다.
+  포크 자체의 API 는 `extended/` 아래 별도 모듈에 있습니다.
+
+이를 쓰는 애플리케이션을 패키징하려면 Gradle 플러그인 포크
+[compose-multiplatform-extended](https://github.com/thisisthepy/compose-multiplatform-extended/blob/extended/extended/README_ko.md)
+를 보십시오.
+
+## 이 포크에 대하여
+
 [JetBrains/compose-multiplatform-core](https://github.com/JetBrains/compose-multiplatform-core)
 를 thisisthepy 가 포크한 저장소입니다. 작업은 `extended` 브랜치에 있으며, JetBrains
 `release/1.11` 의 `73ac849` ("Copy Jetpack Compose 1.11.2") 위에 쌓여 있습니다. 저장소 루트는
 업스트림 그대로 둡니다. 포크가 더한 것은 Compose 모듈 안의 플랫폼 소스 세트이거나 `extended/`
 아래의 스크립트입니다.
-
-English: [README.md](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/README.md)
 
 ## 더한 것
 
