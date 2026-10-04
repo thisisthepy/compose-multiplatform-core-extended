@@ -62,11 +62,51 @@ jobs:
           java -Djava.awt.headless=true -Xlog:class+load:file=class-load.log \
             -cp 'libs/*' extended/skiko/tests/LoaderCheck.java class-load.log
 
+  loader-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extended/skiko
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Fetch skiko and its two dependencies
+        run: |
+          set -euo pipefail
+          mkdir libs
+          central=https://repo1.maven.org/maven2
+          curl -fsSL -o libs/skiko-awt.jar "$central/org/jetbrains/skiko/skiko-awt/$SKIKO_VERSION/skiko-awt-$SKIKO_VERSION.jar"
+          curl -fsSL -o libs/skiko-runtime.jar "$central/org/jetbrains/skiko/skiko-awt-runtime-windows-x64/$SKIKO_VERSION/skiko-awt-runtime-windows-x64-$SKIKO_VERSION.jar"
+          curl -fsSL -o libs/kotlin-stdlib.jar "$central/org/jetbrains/kotlin/kotlin-stdlib/$KOTLIN_VERSION/kotlin-stdlib-$KOTLIN_VERSION.jar"
+          curl -fsSL -o libs/coroutines.jar "$central/org/jetbrains/kotlinx/kotlinx-coroutines-core-jvm/$COROUTINES_VERSION/kotlinx-coroutines-core-jvm-$COROUTINES_VERSION.jar"
+          unzip -o -q libs/skiko-runtime.jar 'skiko-windows-x64.dll' -d libs
+
+      - name: The native library does not link jawt
+        run: |
+          dumpbin.exe //nologo //dependents libs/skiko-windows-x64.dll | tee deps.txt
+          if grep -iE 'jawt|awt\.dll' deps.txt; then echo "skiko-windows-x64.dll links AWT" >&2; exit 1; fi
+
+      - name: Load skiko and check that AWT stays out
+        run: |
+          set -euo pipefail
+          java -Djava.awt.headless=true -Xlog:class+load:file=class-load.log \
+            -cp 'libs/*' extended/skiko/tests/LoaderCheck.java class-load.log
+
   static-archive:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-14 ]
+        os: [ ubuntu-latest, macos-14, windows-latest ]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
@@ -85,6 +125,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgl1-mesa-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxinerama-dev libfontconfig1-dev libdbus-1-dev
 
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+
       - name: Build the archive with no JAWT
+        shell: bash
         run: |
           bash extended/skiko/build-skiko-static-jvm.sh --no-jawt "$RUNNER_TEMP/skiko-static"

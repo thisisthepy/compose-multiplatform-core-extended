@@ -32,6 +32,19 @@ public class LoaderCheck {
             }
         }
 
+        if (System.getProperty("os.name").startsWith("Windows")) {
+            Process tasklist = new ProcessBuilder("tasklist", "/m", "/fi", "PID eq " + ProcessHandle.current().pid())
+                .redirectErrorStream(true).start();
+            String modules = new String(tasklist.getInputStream().readAllBytes());
+            tasklist.waitFor();
+            if (!modules.toLowerCase().contains("skiko")) {
+                problems.add("tasklist does not list skiko, so the module check proves nothing: " + modules);
+            }
+            if (modules.toLowerCase().contains("jawt") || modules.toLowerCase().contains("awt.dll")) {
+                problems.add("native module loaded: " + modules);
+            }
+        }
+
         for (String line : Files.readAllLines(Path.of(args[0]))) {
             if (line.contains("java.awt.") || line.contains("javax.swing.") || line.contains("sun.awt.")) {
                 problems.add("class loaded: " + line);

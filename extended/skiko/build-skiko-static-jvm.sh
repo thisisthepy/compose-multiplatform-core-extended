@@ -201,7 +201,11 @@ if [[ "$host" == "windows" ]]; then
     grep -q "SkLoadICU" "$out/symbols.txt" || die "the archive has no SkLoadICU, so Skia would look for icudtl.dat"
 fi
 
-if [[ "$jawt_source" == "static_no_jawt.c" && "$host" != "windows" ]]; then
+if [[ "$jawt_source" == "static_no_jawt.c" && "$host" == "windows" ]]; then
+    if dumpbin.exe //nologo //symbols "$(cygpath -w "$archive")" | grep "UNDEF" | grep -q "JAWT_"; then
+        die "the archive still refers to JAWT"
+    fi
+elif [[ "$jawt_source" == "static_no_jawt.c" ]]; then
     # An undefined JAWT_ symbol is what would pull libjawt into the link.
     if nm -u "$archive" 2>/dev/null | grep -q "JAWT_"; then
         die "the archive still refers to JAWT" "$(nm -u "$archive" | grep "JAWT_")"
