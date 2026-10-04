@@ -37,6 +37,8 @@ import androidx.compose.ui.input.key.KeyEvent as ComposeKeyEvent
 import androidx.compose.ui.input.key.internal
 import androidx.compose.ui.input.key.toComposeEvent
 import androidx.compose.ui.input.pointer.AwtCursor
+import androidx.compose.ui.input.pointer.ExtendedPointerIcons
+import androidx.compose.ui.input.pointer.StandardPointerIcon
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerButtons
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -812,8 +814,12 @@ internal class ComposeSceneMediator(
         }
 
         override fun setPointerIcon(pointerIcon: PointerIcon) {
-            contentComponent.cursor =
-                (pointerIcon as? AwtCursor)?.cursor ?: Cursor(Cursor.DEFAULT_CURSOR)
+            ExtendedPointerIcons.sink?.let { it.setPointerIcon(pointerIcon); return }
+            contentComponent.cursor = when (pointerIcon) {
+                is AwtCursor -> pointerIcon.cursor
+                is StandardPointerIcon -> pointerIcon.toAwtCursor()
+                else -> Cursor(Cursor.DEFAULT_CURSOR)
+            }
         }
         override val parentFocusManager: FocusManager = DesktopFocusManager()
         override fun requestFocus(): Boolean {
