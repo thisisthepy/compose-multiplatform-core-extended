@@ -1,0 +1,60 @@
+# extended/window/common: the platform-neutral window module.
+#
+# Builds and tests it for the JVM and for the Kotlin/Native targets (macosArm64 on macOS,
+# linuxX64 and linuxArm64 on Linux), and fails if the module names a platform or toolkit.
+
+name: Extended window common
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window-common.yml
+  push:
+    branches:
+      - extended
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window-common.yml
+
+concurrency:
+  group: extended-window-common-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-24.04, macos-14 ]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extended/window
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: The module names no platform and no toolkit
+        working-directory: extended/window/common
+        run: |
+          if grep -rnE "java\.awt|javax\.swing|androidx\.compose|platform\.(posix|darwin|linux)|kotlinx\.cinterop" src test; then
+            echo "common must not name a platform, a toolkit or Compose" >&2
+            exit 1
+          fi
+
+      - name: Build all targets this host can build
+        working-directory: extended/window
+        run: ./kotlin build -m common
+
+      - name: Test
+        working-directory: extended/window
+        run: ./kotlin test -m common
