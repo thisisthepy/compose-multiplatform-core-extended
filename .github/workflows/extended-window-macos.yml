@@ -53,5 +53,8 @@ jobs:
       - name: Build
         run: ./kotlin build -p macosArm64 -m macos
 
+      - name: Check that every window klib has a globally unique name
+        run: ./scripts/check-klib-names.sh --built .
+
       - name: Test
         run: ./kotlin test -p macosArm64 -m macos
