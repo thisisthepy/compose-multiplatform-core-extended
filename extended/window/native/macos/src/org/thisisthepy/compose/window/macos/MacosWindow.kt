@@ -235,6 +235,18 @@ class MacosWindow(
         // and can say where it is. Asked before, every control answers with an empty
         // rectangle and a reader finds the screen stacked in one corner.
         if (readerIsListening) semantics.pushIfChanged(afterDrawing = true)
+        followCaret()
+    }
+
+    /**
+     * Keeps the input method's candidate window at the caret. Asked after each frame, which
+     * is when the field has been laid out and the caret has moved, and again whenever the
+     * spot differs, so a session that has just started is placed on its first frame.
+     */
+    private fun followCaret() {
+        if (!textInput.isActive) return
+        val spot = caretSpot() ?: return
+        if (spot != imeSpot) setImeSpot(spot.first, spot.second)
     }
 
     /** Asks for a frame, which is drawn where AppKit next draws the view. */
@@ -585,8 +597,9 @@ class MacosWindow(
             emit(pointer(WindowEvent.POINTER_DOWN, event, BUTTON_PRIMARY))
         }
 
-        override fun mouseUp(event: NSEvent) =
+        override fun mouseUp(event: NSEvent) {
             emit(pointer(WindowEvent.POINTER_UP, event, BUTTON_PRIMARY))
+        }
 
         override fun rightMouseDown(event: NSEvent) {
             emit(pointer(WindowEvent.POINTER_DOWN, event, BUTTON_SECONDARY))
@@ -600,9 +613,9 @@ class MacosWindow(
 
         override fun rightMouseUp(event: NSEvent) = Unit
 
-        override fun mouseMoved(event: NSEvent) = emit(pointer(WindowEvent.POINTER_MOVE, event, 0))
+        override fun mouseMoved(event: NSEvent) { emit(pointer(WindowEvent.POINTER_MOVE, event, 0)) }
 
-        override fun mouseDragged(event: NSEvent) = emit(pointer(WindowEvent.POINTER_MOVE, event, BUTTON_PRIMARY))
+        override fun mouseDragged(event: NSEvent) { emit(pointer(WindowEvent.POINTER_MOVE, event, BUTTON_PRIMARY)) }
 
         override fun scrollWheel(event: NSEvent) {
             // The record has one pair of numbers, so the position goes first as a move and
@@ -628,7 +641,10 @@ class MacosWindow(
             inputContext?.handleEvent(event)
         }
 
-        override fun keyUp(event: NSEvent) = emit(keyRecord(WindowEvent.KEY_UP, event))
+        override fun keyUp(event: NSEvent) {
+            // Keys the scene did not take are AppKit's, which keeps system key handling.
+            if (!emit(keyRecord(WindowEvent.KEY_UP, event))) super.keyUp(event)
+        }
     }
 
     fun setContent(content: @Composable () -> Unit) {
@@ -754,14 +770,15 @@ class MacosWindow(
      * Every event this window hears leaves through here as a [WindowEvent], and the scene
      * hears it the same way anyone else does: from whoever consumes [eventSink].
      */
-    var eventSink: ((WindowEvent) -> Unit)? = null
+    var eventSink: ((WindowEvent) -> Boolean)? = null
 
     /** Told which entry of the edit menu was chosen. */
     var menuChosen: ((Int) -> Unit)? = null
 
-    private fun emit(event: WindowEvent) {
+    /** True when the scene took the event, which a key-up needs to know to leave the rest to AppKit. */
+    private fun emit(event: WindowEvent): Boolean {
         val sink = eventSink
-        if (sink != null) sink(event) else feed(event)
+        return if (sink != null) sink(event) else feed(event)
     }
 
     /** Where the input method puts its candidate window, in the scene's pixels from the top left. */
@@ -787,7 +804,8 @@ class MacosWindow(
     private var lastPointer = Offset.Zero
 
     /** Delivers an event to the scene. The one place a [WindowEvent] becomes Compose input. */
-    fun feed(event: WindowEvent) {
+    fun feed(event: WindowEvent): Boolean {
+        var taken = true
         when (event.kind) {
             WindowEvent.POINTER_MOVE -> {
                 lastPointer = Offset(event.x, event.y)
@@ -810,11 +828,12 @@ class MacosWindow(
                 position = lastPointer,
                 scrollDelta = Offset(event.x, event.y),
             )
-            WindowEvent.KEY_DOWN -> scene.sendKeyEvent(event.composeKey(KeyEventType.KeyDown))
-            WindowEvent.KEY_UP -> scene.sendKeyEvent(event.composeKey(KeyEventType.KeyUp))
+            WindowEvent.KEY_DOWN -> taken = scene.sendKeyEvent(event.composeKey(KeyEventType.KeyDown))
+            WindowEvent.KEY_UP -> taken = scene.sendKeyEvent(event.composeKey(KeyEventType.KeyUp))
             WindowEvent.TEXT_COMMIT -> textInput.commit(event.text)
             WindowEvent.TEXT_COMPOSE -> textInput.compose(event.text)
         }
+        return taken
     }
 
     private fun WindowEvent.pointerButton(): PointerButton =
