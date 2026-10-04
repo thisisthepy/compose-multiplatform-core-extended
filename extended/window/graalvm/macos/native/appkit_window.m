@@ -432,6 +432,11 @@ int32_t dxc_native_poll_event(struct dxc_event *out) {
 // answer existed, with every consonant and vowel standing separately.
 static NSString *dxc_marked_text;
 
+// Where the caret is, in points from the top left of the view. Set through
+// `dxc_native_set_ime_spot` and read when the input method asks where to put its list.
+static float dxc_ime_x = 0;
+static float dxc_ime_y = 0;
+
 /**
  * The view the window is filled with.
  *
@@ -709,7 +714,7 @@ void dxc_native_set_cursor(int32_t shape) {
 // boundary; until it is asked for, the top left of the view keeps the list on screen and
 // near enough to read, which is better than the bottom of the display.
 - (NSRect)firstRectForCharacterRange:(NSRange)range actualRange:(NSRangePointer)actualRange {
-    NSRect local = NSMakeRect(0, 0, 1, 20);
+    NSRect local = NSMakeRect(dxc_ime_x, dxc_ime_y, 1, 20);
     NSRect windowRect = [self convertRect:local toView:nil];
     return [self.window convertRectToScreen:windowRect];
 }
@@ -1196,4 +1201,103 @@ void dxc_native_debug_key(void *window_pointer, int32_t key_code, const char *ch
         }
     }
     });
+}
+
+// What `WindowPlatform` asks of the window beyond drawing and input. Each takes the window
+// or the view the open call returned and runs on the main thread.
+
+/** Puts a title on the window. */
+void dxc_native_set_title(void *window_pointer, const char *title) {
+    NSWindow *window = (__bridge NSWindow *)window_pointer;
+    NSString *text = [NSString stringWithUTF8String:title];
+    dxc_on_main(^{ window.title = text; });
+}
+
+/** Changes the smallest size the content may be dragged to, in points. */
+void dxc_native_set_min_size(void *window_pointer, int32_t width, int32_t height) {
+    NSWindow *window = (__bridge NSWindow *)window_pointer;
+    dxc_on_main(^{ window.contentMinSize = NSMakeSize(width, height); });
+}
+
+/** Zero hides, one shows, two minimizes, three enters full screen. */
+void dxc_native_set_visibility(void *window_pointer, int32_t visibility) {
+    NSWindow *window = (__bridge NSWindow *)window_pointer;
+    dxc_on_main(^{
+        BOOL full = (window.styleMask & NSWindowStyleMaskFullScreen) != 0;
+        if (visibility != 3 && full) {
+            [window toggleFullScreen:nil];
+        }
+        switch (visibility) {
+        case 0: [window orderOut:nil]; break;
+        case 1:
+            if (window.miniaturized) [window deminiaturize:nil];
+            [window makeKeyAndOrderFront:nil];
+            break;
+        case 2: [window miniaturize:nil]; break;
+        case 3: if (!full) [window toggleFullScreen:nil]; break;
+        }
+    });
+}
+
+/** One when the system is set to dark appearance, zero when light. */
+int32_t dxc_native_system_dark(void) {
+    __block int32_t dark = 0;
+    dxc_on_main(^{
+        NSAppearanceName name = [NSApp.effectiveAppearance
+            bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]];
+        dark = [name isEqualToString:NSAppearanceNameDarkAqua] ? 1 : 0;
+    });
+    return dark;
+}
+
+/** Where the caret is, in points from the top left of the view, for the candidate list. */
+void dxc_native_set_ime_spot(float x, float y) {
+    dxc_ime_x = x;
+    dxc_ime_y = y;
+}
+
+// The item the reader chose from the context menu, or -1 where the menu was dismissed.
+static int32_t dxc_menu_chosen = -1;
+
+@interface DxcMenuTarget : NSObject
+- (void)chosen:(NSMenuItem *)item;
+@end
+
+@implementation DxcMenuTarget
+- (void)chosen:(NSMenuItem *)item { dxc_menu_chosen = (int32_t)item.tag; }
+@end
+
+/**
+ * Shows a context menu at the pointer and answers with the id of the item chosen, or -1.
+ *
+ * [items] is one line per entry, fields separated by a tab: id, enabled (0 or 1), a
+ * separator after it (0 or 1), and the label. The call returns when the menu closes.
+ */
+int32_t dxc_native_context_menu(void *view_pointer, const char *items) {
+    NSView *view = (__bridge NSView *)view_pointer;
+    NSString *packed = [NSString stringWithUTF8String:items];
+    dxc_on_main(^{
+        static DxcMenuTarget *target;
+        if (target == nil) target = [[DxcMenuTarget alloc] init];
+        dxc_menu_chosen = -1;
+        NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
+        menu.autoenablesItems = NO;
+        for (NSString *line in [packed componentsSeparatedByString:@"\n"]) {
+            NSArray<NSString *> *fields = [line componentsSeparatedByString:@"\t"];
+            if (fields.count < 4) continue;
+            NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:fields[3]
+                                                          action:@selector(chosen:)
+                                                   keyEquivalent:@""];
+            item.target = target;
+            item.tag = fields[0].intValue;
+            item.enabled = fields[1].intValue != 0;
+            [menu addItem:item];
+            if (fields[2].intValue != 0) [menu addItem:[NSMenuItem separatorItem]];
+        }
+        NSPoint screen = NSEvent.mouseLocation;
+        NSPoint inWindow = [view.window convertPointFromScreen:screen];
+        NSPoint local = [view convertPoint:inWindow fromView:nil];
+        [menu popUpMenuPositioningItem:nil atLocation:local inView:view];
+    });
+    return dxc_menu_chosen;
 }

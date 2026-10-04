@@ -9,6 +9,7 @@ product:
 dependencies:
   # Annotations and C interop types. Supplied by the native-image builder at image build
   # time, so they are not bundled into the jar.
+  - ../../common
   - org.graalvm.sdk:nativeimage:25.0.1: compile-only
 
 test-dependencies:

@@ -12,6 +12,8 @@ import org.graalvm.nativeimage.IsolateThread
 import org.graalvm.nativeimage.c.function.CFunctionPointer
 import org.graalvm.word.Pointer
 import org.graalvm.word.WordFactory
+import org.thisisthepy.compose.window.WindowEvent
+import org.thisisthepy.compose.window.WindowMeasurement
 
 // The Kotlin face of `native/appkit_window.m`, for the GraalVM native-image path.
 //
@@ -437,3 +439,59 @@ fun forgetFrameCallback() = setAppKitDrawCallback(
     WordFactory.nullPointer<CFunctionPointer>(),
     WordFactory.nullPointer<IsolateThread>(),
 )
+
+@CFunction("dxc_native_set_title")
+private external fun nativeSetTitle(window: Pointer?, title: CCharPointer?)
+
+@CFunction("dxc_native_set_min_size")
+private external fun nativeSetMinSize(window: Pointer?, width: Int, height: Int)
+
+@CFunction("dxc_native_set_visibility")
+private external fun nativeSetVisibility(window: Pointer?, visibility: Int)
+
+@CFunction("dxc_native_system_dark")
+private external fun nativeSystemDark(): Int
+
+@CFunction("dxc_native_set_ime_spot")
+private external fun nativeSetImeSpot(x: Float, y: Float)
+
+@CFunction("dxc_native_context_menu")
+private external fun nativeContextMenu(view: Pointer?, items: CCharPointer?): Int
+
+/** Puts a title on the window. */
+fun NativeWindow.setTitle(title: String) {
+    val holder = CTypeConversion.toCString(title)
+    try {
+        nativeSetTitle(WordFactory.pointer(window), holder.get())
+    } finally {
+        holder.close()
+    }
+}
+
+/** Changes the smallest content size, in points. */
+fun NativeWindow.setMinimumSize(width: Int, height: Int) =
+    nativeSetMinSize(WordFactory.pointer(window), width, height)
+
+/** Zero hides, one shows, two minimizes, three enters full screen. */
+fun NativeWindow.setVisibilityCode(code: Int) =
+    nativeSetVisibility(WordFactory.pointer(window), code)
+
+/** True when the system is set to dark appearance. */
+fun isSystemDark(): Boolean = nativeSystemDark() != 0
+
+/** Tells the input method where the caret is, in points from the top left of the view. */
+fun setNativeImeSpot(x: Float, y: Float) = nativeSetImeSpot(x, y)
+
+/**
+ * Shows a context menu at the pointer and answers with the id chosen, or -1.
+ *
+ * [packed] is one line per entry: id, enabled, separator after, label, separated by tabs.
+ */
+fun NativeWindow.showContextMenu(packed: String): Int {
+    val holder = CTypeConversion.toCString(packed)
+    try {
+        return nativeContextMenu(WordFactory.pointer(view), holder.get())
+    } finally {
+        holder.close()
+    }
+}
