@@ -37,6 +37,7 @@ class X11Window : WindowPlatform {
     private var sizeBuffer: Pointer? = null
     private var frameWanted = false
     private var lastScale = 0f
+    private var lastTheme: SystemTheme? = null
 
     /** Whether a frame was asked for since the last [present]; [requestFrame] coalesces. */
     val frameRequested: Boolean get() = frameWanted
@@ -61,6 +62,7 @@ class X11Window : WindowPlatform {
         textBuffer = UnmanagedMemory.calloc<Pointer>(TEXT_CAPACITY)
         sizeBuffer = UnmanagedMemory.calloc<Pointer>(12)
         lastScale = measure().scale
+        lastTheme = systemTheme()
         return true
     }
 
@@ -74,6 +76,11 @@ class X11Window : WindowPlatform {
         if (scale != lastScale) {
             lastScale = scale
             listener?.onScaleChanged(scale)
+        }
+        val theme = systemTheme()
+        if (theme != lastTheme) {
+            lastTheme = theme
+            listener?.onThemeChanged(theme)
         }
         if (X11Natives.windowClosed() != 0 && listener?.onCloseRequested() != false) {
             close()
@@ -126,8 +133,8 @@ class X11Window : WindowPlatform {
         return FramePresentRecord(drawnWidth, drawnHeight, window.width, window.height)
     }
 
-    /** X11 has no theme signal the window reads yet, so every window reports light. */
-    override fun systemTheme(): SystemTheme = SystemTheme.Light
+    /** Read the way the Kotlin/Native X11 window reads it: from `GTK_THEME`. */
+    override fun systemTheme(): SystemTheme = X11Theme.fromGtkTheme(System.getenv("GTK_THEME"))
 
     override fun setTitle(title: String) {
         val holder = CTypeConversion.toCString(title)
@@ -140,14 +147,8 @@ class X11Window : WindowPlatform {
 
     override fun setMinimumSize(width: Int, height: Int) = X11Natives.setMinSize(width, height)
 
-    override fun setVisibility(visibility: WindowVisibility) {
-        when (visibility) {
-            WindowVisibility.Minimized -> X11Natives.windowAction(ACTION_ICONIFY)
-            WindowVisibility.Fullscreen -> X11Natives.windowAction(ACTION_TOGGLE_MAXIMIZE)
-            WindowVisibility.Visible -> X11Natives.windowAction(ACTION_RAISE)
-            WindowVisibility.Hidden -> X11Natives.windowAction(ACTION_ICONIFY)
-        }
-    }
+    override fun setVisibility(visibility: WindowVisibility) =
+        X11Natives.setVisibility(X11Visibility.code(visibility))
 
     override fun readClipboardText(): String? {
         val buffer = textBuffer ?: return null
@@ -169,7 +170,11 @@ class X11Window : WindowPlatform {
 
     override fun setImeSpot(x: Int, y: Int) = X11Natives.setImeSpot(x.toFloat(), y.toFloat())
 
-    /** The window has no menu of its own, so a requested menu is reported as dismissed. */
+    /**
+     * Bare X11 has no native context menu, and the Kotlin/Native X11 window does not draw
+     * one either: the items are not shown and the listener hears the menu was dismissed, so
+     * a host that wants a menu draws it in its own scene.
+     */
     override fun showContextMenu(items: List<ContextMenuItem>) {
         listener?.onContextMenuChosen(-1)
     }
@@ -187,9 +192,6 @@ class X11Window : WindowPlatform {
 
     private companion object {
         const val TEXT_CAPACITY = 64 * 1024
-        const val ACTION_ICONIFY = 0
-        const val ACTION_TOGGLE_MAXIMIZE = 1
         const val ACTION_CLOSE = 2
-        const val ACTION_RAISE = 3
     }
 }
