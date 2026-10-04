@@ -117,6 +117,11 @@ class ComposeWindowHost(
             }
         }
 
+        override fun onContextMenuChosen(id: Int) {
+            val chord = editChord(id, usesCommandKey(platform.name)) ?: return
+            for (press in chord) scene?.sendKeyEvent(press)
+        }
+
         override fun onThemeChanged(theme: SystemTheme) {
             this@ComposeWindowHost.theme = theme
         }

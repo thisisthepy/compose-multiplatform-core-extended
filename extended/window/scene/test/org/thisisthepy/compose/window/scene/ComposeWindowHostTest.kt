@@ -10,6 +10,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import org.thisisthepy.compose.window.EditMenuId
 import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -26,7 +35,8 @@ import org.thisisthepy.compose.window.WindowPlatform
 import org.thisisthepy.compose.window.WindowVisibility
 
 private class FakePlatform : WindowPlatform {
-    override val name = "fake"
+    override var name = "fake"
+    val chosen = ArrayList<Int>()
     var width = 200
     var height = 100
     var opened = false
@@ -47,6 +57,8 @@ private class FakePlatform : WindowPlatform {
         val now = ArrayList(queued)
         queued.clear()
         for (event in now) listener?.onEvent(event)
+        for (id in ArrayList(chosen)) listener?.onContextMenuChosen(id)
+        chosen.clear()
         if (askClose) listener?.onCloseRequested()
     }
 
@@ -165,6 +177,50 @@ class ComposeWindowHostTest {
         platform.queued.add(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "가"))
         repeat(6) { host.turn(0) }
         assertEquals("가", typed)
+        host.close()
+    }
+
+    @Test
+    fun fr33_6_every_edit_entry_stands_for_its_own_key_with_the_platforms_shortcut_modifier() {
+        val keys = mapOf(
+            EditMenuId.CUT to Key.X,
+            EditMenuId.COPY to Key.C,
+            EditMenuId.PASTE to Key.V,
+            EditMenuId.SELECT_ALL to Key.A,
+        )
+        for ((id, key) in keys) {
+            for (command in listOf(true, false)) {
+                val sent = editChord(id, command)!!
+                assertEquals(listOf(KeyEventType.KeyDown, KeyEventType.KeyUp), sent.map { it.type })
+                assertTrue(sent.all { it.key == key && it.isMetaPressed == command && it.isCtrlPressed != command })
+            }
+        }
+        assertEquals(null, editChord(-1, true), "a dismissed menu presses nothing")
+        assertEquals(null, editChord(99, true), "a number nobody sent presses nothing")
+        assertTrue(usesCommandKey("appkit-graalvm") && usesCommandKey("macos-native"))
+        assertTrue(!usesCommandKey("graalvm-linux-x11"))
+    }
+
+    @Test
+    fun fr33_6_a_chosen_menu_entry_reaches_the_focused_field_as_the_shortcut() {
+        val platform = FakePlatform().also { it.name = "appkit-graalvm" }
+        val surface = FakeSurface()
+        val heard = ArrayList<KeyEvent>()
+        val host = host(platform, surface) {
+            Box(Modifier.size(180.dp, 40.dp).onPreviewKeyEvent { heard += it; true }) {
+                BasicTextField(value = "x", onValueChange = {}, modifier = Modifier.size(180.dp, 40.dp))
+            }
+        }
+        assertTrue(host.open())
+        host.turn(0)
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, 1, 0, 0, 0, ""))
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_UP, 10f, 10f, 0, 0, 0, 0, ""))
+        repeat(6) { host.turn(0) }
+        heard.clear()
+        platform.chosen.add(EditMenuId.COPY)
+        repeat(3) { host.turn(0) }
+        assertEquals(listOf(KeyEventType.KeyDown, KeyEventType.KeyUp), heard.map { it.type })
+        assertTrue(heard.all { it.key == Key.C && it.isMetaPressed })
         host.close()
     }
 }
