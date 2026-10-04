@@ -6,12 +6,12 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - extended/window/graalvm/linux/**
+      - extended/window/**
       - .github/workflows/extended-window-graalvm-linux.yml
   push:
     branches: [ extended ]
     paths:
-      - extended/window/graalvm/linux/**
+      - extended/window/**
       - .github/workflows/extended-window-graalvm-linux.yml
 
 concurrency:
@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: extended/window/graalvm/linux
+          sparse-checkout: extended/window
 
       - uses: actions/setup-java@v4
         with:
@@ -53,7 +53,7 @@ jobs:
           fi
 
       - name: Compile and test the Kotlin
-        working-directory: extended/window/graalvm/linux
+        working-directory: extended/window
         run: |
           ./kotlin build
           ./kotlin test
