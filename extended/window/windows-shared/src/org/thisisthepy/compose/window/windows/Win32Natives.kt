@@ -64,7 +64,7 @@ private external fun windowClosed(): Int
 private external fun pollEvent(out: Pointer?): Int
 
 @CFunction("dxc_native_clipboard_read")
-private external fun clipboardRead(out: CCharPointer?, capacity: Int): Int
+private external fun clipboardRead(out: Pointer?, capacity: Int): Int
 
 @CFunction("dxc_native_clipboard_write")
 private external fun clipboardWrite(text: CCharPointer?)
