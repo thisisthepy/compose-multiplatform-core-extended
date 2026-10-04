@@ -13,10 +13,18 @@ on:
       - compose/ui/ui/src/desktop*/**
       - extended/**
       - .github/workflows/extended-desktop-test.yml
+  push:
+    branches:
+      - extended
+    paths:
+      - compose/foundation/foundation/src/desktop*/**
+      - compose/ui/ui/src/desktop*/**
+      - extended/**
+      - .github/workflows/extended-desktop-test.yml
 
 concurrency:
-  group: extended-desktop-test-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -41,6 +49,6 @@ jobs:
           distribution: 'corretto'
       - uses: gradle/actions/setup-gradle@v4
         with:
-          cache-read-only: true
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
       - name: Run test
         run: ./gradlew ${{ matrix.task }} --tests '${{ matrix.filter }}' --no-daemon --stacktrace

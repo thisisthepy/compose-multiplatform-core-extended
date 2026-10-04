@@ -25,8 +25,8 @@ on:
       - .github/workflows/extended-window-linux.yml
 
 concurrency:
-  group: extended-window-linux-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
