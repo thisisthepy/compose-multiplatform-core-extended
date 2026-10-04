@@ -1,0 +1,7 @@
+# window: a standalone Amper project, like extended/design-systems.
+#
+# The window layers of compose-rust, published under org.thisisthepy.compose.window.*.
+# Nothing here may depend on the renderer, its wire protocol or its node table.
+
+modules:
+  - native/macos

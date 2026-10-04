@@ -1,0 +1,25 @@
+# The Kotlin/Native macOS window: AppKit for the window and its input, Metal for the surface.
+#
+# An operating system layer only. It has no JVM, no AWT and no hand-written interop: every
+# call goes through the platform libraries Kotlin/Native already ships. Policy, such as the
+# smallest size a window is given or what text on the clipboard means, is decided in the
+# common window module and reached from here.
+product:
+  type: lib
+  platforms: [ macosArm64 ]
+
+dependencies:
+  - $compose.runtime
+  - $compose.foundation
+  - $compose.ui
+
+test-dependencies:
+  - $kotlin.test
+
+settings:
+  compose:
+    enabled: true
+  kotlin:
+    optIns:
+      - kotlinx.cinterop.ExperimentalForeignApi
+      - kotlinx.cinterop.BetaInteropApi
