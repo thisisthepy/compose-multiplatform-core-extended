@@ -1,0 +1,100 @@
+# Builds the static Skia/skiko archive for Windows x64 (extended/skiko/build-skiko-static-jvm.sh),
+# the input of the Gradle plugin's nativeImage.skikoStaticDirectory. It is published as a
+# 90-day workflow artifact only; no release or tag is created.
+name: extended skiko static (Windows x64)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ extended ]
+    # Only when what the archive is built from changes: the skiko build scripts, patches and
+    # sources under extended/skiko, and this workflow. Run it by hand for anything else.
+    paths:
+      - 'extended/skiko/**'
+      - '.github/workflows/extended-skiko-static.yml'
+
+concurrency:
+  group: extended-skiko-static
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  ARCHIVE: skiko-static-windows-x64.zip
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extended/skiko
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # MSVC tools (cl.exe, lib.exe, dumpbin.exe) on PATH; the runner's LLVM provides clang-cl.
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Tool versions
+        run: |
+          clang-cl.exe --version
+          cl.exe 2>&1 | head -2 || true
+
+      - name: Build the archive
+        run: |
+          work="$(cygpath -u "$RUNNER_TEMP")/skiko-static"
+          "$BASH" extended/skiko/build-skiko-static-jvm.sh "$work"
+
+      - name: Lay out the package
+        run: |
+          work="$(cygpath -u "$RUNNER_TEMP")/skiko-static"
+          pkg="$GITHUB_WORKSPACE/package"
+          mkdir -p "$pkg/windows-x64"
+          cp "$work/out/windows-x64/skiko-static.lib" "$pkg/windows-x64/"
+          cp -r "$work/out/windows-x64/skia" "$pkg/windows-x64/skia"
+          cp "$work/out/windows-x64/symbols.txt" "$pkg/windows-x64/"
+          cat > "$pkg/README-LAYOUT.txt" <<TXT
+          skiko static archive for Windows x64
+          built from $GITHUB_REPOSITORY @ $GITHUB_SHA (run $GITHUB_RUN_ID)
+          skiko v0.144.6 (9a5b398bb2044fff7e7a84fbfd6f4b803e4427c0), Skia m144, embedded ICU
+
+          Unpack this archive so that the windows-x64 directory ends up as, for example,
+            C:\skiko-static\windows-x64\
+          holding skiko-static.lib and the skia\ directory (the *.lib files from JetBrains' Skia).
+
+          Point the Gradle plugin at the windows-x64 directory itself:
+
+            nativeImage {
+                skikoStaticDirectory = layout.dir(provider { file("C:/skiko-static/windows-x64") })
+            }
+
+          (or the SKIKO_STATIC environment variable where the build reads it).
+
+          Link skiko-static.lib whole (/WHOLEARCHIVE) and the skia\*.lib files as ordinary
+          archives, never forced. Verify files with SHA256SUMS (sha256sum -c SHA256SUMS).
+          TXT
+          sed -i 's/^          //' "$pkg/README-LAYOUT.txt"
+          cd "$pkg"
+          find . -type f ! -name SHA256SUMS | sort | xargs sha256sum > SHA256SUMS
+          cat SHA256SUMS
+          cd "$GITHUB_WORKSPACE"
+          7z a -tzip "$ARCHIVE" ./package/* > /dev/null
+          sha256sum "$ARCHIVE" | tee "$ARCHIVE.sha256"
+          ls -la "$ARCHIVE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skiko-static-windows-x64
+          path: |
+            skiko-static-windows-x64.zip
+            skiko-static-windows-x64.zip.sha256
+          retention-days: 90
+          if-no-files-found: error
