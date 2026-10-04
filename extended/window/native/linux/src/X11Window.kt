@@ -2,6 +2,10 @@
 
 package org.thisisthepy.compose.window.linux
 
+import org.thisisthepy.compose.window.FrameRequestCoalescer
+import org.thisisthepy.compose.window.ImeSession
+import org.thisisthepy.compose.window.keyEventsFor
+
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.CPointerVar
@@ -75,7 +79,7 @@ class X11Window : WindowPlatform {
 
     private var measured = WindowMeasurement(0, 0, DENSITY)
     private var presentedSinceEvent = false
-    private var frameWanted = true
+    private val frameRequests = FrameRequestCoalescer().also { it.request() }
     private var ownedClipboard: String? = null
 
     private val log = WindowEventLog()
@@ -210,15 +214,12 @@ class X11Window : WindowPlatform {
     override fun measure(): WindowMeasurement = measured
 
     override fun requestFrame() {
-        frameWanted = true
+        frameRequests.request()
     }
 
     /** Whether a frame was asked for since the last call. Reading it clears it. */
-    // Local flag: replaced by the common FrameRequests coalescing once common part 2 lands.
     fun takeFrameRequest(): Boolean {
-        val wanted = frameWanted
-        frameWanted = false
-        return wanted
+        return frameRequests.take()
     }
 
     /**
@@ -556,12 +557,12 @@ class X11Window : WindowPlatform {
                     return
                 }
                 measured = WindowMeasurement(width, height, DENSITY)
-                frameWanted = true
+                frameRequests.request()
                 resized()
             }
 
             Expose -> if (event.xexpose.count == 0) {
-                frameWanted = true
+                frameRequests.request()
                 resized()
             }
 
@@ -638,7 +639,7 @@ class X11Window : WindowPlatform {
         val press = event.type == KeyPress
         val keysym = XLookupKeysym(event.xkey.ptr, 0)
         val typed = if (!press) "" else xim?.lookup(event) ?: latinText(event)
-        return keyEventsFor(press, event.xkey.state, keysym, typed)
+        return keyEventsFor(press, event.xkey.state.toInt(), keysym.toLong(), typed)
     }
 
     /** What the key types without an input method: Latin-1, as `XLookupString` answers. */

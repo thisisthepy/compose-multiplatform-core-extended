@@ -1,5 +1,5 @@
 package org.thisisthepy.compose.window.linux
-// Local copy of the D-Bus wire types: replaced by the common D-Bus types once common part 2 lands.
+// The D-Bus wire types stay here: common has no D-Bus code.
 
 /**
  * One connection to the session bus, already authenticated, that carries whole messages.

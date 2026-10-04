@@ -5,7 +5,6 @@
 
 package org.thisisthepy.compose.window.linux
 
-import androidx.compose.ui.input.key.Key
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -44,66 +43,6 @@ import x11.XK_space
  * pass on a machine where the headers say something else.
  */
 class LinuxInputTest {
-
-    /**
-     * A key with a meaning of its own arrives at the scene as that meaning.
-     *
-     * Both halves of the journey, because each is a table and the two are written in different
-     * files: the keysym becomes the shared number here, and the shared number becomes a Compose
-     * key in the interpreter's own sources.
-     */
-    @Test
-    fun nfr9_a_named_key_reaches_the_scene_as_the_key_it_is() {
-        assertEquals(Key.Enter, composeKey(platformKey(XK_Return.toULong())))
-        assertEquals(Key.Tab, composeKey(platformKey(XK_Tab.toULong())))
-        assertEquals(Key.Spacebar, composeKey(platformKey(XK_space.toULong())))
-        assertEquals(Key.Backspace, composeKey(platformKey(XK_BackSpace.toULong())))
-        assertEquals(Key.DirectionLeft, composeKey(platformKey(XK_Left.toULong())))
-        assertEquals(Key.DirectionDown, composeKey(platformKey(XK_Down.toULong())))
-    }
-
-    /**
-     * The keypad's Enter is Enter, and shift-Tab is still Tab.
-     *
-     * Two keysyms for one key, and both have been the reason a form could not be left: a numeric
-     * keypad's Return is a different keysym from the main one, and a Tab held with shift arrives
-     * as `ISO_Left_Tab` rather than as Tab with a modifier.
-     */
-    @Test
-    fun the_second_keysym_for_a_key_means_the_same_key() {
-        assertEquals(
-            platformKey(XK_Return.toULong()),
-            platformKey(XK_KP_Enter.toULong()),
-            "the keypad's Enter is Enter",
-        )
-        assertEquals(
-            platformKey(XK_Tab.toULong()),
-            platformKey(XK_ISO_Left_Tab.toULong()),
-            "a Tab held with shift is still a Tab",
-        )
-    }
-
-    /**
-     * A key that types a letter has no meaning of its own.
-     *
-     * Zero rather than a wrong answer. The letter travels beside the key as a character, and a
-     * key given some other key's number would move the caret instead of typing.
-     */
-    @Test
-    fun a_key_that_types_a_character_claims_no_meaning() {
-        assertEquals(-1, platformKey(XK_a.toULong()))
-        assertEquals(Key.Unknown, composeKey(platformKey(XK_a.toULong())))
-    }
-
-    /** No two named keys share a number, or one of them does what the other means. */
-    @Test
-    fun no_two_named_keys_share_a_number() {
-        val named = listOf(
-            XK_Return, XK_Tab, XK_space, XK_BackSpace, XK_Left, XK_Down,
-        ).map { platformKey(it.toULong()) }
-        assertEquals(named.size, named.toSet().size, "two keys were given the same number")
-        assertNotEquals(Key.Unknown, composeKey(named.first()))
-    }
 
     /**
      * The four modifiers a screen can bind, in the bits the interpreter reads them from.

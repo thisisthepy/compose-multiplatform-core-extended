@@ -2,11 +2,12 @@
 
 package org.thisisthepy.compose.window.linux
 
+import org.thisisthepy.compose.window.x11Modifiers
+
 import x11.Button1Mask
 import x11.Button2Mask
 import x11.Button3Mask
 import x11.ControlMask
-import x11.KeySym
 import x11.Mod1Mask
 import x11.Mod4Mask
 import x11.ShiftMask
@@ -59,41 +60,8 @@ fun buttonsOf(state: UInt): Int {
  * macOS puts Command, which is why it lands in Command's bit: a screen that binds one binds
  * the other, and neither platform has both.
  */
-fun modifiersOf(state: UInt): Int {
-    val bits = state.toInt()
-    return (if (bits and ShiftMask != 0) MODIFIER_SHIFT else 0) or
-        (if (bits and ControlMask != 0) MODIFIER_CONTROL else 0) or
-        (if (bits and Mod1Mask != 0) MODIFIER_ALT else 0) or
-        (if (bits and Mod4Mask != 0) MODIFIER_SUPER else 0)
-}
+fun modifiersOf(state: UInt): Int = x11Modifiers(state.toInt())
 
-/**
- * The shared reader's number for a key this server named with a keysym.
- *
- * The numbers are not this platform's, and that is deliberate: they are the ones `composeKey`
- * reads, which every desktop translates into before the scene sees them, so the table from a
- * number to a Compose key is written once rather than three times. Minus one means a key with no
- * meaning of its own (zero is the letter A in that numbering), which is most of them: a key that types a character carries the character
- * beside it and the scene reads that instead.
- */
-// Local copy: replaced by the common X11Keys type once common part 2 lands.
-fun platformKey(keysym: KeySym): Int = when (keysym.toInt()) {
-    XK_Return, XK_KP_Enter -> PLATFORM_ENTER
-    XK_Tab, XK_ISO_Left_Tab -> PLATFORM_TAB
-    XK_space -> PLATFORM_SPACE
-    XK_BackSpace -> PLATFORM_BACKSPACE
-    XK_Escape -> PLATFORM_ESCAPE
-    XK_Delete -> PLATFORM_DELETE
-    XK_Left -> PLATFORM_LEFT
-    XK_Right -> PLATFORM_RIGHT
-    XK_Down -> PLATFORM_DOWN
-    XK_Up -> PLATFORM_UP
-    XK_Home -> PLATFORM_HOME
-    XK_End -> PLATFORM_END
-    XK_Prior -> PLATFORM_PAGE_UP
-    XK_Next -> PLATFORM_PAGE_DOWN
-    else -> -1
-}
 
 /**
  * This server's name for a pointer shape, from the number the scene asked with.
@@ -122,27 +90,9 @@ const val CURSOR_TEXT = 2
 const val CURSOR_CROSSHAIR = 3
 
 /** From NSEvent.h. The bits the shared reader reads a modifier word's meaning out of. */
-private const val MODIFIER_SHIFT = 1 shl 17
-private const val MODIFIER_CONTROL = 1 shl 18
-private const val MODIFIER_ALT = 1 shl 19
-private const val MODIFIER_SUPER = 1 shl 20
 
 // The shared numbering, which is AppKit's. `composeKey` in the interpreter's own sources is the
 // other end of each of these.
-private const val PLATFORM_ENTER = 0x24
-private const val PLATFORM_TAB = 0x30
-private const val PLATFORM_SPACE = 0x31
-private const val PLATFORM_BACKSPACE = 0x33
-private const val PLATFORM_ESCAPE = 0x35
-private const val PLATFORM_DELETE = 0x75
-private const val PLATFORM_LEFT = 0x7B
-private const val PLATFORM_RIGHT = 0x7C
-private const val PLATFORM_DOWN = 0x7D
-private const val PLATFORM_UP = 0x7E
-private const val PLATFORM_HOME = 0x73
-private const val PLATFORM_END = 0x77
-private const val PLATFORM_PAGE_UP = 0x74
-private const val PLATFORM_PAGE_DOWN = 0x79
 
 /** A wheel arrives as a press and a release of a button that does not exist. */
 const val WHEEL_UP = 4

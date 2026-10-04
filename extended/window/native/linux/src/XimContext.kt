@@ -2,6 +2,9 @@
 
 package org.thisisthepy.compose.window.linux
 
+import org.thisisthepy.compose.window.ImeSession
+import org.thisisthepy.compose.window.appendPoint
+
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.CPointer
