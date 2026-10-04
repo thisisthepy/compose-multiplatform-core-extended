@@ -1,5 +1,5 @@
-# window: the desktop window layers, a standalone project like extended/design-systems.
-# It must not depend on the renderer, so the layers can be published alone.
-
+# The window modules, one standalone Amper project like extended/design-systems.
+# Each window PR adds its own module line.
 modules:
+  - graalvm/linux
   - graalvm/macos
