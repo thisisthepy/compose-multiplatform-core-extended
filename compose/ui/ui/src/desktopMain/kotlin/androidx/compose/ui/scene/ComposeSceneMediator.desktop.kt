@@ -33,6 +33,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.asComposeCanvas
 import androidx.compose.ui.input.InputModeManager
+import androidx.compose.ui.InternalComposeUiApi
 import androidx.compose.ui.input.key.KeyEvent as ComposeKeyEvent
 import androidx.compose.ui.input.key.internal
 import androidx.compose.ui.input.key.toComposeEvent
@@ -813,6 +814,7 @@ internal class ComposeSceneMediator(
             textInputService2.startInputMethod(request)
         }
 
+        @OptIn(InternalComposeUiApi::class)
         override fun setPointerIcon(pointerIcon: PointerIcon) {
             ExtendedPointerIcons.sink?.let { it.setPointerIcon(pointerIcon); return }
             contentComponent.cursor = when (pointerIcon) {

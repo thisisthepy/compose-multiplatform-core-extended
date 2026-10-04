@@ -16,6 +16,7 @@
 
 package androidx.compose.ui.input.pointer
 
+import androidx.compose.ui.InternalComposeUiApi
 import androidx.compose.ui.internal.ExtendedPointerIcons
 import androidx.compose.ui.internal.PointerIconSink
 import androidx.compose.ui.internal.StandardPointerIconKind
@@ -27,6 +28,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
+@OptIn(InternalComposeUiApi::class)
 object AwtFreePointerIconProbe {
     @JvmStatic
     fun main(args: Array<String>) {
@@ -38,6 +40,7 @@ object AwtFreePointerIconProbe {
     }
 }
 
+@OptIn(InternalComposeUiApi::class)
 class AwtFreePointerIconTest {
     @Test
     fun standardIconsReportTheirKind() {

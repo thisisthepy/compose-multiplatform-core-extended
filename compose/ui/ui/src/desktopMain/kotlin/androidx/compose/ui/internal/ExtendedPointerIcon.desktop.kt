@@ -16,6 +16,7 @@
 
 package androidx.compose.ui.internal
 
+import androidx.compose.ui.InternalComposeUiApi
 import androidx.compose.ui.input.pointer.AwtCursor
 import androidx.compose.ui.input.pointer.PointerIcon
 import java.awt.Cursor
@@ -23,6 +24,7 @@ import java.awt.Cursor
 /**
  * Fork-only: the four pointer icons that Compose defines without a platform cursor.
  */
+@InternalComposeUiApi
 enum class StandardPointerIconKind(internal val awtType: Int) {
     // The values are java.awt.Cursor's type constants, written out so that reading a kind
     // never initialises java.awt.Cursor.
@@ -37,6 +39,7 @@ enum class StandardPointerIconKind(internal val awtType: Int) {
  * [PointerIcon.Text] or [PointerIcon.Hand], or null for any other icon (such as one made from a
  * `java.awt.Cursor`). Reading it touches no `java.awt` class.
  */
+@InternalComposeUiApi
 val PointerIcon.standardKind: StandardPointerIconKind?
     get() = when (this) {
         is StandardPointerIcon -> kind
@@ -49,10 +52,12 @@ val PointerIcon.standardKind: StandardPointerIconKind?
  * draws the scene into a window of its own sets it before the scene is created. While it is null
  * (the default) the icon is applied to the AWT content component as before.
  */
+@InternalComposeUiApi
 fun interface PointerIconSink {
     fun setPointerIcon(icon: PointerIcon)
 }
 
+@InternalComposeUiApi
 object ExtendedPointerIcons {
     @Volatile
     var sink: PointerIconSink? = null
