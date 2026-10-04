@@ -191,7 +191,8 @@ class X11Window : WindowPlatform {
     }
 
     private companion object {
-        const val TEXT_CAPACITY = 64 * 1024
+        // 4 MiB, the most one X11 property read returns: a longer clipboard answers empty.
+        const val TEXT_CAPACITY = 4 * 1024 * 1024
         const val ACTION_CLOSE = 2
     }
 }
