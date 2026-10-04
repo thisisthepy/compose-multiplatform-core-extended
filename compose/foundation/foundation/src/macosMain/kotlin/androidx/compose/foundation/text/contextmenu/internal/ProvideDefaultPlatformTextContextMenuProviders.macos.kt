@@ -33,13 +33,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalWindowInfo
-import kotlinx.cinterop.useContents
+import kotlinx.cinterop.CValue
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import platform.AppKit.NSApplication
+import platform.AppKit.NSEvent
 import platform.AppKit.NSMenu
 import platform.AppKit.NSMenuItem
 import platform.AppKit.NSView
+import platform.CoreGraphics.CGPoint
 import platform.CoreGraphics.CGPointMake
 import platform.darwin.NSObject
 import platform.darwin.sel_registerName
@@ -60,6 +62,14 @@ internal actual fun ProvideDefaultPlatformTextContextMenuProviders(
     modifier: Modifier,
     content: @Composable () -> Unit,
 ) {
+    // An application that gave its own menu keeps it: the system's is the default, not a
+    // second menu on top of the one asked for.
+    if (LocalTextContextMenuDropdownProvider.current != null) {
+        androidx.compose.foundation.layout.Box(modifier, propagateMinConstraints = true) {
+            content()
+        }
+        return
+    }
     // Where the menu is put is in the coordinates of whatever the menu is for, so the
     // layout it belongs to has to be known before one can be shown.
     val anchor = remember { AnchorCoordinates() }
@@ -125,18 +135,24 @@ private class NativeTextContextMenuProvider(
                 return@suspendCancellableCoroutine
             }
 
-            // The position is in the layout's coordinates, which count down from its top
-            // left; the view's count up from its bottom left.
-            val local = dataProvider.position(coordinates)
-            val where = view.frame.useContents {
-                CGPointMake(local.x.toDouble(), size.height - local.y.toDouble())
-            }
+            // At the pointer, which is where a right click opens a menu on this platform.
+            // The layout's position is in pixels from the corner of the layout, and the
+            // view counts points from its own corner: converting one to the other put the
+            // menu away from the click whenever the field was not at the window's corner.
+            val where = menuLocation(NSEvent.mouseLocation, view)
             waiting.invokeOnCancellation { menu.cancelTracking() }
             // Returns when the menu closes, whichever way it closed.
             menu.popUpMenuPositioningItem(null, where, view)
             waiting.resume(Unit)
         }
     }
+}
+
+/** The menu's origin in [view]'s coordinates for a pointer at [mouseOnScreen] in screen points. */
+internal fun menuLocation(mouseOnScreen: CValue<CGPoint>, view: NSView): CValue<CGPoint> {
+    val inWindow = view.window?.convertPointFromScreen(mouseOnScreen)
+        ?: return CGPointMake(0.0, 0.0)
+    return view.convertPoint(inWindow, fromView = null)
 }
 
 /** Holds the closure an item runs, because a menu item calls a selector on a target. */
