@@ -82,13 +82,11 @@ class MacosTextContextMenuProviderTest {
         )
         val view = window.contentView!!
         val onScreen = CGPointMake(150.0, 250.0)
-        val expected = view.convertPoint(window.convertPointFromScreen(onScreen), fromView = null)
-        val actual = menuLocation(onScreen, view)
-        actual.useContents {
-            expected.useContents {
-                assertEquals(x, this@useContents.x)
-                assertEquals(y, this@useContents.y)
-            }
+        // The content view starts at the content rect's corner, so the pointer is 50 right of
+        // and 150 above it.
+        menuLocation(onScreen, view).useContents {
+            assertEquals(50.0, x)
+            assertEquals(150.0, y)
         }
     }
 }
