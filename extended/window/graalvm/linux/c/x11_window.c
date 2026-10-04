@@ -1404,3 +1404,31 @@ void dxc_native_set_accessibility(const struct dxc_element *elements, int32_t co
         fprintf(stderr, "\n");
     }
 }
+
+/** Renames the open window. A window that is not open yet takes its title from the open call. */
+void dxc_native_set_title(const char *title) {
+    if (dxc_display == NULL || dxc_window == None || title == NULL) return;
+    XStoreName(dxc_display, dxc_window, title);
+    XChangeProperty(dxc_display, dxc_window, dxc_a_net_wm_name, dxc_a_utf8, 8, PropModeReplace,
+                    (const unsigned char *)title, (int)strlen(title));
+    XFlush(dxc_display);
+}
+
+/** Changes the smallest size the manager lets the window take, in points. */
+void dxc_native_set_min_size(int32_t width, int32_t height) {
+    dxc_options.min_width = width;
+    dxc_options.min_height = height;
+    if (dxc_display == NULL || dxc_window == None) return;
+    XSizeHints hints;
+    memset(&hints, 0, sizeof hints);
+    if (width > 0 || height > 0) {
+        hints.flags |= PMinSize;
+        hints.min_width = (int)((float)width * dxc_scale + 0.5f);
+        hints.min_height = (int)((float)height * dxc_scale + 0.5f);
+    }
+    if (!dxc_options.resizable) {
+        return;
+    }
+    XSetWMNormalHints(dxc_display, dxc_window, &hints);
+    XFlush(dxc_display);
+}

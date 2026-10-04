@@ -4,8 +4,5 @@
 modules:
   - common
   - graalvm/linux
-<<<<<<< HEAD
   - native/macos
-=======
   - graalvm/macos
->>>>>>> origin/extended
