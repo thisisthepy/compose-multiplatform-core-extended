@@ -804,7 +804,7 @@ private val Int.readerRole: String
     } ?: NSAccessibilityGroupRole ?: "AXGroup"
 
 /** Holds the closure a menu item runs, because a menu item calls a selector on a target. */
-private class MenuShortcut(private val run: () -> Unit) : platform.darwin.NSObject() {
+class MenuShortcut(private val run: () -> Unit) : platform.darwin.NSObject() {
     @kotlinx.cinterop.ObjCAction
     fun perform() = run()
 }
