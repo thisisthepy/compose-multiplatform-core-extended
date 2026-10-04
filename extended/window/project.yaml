@@ -1,0 +1,9 @@
+# window: the platform window layer, a standalone Amper project.
+#
+# Like extended/design-systems it is not a module of the Gradle build at the root of this
+# repository, and nothing here may depend on a renderer: the window code is published on its
+# own. Policy shared by every window lives in `common`; each `native/<os>` module is the thin
+# Kotlin/Native layer for one operating system.
+
+modules:
+  - native/linux

@@ -1,0 +1,113 @@
+# The window modules under extended/window: build and test them.
+#
+# `native/linux` compiles against Compose for Kotlin/Native Linux, which JetBrains does not
+# publish, so the job builds those Compose modules from this checkout, publishes them to the
+# local Maven repository, and then builds and tests the window project against them. The
+# inherited upstream workflows do not build extended/window and are not the gate for it.
+
+name: extended window
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window.yml
+  push:
+    branches:
+      - extended
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window.yml
+
+concurrency:
+  group: extended-window-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  COMPOSE_VERSION: 1.11.1
+  MATERIAL3_VERSION: 1.11.0-alpha07
+
+jobs:
+  linux:
+    name: native/linux (Linux x64 test, arm64 build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost \
+            /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/share/powershell \
+            /usr/local/lib/node_modules /usr/local/julia* /opt/microsoft /opt/google
+          sudo docker image prune --all --force >/dev/null || true
+          df -h /
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'corretto'
+
+      - name: Point the Compose build at the JDK
+        run: echo "ANDROIDX_JDK21=$JAVA_HOME" >> "$GITHUB_ENV"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+          gradle-home-cache-excludes: |
+            caches/build-cache-1
+
+      - name: Cache Kotlin/Native and the Kotlin toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.konan
+            ~/.cache/JetBrains/Kotlin
+          key: extended-window-linux-${{ hashFiles('extended/window/**/module.yaml', 'extended/window/libs.versions.toml', 'extended/window/kotlin') }}
+          restore-keys: |
+            extended-window-linux-
+
+      - name: Install the X11, GL, fontconfig and FreeType development libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libx11-dev libxext-dev libgl1-mesa-dev \
+            libfontconfig1-dev libfreetype6-dev xvfb
+
+      - name: Configure Gradle for this runner
+        run: |
+          mkdir -p ~/.gradle
+          cat > ~/.gradle/gradle.properties <<EOF
+          org.gradle.caching=false
+          org.gradle.workers.max=4
+          org.gradle.jvmargs=-Xmx11g -XX:MaxMetaspaceSize=2g -XX:+UseParallelGC -Dlint.nullness.ignore-deprecated=true -Dfile.encoding=UTF-8
+          kotlin.compiler.execution.strategy=in-process
+          EOF
+
+      - name: Publish Compose for Kotlin/Native Linux from this checkout
+        run: |
+          set -euo pipefail
+          tasks=()
+          for module in animation:animation animation:animation-core foundation:foundation \
+              foundation:foundation-layout material:material-ripple material3:material3 \
+              ui:ui ui:ui-backhandler ui:ui-geometry ui:ui-graphics ui:ui-text \
+              ui:ui-tooling-preview ui:ui-unit ui:ui-util; do
+            for publication in LinuxX64 LinuxArm64 KotlinMultiplatform; do
+              tasks+=(":compose:$module:publish${publication}PublicationToMavenLocal")
+            done
+          done
+          ./gradlew --no-daemon --no-configuration-cache \
+            "-Pjetbrains.publication.version.COMPOSE=$COMPOSE_VERSION" \
+            "-Pjetbrains.publication.version.COMPOSE_MATERIAL3=$MATERIAL3_VERSION" \
+            "${tasks[@]}"
+
+      - name: Build both architectures
+        working-directory: extended/window
+        run: ./kotlin build -p linuxX64 -p linuxArm64
+
+      - name: Test (x64, under a virtual display)
+        working-directory: extended/window
+        run: xvfb-run -a ./kotlin test -p linuxX64
