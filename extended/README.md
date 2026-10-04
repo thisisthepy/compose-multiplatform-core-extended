@@ -6,23 +6,15 @@ Korean: [README_ko.md](https://github.com/thisisthepy/compose-multiplatform-core
 
 ## Features
 
-- AWT-free desktop windows on both paths: a GraalVM native-image executable and a Kotlin/Native
-  executable draw into a window that the platform's own API makes (AppKit and Metal on macOS,
-  X11 on Linux), not into the JDK's AWT.
-- One shared window module, `org.thisisthepy.compose.window`: the window state machine, minimum
-  size, event normalisation, frame-request coalescing, IME composition state, dark mode and DPI
-  live in a common module that depends on the Kotlin standard library only. Both paths use it,
-  and parity tests run the same checks against both.
-- Design systems and Liquid Glass: Material 3, Cupertino, Fluent, GNOME, Breeze and Deepin
-  themes, and the Liquid Glass material, as standalone libraries.
-- skiko without JAWT: a static skiko archive that a native image links, with no dependency on
-  the JDK's `libjawt`.
-- AWT-free clipboard and pointer icons, so a window without AWT still copies, pastes and changes
-  its cursor.
-- Linux and Windows (`mingwX64`) Kotlin/Native targets for the Compose UI modules.
-- An upstream public API guard: a workflow compares the public API of the Compose modules with
-  upstream's, so existing Compose code keeps compiling. The fork's own API is in separate
-  modules under `extended/`.
+Status is as of 2026-10-05. Items marked in progress or planned are not on `extended` yet.
+
+- AWT-free desktop windows on both paths. macOS works on both: the Kotlin/Native window (AppKit and Metal) and the GraalVM native-image window. Linux (X11) works on the GraalVM path; the Kotlin/Native Linux window is in progress ([#28](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/28)). Windows is in progress: the shared Win32 window, `windows-shared`, is not merged ([#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32)).
+- One shared window module, `org.thisisthepy.compose.window`: the window state machine, minimum size, event normalisation, frame-request coalescing, IME composition state, dark mode and DPI live in a common module that depends on the Kotlin standard library only. Both paths use it. Parity tests that run the same checks against both are planned ([#70](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/70)).
+- Design systems and Liquid Glass: Material 3, Cupertino, Fluent, GNOME, Breeze and Deepin themes, and the Liquid Glass material, as standalone libraries.
+- skiko without JAWT: a static skiko archive that a native image links, with no dependency on the JDK's `libjawt`.
+- AWT-free clipboard and pointer icons, so a window without AWT still copies, pastes and changes its cursor.
+- `linuxX64`, `linuxArm64` and `mingwX64` Kotlin/Native source sets for the Compose UI modules are in the tree. No CI job builds them yet, and running a renderer linked from the `mingwX64` ones on Windows is open in [#3](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/3).
+- An upstream public API guard: a workflow compares the public API of the Compose modules with upstream's, so existing Compose code keeps compiling. The fork's own API is in separate modules under `extended/`.
 
 To package an application that uses these, see the Gradle plugin fork,
 [compose-multiplatform-extended](https://github.com/thisisthepy/compose-multiplatform-extended/blob/extended/extended/README.md).
