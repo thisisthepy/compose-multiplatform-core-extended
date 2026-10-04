@@ -109,9 +109,15 @@ jobs:
             "-Pjetbrains.publication.version.COMPOSE_MATERIAL3=$MATERIAL3_VERSION" \
             "${tasks[@]}"
 
-      - name: Build both architectures
+      - name: Build x64
         working-directory: extended/window
-        run: ./kotlin build -p linuxX64 -p linuxArm64
+        run: ./kotlin build -p linuxX64
+
+      # Compiled only: the cross compile sysroot has no arm64 libX11, so the arm64 test
+      # executable cannot be linked on an x86-64 runner.
+      - name: Compile arm64
+        working-directory: extended/window
+        run: ./kotlin task :linux:compileLinuxArm64Debug
 
       - name: Test (x64, under a virtual display)
         working-directory: extended/window
