@@ -1,0 +1,9 @@
+product: jvm/lib
+
+dependencies:
+  # Annotations and C interop types for @CFunction and @CEntryPoint. The native-image
+  # builder supplies them at image build time, so they are not bundled.
+  - org.graalvm.sdk:nativeimage:25.0.1: compile-only
+
+test-dependencies:
+  - $kotlin.test
