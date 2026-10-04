@@ -1,3 +1,4 @@
+// probe
 public final class androidx/compose/ui/AbsoluteAlignment {
 	public static final field $stable I
 	public static final field INSTANCE Landroidx/compose/ui/AbsoluteAlignment;
