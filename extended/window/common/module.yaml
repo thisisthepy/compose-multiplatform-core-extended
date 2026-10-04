@@ -11,3 +11,10 @@ product:
 
 test-dependencies:
   - $kotlin.test
+
+settings:
+  publishing:
+    enabled: true
+    group: org.thisisthepy.compose.window
+    name: common
+    version: 0.1.0

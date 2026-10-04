@@ -8,3 +8,10 @@ dependencies:
 
 test-dependencies:
   - $kotlin.test
+
+settings:
+  publishing:
+    enabled: true
+    group: org.thisisthepy.compose.window
+    name: graalvm-linux
+    version: 0.1.0

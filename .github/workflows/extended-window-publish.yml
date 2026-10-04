@@ -1,0 +1,69 @@
+# The window modules published to the local Maven repository, the way compose-rust consumes
+# them. Amper rejects two modules both named macos in one project, so each publication is
+# built from a project of the modules it needs.
+name: Extended window publish
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window-publish.yml
+  push:
+    branches:
+      - extended
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window-publish.yml
+
+concurrency:
+  group: extended-window-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            sets: "common native/macos|common graalvm/macos"
+          - os: ubuntu-24.04
+            sets: "common graalvm/linux"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: extended/window
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extended/window
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Publish each set to the local repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp project.yaml project.yaml.all
+          IFS='|' read -ra sets <<< "${{ matrix.sets }}"
+          for set in "${sets[@]}"; do
+            printf 'modules:\n' > project.yaml
+            for m in $set; do printf '  - %s\n' "$m" >> project.yaml; done
+            cat project.yaml
+            ./kotlin publish mavenLocal
+          done
+          cp project.yaml.all project.yaml
+
+      - name: What was published
+        shell: bash
+        run: |
+          find ~/.m2/repository/org/thisisthepy/compose/window -name '*.pom' -o -name '*.jar' -o -name '*.klib' -o -name '*.module' | sort
+          test -n "$(find ~/.m2/repository/org/thisisthepy/compose/window -name '*.pom')"

@@ -17,6 +17,11 @@ test-dependencies:
   - $kotlin.test
 
 settings:
+  publishing:
+    enabled: true
+    group: org.thisisthepy.compose.window
+    name: native-macos
+    version: 0.1.0
   compose:
     enabled: true
   kotlin:
