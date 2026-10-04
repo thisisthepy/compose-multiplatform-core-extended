@@ -48,6 +48,18 @@ object AwtFreeClipEntryProbe {
     }
 }
 
+/** Lays out and draws a Text in a scene with no window. Direction resolution must not touch AWT. */
+@OptIn(InternalTestApi::class, ExperimentalTestApi::class)
+object AwtFreeTextProbe {
+    fun run() {
+        runInternalSkikoComposeUiTest {
+            setContent { androidx.compose.foundation.text.BasicText("hello, world") }
+            waitForIdle()
+        }
+        println("probe-ok")
+    }
+}
+
 class AwtFreeClipEntryTest {
     @Test
     fun plainTextEntryRoundTripsInProcess() = runBlocking {
