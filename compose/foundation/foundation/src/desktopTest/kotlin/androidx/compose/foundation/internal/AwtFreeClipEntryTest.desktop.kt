@@ -20,6 +20,7 @@ package androidx.compose.foundation.internal
 
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.text.AnnotatedString
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -44,6 +45,8 @@ object AwtFreeClipEntryProbe {
         }
         check(clipboard.nativeClipboardHasText())
         check(runBlocking { clipboard.hasAnyData() })
+        check(AnnotatedString("copied").toClipEntry()?.let { runBlocking { it.readText() } } == "copied")
+        check(AnnotatedString("copied").toClipEntry()?.hasAnnotatedString() == true)
         println("probe-ok")
     }
 }

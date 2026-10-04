@@ -83,7 +83,7 @@ internal class AwtPlatformClipboard internal constructor() : Clipboard {
     }
 
     override suspend fun setClipEntry(clipEntry: ClipEntry?) {
-        val transferable = clipEntry?.asAwtTransferable
+        val transferable = clipEntry?.toAwtTransferable()
         systemClipboard?.setContents(
             /* contents = */ transferable ?: EmptyTransferable,
             /* owner = */ transferable as? ClipboardOwner,
@@ -155,3 +155,36 @@ internal actual fun createPlatformClipboardManager(): ClipboardManager = AwtClip
 
 internal actual fun createPlatformClipboard(): Clipboard = AwtPlatformClipboard()
 
+
+// A text entry (String or AnnotatedString) is what an AWT-free producer builds. The system
+// clipboard needs a Transferable, made here, where java.awt.datatransfer is already in use.
+@OptIn(ExperimentalComposeUiApi::class)
+private fun ClipEntry.toAwtTransferable(): Transferable? =
+    when (val native = nativeClipEntry) {
+        is Transferable -> native
+        is String -> StringSelection(native)
+        is AnnotatedString -> AnnotatedStringSelection(native)
+        else -> null
+    }
+
+// Offers the same flavors as foundation's AnnotatedStringTransferable: DataFlavor equality
+// compares the MIME type and representation class, not the display name.
+private class AnnotatedStringSelection(private val data: AnnotatedString) : Transferable, ClipboardOwner {
+    override fun getTransferDataFlavors(): Array<DataFlavor?> = supportedFlavors
+
+    override fun isDataFlavorSupported(flavor: DataFlavor): Boolean = flavor in supportedFlavors
+
+    override fun getTransferData(flavor: DataFlavor): Any =
+        when (flavor) {
+            annotatedStringFlavor -> data
+            DataFlavor.stringFlavor -> data.text
+            else -> throw UnsupportedFlavorException(flavor)
+        }
+
+    override fun lostOwnership(clipboard: java.awt.datatransfer.Clipboard?, contents: Transferable?) = Unit
+
+    companion object {
+        private val annotatedStringFlavor = DataFlavor(AnnotatedString::class.java, "AnnotatedString")
+        private val supportedFlavors = arrayOf(annotatedStringFlavor, DataFlavor.stringFlavor)
+    }
+}
