@@ -55,5 +55,8 @@ jobs:
       - name: Compile and test the Kotlin
         working-directory: extended/window
         run: |
+          # The shared project lists two modules both named macos, which Amper rejects, so
+          # this job builds the project made of the modules it needs.
+          printf 'modules:\n  - common\n  - graalvm/linux\n' > project.yaml
           ./kotlin build -m linux -p jvm
           ./kotlin test -m linux -p jvm
