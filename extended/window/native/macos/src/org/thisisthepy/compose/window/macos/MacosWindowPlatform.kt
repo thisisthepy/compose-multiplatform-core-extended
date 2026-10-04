@@ -14,6 +14,7 @@ import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.WindowPlatform
 import org.thisisthepy.compose.window.WindowVisibility
 import platform.AppKit.NSApplication
+import platform.AppKit.currentEvent
 import platform.AppKit.NSMenu
 import platform.AppKit.NSMenuItem
 import platform.CoreGraphics.CGPointMake
@@ -22,6 +23,7 @@ import platform.Foundation.NSDefaultRunLoopMode
 import platform.Foundation.NSMakeSize
 import platform.Foundation.NSRunLoop
 import platform.Foundation.dateWithTimeIntervalSinceNow
+import platform.Foundation.runMode
 
 /**
  * The [WindowPlatform] of the Kotlin/Native macOS window.
@@ -150,8 +152,8 @@ class MacosWindowPlatform(
             menu.addItem(item)
             if (entry.separatorAfter) menu.addItem(NSMenuItem.separatorItem())
         }
-        val at = NSApplication.sharedApplication().currentEvent?.locationInWindow
-            ?.useContents { CGPointMake(x, y) } ?: CGPointMake(0.0, 0.0)
+        val event = NSApplication.sharedApplication().currentEvent
+        val at = if (event != null) event.locationInWindow else CGPointMake(0.0, 0.0)
         // Returns once the menu closes, so a dismissal is told apart from a choice here.
         menu.popUpMenuPositioningItem(null, atLocation = view.convertPoint(at, fromView = null), inView = view)
         listener?.onContextMenuChosen(chosen)
