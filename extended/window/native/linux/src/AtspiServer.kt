@@ -1,5 +1,8 @@
 package org.thisisthepy.compose.window.linux
 
+import org.thisisthepy.compose.window.appendPoint
+import org.thisisthepy.compose.window.codePointsOf
+
 // The objects a reader asks questions of, answered from the tree the window last published.
 //
 // AT-SPI is a conversation the other way round from the notification daemon: this process owns
