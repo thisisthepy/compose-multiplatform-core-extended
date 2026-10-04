@@ -12,7 +12,9 @@ product:
 # .github/workflows/extended-window.yml). skiko has a published linuxX64 target and is
 # resolved normally as a dependency of Compose UI.
 repositories:
-  - mavenLocal
+  - id: mavenLocal
+    url: mavenLocal
+    publish: true
 
 dependencies:
   - ../../common
@@ -54,6 +56,11 @@ test-dependencies:
   - $kotlin.test
 
 settings:
+  publishing:
+    enabled: true
+    group: org.thisisthepy.compose.window
+    artifactId: native-linux
+    version: 0.1.0
   compose: enabled
   kotlin:
     optIns:
