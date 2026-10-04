@@ -114,6 +114,14 @@ void dxc_native_debug_key(void *window_pointer, int32_t key_code, const char *ch
 int32_t dxc_native_poll_event(struct dxc_event *out);
 void dxc_native_set_ime_spot(float x, float y);
 
+void dxc_native_window_configure(int32_t resizable, int32_t min_width, int32_t min_height,
+                                  int32_t system_chrome, int32_t backdrop);
+/* win32_platform.c */
+void dxc_native_set_title(void *window_pointer, const char *title);
+int32_t dxc_native_system_dark(void);
+void dxc_native_set_visibility(void *window_pointer, int32_t code);
+int32_t dxc_native_show_context_menu(void *window_pointer, const char *packed);
+
 int32_t dxc_notify_start(void);
 void dxc_notify_request_permission(void);
 void dxc_notify_refresh_permission(void);

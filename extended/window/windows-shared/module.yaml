@@ -1,0 +1,17 @@
+# The Kotlin side of the shared Win32 window, for the GraalVM native-image path: the
+# @CFunction declarations over c/win32_window.c, the event queue reader and the
+# WindowPlatform that answers `common`'s questions from them. It names no toolkit type, so
+# it compiles with no AWT on the path. The Kotlin/Native renderer does not use this
+# module; it runs cinterop over c/win32_window.h and links the same C object.
+
+product:
+  type: jvm/lib
+
+dependencies:
+  - ../common
+  # Annotations and C interop types. Supplied by the native-image builder at image build
+  # time, so they are not bundled into the jar.
+  - org.graalvm.sdk:nativeimage:25.0.1: compile-only
+
+test-dependencies:
+  - $kotlin.test

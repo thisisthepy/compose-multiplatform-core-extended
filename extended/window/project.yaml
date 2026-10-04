@@ -6,3 +6,4 @@ modules:
   - graalvm/linux
   - native/macos
   - graalvm/macos
+  - windows-shared

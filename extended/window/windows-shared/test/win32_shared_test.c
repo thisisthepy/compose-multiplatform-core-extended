@@ -64,6 +64,10 @@ int main(int argc, char **argv) {
         dxc_native_poll_event(NULL);
         dxc_native_clipboard_write(argv[0]);
         dxc_notify_start();
+        dxc_native_set_title(window.window, argv[0]);
+        dxc_native_system_dark();
+        dxc_native_set_visibility(window.window, 1);
+        dxc_native_show_context_menu(window.window, argv[0]);
     }
     if (failures == 0) printf("ok\n");
     return failures == 0 ? 0 : 1;
