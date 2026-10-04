@@ -12,7 +12,11 @@
 # find JAWT_GetAWT, and a native image has no java.home. In this archive Skiko_GetAWT calls
 # JAWT_GetAWT directly instead (static_jawt.c), and the image links JAWT's own archive.
 #
-# Usage: build-skiko-static-jvm.sh <work-dir>
+# With --no-jawt the replacement is static_no_jawt.c instead: Skiko_GetAWT answers "no AWT"
+# and the archive refers to nothing in JAWT, so an embedder that opens its own window links
+# neither libjawt nor libawt. The default keeps the direct call for a SkiaLayer in an AWT window.
+#
+# Usage: build-skiko-static-jvm.sh [--no-jawt] <work-dir>
 #
 # Output, in <work-dir>/out/<os>-<arch>/:
 #   libskiko-static.a   skiko's own bindings (skiko-static.lib on Windows). Link the whole
@@ -40,7 +44,12 @@ die() {
     exit 1
 }
 
-[[ $# -eq 1 ]] || die "usage: build-skiko-static-jvm.sh <work-dir>"
+jawt_source="static_jawt.c"
+if [[ "${1:-}" == "--no-jawt" ]]; then
+    jawt_source="static_no_jawt.c"
+    shift
+fi
+[[ $# -eq 1 ]] || die "usage: build-skiko-static-jvm.sh [--no-jawt] <work-dir>"
 WORK="$1"
 
 case "$(uname -s)-$(uname -m)" in
@@ -104,18 +113,18 @@ mkdir -p "$out"
 # On Windows with the static C runtime, as JetBrains' Skia is.
 if [[ "$host" == "macos" ]]; then
     "${CC:-cc}" -c -O2 -arch arm64 -I"$JAVA_HOME/include" -I"$JAVA_HOME/include/darwin" \
-        "$HERE/static_jawt.c" -o "$out/static_jawt.o"
+        "$HERE/$jawt_source" -o "$out/static_jawt.o"
     jawt_object="$out/static_jawt.o"
     extra_objects=()
     suffix="o"
 elif [[ "$host" == "linux" ]]; then
     "${CC:-cc}" -c -O2 -fPIC -I"$JAVA_HOME/include" -I"$JAVA_HOME/include/linux" \
-        "$HERE/static_jawt.c" -o "$out/static_jawt.o"
+        "$HERE/$jawt_source" -o "$out/static_jawt.o"
     jawt_object="$out/static_jawt.o"
     suffix="o"
 else
     cl.exe //nologo //O2 //MT //c "//I$(cygpath -w "$JAVA_HOME/include")" "//I$(cygpath -w "$JAVA_HOME/include/win32")" \
-        "$(cygpath -w "$HERE/static_jawt.c")" "//Fo$(cygpath -w "$out/static_jawt.obj")"
+        "$(cygpath -w "$HERE/$jawt_source")" "//Fo$(cygpath -w "$out/static_jawt.obj")"
     jawt_object="$out/static_jawt.obj"
     # Skia on Windows reads its ICU data from icudtl.dat beside the module and stops without
     # it. The data is compiled into the archive instead (embedded_icu.cpp), with clang-cl
@@ -190,6 +199,13 @@ entry_points="$(grep -c " T ${prefix}Java_org_jetbrains_ski" "$out/symbols.txt" 
 grep -q " T ${prefix}Skiko_GetAWT\$" "$out/symbols.txt" || die "the archive has no Skiko_GetAWT"
 if [[ "$host" == "windows" ]]; then
     grep -q "SkLoadICU" "$out/symbols.txt" || die "the archive has no SkLoadICU, so Skia would look for icudtl.dat"
+fi
+
+if [[ "$jawt_source" == "static_no_jawt.c" && "$host" != "windows" ]]; then
+    # An undefined JAWT_ symbol is what would pull libjawt into the link.
+    if nm -u "$archive" 2>/dev/null | grep -q "JAWT_"; then
+        die "the archive still refers to JAWT" "$(nm -u "$archive" | grep "JAWT_")"
+    fi
 fi
 
 echo "$archive: $(wc -c < "$archive" | tr -d ' ') bytes, $entry_points JNI entry points"
