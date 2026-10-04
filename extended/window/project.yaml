@@ -3,4 +3,8 @@
 # Nothing here may depend on the renderer, its wire protocol or its node table.
 modules:
   - graalvm/linux
+<<<<<<< HEAD
   - native/macos
+=======
+  - graalvm/macos
+>>>>>>> origin/extended

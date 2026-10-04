@@ -1,0 +1,84 @@
+# extended/window/graalvm/macos: the AppKit window for the GraalVM native-image path.
+#
+# Compiles appkit_window.m into a static library, runs the pure C tests of the resize
+# counters, compiles the Kotlin wrapper and runs its tests, and fails if the module names
+# java.awt or if the generated upcall table is stale.
+
+name: Extended window graalvm macos
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window-graalvm-macos.yml
+  push:
+    branches:
+      - extended
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window-graalvm-macos.yml
+
+concurrency:
+  group: extended-window-graalvm-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: graalvm/macos (compile and test)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: extended/window
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extended/window
+          filter: blob:none
+
+      - name: The module names no java.awt
+        run: |
+          if grep -rEn 'java\.awt|javax\.swing|sun\.awt' graalvm/macos/src graalvm/macos/module.yaml; then
+            echo "graalvm/macos must not reference java.awt" >&2
+            exit 1
+          fi
+
+      - name: The upcall table is generated and current
+        run: graalvm/macos/tools/gen-upcalls.sh --check
+
+      - name: No runtime reflection in the module
+        run: |
+          if grep -rEn 'java\.lang\.reflect|Class\.forName|::class\.java|getDeclared|\.javaClass' graalvm/macos/src; then
+            echo "upcalls go through the generated table, not reflection" >&2
+            exit 1
+          fi
+
+      - name: Compile appkit_window.m into a static library
+        run: |
+          mkdir -p build/native
+          for arch in arm64 x86_64; do
+            cc -c -O2 -fobjc-arc -arch "$arch" -o "build/native/appkit_window-$arch.o" graalvm/macos/native/appkit_window.m
+          done
+          lipo -create build/native/appkit_window-arm64.o build/native/appkit_window-x86_64.o -output build/native/appkit_window.o
+          ar rcs build/native/libappkit_window.a build/native/appkit_window.o
+          nm build/native/libappkit_window.a | grep -E ' T _dxc_native_(window_open|poll_event|set_draw_callback)'
+
+      - name: Cache the Kotlin toolchain and Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/JetBrains/Kotlin
+            ~/.m2/repository
+          key: extended-window-${{ runner.os }}-${{ hashFiles('extended/window/**/module.yaml', 'extended/window/kotlin') }}
+          restore-keys: |
+            extended-window-${{ runner.os }}-
+
+      - name: Compile the Kotlin wrapper
+        run: ./kotlin build -p jvm
+
+      - name: Test
+        run: ./kotlin test -p jvm

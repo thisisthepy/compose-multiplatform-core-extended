@@ -48,3 +48,20 @@ two things to link, and they have to be linked differently:
   by name, so ordinary archive semantics would drop all of them.
 - `skia/*.a`, as ordinary archives: JetBrains' module archives (skottie, sksg, svg) each
   carry their own copy of Skia's core objects, and forcing them in defines those twice.
+
+## skiko with no AWT (embedder path)
+
+An embedder that opens its own window never asks skiko for an AWT drawing surface, so
+nothing in the process should load `libjawt` or `libawt`. skiko's JVM library already only
+opens `libjawt` when `getAWT()` is called, and its loader (`Library.load`, `Setup.init`)
+touches no `java.awt` class unless `skiko.rendering.laf.global` is set. The static archive
+was the exception: `static_jawt.c` calls `JAWT_GetAWT` directly, which links JAWT.
+
+| File | What it is |
+|---|---|
+| `static_no_jawt.c` | `Skiko_GetAWT` that answers "no AWT" and refers to nothing in JAWT. Used by `build-skiko-static-jvm.sh --no-jawt` |
+| `tests/LoaderCheck.java` | Loads skiko as an embedder does and fails if `libjawt`/`libawt` is mapped or a `java.awt`, `javax.swing` or `sun.awt` class is loaded |
+
+`.github/workflows/extended-skiko-awt-free.yml` runs the loader check against skiko's
+published JVM library, and builds the static archive with `--no-jawt` on Linux and macOS,
+where the script fails if the archive still has an undefined `JAWT_` symbol.
