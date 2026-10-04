@@ -36,6 +36,10 @@ internal object X11Natives {
     external fun windowBeginDrag(edge: Int)
 
     @JvmStatic
+    @CFunction("dxc_native_set_visibility")
+    external fun setVisibility(visibility: Int)
+
+    @JvmStatic
     @CFunction("dxc_native_window_closed")
     external fun windowClosed(): Int
 
