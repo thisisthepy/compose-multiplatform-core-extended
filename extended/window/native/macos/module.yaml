@@ -30,4 +30,6 @@ settings:
       - kotlinx.cinterop.BetaInteropApi
 
 repositories:
-  - mavenLocal
+  - id: mavenLocal
+    url: mavenLocal
+    publish: true

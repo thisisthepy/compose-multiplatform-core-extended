@@ -1,6 +1,5 @@
 # The window modules published to the local Maven repository, the way compose-rust consumes
-# them. Amper rejects two modules both named macos in one project, so each publication is
-# built from a project of the modules it needs.
+# them. Each runner publishes the modules it can build: the macOS one adds native/macos.
 name: Extended window publish
 
 on:
@@ -30,9 +29,9 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            sets: "common native/macos|common graalvm/macos"
+            modules: "common native/macos graalvm/graalvm-macos graalvm/graalvm-linux"
           - os: ubuntu-24.04
-            sets: "common graalvm/linux"
+            modules: "common graalvm/graalvm-macos graalvm/graalvm-linux"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     defaults:
@@ -48,18 +47,15 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Publish each set to the local repository
+      - name: Publish to the local repository
         shell: bash
         run: |
           set -euo pipefail
           cp project.yaml project.yaml.all
-          IFS='|' read -ra sets <<< "${{ matrix.sets }}"
-          for set in "${sets[@]}"; do
-            printf 'modules:\n' > project.yaml
-            for m in $set; do printf '  - %s\n' "$m" >> project.yaml; done
-            cat project.yaml
-            ./kotlin publish mavenLocal
-          done
+          printf 'modules:\n' > project.yaml
+          for m in ${{ matrix.modules }}; do printf '  - %s\n' "$m" >> project.yaml; done
+          cat project.yaml
+          ./kotlin publish mavenLocal
           cp project.yaml.all project.yaml
 
       - name: What was published

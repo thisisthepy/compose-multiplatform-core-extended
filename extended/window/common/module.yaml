@@ -20,4 +20,6 @@ settings:
     version: 0.1.0
 
 repositories:
-  - mavenLocal
+  - id: mavenLocal
+    url: mavenLocal
+    publish: true
