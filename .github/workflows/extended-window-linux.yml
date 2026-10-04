@@ -71,9 +71,7 @@ jobs:
           path: |
             ~/.konan
             ~/.cache/JetBrains/Kotlin
-          key: extended-window-linux-${{ hashFiles('extended/window/common/**
-      - extended/window/native/linux/**
-      - extended/window/project.yaml/module.yaml', 'extended/window/libs.versions.toml', 'extended/window/kotlin') }}
+          key: extended-window-linux-${{ hashFiles('extended/window/**/module.yaml', 'extended/window/libs.versions.toml', 'extended/window/kotlin') }}
           restore-keys: |
             extended-window-linux-
 
