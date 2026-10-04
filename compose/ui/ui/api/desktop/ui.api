@@ -2223,16 +2223,6 @@ public final class androidx/compose/ui/input/pointer/ConsumedData {
 	public final fun setPositionChange (Z)V
 }
 
-public final class androidx/compose/ui/input/pointer/ExtendedPointerIcons {
-	public static final field INSTANCE Landroidx/compose/ui/input/pointer/ExtendedPointerIcons;
-	public final fun getSink ()Landroidx/compose/ui/input/pointer/PointerIconSink;
-	public final fun setSink (Landroidx/compose/ui/input/pointer/PointerIconSink;)V
-}
-
-public final class androidx/compose/ui/input/pointer/ExtendedPointerIcon_desktopKt {
-	public static final fun getStandardKind (Landroidx/compose/ui/input/pointer/PointerIcon;)Landroidx/compose/ui/input/pointer/StandardPointerIconKind;
-}
-
 public final class androidx/compose/ui/input/pointer/HistoricalChange {
 	public static final field $stable I
 	public synthetic fun <init> (JJFJILkotlin/jvm/internal/DefaultConstructorMarker;)V
@@ -2418,10 +2408,6 @@ public final class androidx/compose/ui/input/pointer/PointerIconKt {
 	public static synthetic fun stylusHoverIcon$default (Landroidx/compose/ui/Modifier;Landroidx/compose/ui/input/pointer/PointerIcon;ZLandroidx/compose/ui/node/DpTouchBoundsExpansion;ILjava/lang/Object;)Landroidx/compose/ui/Modifier;
 }
 
-public abstract interface class androidx/compose/ui/input/pointer/PointerIconSink {
-	public abstract fun setPointerIcon (Landroidx/compose/ui/input/pointer/PointerIcon;)V
-}
-
 public final class androidx/compose/ui/input/pointer/PointerIcon_desktopKt {
 	public static final fun PointerIcon (Ljava/awt/Cursor;)Landroidx/compose/ui/input/pointer/PointerIcon;
 }
@@ -2569,16 +2555,6 @@ public final class androidx/compose/ui/input/pointer/PointerType$Companion {
 	public final fun getStylus-T8wyACA ()I
 	public final fun getTouch-T8wyACA ()I
 	public final fun getUnknown-T8wyACA ()I
-}
-
-public final class androidx/compose/ui/input/pointer/StandardPointerIconKind : java/lang/Enum {
-	public static final field Crosshair Landroidx/compose/ui/input/pointer/StandardPointerIconKind;
-	public static final field Default Landroidx/compose/ui/input/pointer/StandardPointerIconKind;
-	public static final field Hand Landroidx/compose/ui/input/pointer/StandardPointerIconKind;
-	public static final field Text Landroidx/compose/ui/input/pointer/StandardPointerIconKind;
-	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public static fun valueOf (Ljava/lang/String;)Landroidx/compose/ui/input/pointer/StandardPointerIconKind;
-	public static fun values ()[Landroidx/compose/ui/input/pointer/StandardPointerIconKind;
 }
 
 public final class androidx/compose/ui/input/pointer/SuspendingPointerInputFilterKt {

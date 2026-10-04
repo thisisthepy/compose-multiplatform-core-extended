@@ -16,6 +16,8 @@
 
 package androidx.compose.ui.input.pointer
 
+import androidx.compose.ui.internal.StandardPointerIcon
+import androidx.compose.ui.internal.StandardPointerIconKind
 import java.awt.Cursor
 
 internal class AwtCursor(val cursor: Cursor) : PointerIcon {

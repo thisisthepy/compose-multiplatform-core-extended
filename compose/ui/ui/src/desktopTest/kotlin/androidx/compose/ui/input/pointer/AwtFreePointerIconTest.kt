@@ -16,6 +16,10 @@
 
 package androidx.compose.ui.input.pointer
 
+import androidx.compose.ui.internal.ExtendedPointerIcons
+import androidx.compose.ui.internal.PointerIconSink
+import androidx.compose.ui.internal.StandardPointerIconKind
+import androidx.compose.ui.internal.standardKind
 import java.awt.Cursor
 import java.io.File
 import kotlin.test.Test
