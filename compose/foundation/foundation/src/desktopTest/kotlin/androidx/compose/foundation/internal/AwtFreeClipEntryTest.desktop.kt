@@ -77,6 +77,7 @@ object AwtFreeClipEntryProbe {
 @OptIn(InternalTestApi::class, ExperimentalTestApi::class)
 object AwtFreeTextFieldCopyProbe {
     fun run() {
+        installEmbedderDispatcher()
         var stored: ClipEntry? = null
         val clipboard = object : Clipboard {
             override val nativeClipboard: NativeClipboard = ""
@@ -114,6 +115,7 @@ object AwtFreeTextFieldCopyProbe {
 @OptIn(InternalTestApi::class, ExperimentalTestApi::class)
 object AwtFreeTextProbe {
     fun run() {
+        installEmbedderDispatcher()
         runInternalSkikoComposeUiTest {
             setContent { androidx.compose.foundation.text.BasicText("hello, world") }
             waitForIdle()
@@ -156,4 +158,14 @@ class AwtFreeClipEntryTest {
             .toList()
         assertTrue(loaded.isEmpty(), "AWT classes were loaded:\n" + loaded.joinToString("\n"))
     }
+}
+
+/**
+ * A scene's main-thread work goes to Skiko's Swing dispatcher unless an embedder says
+ * otherwise, and that dispatcher is what loads java.awt.EventQueue. The embedders these
+ * probes stand for install their own, so the probes do too.
+ */
+@OptIn(androidx.compose.ui.InternalComposeUiApi::class)
+private fun installEmbedderDispatcher() {
+    androidx.compose.ui.internal.ExtendedMainDispatcher.override = kotlinx.coroutines.Dispatchers.Unconfined
 }

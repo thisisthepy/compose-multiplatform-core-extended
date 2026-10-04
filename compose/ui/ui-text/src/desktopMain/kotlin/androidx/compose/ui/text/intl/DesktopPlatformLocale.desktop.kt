@@ -27,8 +27,8 @@ internal actual fun createPlatformLocaleDelegate() = object : PlatformLocaleDele
 // (src/java.desktop/share/classes/java/awt/ComponentOrientation.java): the languages
 // "iw", "ar", "fa" and "ur" are right to left, everything else is left to right. That method
 // is not called here because loading java.awt.ComponentOrientation pulls in AWT.
-// One addition: since JDK 17 Locale.getLanguage() reports Hebrew as "he", which the JDK
-// list does not contain, so "he" is listed next to "iw".
-private val rtlLanguages = setOf("iw", "he", "ar", "fa", "ur")
+// Two additions: since JDK 17 Locale.getLanguage() reports Hebrew as "he" and Yiddish as "yi", which
+// the JDK list may not carry under those codes, so they are listed next to "iw" and "ji".
+private val rtlLanguages = setOf("iw", "he", "ar", "fa", "ur", "yi", "ji")
 
 internal actual fun Locale.isRtl(): Boolean = platformLocale.language in rtlLanguages
