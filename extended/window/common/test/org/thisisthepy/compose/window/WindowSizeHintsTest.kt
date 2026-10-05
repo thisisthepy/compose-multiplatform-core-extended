@@ -28,6 +28,6 @@ class WindowSizeHintsTest {
 
     @Test
     fun a_smallest_size_is_scaled_to_pixels_and_rounded() {
-        assertEquals(SizeHints(451 to 391, null), sizeHintsFor(300, 260, true, 520, 360, scale = 1.5f))
+        assertEquals(SizeHints(527 to 457, null), sizeHintsFor(301, 261, true, 520, 360, scale = 1.75f))
     }
 }
