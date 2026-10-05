@@ -29,13 +29,15 @@ object ElementRole {
 /**
  * What a macOS title bar's size is worked out from, in points: the window's frame height,
  * the height of the part below the bar, where the close button starts and where the zoom
- * button ends (null where the window has no buttons).
+ * button ends (null where the window has no buttons), and the radius the system gave the
+ * window's corners (null where it does not say).
  */
 data class TitleBarMetrics(
     val windowHeight: Float,
     val contentLayoutHeight: Float,
     val closeMinX: Float?,
     val zoomMaxX: Float?,
+    val cornerRadius: Float? = null,
 ) {
     /**
      * The caption these measure, or null while the window is changing size: the frame and
