@@ -25,7 +25,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.platform.Clipboard
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.NativeClipboard
@@ -86,24 +90,31 @@ object AwtFreeTextFieldCopyProbe {
                 stored = clipEntry
             }
         }
-        runInternalSkikoComposeUiTest {
-            val state = TextFieldState("copy me")
-            val focusRequester = FocusRequester()
-            setContent {
-                CompositionLocalProvider(LocalClipboard provides clipboard) {
-                    BasicTextField(
-                        state = state,
-                        modifier = Modifier.focusRequester(focusRequester).testTag("field"),
-                    )
+        // ImageComposeScene rather than the test host: the host waits on the Swing queue, which
+        // is the toolkit this probe says is not needed.
+        val state = TextFieldState("copy me")
+        val focusRequester = FocusRequester()
+        val scene = ImageComposeScene(
+            width = 300,
+            height = 100,
+            coroutineContext = kotlinx.coroutines.Dispatchers.Unconfined,
+        ) {
+            CompositionLocalProvider(LocalClipboard provides clipboard) {
+                BasicTextField(state = state, modifier = Modifier.focusRequester(focusRequester))
+            }
+        }
+        try {
+            scene.render()
+            focusRequester.requestFocus()
+            scene.render()
+            for (key in listOf(Key.A, Key.C)) {
+                for (type in listOf(KeyEventType.KeyDown, KeyEventType.KeyUp)) {
+                    scene.sendKeyEvent(KeyEvent(key, type, isCtrlPressed = true))
+                    scene.render()
                 }
             }
-            runOnIdle { focusRequester.requestFocus() }
-            waitForIdle()
-            onNodeWithTag("field").performKeyInput {
-                withKeysDown(listOf(Key.CtrlLeft)) { pressKey(Key.A) }
-                withKeysDown(listOf(Key.CtrlLeft)) { pressKey(Key.C) }
-            }
-            waitForIdle()
+        } finally {
+            scene.close()
         }
         val copied = stored?.let { runBlocking { it.readText() } }
         check(copied == "copy me") { "clipboard held: $copied" }
