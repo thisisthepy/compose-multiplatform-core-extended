@@ -21,4 +21,9 @@ import org.jetbrains.skiko.orderEmojiAndSymbolsPopup
 
 internal actual fun KeyEvent.cancelsTextSelection(): Boolean = false
 
-internal actual fun showCharacterPalette() = orderEmojiAndSymbolsPopup()
+// Skiko's popup is the toolkit's own (it goes through SkiaLayer, an AWT component), so an
+// embedder built without the toolkit has none, and the class stays out of its image.
+@OptIn(androidx.compose.ui.InternalComposeUiApi::class)
+internal actual fun showCharacterPalette() {
+    if (androidx.compose.ui.internal.ExtendedAwt.available) orderEmojiAndSymbolsPopup()
+}
