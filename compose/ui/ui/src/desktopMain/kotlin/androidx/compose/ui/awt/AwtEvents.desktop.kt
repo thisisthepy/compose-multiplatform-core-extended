@@ -18,6 +18,8 @@ import androidx.compose.ui.input.pointer.PointerEvent
  * It is therefore recommended to always check for `null` when using this property.
  */
 val PointerEvent.awtEventOrNull: java.awt.event.MouseEvent? get() {
+    // Without the toolkit the cast below is dead code, and the class it names stays out of an image.
+    if (!androidx.compose.ui.internal.ExtendedAwt.available) return null
     return nativeEvent.takeIf { it.isInstanceOfAwt("java.awt.event.MouseEvent") } as? java.awt.event.MouseEvent
 }
 
@@ -31,6 +33,7 @@ val PointerEvent.awtEventOrNull: java.awt.event.MouseEvent? get() {
  * It is therefore recommended to always check for `null` when using this property.
  */
 val KeyEvent.awtEventOrNull: java.awt.event.KeyEvent? get() {
+    if (!androidx.compose.ui.internal.ExtendedAwt.available) return null
     return internal.nativeEvent.takeIf { it.isInstanceOfAwt("java.awt.event.KeyEvent") } as? java.awt.event.KeyEvent
 }
 
