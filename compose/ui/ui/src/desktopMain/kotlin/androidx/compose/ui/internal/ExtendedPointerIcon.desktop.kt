@@ -43,7 +43,8 @@ enum class StandardPointerIconKind(internal val awtType: Int) {
 val PointerIcon.standardKind: StandardPointerIconKind?
     get() = when (this) {
         is StandardPointerIcon -> kind
-        is AwtCursor -> StandardPointerIconKind.entries.firstOrNull { it.awtType == cursor.type }
+        // An icon made from a java.awt.Cursor cannot exist where the toolkit is switched off.
+        is AwtCursor -> if (ExtendedAwt.available) StandardPointerIconKind.entries.firstOrNull { it.awtType == cursor.type } else null
         else -> null
     }
 
@@ -70,7 +71,7 @@ internal class StandardPointerIcon(val kind: StandardPointerIconKind) : PointerI
         this === other -> true
         other is StandardPointerIcon -> kind == other.kind
         // Cursor(HAND_CURSOR) made by the application still equals PointerIcon.Hand.
-        other is AwtCursor -> other.cursor.type == kind.awtType
+        ExtendedAwt.available && other is AwtCursor -> other.cursor.type == kind.awtType
         else -> false
     }
 
