@@ -6,9 +6,14 @@
 # keyed by title bar style and release. This opens a window in each style (no toolbar, and
 # an empty unified toolbar, built the way MacosWindow.kt's applyChrome builds them), takes
 # the window's own image with the shadow off through the public CGWindowListCreateImage,
-# and measures the radius from how much of the bottom corners is transparent. It fails when
-# the measured radius is more than 1pt from the table's, which is how a new macOS that
-# draws a different corner is caught.
+# and measures how much of the bottom corners is transparent.
+#
+# macOS draws a continuous corner (the curve eases into the straight edge), not a quarter
+# circle, so the transparent area is not that of a circle of the same radius. The probe
+# therefore draws a reference: a borderless window whose layer has the table's radius with
+# the continuous corner curve, captured the same way. The drawn radius is the table's
+# scaled by the square root of the two areas. It fails when that is more than 1pt from the
+# table's, which is how a new macOS that draws a different corner is caught.
 #
 # Usage: scripts/check-macos-corner-radius.sh   (macOS only)
 set -uo pipefail
@@ -27,6 +32,7 @@ mkdir -p "$work"
 
 cat > "$work/probe.m" <<'PROBE'
 #import <AppKit/AppKit.h>
+#import <QuartzCore/QuartzCore.h>
 #import <dlfcn.h>
 #import <math.h>
 
@@ -62,7 +68,63 @@ static size_t bottom_run(const uint8_t *rgba, size_t width, size_t height) {
     return run;
 }
 
-static int measure(int toolbar, capture_fn capture, double *radius) {
+// The transparent area at the bottom corners of [window]'s own image, in points squared.
+static int corner_area(NSWindow *window, capture_fn capture, const char *name, double *area_pt) {
+    [window makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
+    pump(1.5);
+
+    // kCGWindowListOptionIncludingWindow, kCGWindowImageBoundsIgnoreFraming |
+    // kCGWindowImageBestResolution.
+    CGImageRef image = capture(CGRectNull, 1 << 3, (uint32_t)window.windowNumber, (1 << 0) | (1 << 3));
+    if (image == NULL) {
+        [window close];
+        return 1;
+    }
+    size_t width = CGImageGetWidth(image), height = CGImageGetHeight(image);
+    double scale = width / window.frame.size.width;
+    uint8_t *rgba = calloc(width * height * 4, 1);
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGContextRef context = CGBitmapContextCreate(rgba, width, height, 8, width * 4, space,
+                                                 (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
+    CGContextDrawImage(context, CGRectMake(0, 0, width, height), image);
+    size_t box = (size_t)ceil(48 * scale);
+    double area = (cut_area(rgba, width, height, box, 0) + cut_area(rgba, width, height, box, 1)) / 2;
+    *area_pt = area / (scale * scale);
+    printf("%s scale %.1f image %zux%zu area %.1fpt2 bottom-run %zupx circle-radius %.2fpt\n",
+           name, scale, width, height, *area_pt, bottom_run(rgba, width, height),
+           sqrt(*area_pt / (1 - M_PI / 4)));
+    CGContextRelease(context);
+    CGColorSpaceRelease(space);
+    CGImageRelease(image);
+    free(rgba);
+    [window close];
+    return 0;
+}
+
+// The same area for a borderless window whose layer has [radius] with the continuous curve.
+static int reference_area(double radius, capture_fn capture, double *area_pt) {
+    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(200, 200, 480, 360)
+                                                   styleMask:NSWindowStyleMaskBorderless
+                                                     backing:NSBackingStoreBuffered
+                                                       defer:NO];
+    window.releasedWhenClosed = NO;
+    window.hasShadow = NO;
+    window.opaque = NO;
+    window.backgroundColor = NSColor.clearColor;
+    NSView *content = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 480, 360)];
+    content.wantsLayer = YES;
+    content.layer.backgroundColor = NSColor.redColor.CGColor;
+    content.layer.cornerRadius = radius;
+    content.layer.cornerCurve = kCACornerCurveContinuous;
+    content.layer.masksToBounds = YES;
+    window.contentView = content;
+    char name[64];
+    snprintf(name, sizeof name, "reference-%.0f", radius);
+    return corner_area(window, capture, name, area_pt);
+}
+
+static int measure(int toolbar, double table, capture_fn capture, double *radius) {
     NSWindow *window = [[NSWindow alloc]
         initWithContentRect:NSMakeRect(200, 200, 480, 360)
                   styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskMiniaturizable |
@@ -85,41 +147,21 @@ static int measure(int toolbar, capture_fn capture, double *radius) {
     content.wantsLayer = YES;
     content.layer.backgroundColor = NSColor.redColor.CGColor;
     window.contentView = content;
-    [window makeKeyAndOrderFront:nil];
-    [NSApp activateIgnoringOtherApps:YES];
-    pump(1.5);
-
-    // kCGWindowListOptionIncludingWindow, kCGWindowImageBoundsIgnoreFraming |
-    // kCGWindowImageBestResolution.
-    CGImageRef image = capture(CGRectNull, 1 << 3, (uint32_t)window.windowNumber, (1 << 0) | (1 << 3));
-    if (image == NULL) {
-        [window close];
-        return 1;
-    }
-    size_t width = CGImageGetWidth(image), height = CGImageGetHeight(image);
-    double scale = width / window.frame.size.width;
-    uint8_t *rgba = calloc(width * height * 4, 1);
-    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
-    CGContextRef context = CGBitmapContextCreate(rgba, width, height, 8, width * 4, space,
-                                                 kCGImageAlphaPremultipliedLast);
-    CGContextDrawImage(context, CGRectMake(0, 0, width, height), image);
-    // A circular corner of radius r leaves r^2 (1 - pi/4) of its box transparent.
-    size_t box = (size_t)ceil(48 * scale);
-    double area = (cut_area(rgba, width, height, box, 0) + cut_area(rgba, width, height, box, 1)) / 2;
-    *radius = sqrt(area / (1 - M_PI / 4)) / scale;
-    printf("%s scale %.1f image %zux%zu area %.1fpx bottom-run %zupx radius %.2fpt\n",
-           toolbar ? "toolbar" : "simple", scale, width, height, area,
-           bottom_run(rgba, width, height), *radius);
-    CGContextRelease(context);
-    CGColorSpaceRelease(space);
-    CGImageRelease(image);
-    free(rgba);
-    [window close];
+    double area = 0, reference = 0;
+    if (corner_area(window, capture, toolbar ? "toolbar" : "simple", &area) != 0) return 1;
+    if (reference_area(table, capture, &reference) != 0 || reference <= 0) return 1;
+    *radius = table * sqrt(area / reference);
+    printf("%s drawn radius %.2fpt (table %.1fpt)\n", toolbar ? "toolbar" : "simple", *radius, table);
     return 0;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     @autoreleasepool {
+        if (argc != 3) {
+            puts("ERROR usage: probe <simple radius> <toolbar radius>");
+            return 2;
+        }
+        double want_simple = atof(argv[1]), want_toolbar = atof(argv[2]);
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
         [NSApp finishLaunching];
@@ -129,11 +171,11 @@ int main(void) {
             return 2;
         }
         double simple = 0, toolbar = 0;
-        if (measure(0, capture, &simple) != 0 || measure(1, capture, &toolbar) != 0) {
+        if (measure(0, want_simple, capture, &simple) != 0 ||
+            measure(1, want_toolbar, capture, &toolbar) != 0) {
             puts("ERROR the window server returned no image of the window");
             return 2;
         }
-        printf("os %ld\n", (long)NSProcessInfo.processInfo.operatingSystemVersion.majorVersion);
         printf("measured %.2f %.2f\n", simple, toolbar);
         return 0;
     }
@@ -141,21 +183,21 @@ int main(void) {
 PROBE
 
 cc -fobjc-arc -Wno-deprecated-declarations "$work/probe.m" -framework AppKit \
-    -framework CoreGraphics -o "$work/probe" || { echo "FAIL: the probe did not compile"; exit 1; }
-output="$("$work/probe")"
-probe_status=$?
-echo "$output"
-[[ $probe_status -eq 0 ]] || { echo "FAIL: the probe could not capture the window ($probe_status)"; exit 1; }
-
-os="$(sed -n 's/^os //p' <<< "$output")"
-read -r simple toolbar <<< "$(sed -n 's/^measured //p' <<< "$output")"
+    -framework CoreGraphics -framework QuartzCore -o "$work/probe" || { echo "FAIL: the probe did not compile"; exit 1; }
+os="$(sw_vers -productVersion | cut -d. -f1)"
 
 # The last row whose release is not newer than this one, as macosCornerRadius picks it.
 row="$(sed -n 's/^ *MacosCornerRadiusRow(fromMajor = \([0-9]*\), simple = \([0-9.]*\), toolbar = \([0-9.]*\)),$/\1 \2 \3/p' "$table" |
     awk -v os="$os" '$1 <= os { r = $0 } END { print r }')"
 [[ -n "$row" ]] || { echo "FAIL: MacosCornerRadius.kt has no row for macOS $os"; exit 1; }
 read -r from want_simple want_toolbar <<< "$row"
-echo "table (from macOS $from): simple $want_simple toolbar $want_toolbar"
+
+output="$("$work/probe" "$want_simple" "$want_toolbar")"
+probe_status=$?
+echo "$output"
+[[ $probe_status -eq 0 ]] || { echo "FAIL: the probe could not capture the window ($probe_status)"; exit 1; }
+read -r simple toolbar <<< "$(sed -n 's/^measured //p' <<< "$output")"
+echo "macOS $os, table row from macOS $from: simple $want_simple toolbar $want_toolbar"
 
 status=0
 for pair in "simple $simple $want_simple" "toolbar $toolbar $want_toolbar"; do
