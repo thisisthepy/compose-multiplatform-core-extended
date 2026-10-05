@@ -5,14 +5,10 @@
 # it from MACOS_CORNER_RADII in common/src/org/thisisthepy/compose/window/MacosCornerRadius.kt,
 # keyed by title bar style and release. This opens a window in each style (no toolbar, and
 # an empty unified toolbar, built the way MacosWindow.kt's applyChrome builds them), takes
-# the window's own image with the shadow off through the public CGWindowListCreateImage,
-# and measures how much of the bottom corners is transparent.
-#
-# macOS draws a continuous corner (the curve eases into the straight edge), not a quarter
-# circle, so the transparent area is not that of a circle of the same radius. The probe
-# therefore draws a reference: a borderless window whose layer has the table's radius with
-# the continuous corner curve, captured the same way. The drawn radius is the table's
-# scaled by the square root of the two areas. It fails when that is more than 1pt from the
+# the window's own image with the shadow off through the public CGWindowListCreateImage at
+# one pixel per point, and finds the reference corner (a borderless window whose layer is
+# cut to a given radius, with the continuous or the circular curve) that matches the two
+# bottom corners pixel for pixel. It fails when that radius is more than 1pt from the
 # table's, which is how a new macOS that draws a different corner is caught.
 #
 # Usage: scripts/check-macos-corner-radius.sh   (macOS only)
@@ -121,12 +117,18 @@ static int reference(double radius, int continuous, capture_fn capture, struct c
 
 // The drawn radius is the reference radius whose corner matches the window's pixel for
 // pixel (least squares over both bottom corners), tried in quarter points around the table's
-// value with both corner curves. Comparing whole pixel maps rather than total transparent
-// area matters: the area of a continuous corner depends on how far its curve eases into the
-// edge, and an area ratio against one fixed reference read macOS 26 corners 0.9pt large
-// (16.91 for 16, 26.96 for 26) while macOS 14 and 15 read within 0.1pt. The area check
-// assumed the window's curve and the layer's continuous curve have the same shape at every
-// radius; the pixel fit does not assume it, and prints which curve fits.
+// value with both corner curves.
+//
+// This replaced a comparison of total transparent area against one reference, which read
+// macOS 26 corners about 0.9pt large (16.91 for 16, 26.96 for 26) and macOS 14 and 15 within
+// 0.1pt. The bias was not an edge stroke: the outer ring of a window without a toolbar is
+// fully opaque along its straight edges (printed below as straight-edge clear), and leaving
+// that ring out moved nothing. It is the shape. macOS 14 and 15 draw a quarter circle, and
+// the best fit is circular at 10.25pt. macOS 26 draws a continuous curve whose best fit is
+// the layer's continuous curve at about 0.75pt above the radius the system used to report
+// (16.75 for 16, 26.75 for 26), with a small residual, so its curve is not exactly the
+// layer's at the nominal radius. Fitting the whole pixel map measures that honestly rather
+// than turning a shape difference into an area ratio.
 static int measure(int toolbar, double table, capture_fn capture, double *radius) {
     NSWindow *window = [[NSWindow alloc]
         initWithContentRect:NSMakeRect(200, 200, 480, 360)
