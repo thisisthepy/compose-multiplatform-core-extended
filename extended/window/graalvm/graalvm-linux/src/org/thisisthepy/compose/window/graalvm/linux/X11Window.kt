@@ -7,6 +7,7 @@ import org.graalvm.nativeimage.c.type.CFloatPointer
 import org.graalvm.nativeimage.c.type.CTypeConversion
 import org.graalvm.word.Pointer
 import org.graalvm.word.WordFactory
+import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.ContextMenuItem
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.SystemTheme
@@ -31,10 +32,12 @@ class X11Window : WindowPlatform {
     private var listener: WindowListener? = null
     private var windowPointer: Long = 0
     private var queuePointer: Long = 0
-    private var eventBuffer: Pointer? = null
-    private var windowBuffer: Pointer? = null
-    private var textBuffer: Pointer? = null
-    private var sizeBuffer: Pointer? = null
+    // Addresses, with zero for none. A word value is never compared with null or put in a
+    // collection here, because native-image rejects both: a word is not an object.
+    private var eventBuffer: Long = 0
+    private var windowBuffer: Long = 0
+    private var textBuffer: Long = 0
+    private var sizeBuffer: Long = 0
     private var frameWanted = false
     private var lastScale = 0f
     private var lastTheme: SystemTheme? = null
@@ -42,9 +45,18 @@ class X11Window : WindowPlatform {
     /** Whether a frame was asked for since the last [present]; [requestFrame] coalesces. */
     val frameRequested: Boolean get() = frameWanted
 
+    /** Whether the window may be resized, set before [open]. */
+    var resizable: Boolean = true
+
+    /** Whether the window shows what is behind it, set before [open]. */
+    var backdrop: Boolean = false
+
     override fun open(config: WindowConfig, listener: WindowListener): Boolean {
         this.listener = listener
-        X11Natives.windowConfigure(1, config.minWidth, config.minHeight, if (config.decorated) 1 else 0, 0)
+        X11Natives.windowConfigure(
+            if (resizable) 1 else 0, config.minWidth, config.minHeight, if (config.decorated) 1 else 0,
+            if (backdrop) 1 else 0,
+        )
         val title = CTypeConversion.toCString(config.title)
         val out = UnmanagedMemory.calloc<Pointer>(X11Layout.WINDOW_BYTES)
         try {
@@ -55,12 +67,12 @@ class X11Window : WindowPlatform {
         } finally {
             title.close()
         }
-        windowBuffer = out
+        windowBuffer = out.rawValue()
         windowPointer = out.readWord<Pointer>(0).rawValue()
         queuePointer = out.readWord<Pointer>(24).rawValue()
-        eventBuffer = UnmanagedMemory.calloc<Pointer>(X11Layout.EVENT_BYTES)
-        textBuffer = UnmanagedMemory.calloc<Pointer>(TEXT_CAPACITY)
-        sizeBuffer = UnmanagedMemory.calloc<Pointer>(12)
+        eventBuffer = UnmanagedMemory.calloc<Pointer>(X11Layout.EVENT_BYTES).rawValue()
+        textBuffer = UnmanagedMemory.calloc<Pointer>(TEXT_CAPACITY).rawValue()
+        sizeBuffer = UnmanagedMemory.calloc<Pointer>(12).rawValue()
         lastScale = measure().scale
         lastTheme = systemTheme()
         return true
@@ -68,9 +80,13 @@ class X11Window : WindowPlatform {
 
     override fun pump(timeoutMillis: Long) {
         X11Natives.pump(timeoutMillis.coerceAtLeast(0) / 1000.0)
-        val record = eventBuffer ?: return
-        while (X11Natives.pollEvent(record) != 0) {
-            listener?.onEvent(read(record))
+        if (eventBuffer == 0L) return
+        while (X11Natives.pollEvent(WordFactory.pointer<Pointer>(eventBuffer)) != 0) {
+            if (WordFactory.pointer<Pointer>(eventBuffer).readInt(0) == EVENT_TEXT_PASTE) {
+                takePaste()?.let { listener?.onEvent(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, it)) }
+                continue
+            }
+            listener?.onEvent(read(eventBuffer))
         }
         val scale = measure().scale
         if (scale != lastScale) {
@@ -87,7 +103,21 @@ class X11Window : WindowPlatform {
         }
     }
 
-    private fun read(record: Pointer): WindowEvent {
+    /** The whole of a paste the window is holding, so that it lands as one edit. */
+    private fun takePaste(): String? {
+        if (textBuffer == 0L) return null
+        val buffer = WordFactory.pointer<Pointer>(textBuffer)
+        val length = X11Natives.takePaste(WordFactory.pointer<CCharPointer>(textBuffer), TEXT_CAPACITY)
+        if (length <= 0) return null
+        val bytes = ByteArray(length)
+        for (i in 0 until length) bytes[i] = buffer.readByte(i)
+        return bytes.decodeToString()
+    }
+
+    // Takes the address, not a word: native-image rejects a word passed as an argument to a
+    // method that is not inlined, so each read makes the word where it uses it.
+    private fun read(address: Long): WindowEvent {
+        val record = WordFactory.pointer<Pointer>(address)
         val bytes = ByteArray(X11Layout.EVENT_TEXT_BYTES)
         var length = 0
         while (length < bytes.size) {
@@ -108,12 +138,13 @@ class X11Window : WindowPlatform {
     }
 
     override fun measure(): WindowMeasurement {
-        val size = sizeBuffer ?: return WindowMeasurement(0, 0, 1f)
+        if (sizeBuffer == 0L) return WindowMeasurement(0, 0, 1f)
+        val size = WordFactory.pointer<Pointer>(sizeBuffer)
         X11Natives.windowSize(
             WordFactory.pointer<Pointer>(windowPointer),
-            size as CIntPointer,
-            size.add(4) as CIntPointer,
-            size.add(8) as CFloatPointer,
+            WordFactory.pointer<CIntPointer>(sizeBuffer),
+            WordFactory.pointer<CIntPointer>(sizeBuffer + 4),
+            WordFactory.pointer<CFloatPointer>(sizeBuffer + 8),
         )
         return WindowMeasurement(size.readInt(0), size.readInt(4), size.readFloat(8))
     }
@@ -143,6 +174,49 @@ class X11Window : WindowPlatform {
     /** Read the way the Kotlin/Native X11 window reads it: from `GTK_THEME`. */
     override fun systemTheme(): SystemTheme = X11Theme.fromGtkTheme(System.getenv("GTK_THEME"))
 
+    /**
+     * Makes the window's GL context current for the frame about to be drawn. False where
+     * there is nothing to draw into, which is a closed window or one with no pixels; the
+     * frame is then skipped rather than waited for.
+     */
+    fun beginFrame(): Boolean = X11Natives.frameBegin(WordFactory.pointer<Pointer>(windowPointer)) == 0
+
+    /**
+     * Sets the shape of the pointer over the window. [shape] is one of the small numbers the
+     * renderer and `x11_window.c` agree on: 0 arrow, 1 hand, 2 text, 3 crosshair, 4 resize
+     * left and right, 5 resize up and down.
+     */
+    fun setCursor(shape: Int) = X11Natives.setCursor(shape)
+
+    /**
+     * Hands the window what it would tell a reader who cannot see it, as the records
+     * `x11_window.c` holds for an AT-SPI bridge to read. Capped at [X11Layout.MAX_ELEMENTS].
+     */
+    fun setAccessibility(elements: List<AccessibleElement>) {
+        val capped = if (elements.size > X11Layout.MAX_ELEMENTS) elements.take(X11Layout.MAX_ELEMENTS) else elements
+        val records = UnmanagedMemory.calloc<Pointer>(X11Layout.MAX_ELEMENTS * X11Layout.ELEMENT_BYTES)
+        try {
+            for ((index, element) in capped.withIndex()) {
+                val at = index * X11Layout.ELEMENT_BYTES
+                records.writeInt(at, element.role)
+                records.writeFloat(at + 4, element.x)
+                records.writeFloat(at + 8, element.y)
+                records.writeFloat(at + 12, element.width)
+                records.writeFloat(at + 16, element.height)
+                val bytes = element.label.encodeToByteArray()
+                var length = 0
+                while (length < bytes.size && length < X11Layout.EVENT_TEXT_BYTES - 1) {
+                    records.writeByte(at + X11Layout.ELEMENT_LABEL_OFFSET + length, bytes[length])
+                    length++
+                }
+                records.writeByte(at + X11Layout.ELEMENT_LABEL_OFFSET + length, 0)
+            }
+            X11Natives.setAccessibility(records, capped.size, WordFactory.pointer<Pointer>(windowPointer))
+        } finally {
+            UnmanagedMemory.free(records)
+        }
+    }
+
     override fun setTitle(title: String) {
         val holder = CTypeConversion.toCString(title)
         try {
@@ -158,8 +232,9 @@ class X11Window : WindowPlatform {
         X11Natives.setVisibility(X11Visibility.code(visibility))
 
     override fun readClipboardText(): String? {
-        val buffer = textBuffer ?: return null
-        val length = X11Natives.clipboardRead(buffer as CCharPointer, TEXT_CAPACITY)
+        if (textBuffer == 0L) return null
+        val buffer = WordFactory.pointer<Pointer>(textBuffer)
+        val length = X11Natives.clipboardRead(WordFactory.pointer<CCharPointer>(textBuffer), TEXT_CAPACITY)
         if (length <= 0) return null
         val bytes = ByteArray(length)
         for (i in 0 until length) bytes[i] = buffer.readByte(i)
@@ -190,15 +265,24 @@ class X11Window : WindowPlatform {
         X11Upcalls.clearFramePainter()
         X11Natives.windowAction(ACTION_CLOSE)
         X11Natives.pump(0.0)
-        listOf(eventBuffer, windowBuffer, textBuffer, sizeBuffer).forEach { it?.let(UnmanagedMemory::free) }
-        eventBuffer = null
-        windowBuffer = null
-        textBuffer = null
-        sizeBuffer = null
+        freeBuffer(eventBuffer)
+        freeBuffer(windowBuffer)
+        freeBuffer(textBuffer)
+        freeBuffer(sizeBuffer)
+        eventBuffer = 0
+        windowBuffer = 0
+        textBuffer = 0
+        sizeBuffer = 0
+    }
+
+    private fun freeBuffer(address: Long) {
+        if (address != 0L) UnmanagedMemory.free(WordFactory.pointer<Pointer>(address))
     }
 
     private companion object {
-        const val TEXT_CAPACITY = 64 * 1024
+        // 4 MiB, the most one X11 property read returns: a longer clipboard answers empty.
+        const val TEXT_CAPACITY = 4 * 1024 * 1024
         const val ACTION_CLOSE = 2
+        const val EVENT_TEXT_PASTE = 13
     }
 }

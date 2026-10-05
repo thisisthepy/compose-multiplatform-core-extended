@@ -2,7 +2,15 @@
 
 package org.thisisthepy.compose.window.macos
 
+import kotlinx.cinterop.COpaquePointer
+import kotlinx.cinterop.CFunction
+import kotlinx.cinterop.CPointed
+import kotlinx.cinterop.autoreleasepool
+import kotlinx.cinterop.interpretCPointer
+import kotlinx.cinterop.invoke
 import kotlinx.cinterop.objcPtr
+import kotlinx.cinterop.reinterpret
+import kotlinx.cinterop.toCPointer
 import kotlinx.cinterop.useContents
 import org.jetbrains.skia.BackendRenderTarget
 import org.jetbrains.skia.Canvas
@@ -16,6 +24,8 @@ import platform.Metal.MTLCreateSystemDefaultDevice
 import platform.Metal.MTLPixelFormatBGRA8Unorm
 import platform.QuartzCore.CAMetalLayer
 import platform.QuartzCore.CATransaction
+import platform.darwin.sel_registerName
+import platform.posix.dlsym
 
 /**
  * The layer this window draws into, and the one frame it draws at a time.
@@ -41,6 +51,12 @@ class MetalSurface {
         "the Metal device would not give a command queue"
     }
     private val context = DirectContext.makeMetal(device.objcPtr(), queue.objcPtr())
+
+    /** What Metal has allocated for this device, in bytes, for measuring. */
+    val allocatedBytes: Long get() = device.currentAllocatedSize.toLong()
+
+    /** Skia's resource cache limit, in bytes, for measuring. */
+    val cacheLimitBytes: Long get() = context.resourceCacheLimit
 
     val layer = CAMetalLayer().also {
         @Suppress("CAST_NEVER_SUCCEEDS")
@@ -74,6 +90,30 @@ class MetalSurface {
      * layer says it is not on screen or is already as far ahead as it is allowed to be.
      */
     fun draw(paint: (Canvas, Int, Int) -> Unit): Boolean {
+        // Its own pool, because the drawable and the command buffer are handed out
+        // autoreleased, and a frame drawn inside a resize can be many frames away from the
+        // run loop draining the pool it would otherwise land in.
+        return autoreleasepool { drawFrame(paint) }
+    }
+
+    /**
+     * The drawable this frame draws into, asked for without it ever becoming a Kotlin object.
+     *
+     * Every Objective-C object that reaches Kotlin is held by a Kotlin wrapper until the
+     * collector frees the wrapper, and the release that follows is handed to the main run
+     * loop, because AppKit objects (menus, views, tracking areas) may only be let go of on
+     * the main thread. A resize draws frame after frame without that loop turning, and a
+     * drawable owns a texture the size of the window, so drawables held that way piled up:
+     * 100 sizes held 528 MB of Metal memory.
+     *
+     * Asked for through the runtime directly, the drawable comes back autoreleased and owned
+     * by nothing in Kotlin. The pool [draw] wraps the frame in is its only owner, and it
+     * goes back to the layer the moment the frame ends, on the thread that drew it.
+     */
+    private fun nextDrawable(): COpaquePointer? =
+        sendForObject(interpretCPointer<CPointed>(layer.objcPtr()), NEXT_DRAWABLE)
+
+    private fun drawFrame(paint: (Canvas, Int, Int) -> Unit): Boolean {
         val width: Int
         val height: Int
         layer.drawableSize.useContents {
@@ -81,8 +121,10 @@ class MetalSurface {
             height = this.height.toInt()
         }
         if (width <= 0 || height <= 0) return false
-        val drawable = layer.nextDrawable() ?: return false
-        val target = BackendRenderTarget.makeMetal(width, height, drawable.texture.objcPtr())
+        val drawable = nextDrawable() ?: return false
+        // Owned by the drawable, so it lives exactly as long as the drawable does.
+        val texture = sendForObject(drawable, TEXTURE) ?: return false
+        val target = BackendRenderTarget.makeMetal(width, height, texture.rawValue)
         val surface = Surface.makeFromBackendRenderTarget(
             context,
             target,
@@ -103,13 +145,11 @@ class MetalSurface {
             // and then the handing over belongs to whoever is committing the layer tree.
             // Apple's own wording for a view that has to stay attached while it is resized.
             val commands = queue.commandBuffer()
-            if (commands == null) {
-                drawable.present()
-            } else {
+            if (commands != null) {
                 commands.commit()
                 commands.waitUntilScheduled()
-                drawable.present()
             }
+            sendForNothing(drawable, PRESENT)
         } finally {
             surface.close()
             target.close()
@@ -133,6 +173,32 @@ class MetalSurface {
     }
 
     companion object {
+        private val NEXT_DRAWABLE = requireNotNull(sel_registerName("nextDrawable"))
+        private val TEXTURE = requireNotNull(sel_registerName("texture"))
+        private val PRESENT = requireNotNull(sel_registerName("present"))
+
+        /**
+         * `objc_msgSend`, found at run time. The runtime declares it without a prototype,
+         * so each call casts it to the exact shape of the method it sends, as arm64 needs.
+         */
+        private val messageSend: COpaquePointer = requireNotNull(
+            // RTLD_DEFAULT: search every image loaded into the process.
+            dlsym((-2L).toCPointer<CPointed>(), "objc_msgSend"),
+        ) { "the Objective-C runtime has no objc_msgSend" }
+
+        /** Sends a selector that takes nothing and answers an object, at +0. */
+        private fun sendForObject(receiver: COpaquePointer?, selector: COpaquePointer): COpaquePointer? =
+            messageSend
+                .reinterpret<CFunction<(COpaquePointer?, COpaquePointer?) -> COpaquePointer?>>()
+                .invoke(receiver, selector)
+
+        /** Sends a selector that takes nothing and answers nothing. */
+        private fun sendForNothing(receiver: COpaquePointer?, selector: COpaquePointer) {
+            messageSend
+                .reinterpret<CFunction<(COpaquePointer?, COpaquePointer?) -> Unit>>()
+                .invoke(receiver, selector)
+        }
+
         /**
          * Empties the canvas a frame is about to be drawn on.
          *

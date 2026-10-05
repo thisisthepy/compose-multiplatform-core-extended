@@ -18,7 +18,7 @@ import androidx.compose.ui.input.pointer.PointerEvent
  * It is therefore recommended to always check for `null` when using this property.
  */
 val PointerEvent.awtEventOrNull: java.awt.event.MouseEvent? get() {
-    return nativeEvent as? java.awt.event.MouseEvent?
+    return nativeEvent.takeIf { it.isInstanceOfAwt("java.awt.event.MouseEvent") } as? java.awt.event.MouseEvent
 }
 
 /**
@@ -31,5 +31,17 @@ val PointerEvent.awtEventOrNull: java.awt.event.MouseEvent? get() {
  * It is therefore recommended to always check for `null` when using this property.
  */
 val KeyEvent.awtEventOrNull: java.awt.event.KeyEvent? get() {
-    return internal.nativeEvent as? java.awt.event.KeyEvent?
+    return internal.nativeEvent.takeIf { it.isInstanceOfAwt("java.awt.event.KeyEvent") } as? java.awt.event.KeyEvent
+}
+
+// An event sent by an embedder is not an AWT event. Comparing class names up the superclass chain
+// answers that without loading a java.awt class: the cast to java.awt.event.KeyEvent would load
+// AWTEvent, whose initialiser loads the AWT native libraries.
+private fun Any?.isInstanceOfAwt(className: String): Boolean {
+    var type: Class<*>? = this?.javaClass
+    while (type != null) {
+        if (type.name == className) return true
+        type = type.superclass
+    }
+    return false
 }

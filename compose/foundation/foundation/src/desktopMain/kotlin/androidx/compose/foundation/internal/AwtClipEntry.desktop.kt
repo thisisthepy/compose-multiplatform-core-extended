@@ -74,9 +74,6 @@ internal suspend fun ClipEntry.readTransferableAnnotatedString(): AnnotatedStrin
     }
 }
 
-internal fun AnnotatedString.toTransferableClipEntry(): ClipEntry =
-    ClipEntry(AnnotatedStringTransferable(this))
-
 internal fun ClipEntry.hasTransferableAnnotatedString(): Boolean {
     val transferable = asAwtTransferable ?: return false
     return transferable.isDataFlavorSupported(annotatedStringFlavor)

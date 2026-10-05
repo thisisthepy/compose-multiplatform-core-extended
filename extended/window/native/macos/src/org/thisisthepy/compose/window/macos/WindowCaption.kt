@@ -22,6 +22,8 @@ data class WindowCaption(
     val buttonsAtStart: Boolean = true,
     /** A strip directly above the bar that the bar's surface covers and its content starts below. */
     val insetTop: Dp = 0.dp,
+    /** The radius the system gave the window's corners, or zero where it does not say. */
+    val cornerRadius: Dp = 0.dp,
 ) {
     companion object {
         /** No strip to avoid. */

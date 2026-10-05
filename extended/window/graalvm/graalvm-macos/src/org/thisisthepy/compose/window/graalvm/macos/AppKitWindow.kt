@@ -3,6 +3,7 @@
 package org.thisisthepy.compose.window.graalvm.macos
 
 import org.graalvm.nativeimage.StackValue
+import org.graalvm.nativeimage.UnmanagedMemory
 import org.graalvm.nativeimage.c.function.CFunction
 import org.graalvm.nativeimage.c.type.CCharPointer
 import org.graalvm.nativeimage.c.type.CIntPointer
@@ -13,6 +14,7 @@ import org.graalvm.nativeimage.c.function.CFunctionPointer
 import org.graalvm.word.Pointer
 import org.graalvm.word.WordFactory
 import org.thisisthepy.compose.window.WindowEvent
+import org.thisisthepy.compose.window.macosCornerRadius
 import org.thisisthepy.compose.window.WindowMeasurement
 
 // The Kotlin face of `native/appkit_window.m`, for the GraalVM native-image path.
@@ -92,8 +94,16 @@ private external fun configureWindow(
     backdrop: Int,
 )
 
-@CFunction("dxc_native_window_caption")
-private external fun windowCaption(view: Pointer?, height: CFloatPointer?, buttonsWidth: CFloatPointer?)
+@CFunction("dxc_native_window_chrome")
+private external fun windowChrome(
+    fullSizeContent: Int,
+    transparentTitleBar: Int,
+    titleHidden: Int,
+    unifiedToolbar: Int,
+)
+
+@CFunction("dxc_native_window_title_bar")
+private external fun windowTitleBar(view: Pointer?, out: CFloatPointer?)
 
 @CFunction("dxc_native_set_icon")
 private external fun setIcon(rgba: CCharPointer?, width: Int, height: Int)
@@ -270,18 +280,54 @@ fun configureNativeWindow(
 )
 
 /**
- * The strip of the window the title bar occupies and the room its three buttons take at the
- * leading edge, as the window reports them, in points.
+ * How the title bar is built, handed over before the window is made: whether the content
+ * runs under the bar, whether the bar is transparent, whether the title is hidden, and
+ * whether the window has an empty unified toolbar, which sets the bar's height and the
+ * window's corner radius on macOS 26.
+ */
+fun configureNativeWindowChrome(
+    fullSizeContentView: Boolean,
+    titlebarAppearsTransparent: Boolean,
+    titleHidden: Boolean,
+    unifiedToolbar: Boolean,
+) = windowChrome(
+    if (fullSizeContentView) 1 else 0,
+    if (titlebarAppearsTransparent) 1 else 0,
+    if (titleHidden) 1 else 0,
+    if (unifiedToolbar) 1 else 0,
+)
+
+/**
+ * What the title bar's size is worked out from, as the window reports it, in points.
  *
  * Measured rather than assumed, because the height follows the platform: it is taller
  * under a toolbar than under the standard bar and has changed between releases.
  */
-fun NativeWindow.measureCaption(): CaptionMetrics {
-    val height = StackValue.get<CFloatPointer>(4)
-    val buttons = StackValue.get<CFloatPointer>(4)
-    windowCaption(WordFactory.pointer(view), height, buttons)
-    return CaptionMetrics(height.read(), buttons.read())
+fun NativeWindow.measureTitleBar(): TitleBarMetrics {
+    val out = StackValue.get<CFloatPointer>(6 * 4)
+    windowTitleBar(WordFactory.pointer(view), out)
+    val close = out.read(2)
+    val zoom = out.read(3)
+    return TitleBarMetrics(
+        windowHeight = out.read(0),
+        contentLayoutHeight = out.read(1),
+        closeMinX = close.takeIf { it >= 0f },
+        zoomMaxX = zoom.takeIf { it >= 0f },
+        // AppKit reports no corner radius through a public API, so it is looked up by
+        // style and release in the table the Kotlin/Native window uses too.
+        cornerRadius = macosCornerRadius(
+            toolbar = out.read(4) > 0f,
+            macosMajor = out.read(5).toInt(),
+        )?.toFloat(),
+    )
 }
+
+/**
+ * The strip of the window the title bar occupies and the room its three buttons take at the
+ * leading edge, in points, or null while the window is between sizes. The gap in front of
+ * the first button is mirrored after the last.
+ */
+fun NativeWindow.measureCaption(): CaptionMetrics? = measureTitleBar().caption()
 
 /** The paths of the files last dragged over the window, one string, NUL between them. */
 fun readDroppedPaths(): String {
@@ -341,14 +387,18 @@ fun installApplicationMenu(name: String) {
 
 /** What is on the clipboard, or empty where it holds something that is not text. */
 fun readClipboard(): String {
-    val buffer = StackValue.get<Pointer>(CLIPBOARD_BYTES)
-    val length = clipboardRead(buffer, CLIPBOARD_BYTES)
-    if (length <= 0) return ""
-    val bytes = ByteArray(length)
-    for (index in 0 until length) {
-        bytes[index] = buffer.readByte(index)
+    val buffer = UnmanagedMemory.malloc<Pointer>(CLIPBOARD_BYTES)
+    try {
+        val length = clipboardRead(buffer, CLIPBOARD_BYTES)
+        if (length <= 0) return ""
+        val bytes = ByteArray(length)
+        for (index in 0 until length) {
+            bytes[index] = buffer.readByte(index)
+        }
+        return String(bytes, Charsets.UTF_8)
+    } finally {
+        UnmanagedMemory.free(buffer)
     }
-    return String(bytes, Charsets.UTF_8)
 }
 
 /** Puts text on the clipboard, replacing what was there. */
@@ -367,7 +417,7 @@ fun writeClipboard(text: String) {
  * A paragraph rather than a book. What crosses is stack storage, and a field that is
  * handed a novel has a different problem from the one this is solving.
  */
-private const val CLIPBOARD_BYTES = 64 * 1024
+private const val CLIPBOARD_BYTES = 4 * 1024 * 1024
 
 /** What a pointer can look like, in the small set both sides agree on. */
 object PointerShape {

@@ -19,8 +19,8 @@ on:
       - .github/workflows/extended-window-common.yml
 
 concurrency:
-  group: extended-window-common-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -54,6 +54,10 @@ jobs:
       - name: Build all targets this host can build
         working-directory: extended/window
         run: ./kotlin build -m common
+
+      - name: Check that every window klib has a globally unique name
+        working-directory: extended/window
+        run: ./scripts/check-klib-names.sh --built .
 
       - name: Test
         working-directory: extended/window

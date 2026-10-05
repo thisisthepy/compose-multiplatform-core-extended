@@ -20,8 +20,8 @@ on:
       - .github/workflows/extended-window-graalvm-macos.yml
 
 concurrency:
-  group: extended-window-graalvm-macos-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -46,6 +46,9 @@ jobs:
             echo "graalvm/graalvm-macos must not reference java.awt" >&2
             exit 1
           fi
+
+      - name: The window code calls no private AppKit API
+        run: ./scripts/check-no-private-api.sh
 
       - name: The upcall table is generated and current
         run: graalvm/graalvm-macos/tools/gen-upcalls.sh --check

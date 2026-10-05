@@ -1,0 +1,41 @@
+# Compiles compose:foundation:foundation for macOS and runs its macOS tests that the fork
+# adds. The other extended workflows build the JVM targets or the window modules only, so a
+# change under foundation's macosMain would otherwise reach `extended` uncompiled.
+name: extended foundation macos
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ extended ]
+    paths:
+      - compose/foundation/foundation/src/macos*/**
+      - .github/workflows/extended-foundation-macos.yml
+  push:
+    branches: [ extended ]
+    paths:
+      - compose/foundation/foundation/src/macos*/**
+      - .github/workflows/extended-foundation-macos.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: foundation macosArm64 (MenuLocationTest)
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'corretto'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+      - name: Compile and run the fork's macOS tests
+        run: ./gradlew :compose:foundation:foundation:macosArm64Test --tests '*MenuLocationTest*' -Pcompose.platforms=macos --no-daemon --stacktrace

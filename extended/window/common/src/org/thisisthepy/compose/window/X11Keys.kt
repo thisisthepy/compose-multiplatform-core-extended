@@ -14,6 +14,14 @@ package org.thisisthepy.compose.window
 /** A key with no meaning of its own. Zero is the A key in this numbering, so it cannot be zero. */
 const val NO_KEY = -1
 
+/**
+ * Whether the key is Shift and Delete alone, which cuts on every X11 desktop. The shared
+ * reader has no such shortcut, so the window reports it as control and X.
+ */
+fun x11IsShiftDelete(keysym: Long, state: Int): Boolean =
+    keysym == XK_DELETE &&
+        (state and (X11_SHIFT_MASK or X11_CONTROL_MASK or X11_MOD1_MASK or X11_MOD4_MASK)) == X11_SHIFT_MASK
+
 /** The key number for an X11 keysym, or [NO_KEY] where the key only types a character. */
 fun x11KeyNumber(keysym: Long): Int {
     if (keysym in XK_LOWER_A..XK_LOWER_Z) return X11_LETTERS[(keysym - XK_LOWER_A).toInt()]
@@ -26,6 +34,7 @@ fun x11KeyNumber(keysym: Long): Int {
         XK_BACKSPACE -> 0x33
         XK_ESCAPE -> 0x35
         XK_DELETE -> 0x75
+        XK_INSERT -> 0x72
         XK_LEFT -> 0x7B
         XK_RIGHT -> 0x7C
         XK_DOWN -> 0x7D
@@ -124,6 +133,7 @@ private const val XK_NEXT = 0xFF56L
 private const val XK_END = 0xFF57L
 private const val XK_KP_ENTER = 0xFF8DL
 private const val XK_DELETE = 0xFFFFL
+private const val XK_INSERT = 0xFF63L
 private const val XK_ISO_LEFT_TAB = 0xFE20L
 
 // a to z, then 0 to 9, each as the board numbers them.

@@ -16,13 +16,16 @@
 
 package androidx.compose.ui.input.pointer
 
+import androidx.compose.ui.internal.StandardPointerIcon
+import androidx.compose.ui.internal.StandardPointerIconKind
 import java.awt.Cursor
 
 internal class AwtCursor(val cursor: Cursor) : PointerIcon {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
-        if (javaClass != other?.javaClass) return false
+        if (other !is AwtCursor && other !is StandardPointerIcon) return false
 
+        if (other is StandardPointerIcon) return other == this
         other as AwtCursor
 
         // AwtCursor doesn't implement equals
@@ -53,7 +56,7 @@ internal class AwtCursor(val cursor: Cursor) : PointerIcon {
  */
 fun PointerIcon(cursor: Cursor): PointerIcon = AwtCursor(cursor)
 
-internal actual val pointerIconDefault: PointerIcon = AwtCursor(Cursor(Cursor.DEFAULT_CURSOR))
-internal actual val pointerIconCrosshair: PointerIcon = AwtCursor(Cursor(Cursor.CROSSHAIR_CURSOR))
-internal actual val pointerIconText: PointerIcon = AwtCursor(Cursor(Cursor.TEXT_CURSOR))
-internal actual val pointerIconHand: PointerIcon = AwtCursor(Cursor(Cursor.HAND_CURSOR))
+internal actual val pointerIconDefault: PointerIcon = StandardPointerIcon(StandardPointerIconKind.Default)
+internal actual val pointerIconCrosshair: PointerIcon = StandardPointerIcon(StandardPointerIconKind.Crosshair)
+internal actual val pointerIconText: PointerIcon = StandardPointerIcon(StandardPointerIconKind.Text)
+internal actual val pointerIconHand: PointerIcon = StandardPointerIcon(StandardPointerIconKind.Hand)

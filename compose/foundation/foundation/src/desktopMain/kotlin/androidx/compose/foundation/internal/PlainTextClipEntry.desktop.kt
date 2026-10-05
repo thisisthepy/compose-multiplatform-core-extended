@@ -20,15 +20,31 @@ package androidx.compose.foundation.internal
 
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.text.AnnotatedString
 
 // Extended hook: an embedder that supplies its own Clipboard (no AWT display, no
-// java.awt.datatransfer) wraps plain text as `ClipEntry("text")`. A ClipEntry whose
-// nativeClipEntry is a String is plain text and is read without touching Transferable or
-// DataFlavor. Every other nativeClipEntry keeps the Transferable path in ClipboardUtils.
+// java.awt.datatransfer) wraps plain text as `ClipEntry("text")`. Copying from a text field
+// produces `ClipEntry(annotatedString)`. Both are read without touching Transferable or
+// DataFlavor, and the AWT clipboard converts them when it stores the entry. Every other
+// nativeClipEntry keeps the Transferable path in AwtClipEntry.desktop.kt.
 // The public API is unchanged: the constructor already accepts Any.
 
-/** True when this entry holds a plain [String] instead of a Transferable. */
-internal fun ClipEntry.isPlainText(): Boolean = nativeClipEntry is String
+/** True when this entry holds text (a [String] or an [AnnotatedString]), not a Transferable. */
+internal fun ClipEntry.isPlainText(): Boolean =
+    nativeClipEntry is String || nativeClipEntry is AnnotatedString
 
 /** The text of a plain-text entry, or null when the entry is not plain text. */
-internal fun ClipEntry.plainTextOrNull(): String? = nativeClipEntry as? String
+internal fun ClipEntry.plainTextOrNull(): String? =
+    when (val native = nativeClipEntry) {
+        is String -> native
+        is AnnotatedString -> native.text
+        else -> null
+    }
+
+/** The styled text of a plain-text entry, or null when the entry is not plain text. */
+internal fun ClipEntry.annotatedStringOrNull(): AnnotatedString? =
+    when (val native = nativeClipEntry) {
+        is String -> AnnotatedString(native)
+        is AnnotatedString -> native
+        else -> null
+    }
