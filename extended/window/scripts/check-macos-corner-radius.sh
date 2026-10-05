@@ -49,16 +49,38 @@ static void pump(double seconds) {
     }
 }
 
-// The transparent area in a size by size box at one bottom corner, in pixels.
-static double cut_area(const uint8_t *rgba, size_t width, size_t height, size_t box, int right) {
-    double area = 0;
+static double clear_at(const uint8_t *rgba, size_t width, size_t x, size_t y) {
+    return 1.0 - rgba[(y * width + x) * 4 + 3] / 255.0;
+}
+
+// The transparent area in a box by box square at one bottom corner, in pixels, three ways:
+// raw, without the outermost ring of pixels (the bottom row and the outer column), and
+// with the edge stroke taken out.
+//
+// The stroke: a titled window draws a thin edge line around its outline, and in the
+// window's own image that line is slightly transparent along every straight edge, not only
+// at the corner. Counted raw, the bottom row and the outer column of the box add a strip of
+// transparency to the area that has nothing to do with the corner, which made the radius
+// read about 0.9pt large. The reference window (a bare layer) has no such line. So each
+// pixel's transparency is measured against the transparency of the same row and the same
+// column far from the corner (the middle of the bottom edge and of the side edge), and
+// only what exceeds that baseline counts, rescaled so a fully clear pixel still counts 1.
+struct areas { double raw, inner, corrected; };
+
+static struct areas cut_area(const uint8_t *rgba, size_t width, size_t height, size_t box, int right) {
+    struct areas a = {0, 0, 0};
     for (size_t y = height - box; y < height; y++) {
+        double row_base = clear_at(rgba, width, width / 2, y);
         for (size_t i = 0; i < box; i++) {
             size_t x = right ? width - 1 - i : i;
-            area += 1.0 - rgba[(y * width + x) * 4 + 3] / 255.0;
+            double t = clear_at(rgba, width, x, y);
+            a.raw += t;
+            if (y != height - 1 && i != 0) a.inner += t;
+            double base = fmax(row_base, clear_at(rgba, width, x, height / 2));
+            a.corrected += base < 1.0 ? fmax(0.0, (t - base) / (1.0 - base)) : t;
         }
     }
-    return area;
+    return a;
 }
 
 // Transparent pixels in the bottom row, counted from one corner: the arc's reach.
@@ -89,8 +111,15 @@ static int corner_area(NSWindow *window, capture_fn capture, const char *name, d
                                                  (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
     CGContextDrawImage(context, CGRectMake(0, 0, width, height), image);
     size_t box = (size_t)ceil(48 * scale);
-    double area = (cut_area(rgba, width, height, box, 0) + cut_area(rgba, width, height, box, 1)) / 2;
-    *area_pt = area / (scale * scale);
+    struct areas left = cut_area(rgba, width, height, box, 0);
+    struct areas right = cut_area(rgba, width, height, box, 1);
+    double s2 = scale * scale;
+    printf("%s edge clear: bottom-row %.3f side-column %.3f; area raw %.1fpt2 inner %.1fpt2 corrected %.1fpt2\n",
+           name, clear_at(rgba, width, width / 2, height - 1), clear_at(rgba, width, 0, height / 2),
+           (left.raw + right.raw) / 2 / s2, (left.inner + right.inner) / 2 / s2,
+           (left.corrected + right.corrected) / 2 / s2);
+    double area = (left.corrected + right.corrected) / 2;
+    *area_pt = area / s2;
     printf("%s scale %.1f image %zux%zu area %.1fpt2 bottom-run %zupx circle-radius %.2fpt\n",
            name, scale, width, height, *area_pt, bottom_run(rgba, width, height),
            sqrt(*area_pt / (1 - M_PI / 4)));
