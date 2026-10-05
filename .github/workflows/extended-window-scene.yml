@@ -1,0 +1,73 @@
+# extended/window/scene: the Compose scene host over WindowPlatform.
+#
+# Builds and tests it for the JVM (what the GraalVM path runs) and macosArm64, and fails if
+# the module names java.awt or a toolkit window class. The graalvm-linux change that gives
+# the host a GL frame is compiled by the same job.
+
+name: Extended window scene
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window-scene.yml
+  push:
+    branches:
+      - extended
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window-scene.yml
+
+concurrency:
+  group: extended-window-scene-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: scene (jvm, macosArm64)
+    runs-on: macos-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: extended/window
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extended/window
+          filter: blob:none
+
+      - name: The module names no java.awt and no toolkit window
+        run: |
+          if grep -rEn '^import (java\.awt|javax\.swing|sun\.awt|androidx\.compose\.ui\.awt|androidx\.compose\.ui\.window)' scene/src; then
+            echo "scene must not import java.awt or a toolkit window" >&2
+            exit 1
+          fi
+
+      - name: Cache the Kotlin toolchain, konan and Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/JetBrains/Kotlin
+            ~/.konan
+            ~/.m2/repository
+          key: extended-window-scene-${{ runner.os }}-${{ hashFiles('extended/window/**/module.yaml', 'extended/window/libs.versions.toml', 'extended/window/kotlin') }}
+          restore-keys: |
+            extended-window-scene-${{ runner.os }}-
+
+      - name: Build
+        run: |
+          ./kotlin build -p jvm -m scene
+          ./kotlin build -p macosArm64 -m scene
+
+      - name: Test (jvm)
+        run: ./kotlin test -p jvm -m scene
+
+      - name: Test (macosArm64)
+        run: ./kotlin test -p macosArm64 -m scene
+
+      - name: The Linux GraalVM layer compiles with the GL frame entry
+        run: ./kotlin build -p jvm -m graalvm-linux
