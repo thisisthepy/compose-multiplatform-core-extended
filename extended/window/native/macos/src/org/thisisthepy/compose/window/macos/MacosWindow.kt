@@ -24,6 +24,7 @@ import kotlinx.cinterop.CValue
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.reinterpret
+import kotlinx.cinterop.toKString
 import kotlinx.cinterop.useContents
 import kotlinx.cinterop.value
 import platform.CoreGraphics.CGPoint
@@ -46,6 +47,8 @@ import platform.AppKit.NSWindowZoomButton
 import platform.AppKit.NSViewLayerContentsRedrawDuringViewResize
 import platform.CoreGraphics.CGSize
 import platform.Foundation.NSProcessInfo
+import platform.Foundation.runMode
+import platform.Foundation.timeIntervalSinceNow
 import platform.QuartzCore.CALayer
 import platform.QuartzCore.CALayerDelegateProtocol
 import platform.AppKit.NSColor
@@ -689,9 +692,8 @@ class MacosWindow(
     /**
      * DXC_METRICS=1: the scripted drag and its measurements; see [ResizeMetrics].
      *
-     * All 100 sizes are set inside this one block, so the run loop does not turn between
-     * them. That is the hardest case for anything a frame leaves to an autorelease pool,
-     * and it is the case a fast drag of the edge comes closest to.
+     * Each size in its own pool, and the run loop turned between sizes as a drag turns it
+     * between events: see [turnAsADragDoes].
      */
     private fun runMetrics() {
         val phase = { name: String ->
@@ -702,6 +704,14 @@ class MacosWindow(
                         "metal_allocated_mb=${metal.allocatedBytes / 1048576} " +
                         "footprint_mb=${footprint / 1048576} resident_mb=${resident / 1048576}",
                 )
+                // Where the footprint is, by kind, when one number is not enough to say.
+                if (platform.posix.getenv("DXC_METRICS_BREAKDOWN")?.toKString() == "1") {
+                    val pid = platform.posix.getpid()
+                    platform.posix.fflush(null)
+                    platform.posix.system(
+                        "echo 'compose-rust: breakdown $name' 1>&2; /usr/bin/footprint $pid 1>&2",
+                    )
+                }
         }
         ResizeMetrics.run(
             phase = phase,
@@ -721,6 +731,7 @@ class MacosWindow(
                     )
                     window.displayIfNeeded()
                     platform.QuartzCore.CATransaction.flush()
+                    turnAsADragDoes()
                 }
             },
         )
@@ -732,6 +743,25 @@ class MacosWindow(
             platform.darwin.dispatch_time(platform.darwin.DISPATCH_TIME_NOW, 2_000_000_000L),
             platform.darwin.dispatch_get_main_queue(),
         ) { phase("settled") }
+    }
+
+    /**
+     * Lets the run loop turn in the mode a live resize runs it in, for one event's worth
+     * of time at 60 events a second, as it does between the events of a real drag.
+     *
+     * Core Animation hands each size's surfaces to the window server and learns that the
+     * server is done with them through a port the run loop services. Setting 100 sizes in
+     * one turn never services it: the footprint then held 499 MB of surfaces this process
+     * owns and no longer maps, all given back once the loop turned. A drag of the edge
+     * turns the loop between events, so the scripted one does too, and its reading is the
+     * drag's.
+     */
+    private fun turnAsADragDoes() {
+        val until = platform.Foundation.NSDate(timeIntervalSinceNow = 1.0 / 60)
+        val loop = platform.Foundation.NSRunLoop.currentRunLoop
+        while (until.timeIntervalSinceNow > 0 &&
+            loop.runMode(platform.AppKit.NSEventTrackingRunLoopMode, beforeDate = until)
+        ) Unit
     }
 
     /** Physical footprint and resident size of this process, in bytes. */
