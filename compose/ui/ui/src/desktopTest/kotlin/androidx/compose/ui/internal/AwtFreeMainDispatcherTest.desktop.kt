@@ -45,8 +45,38 @@ object CoroutinesMainProbe {
     }
 }
 
+/** With the toolkit switched off, the pieces an embedder reaches answer without loading java.awt. */
+@OptIn(InternalComposeUiApi::class)
+object ExtendedAwtProbe {
+    @JvmStatic
+    fun main(args: Array<String>) {
+        check(!ExtendedAwt.available) { "compose.awt=false was not read" }
+        val name = androidx.compose.ui.input.key.Key.A.toString()
+        check(name.startsWith("Key: ")) { name }
+        println("probe-ok")
+    }
+}
+
 @OptIn(InternalComposeUiApi::class)
 class AwtFreeMainDispatcherTest {
+    @Test
+    fun withTheToolkitSwitchedOffKeyNamesLoadNoAwtClass() {
+        val java = File(System.getProperty("java.home"), "bin/java").path
+        val process = ProcessBuilder(
+            java,
+            "-verbose:class",
+            "-Djava.awt.headless=true",
+            "-Dcompose.awt=false",
+            "-cp", System.getProperty("java.class.path"),
+            ExtendedAwtProbe::class.java.name,
+        ).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        assertEquals(0, process.waitFor(), output)
+        assertEquals(true, output.contains("probe-ok"), output)
+        val awt = output.lineSequence().filter { it.startsWith("[") && it.contains("java.awt.") }.toList()
+        assertEquals(emptyList<String>(), awt)
+    }
+
     @Test
     fun theCoroutinesMainPropertySendsTheWorkToDispatchersMainAndLoadsNoToolkit() {
         val java = File(System.getProperty("java.home"), "bin/java").path
