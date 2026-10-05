@@ -154,13 +154,6 @@ class X11Window : WindowPlatform {
     }
 
     /**
-     * Makes the window's GL framebuffer current for the frame about to be drawn. False where
-     * there is nothing to draw into, which is a closed window. A frame that was begun is
-     * ended by [present].
-     */
-    fun beginFrame(): Boolean = X11Natives.frameBegin(WordFactory.pointer<Pointer>(windowPointer)) == 0
-
-    /**
      * Swaps the frame just drawn onto the screen and reports it. The window size is read
      * after the swap, so a frame drawn for an older size shows up as a mismatch.
      */

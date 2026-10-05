@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.ui.InternalComposeUiApi::class)
+
 package org.thisisthepy.compose.window.scene
 
 import androidx.compose.ui.input.key.Key

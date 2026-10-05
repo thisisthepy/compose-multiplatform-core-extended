@@ -27,6 +27,17 @@ settings:
     group: org.thisisthepy.compose.window
     artifactId: scene
     version: 0.1.0
+  kotlin:
+    # The klib takes its Maven coordinates as its unique_name, like the other window modules.
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.window:scene
+
+test-settings:
+  kotlin:
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.window:scene-test
 
 repositories:
   - id: mavenLocal
