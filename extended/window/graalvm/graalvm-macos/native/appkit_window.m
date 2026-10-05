@@ -62,6 +62,10 @@ enum {
     // selector's name in the text. Which Compose key it becomes is decided on the other
     // side, in the same table the Kotlin/Native window uses.
     DXC_EVENT_EDIT_COMMAND = 16,
+
+    // An entry of the text edit menu the window put up on a right click was chosen. The
+    // key_code field says which, as the id the menu was described with.
+    DXC_EVENT_MENU_COMMAND = 17,
 };
 
 // Set in `buttons` on a press or release of the secondary button. The buttons held down
@@ -524,6 +528,41 @@ static float dxc_ime_spot_y;
 // The paths of the files last dragged over the window, NUL separated.
 static NSString *dxc_dropped_paths;
 
+// The text edit menu a right click puts up, described by the Kotlin side so that every
+// window draws the same one from the same list. The wire form is the one
+// dxc_native_context_menu takes: a line per entry, fields separated by a tab (id, enabled,
+// a separator after it, the label).
+static NSString *dxc_text_menu_spec = nil;
+#define DXC_PASTE_COMMAND 3
+
+void dxc_native_set_text_menu(const char *spec) {
+    dxc_text_menu_spec = spec == NULL ? nil : [NSString stringWithUTF8String:spec];
+}
+
+static NSMenu *dxc_text_menu(id target) {
+    if (dxc_text_menu_spec == nil) {
+        return nil;
+    }
+    NSMenu *menu = [[NSMenu alloc] init];
+    menu.autoenablesItems = YES;
+    for (NSString *line in [dxc_text_menu_spec componentsSeparatedByString:@"\n"]) {
+        NSArray<NSString *> *fields = [line componentsSeparatedByString:@"\t"];
+        if (fields.count < 4) {
+            continue;
+        }
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:fields[3]
+                                                      action:@selector(dxcMenuCommand:)
+                                               keyEquivalent:@""];
+        item.tag = fields[0].integerValue;
+        item.target = target;
+        [menu addItem:item];
+        if (fields[2].intValue != 0) {
+            [menu addItem:NSMenuItem.separatorItem];
+        }
+    }
+    return menu;
+}
+
 @interface DxcView : NSView <NSTextInputClient>
 @end
 
@@ -632,8 +671,39 @@ void dxc_native_set_cursor(int32_t shape) {
 - (void)mouseDragged:(NSEvent *)event { [self dxcSend:DXC_EVENT_POINTER_MOVE event:event]; }
 - (void)mouseDown:(NSEvent *)event { [self dxcSend:DXC_EVENT_POINTER_DOWN event:event]; }
 - (void)mouseUp:(NSEvent *)event { [self dxcSend:DXC_EVENT_POINTER_UP event:event]; }
-- (void)rightMouseDown:(NSEvent *)event { [self dxcSend:DXC_EVENT_POINTER_DOWN event:event]; }
-- (void)rightMouseUp:(NSEvent *)event { [self dxcSend:DXC_EVENT_POINTER_UP event:event]; }
+// The press goes to the scene first, so the field under the pointer takes focus and a word
+// under it can be selected the way a click would, and then the menu comes up under the
+// pointer. The menu's tracking swallows the release, so it is sent once the menu has gone,
+// or the scene would go on believing a button is held down.
+- (void)rightMouseDown:(NSEvent *)event {
+    [self dxcSend:DXC_EVENT_POINTER_DOWN event:event];
+    NSMenu *menu = dxc_text_menu(self);
+    if (menu != nil) {
+        [NSMenu popUpContextMenu:menu withEvent:event forView:self];
+    }
+    [self dxcSend:DXC_EVENT_POINTER_UP event:event];
+}
+- (void)rightMouseUp:(NSEvent *)event { }
+
+// An entry of the text menu. Nothing is done here beyond saying which: the key presses it
+// stands for are made on the Kotlin side, so an input method's composition is untouched
+// and the field that has focus receives them as it would from the keyboard.
+- (void)dxcMenuCommand:(NSMenuItem *)item {
+    struct dxc_event record;
+    memset(&record, 0, sizeof record);
+    record.kind = DXC_EVENT_MENU_COMMAND;
+    record.key_code = (int32_t)item.tag;
+    dxc_push_event(record);
+}
+
+// Paste is greyed out while the clipboard holds no text. Everything else stays available:
+// whether there is a selection to cut or copy is the field's to know.
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(dxcMenuCommand:) && item.tag == DXC_PASTE_COMMAND) {
+        return [NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString] != nil;
+    }
+    return YES;
+}
 - (void)scrollWheel:(NSEvent *)event { [self dxcSend:DXC_EVENT_SCROLL event:event]; }
 // Both, and in this order. The key itself is what arrows, Enter and backspace are read
 // as, and the input context is what turns the rest into text: it answers with
@@ -1160,29 +1230,15 @@ int32_t dxc_native_window_open(
 /**
  * What the title bar's size is worked out from, in points: the window's frame height, the
  * height of the part below the bar, where the close button starts and where the zoom button
- * ends (both -1 where the window has no buttons), and the radius the system gave the
- * window's corners (-1 where it does not say). `out` holds five floats.
+ * ends (both -1 where the window has no buttons), whether the window has a toolbar (1 or 0)
+ * and the major release of macOS it runs on. `out` holds six floats.
  *
  * Raw measurements rather than an answer, because the answer is `macosWindowCaption` in
  * Kotlin, which the Kotlin/Native window also uses, so the two cannot disagree about where
- * the content starts.
+ * the content starts. The corner radius is not among them: AppKit reports none through a
+ * public API, so the Kotlin side looks it up by toolbar and release in the table both
+ * windows share (`macosCornerRadius`).
  */
-/**
- * The radius the system gave [window]'s corners, or -1 where it does not say.
- *
- * AppKit has no public property for it, so this asks for `_cornerRadius` by key value
- * coding after checking the window answers it; a release without it gives -1 rather than
- * an exception. The Kotlin/Native window asks the same way under the same key
- * (MACOS_CORNER_RADIUS_KEY), so both windows read one number.
- */
-static CGFloat dxc_window_corner_radius(NSWindow *window) {
-    if (![window respondsToSelector:NSSelectorFromString(@"_cornerRadius")]) {
-        return -1;
-    }
-    id value = [window valueForKey:@"_cornerRadius"];
-    return [value respondsToSelector:@selector(doubleValue)] ? [value doubleValue] : -1;
-}
-
 void dxc_native_window_title_bar(void *view_pointer, float *out) {
     dxc_on_main(^{
     @autoreleasepool {
@@ -1192,11 +1248,12 @@ void dxc_native_window_title_bar(void *view_pointer, float *out) {
         out[1] = 0;
         out[2] = -1;
         out[3] = -1;
-        out[4] = -1;
+        out[4] = 0;
+        out[5] = (float)NSProcessInfo.processInfo.operatingSystemVersion.majorVersion;
         if (window == nil) {
             return;
         }
-        out[4] = (float)dxc_window_corner_radius(window);
+        out[4] = window.toolbar != nil ? 1 : 0;
         out[0] = (float)window.frame.size.height;
         out[1] = (float)window.contentLayoutRect.size.height;
         NSButton *close = [window standardWindowButton:NSWindowCloseButton];

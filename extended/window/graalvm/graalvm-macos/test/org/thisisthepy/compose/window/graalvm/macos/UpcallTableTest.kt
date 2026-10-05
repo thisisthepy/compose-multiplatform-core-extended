@@ -1,7 +1,9 @@
 package org.thisisthepy.compose.window.graalvm.macos
 
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.EditMenuId
 import org.thisisthepy.compose.window.WindowEvent
+import org.thisisthepy.compose.window.WindowListener
 import org.thisisthepy.compose.window.WindowPlatform
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -46,5 +48,39 @@ class UpcallTableTest {
             ),
         )
         assertEquals("1\t1\t0\tCopy\n2\t0\t1\tPaste now", packed)
+    }
+
+    private class Recorder : WindowListener {
+        val events = ArrayList<WindowEvent>()
+        val chosen = ArrayList<Int>()
+        override fun onEvent(event: WindowEvent) { events += event }
+        override fun onContextMenuChosen(id: Int) { chosen += id }
+    }
+
+    @Test
+    fun fr33_6_the_text_menu_a_right_click_puts_up_is_cut_copy_paste_and_select_all() {
+        val items = AppKitWindowPlatform.textEditMenu()
+        assertEquals(
+            listOf(EditMenuId.CUT, EditMenuId.COPY, EditMenuId.PASTE, EditMenuId.SELECT_ALL),
+            items.map { it.id },
+        )
+        assertEquals(
+            "1\t1\t0\tCut\n2\t1\t0\tCopy\n3\t1\t1\tPaste\n4\t1\t0\tSelect All",
+            AppKitWindowPlatform.packMenu(items),
+        )
+    }
+
+    @Test
+    fun fr33_6_a_chosen_menu_entry_reaches_the_listener_as_a_choice_and_not_as_an_event() {
+        val recorder = Recorder()
+        val chosen = WindowEvent(WindowEvent.MENU_COMMAND, 0f, 0f, 0, 0, EditMenuId.COPY, 0, "")
+        AppKitWindowPlatform.deliver(chosen, recorder)
+        assertEquals(listOf(EditMenuId.COPY), recorder.chosen)
+        assertTrue(recorder.events.isEmpty())
+
+        val key = WindowEvent(WindowEvent.KEY_DOWN, 0f, 0f, 0, 0, 8, 0, "")
+        AppKitWindowPlatform.deliver(key, recorder)
+        assertEquals(listOf(key), recorder.events)
+        assertEquals(listOf(EditMenuId.COPY), recorder.chosen)
     }
 }

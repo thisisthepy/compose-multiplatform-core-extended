@@ -1,9 +1,11 @@
 package org.thisisthepy.compose.window.graalvm.macos
 
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.editMenuItems
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.WindowConfig
+import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowListener
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.WindowPlatform
@@ -38,12 +40,13 @@ class AppKitWindowPlatform : WindowPlatform {
 
     override fun open(config: WindowConfig, listener: WindowListener): Boolean {
         configureNativeWindow(
-            resizable = true,
+            resizable = config.resizable,
             minWidth = config.minWidth,
             minHeight = config.minHeight,
             systemChrome = config.decorated,
             backdrop = config.transparent,
         )
+        setTextMenu(packMenu(textEditMenu()))
         val opened = openNativeWindow(config.title, config.width, config.height) ?: return false
         window = opened
         this.listener = listener
@@ -57,7 +60,7 @@ class AppKitWindowPlatform : WindowPlatform {
         val sink = listener ?: return
         pumpWindowEvents(timeoutMillis / 1000.0)
         for (event in drainWindowEvents()) {
-            sink.onEvent(event)
+            deliver(event, sink)
         }
         val theme = systemTheme()
         if (theme != lastTheme) {
@@ -135,6 +138,27 @@ class AppKitWindowPlatform : WindowPlatform {
     }
 
     companion object {
+        /**
+         * The entries of the menu a right click puts up. Cut and Copy cannot be judged from
+         * outside the field, which owns the selection; Paste is greyed out by the window
+         * while the clipboard holds no text.
+         */
+        fun textEditMenu(): List<ContextMenuItem> =
+            editMenuItems(canCut = true, canCopy = true, canPaste = true, canSelectAll = true)
+
+        /**
+         * Hands one event the window wrote down to [sink]. A chosen menu entry goes to
+         * [WindowListener.onContextMenuChosen] and not to [WindowListener.onEvent], as it
+         * does on the other platform layers.
+         */
+        fun deliver(event: WindowEvent, sink: WindowListener) {
+            if (event.kind == WindowEvent.MENU_COMMAND) {
+                sink.onContextMenuChosen(event.keyCode)
+            } else {
+                sink.onEvent(event)
+            }
+        }
+
         /** The wire form the C side parses: a tab-separated line per item. */
         fun packMenu(items: List<ContextMenuItem>): String =
             items.joinToString("\n") {

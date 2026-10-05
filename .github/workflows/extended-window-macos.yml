@@ -50,6 +50,12 @@ jobs:
           restore-keys: |
             extended-window-macos-${{ runner.os }}-
 
+      - name: The window code calls no private AppKit API
+        run: ./scripts/check-no-private-api.sh
+
+      - name: The corner radius table matches the corner macOS draws
+        run: ./scripts/check-macos-corner-radius.sh
+
       - name: Build
         run: ./kotlin build -p macosArm64 -m macos
 

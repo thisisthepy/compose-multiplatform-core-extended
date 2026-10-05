@@ -53,5 +53,10 @@ data class WindowEvent(
          * buttons alone cannot say which one was let go.
          */
         const val SECONDARY_BUTTON = 1 shl 16
+
+        // An entry of the text edit menu the window put up itself on a right click was
+        // chosen; `keyCode` is its [EditMenuId]. Platform layers hand it to
+        // [WindowListener.onContextMenuChosen] and do not pass it on as an event.
+        const val MENU_COMMAND = 17
     }
 }

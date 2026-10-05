@@ -14,6 +14,7 @@ import org.graalvm.nativeimage.c.function.CFunctionPointer
 import org.graalvm.word.Pointer
 import org.graalvm.word.WordFactory
 import org.thisisthepy.compose.window.WindowEvent
+import org.thisisthepy.compose.window.macosCornerRadius
 import org.thisisthepy.compose.window.WindowMeasurement
 
 // The Kotlin face of `native/appkit_window.m`, for the GraalVM native-image path.
@@ -303,7 +304,7 @@ fun configureNativeWindowChrome(
  * under a toolbar than under the standard bar and has changed between releases.
  */
 fun NativeWindow.measureTitleBar(): TitleBarMetrics {
-    val out = StackValue.get<CFloatPointer>(20)
+    val out = StackValue.get<CFloatPointer>(6 * 4)
     windowTitleBar(WordFactory.pointer(view), out)
     val close = out.read(2)
     val zoom = out.read(3)
@@ -312,7 +313,12 @@ fun NativeWindow.measureTitleBar(): TitleBarMetrics {
         contentLayoutHeight = out.read(1),
         closeMinX = close.takeIf { it >= 0f },
         zoomMaxX = zoom.takeIf { it >= 0f },
-        cornerRadius = out.read(4).takeIf { it >= 0f },
+        // AppKit reports no corner radius through a public API, so it is looked up by
+        // style and release in the table the Kotlin/Native window uses too.
+        cornerRadius = macosCornerRadius(
+            toolbar = out.read(4) > 0f,
+            macosMajor = out.read(5).toInt(),
+        )?.toFloat(),
     )
 }
 
@@ -502,6 +508,9 @@ private external fun nativeSetImeSpot(x: Float, y: Float)
 @CFunction("dxc_native_context_menu")
 private external fun nativeContextMenu(view: Pointer?, items: CCharPointer?): Int
 
+@CFunction("dxc_native_set_text_menu")
+private external fun nativeSetTextMenu(spec: CCharPointer?)
+
 /** Puts a title on the window. */
 fun NativeWindow.setTitle(title: String) {
     val holder = CTypeConversion.toCString(title)
@@ -535,6 +544,25 @@ fun NativeWindow.showContextMenu(packed: String): Int {
     val holder = CTypeConversion.toCString(packed)
     try {
         return nativeContextMenu(WordFactory.pointer(view), holder.get())
+    } finally {
+        holder.close()
+    }
+}
+
+/**
+ * Describes the text edit menu the window puts up itself on a right click, in the form
+ * [showContextMenu] takes, or removes it when [packed] is null.
+ *
+ * The entry the reader picks comes back as an event of kind `WindowEvent.MENU_COMMAND`.
+ */
+fun setTextMenu(packed: String?) {
+    if (packed == null) {
+        nativeSetTextMenu(WordFactory.nullPointer<CCharPointer>())
+        return
+    }
+    val holder = CTypeConversion.toCString(packed)
+    try {
+        nativeSetTextMenu(holder.get())
     } finally {
         holder.close()
     }

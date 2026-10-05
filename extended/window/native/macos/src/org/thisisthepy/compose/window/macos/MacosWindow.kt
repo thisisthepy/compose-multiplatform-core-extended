@@ -34,6 +34,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.enableSavedStateHandles
 import kotlinx.coroutines.Dispatchers
 import org.jetbrains.skia.Canvas
+import org.thisisthepy.compose.window.macosCornerRadius
 import androidx.compose.ui.input.pointer.PointerIcon
 import platform.AppKit.NSBackingStoreBuffered
 import platform.AppKit.NSWindowCloseButton
@@ -103,8 +104,6 @@ import platform.AppKit.NSAccessibilityStaticTextRole
 import platform.AppKit.NSAccessibilityTextFieldRole
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSMakeRect
-import platform.Foundation.NSNumber
-import platform.Foundation.NSSelectorFromString
 import platform.Foundation.valueForKey
 import platform.Foundation.NSMakeSize
 import androidx.compose.runtime.setValue
@@ -273,7 +272,7 @@ class MacosWindow(
             contentLayoutHeight = window.contentLayoutRect.useContents { size.height },
             closeMinX = close?.frame?.useContents { origin.x },
             zoomMaxX = zoom?.frame?.useContents { origin.x + size.width },
-            cornerRadius = systemCornerRadius(window),
+            cornerRadius = systemCornerRadius(chrome),
         ) ?: return
     }
 
@@ -1008,17 +1007,19 @@ internal fun scenePoint(view: NSView, locationInWindow: CValue<CGPoint>, scale: 
     }
 
 /**
- * The radius the system gave [window]'s corners, or null where it does not say.
+ * The radius the system draws on [window]'s corners under [chrome], from the table in the
+ * common window module, or null for a release that table does not cover.
  *
- * AppKit has no public property for it. Asked by key value coding under
- * [MACOS_CORNER_RADIUS_KEY] after checking the window answers it, the same way the GraalVM
- * window asks in `appkit_window.m`, so a release without it gives no radius rather than
- * an exception and both windows read one number.
+ * AppKit reports no window corner radius through a public API, and a private key is
+ * rejected by Mac App Store review and can break in any update, so the radius is looked up
+ * by title bar style and release rather than read from the window. The GraalVM window
+ * looks it up in the same table.
  */
-internal fun systemCornerRadius(window: NSWindow): Double? {
-    if (!window.respondsToSelector(NSSelectorFromString(MACOS_CORNER_RADIUS_KEY))) return null
-    return (window.valueForKey(MACOS_CORNER_RADIUS_KEY) as? NSNumber)?.doubleValue
-}
+internal fun systemCornerRadius(chrome: MacosWindowChrome): Double? =
+    macosCornerRadius(
+        toolbar = chrome.unifiedToolbar,
+        macosMajor = NSProcessInfo.processInfo.operatingSystemVersion.useContents { majorVersion }.toInt(),
+    )
 
 /**
  * Builds [window]'s title bar the way [chrome] says, as the GraalVM window does when it

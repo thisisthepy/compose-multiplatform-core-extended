@@ -29,9 +29,9 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            modules: "common native/macos graalvm/graalvm-macos graalvm/graalvm-linux"
+            modules: "common scene native/macos graalvm/graalvm-macos graalvm/graalvm-linux"
           - os: ubuntu-24.04
-            modules: "common graalvm/graalvm-macos graalvm/graalvm-linux"
+            modules: "common scene graalvm/graalvm-macos graalvm/graalvm-linux"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     defaults:
