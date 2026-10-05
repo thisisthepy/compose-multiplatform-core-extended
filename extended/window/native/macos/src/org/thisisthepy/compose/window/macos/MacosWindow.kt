@@ -66,6 +66,8 @@ import platform.AppKit.NSDraggingDestinationProtocol
 import platform.AppKit.NSDraggingInfoProtocol
 import platform.AppKit.NSFilenamesPboardType
 import platform.AppKit.NSEvent
+import platform.AppKit.NSApplication
+import platform.AppKit.NSEventType
 import platform.AppKit.NSEventModifierFlagControl
 import platform.AppKit.NSTrackingActiveAlways
 import platform.AppKit.NSTrackingActiveInKeyWindow
@@ -741,7 +743,68 @@ class MacosWindow(
         platform.darwin.dispatch_after(
             platform.darwin.dispatch_time(platform.darwin.DISPATCH_TIME_NOW, 2_000_000_000L),
             platform.darwin.dispatch_get_main_queue(),
-        ) { phase("settled") }
+        ) {
+            phase("settled")
+            dragAnEdge(phase)
+        }
+    }
+
+    /**
+     * The same measurement taken through the path a hand takes: a drag of the right edge
+     * made of mouse events, which AppKit turns into a live resize of its own.
+     *
+     * The scripted drag above sets sizes directly and turns the run loop between them
+     * because a drag does; this one does not assume it. The events are posted one at a
+     * time from a timer in the common modes, so they arrive at 60 a second inside the
+     * tracking loop AppKit runs for a live resize, as a hand's would. The reading is taken
+     * at the last position, with the button still held, which is the most a drag holds.
+     */
+    private fun dragAnEdge(phase: (String) -> Unit) {
+        val steps = 50
+        val startWidth = window.frame.useContents { size.width }
+        val y = window.frame.useContents { size.height } / 2
+        // Two points inside the edge, which AppKit counts as the edge.
+        val x0 = startWidth - 2
+        var step = 0
+        fun post(type: NSEventType, x: Double) {
+            val event = NSEvent.mouseEventWithType(
+                type = type,
+                location = platform.Foundation.NSMakePoint(x, y),
+                modifierFlags = 0u,
+                timestamp = NSProcessInfo.processInfo.systemUptime,
+                windowNumber = window.windowNumber,
+                context = null,
+                eventNumber = 0,
+                clickCount = 1,
+                pressure = 1f,
+            ) ?: return
+            NSApplication.sharedApplication.postEvent(event, atStart = false)
+        }
+        val timer = platform.Foundation.NSTimer.timerWithTimeInterval(1.0 / 60, repeats = true) { timer ->
+            step++
+            when {
+                step == 1 -> post(platform.AppKit.NSEventTypeLeftMouseDown, x0)
+                step <= steps + 1 -> post(
+                    platform.AppKit.NSEventTypeLeftMouseDragged,
+                    x0 + 400.0 * (step - 1) / steps,
+                )
+                else -> {
+                    val widened = window.frame.useContents { size.width } - startWidth
+                    printError("compose-rust: metrics event-drag widened_by=${widened.toInt()}")
+                    phase("event-drag")
+                    post(platform.AppKit.NSEventTypeLeftMouseUp, x0 + 400.0)
+                    timer?.invalidate()
+                    platform.darwin.dispatch_after(
+                        platform.darwin.dispatch_time(platform.darwin.DISPATCH_TIME_NOW, 2_000_000_000L),
+                        platform.darwin.dispatch_get_main_queue(),
+                    ) {
+                        phase("event-settled")
+                        printError("compose-rust: metrics done")
+                    }
+                }
+            }
+        }
+        platform.Foundation.NSRunLoop.currentRunLoop.addTimer(timer, forMode = platform.Foundation.NSRunLoopCommonModes)
     }
 
     /**
