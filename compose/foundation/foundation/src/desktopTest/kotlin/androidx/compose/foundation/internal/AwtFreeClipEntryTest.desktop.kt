@@ -146,7 +146,11 @@ class AwtFreeClipEntryTest {
             java,
             "-verbose:class",
             "-Djava.awt.headless=true",
-            "-cp", System.getProperty("java.class.path"),
+            // Without kotlinx-coroutines-swing, as an embedder that has none runs: its Main
+            // dispatcher factory is a Swing timer, and the first use of Dispatchers.Main loads it.
+            "-cp", System.getProperty("java.class.path").split(File.pathSeparator)
+                .filterNot { it.contains("kotlinx-coroutines-swing") }
+                .joinToString(File.pathSeparator),
             AwtFreeClipEntryProbe::class.java.name,
             *args,
         ).redirectErrorStream(true).start()
