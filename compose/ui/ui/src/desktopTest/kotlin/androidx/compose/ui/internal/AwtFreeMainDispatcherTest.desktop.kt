@@ -55,7 +55,10 @@ class AwtFreeMainDispatcherTest {
             "-verbose:class",
             "-Djava.awt.headless=true",
             "-Dcompose.main.dispatcher=coroutines",
-            "-cp", System.getProperty("java.class.path"),
+            // Without Swing's provider, as an embedder that has none runs: finding it loads Swing.
+            "-cp", System.getProperty("java.class.path").split(File.pathSeparator)
+                .filterNot { it.contains("kotlinx-coroutines-swing") }
+                .joinToString(File.pathSeparator),
             CoroutinesMainProbe::class.java.name,
         ).redirectErrorStream(true).start()
         val output = process.inputStream.bufferedReader().readText()
