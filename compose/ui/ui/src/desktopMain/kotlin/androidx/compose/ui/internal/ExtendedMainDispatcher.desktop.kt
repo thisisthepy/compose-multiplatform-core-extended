@@ -19,6 +19,7 @@ package androidx.compose.ui.internal
 import androidx.compose.ui.InternalComposeUiApi
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import org.jetbrains.skiko.MainUIDispatcher
 
 /**
@@ -26,19 +27,31 @@ import org.jetbrains.skiko.MainUIDispatcher
  *
  * By default that work goes to Skiko's [MainUIDispatcher], which is the Swing event queue, and
  * the first dispatch to it loads java.awt.Toolkit and with it the native AWT library. An
- * embedder that draws and pumps events itself has no use for either, so it installs its own
- * dispatcher here before Compose starts. Until then, and when [override] is null, every call
- * goes to Skiko's dispatcher unchanged. This is not public API: the package is ignored by
- * the API dump.
+ * embedder that draws and pumps events itself has no use for either, and says so in one of
+ * two ways, both before Compose starts:
+ *
+ *  - [override] names a dispatcher, for code that is compiled against this fork;
+ *  - the system property `compose.main.dispatcher` set to `coroutines` sends the work to
+ *    `Dispatchers.Main`, whose provider the embedder supplies through the ordinary
+ *    kotlinx.coroutines service. That needs nothing from this fork at compile time, so an
+ *    embedder can build against upstream Compose and still run on this one.
+ *
+ * Without either, every call goes to Skiko's dispatcher unchanged. This is not public API:
+ * the package is ignored by the API dump.
  */
 @InternalComposeUiApi
 object ExtendedMainDispatcher {
     @Volatile
     var override: CoroutineDispatcher? = null
 
-    /** What Compose uses for its main-thread work: [override] when set, Skiko's otherwise. */
+    /** Read once, when the first main-thread work is asked for, which is after an embedder's setup. */
+    private val usesCoroutinesMain: Boolean =
+        System.getProperty("compose.main.dispatcher") == "coroutines"
+
+    /** What Compose uses for its main-thread work: [override], `Dispatchers.Main` or Skiko's. */
     val dispatcher: CoroutineDispatcher = object : CoroutineDispatcher() {
-        private val current: CoroutineDispatcher get() = override ?: MainUIDispatcher
+        private val current: CoroutineDispatcher
+            get() = override ?: if (usesCoroutinesMain) Dispatchers.Main else MainUIDispatcher
 
         override fun isDispatchNeeded(context: CoroutineContext): Boolean =
             current.isDispatchNeeded(context)

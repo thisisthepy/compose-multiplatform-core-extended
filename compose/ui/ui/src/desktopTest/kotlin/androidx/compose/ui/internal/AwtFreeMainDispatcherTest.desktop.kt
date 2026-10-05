@@ -17,15 +17,54 @@
 package androidx.compose.ui.internal
 
 import androidx.compose.ui.InternalComposeUiApi
+import java.io.File
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertSame
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.setMain
+
+/** Runs in its own JVM: the property is read once, when the dispatcher is first asked for work. */
+@OptIn(InternalComposeUiApi::class, ExperimentalCoroutinesApi::class)
+object CoroutinesMainProbe {
+    @JvmStatic
+    fun main(args: Array<String>) {
+        var seen = 0
+        Dispatchers.setMain(object : CoroutineDispatcher() {
+            override fun dispatch(context: CoroutineContext, block: Runnable) {
+                seen++
+            }
+        })
+        ExtendedMainDispatcher.dispatcher.dispatch(EmptyCoroutineContext, Runnable { })
+        check(seen == 1) { "Dispatchers.Main saw $seen" }
+        println("probe-ok")
+    }
+}
 
 @OptIn(InternalComposeUiApi::class)
 class AwtFreeMainDispatcherTest {
+    @Test
+    fun theCoroutinesMainPropertySendsTheWorkToDispatchersMainAndLoadsNoToolkit() {
+        val java = File(System.getProperty("java.home"), "bin/java").path
+        val process = ProcessBuilder(
+            java,
+            "-verbose:class",
+            "-Djava.awt.headless=true",
+            "-Dcompose.main.dispatcher=coroutines",
+            "-cp", System.getProperty("java.class.path"),
+            CoroutinesMainProbe::class.java.name,
+        ).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        assertEquals(0, process.waitFor(), output)
+        assertEquals(true, output.contains("probe-ok"), output)
+        val awt = output.lineSequence().filter { it.startsWith("[") && it.contains("java.awt.") }.toList()
+        assertEquals(emptyList<String>(), awt)
+    }
+
     @Test
     fun anInstalledDispatcherTakesTheMainThreadWork() {
         val seen = mutableListOf<Runnable>()
