@@ -51,7 +51,7 @@ object ExtendedMainDispatcher {
     /** What Compose uses for its main-thread work: [override], `Dispatchers.Main` or Skiko's. */
     val dispatcher: CoroutineDispatcher = object : CoroutineDispatcher() {
         private val current: CoroutineDispatcher
-            get() = override ?: if (usesCoroutinesMain) Dispatchers.Main else MainUIDispatcher
+            get() = override ?: if (usesCoroutinesMain || !ExtendedAwt.available) Dispatchers.Main else MainUIDispatcher
 
         override fun isDispatchNeeded(context: CoroutineContext): Boolean =
             current.isDispatchNeeded(context)
