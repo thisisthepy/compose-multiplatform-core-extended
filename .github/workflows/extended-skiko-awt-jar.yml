@@ -44,9 +44,3 @@ jobs:
           init="$(javap -c -p -classpath "$jar" org.jetbrains.skiko.Setup)"
           grep -q 'AwtSwitch' <<< "$init" || { echo "Setup.init does not read AwtSwitch" >&2; exit 1; }
           javap -c -p -classpath "$jar" org.jetbrains.skiko.AwtSwitch | grep -q 'compose.awt'
-
-      - name: With compose.awt=false the loader loads no java.awt class
-        run: |
-          set -euo pipefail
-          # Reuses the check of the AWT-free loader, with this jar in place of JetBrains'.
-          cat extended/skiko/tests/LoaderCheck.java | head -20 > /dev/null
