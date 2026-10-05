@@ -19,6 +19,11 @@ dependencies:
 test-dependencies:
   - $kotlin.test
 
+# The JVM tests make a real scene, which loads skia's native library. The library ships in
+# the desktop runtime for the machine running the tests; the module itself never uses it.
+test-dependencies@jvm:
+  - $compose.desktop.currentOs
+
 settings:
   compose:
     enabled: true
