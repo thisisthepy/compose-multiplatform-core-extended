@@ -20,15 +20,22 @@ data class MacosCornerRadiusRow(val fromMajor: Int, val simple: Double, val tool
  * measures the corner the system actually drew on screen, fails against this table.
  * Keep each row on one line in this form: that script reads it.
  *
- * Evidence per row, from that check on GitHub runners: macOS 14 and 15 measured (both
- * styles draw a quarter circle that fits best at 10.25pt); macOS 26 measured (continuous
- * curves that fit best at 16.75pt and 26.75pt). macOS 11 to 13 are unmeasured: no runner
- * offers them, so their row repeats the 14 and 15 value.
+ * How the values are measured (scripts/check-macos-corner-radius.sh, in CI on the GitHub
+ * runners macos-14, macos-15 and macos-latest, which is macOS 26): a window of each style is
+ * captured with its shadow off, and its two bottom corners are fitted pixel for pixel, by
+ * least squares, against reference corners cut into a bare layer, tried in quarter-point
+ * steps with both the circular and the continuous corner curve. The radius of the best fit
+ * is the value here.
+ *
+ * Evidence per row: macOS 14 and 15 measured, a circular curve at 10.25pt in both styles.
+ * macOS 26 measured, a continuous curve at 16.75pt without a toolbar and 26.75pt with one.
+ * macOS 11 to 13 are unmeasured: no runner offers them, so their row repeats the macOS 14
+ * and 15 value.
  */
 val MACOS_CORNER_RADII: List<MacosCornerRadiusRow> = listOf(
-    MacosCornerRadiusRow(fromMajor = 11, simple = 10.0, toolbar = 10.0),
-    MacosCornerRadiusRow(fromMajor = 14, simple = 10.0, toolbar = 10.0),
-    MacosCornerRadiusRow(fromMajor = 26, simple = 16.0, toolbar = 26.0),
+    MacosCornerRadiusRow(fromMajor = 11, simple = 10.25, toolbar = 10.25),
+    MacosCornerRadiusRow(fromMajor = 14, simple = 10.25, toolbar = 10.25),
+    MacosCornerRadiusRow(fromMajor = 26, simple = 16.75, toolbar = 26.75),
 )
 
 /**
