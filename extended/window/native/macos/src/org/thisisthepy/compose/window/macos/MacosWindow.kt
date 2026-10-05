@@ -777,7 +777,7 @@ class MacosWindow(
                 clickCount = 1,
                 pressure = 1f,
             ) ?: return
-            NSApplication.sharedApplication.postEvent(event, atStart = false)
+            NSApplication.sharedApplication().postEvent(event, atStart = false)
         }
         val timer = platform.Foundation.NSTimer.timerWithTimeInterval(1.0 / 60, repeats = true) { timer ->
             step++
