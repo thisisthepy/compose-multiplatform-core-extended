@@ -25,6 +25,9 @@ import kotlinx.cinterop.alloc
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.toKString
+import kotlinx.cinterop.readValue
+import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.useContents
 import kotlinx.cinterop.value
 import platform.CoreGraphics.CGPoint
@@ -48,7 +51,6 @@ import platform.AppKit.NSWindowZoomButton
 import platform.AppKit.NSViewLayerContentsRedrawDuringViewResize
 import platform.CoreGraphics.CGSize
 import platform.Foundation.NSProcessInfo
-import platform.Foundation.runMode
 import platform.QuartzCore.CALayer
 import platform.QuartzCore.CALayerDelegateProtocol
 import platform.AppKit.NSColor
@@ -693,8 +695,8 @@ class MacosWindow(
     /**
      * DXC_METRICS=1: the scripted drag and its measurements; see [ResizeMetrics].
      *
-     * Each size in its own pool, and the run loop turned between sizes as a drag turns it
-     * between events: see [turnAsADragDoes].
+     * The scripted drag sets 100 sizes inside one turn of the run loop, which no hand's drag
+     * does, so its readings are reported and not bounded; [dragAnEdge] is the drag that is.
      */
     private fun runMetrics() {
         val phase = { name: String ->
@@ -732,7 +734,6 @@ class MacosWindow(
                     )
                     window.displayIfNeeded()
                     platform.QuartzCore.CATransaction.flush()
-                    turnAsADragDoes()
                 }
             },
         )
@@ -753,19 +754,27 @@ class MacosWindow(
      * The same measurement taken through the path a hand takes: a drag of the right edge
      * made of mouse events, which AppKit turns into a live resize of its own.
      *
-     * The scripted drag above sets sizes directly and turns the run loop between them
-     * because a drag does; this one does not assume it. The events are posted one at a
-     * time from a timer in the common modes, so they arrive at 60 a second inside the
-     * tracking loop AppKit runs for a live resize, as a hand's would. The reading is taken
-     * at the last position, with the button still held, which is the most a drag holds.
+     * The events are posted one at a time from a timer in the common modes, so they arrive
+     * at 60 a second inside the tracking loop AppKit runs for a live resize, as a hand's
+     * would. 300 of them, long enough to show whether what a drag holds levels off, and the
+     * reading is taken at the last position with the button still held, which is the most
+     * a drag holds.
+     *
+     * Three times during the drag it stops, with the button held, draws a pattern over the
+     * frame and compares the window as the window server shows it with the pattern drawn:
+     * see [checkOnScreen].
      */
     private fun dragAnEdge(phase: (String) -> Unit) {
-        val steps = 50
+        val events = 300
+        val distance = 450.0
+        val pause = 15
+        val checkAt = setOf(100, 200, 300)
         val startWidth = window.frame.useContents { size.width }
         val y = window.frame.useContents { size.height } / 2
         // Two points inside the edge, which AppKit counts as the edge.
         val x0 = startWidth - 2
-        var step = 0
+        var sent = 0
+        var paused = 0
         fun post(type: NSEventType, x: Double) {
             val event = NSEvent.mouseEventWithType(
                 type = type,
@@ -780,19 +789,34 @@ class MacosWindow(
             ) ?: return
             NSApplication.sharedApplication().postEvent(event, atStart = false)
         }
+        post(platform.AppKit.NSEventTypeLeftMouseDown, x0)
         val timer = platform.Foundation.NSTimer.timerWithTimeInterval(1.0 / 60, repeats = true) { timer ->
-            step++
             when {
-                step == 1 -> post(platform.AppKit.NSEventTypeLeftMouseDown, x0)
-                step <= steps + 1 -> post(
-                    platform.AppKit.NSEventTypeLeftMouseDragged,
-                    x0 + 400.0 * (step - 1) / steps,
-                )
+                paused > 0 -> {
+                    paused--
+                    if (paused == 0) {
+                        checkOnScreen(sent)
+                        metal.overlay = null
+                    }
+                }
+                sent < events -> {
+                    sent++
+                    post(platform.AppKit.NSEventTypeLeftMouseDragged, x0 + distance * sent / events)
+                    if (sent in checkAt) {
+                        // Drawn now, with the pattern over it, and looked at once the
+                        // window server has had a few refreshes to show it.
+                        metal.overlay = ::drawCheckPattern
+                        view.needsDisplay = true
+                        view.displayIfNeeded()
+                        platform.QuartzCore.CATransaction.flush()
+                        paused = pause
+                    }
+                }
                 else -> {
                     val widened = window.frame.useContents { size.width } - startWidth
-                    printError("compose-rust: metrics event-drag widened_by=${widened.toInt()}")
+                    printError("compose-rust: metrics event-drag widened_by=${widened.toInt()} events=$events")
                     phase("event-drag")
-                    post(platform.AppKit.NSEventTypeLeftMouseUp, x0 + 400.0)
+                    post(platform.AppKit.NSEventTypeLeftMouseUp, x0 + distance)
                     timer?.invalidate()
                     platform.darwin.dispatch_after(
                         platform.darwin.dispatch_time(platform.darwin.DISPATCH_TIME_NOW, 2_000_000_000L),
@@ -808,29 +832,127 @@ class MacosWindow(
     }
 
     /**
-     * Lets the run loop turn in the mode a live resize runs it in, for one event's worth
-     * of time at 60 events a second, as it does between the events of a real drag.
+     * A pattern of black and white blocks four pixels square, each block's colour a
+     * function of where it is, drawn over the whole frame at the frame's size.
      *
-     * Core Animation hands each size's surfaces to the window server and learns that the
-     * server is done with them through a port the run loop services. Setting 100 sizes in
-     * one turn never services it: the footprint then held 499 MB of surfaces this process
-     * owns and no longer maps, all given back once the loop turned. A drag of the edge
-     * turns the loop between events, so the scripted one does too, and its reading is the
-     * drag's.
+     * Where it lands on the screen says where the frame landed: moved by one pixel, or
+     * scaled by any amount, the blocks no longer meet the ones expected.
      */
-    private fun turnAsADragDoes() {
-        // Seconds since the reference date, the clock NSDate counts in.
-        val deadline = platform.CoreFoundation.CFAbsoluteTimeGetCurrent() + 1.0 / 60
-        val until = platform.Foundation.NSDate(timeIntervalSinceReferenceDate = deadline)
-        val loop = platform.Foundation.NSRunLoop.currentRunLoop
-        // runMode answers at once, and false, when the mode has nothing to wait on, so the
-        // time is spent here rather than left to it: the turn is the event's whole 1/60 s
-        // either way, as it is between the events of a hand's drag.
-        while (platform.CoreFoundation.CFAbsoluteTimeGetCurrent() < deadline) {
-            if (!loop.runMode(platform.AppKit.NSEventTrackingRunLoopMode, beforeDate = until)) {
-                platform.posix.usleep(1000u)
+    private fun drawCheckPattern(canvas: Canvas, width: Int, height: Int) {
+        val black = org.jetbrains.skia.Paint().apply { color = 0xFF000000.toInt() }
+        val white = org.jetbrains.skia.Paint().apply { color = 0xFFFFFFFF.toInt() }
+        canvas.drawRect(org.jetbrains.skia.Rect.makeWH(width.toFloat(), height.toFloat()), black)
+        for (by in 0 until (height + 3) / 4) {
+            for (bx in 0 until (width + 3) / 4) {
+                if (checkBlockIsWhite(bx, by)) {
+                    canvas.drawRect(
+                        org.jetbrains.skia.Rect.makeXYWH(bx * 4f, by * 4f, 4f, 4f),
+                        white,
+                    )
+                }
             }
         }
+    }
+
+    private fun checkBlockIsWhite(bx: Int, by: Int): Boolean =
+        (((bx * 73856093) xor (by * 19349663)) ushr 4) and 1 == 1
+
+    /**
+     * Takes the window's own image through the public CGWindowListCreateImage, which
+     * captures a process's own windows without any permission, and compares it pixel for
+     * pixel with the pattern the last frame was drawn with.
+     *
+     * Compared inside the view, clear of the title bar and of the rounded corners, at the
+     * place the view sits in the window. Prints the fraction that matched, and the
+     * fraction that would have matched had the frame sat at the other end of a larger
+     * drawable, which is the mistake a wrong anchor makes.
+     */
+    @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+    private fun checkOnScreen(atEvent: Int) {
+        val scale = window.backingScaleFactor
+        // kCGWindowListOptionIncludingWindow; kCGWindowImageBoundsIgnoreFraming and
+        // kCGWindowImageBestResolution, so one pixel of the image is one backing pixel.
+        @Suppress("DEPRECATION")
+        val image = platform.CoreGraphics.CGWindowListCreateImage(
+            platform.CoreGraphics.CGRectNull.readValue(),
+            1u shl 3,
+            window.windowNumber.toUInt(),
+            (1u shl 0) or (1u shl 3),
+        )
+        if (image == null) {
+            printError("compose-rust: metrics capture at=$atEvent error=no-image")
+            return
+        }
+        val imageWidth = platform.CoreGraphics.CGImageGetWidth(image).toInt()
+        val imageHeight = platform.CoreGraphics.CGImageGetHeight(image).toInt()
+        val pixels = ByteArray(imageWidth * imageHeight * 4)
+        pixels.usePinned { pinned ->
+            val space = platform.CoreGraphics.CGColorSpaceCreateDeviceRGB()
+            val context = platform.CoreGraphics.CGBitmapContextCreate(
+                pinned.addressOf(0),
+                imageWidth.toULong(),
+                imageHeight.toULong(),
+                8u,
+                (imageWidth * 4).toULong(),
+                space,
+                platform.CoreGraphics.CGImageAlphaInfo.kCGImageAlphaPremultipliedLast.value,
+            )
+            platform.CoreGraphics.CGContextDrawImage(
+                context,
+                platform.CoreGraphics.CGRectMake(0.0, 0.0, imageWidth.toDouble(), imageHeight.toDouble()),
+                image,
+            )
+            platform.CoreGraphics.CGContextRelease(context)
+            platform.CoreGraphics.CGColorSpaceRelease(space)
+        }
+        platform.CoreGraphics.CGImageRelease(image)
+
+        val windowWidth = window.frame.useContents { size.width }
+        val windowHeight = window.frame.useContents { size.height }
+        val imageScale = imageWidth / windowWidth
+        // Where the view is, in the window, counted from the window's top left in pixels.
+        val viewRect = view.convertRect(view.bounds, toView = null)
+        val viewLeft = viewRect.useContents { origin.x } * scale
+        val viewTop = viewRect.useContents { (windowHeight - (origin.y + size.height)) } * scale
+        val viewWidth = viewRect.useContents { size.width } * scale
+        val viewHeight = viewRect.useContents { size.height } * scale
+        val barBottom = window.contentLayoutRect.useContents { windowHeight - (origin.y + size.height) } * scale
+        val margin = (32 * scale).toInt()
+        val fromX = margin
+        val toX = (viewWidth - margin).toInt()
+        val fromY = maxOf(margin / 4, (barBottom - viewTop).toInt() + margin / 4)
+        val toY = (viewHeight - margin).toInt()
+        val drawnHeight = metal.heightInPixels
+        val slack = MetalSurface.roundUp(drawnHeight) - drawnHeight
+
+        fun matchWithShift(shiftY: Int): Double {
+            var same = 0L
+            var total = 0L
+            for (py in fromY until toY) {
+                val iy = (viewTop + py + shiftY).toInt()
+                if (iy < 0 || iy >= imageHeight) continue
+                for (px in fromX until toX) {
+                    val ix = (viewLeft + px).toInt()
+                    if (ix < 0 || ix >= imageWidth) continue
+                    val at = (iy * imageWidth + ix) * 4
+                    val luminance = (pixels[at].toInt() and 0xFF) + (pixels[at + 1].toInt() and 0xFF) +
+                        (pixels[at + 2].toInt() and 0xFF)
+                    val seenWhite = luminance > 3 * 128
+                    if (seenWhite == checkBlockIsWhite(px / 4, py / 4)) same++
+                    total++
+                }
+            }
+            return if (total == 0L) 0.0 else same.toDouble() / total
+        }
+
+        val match = if (kotlin.math.abs(imageScale - scale) < 0.01) matchWithShift(0) else 0.0
+        val fmt = { v: Double -> (kotlin.math.round(v * 10000) / 10000).toString() }
+        printError(
+            "compose-rust: metrics capture at=$atEvent window=${metal.widthInPixels}x$drawnHeight " +
+                "image_scale=${fmt(imageScale)} backing_scale=${fmt(scale)} match=${fmt(match)} " +
+                "if_anchored_low=${fmt(if (slack > 0) matchWithShift(slack) else 0.0)} " +
+                "if_anchored_high=${fmt(if (slack > 0) matchWithShift(-slack) else 0.0)}",
+        )
     }
 
     /** Physical footprint and resident size of this process, in bytes. */
