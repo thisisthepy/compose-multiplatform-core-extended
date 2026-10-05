@@ -156,7 +156,13 @@ class AwtFreeClipEntryTest {
         val loaded = output.lineSequence()
             .filter { it.startsWith("[") && it.contains("java.awt.") }
             .toList()
-        assertTrue(loaded.isEmpty(), "AWT classes were loaded:\n" + loaded.joinToString("\n"))
+        val lines = output.lines()
+        val first = lines.indexOfFirst { it.startsWith("[") && it.contains("java.awt.") }
+        val before = if (first > 0) lines.subList(maxOf(0, first - 12), first).joinToString("\n") else ""
+        assertTrue(
+            loaded.isEmpty(),
+            "AWT classes were loaded, after:\n$before\nthen:\n" + loaded.joinToString("\n"),
+        )
     }
 }
 
