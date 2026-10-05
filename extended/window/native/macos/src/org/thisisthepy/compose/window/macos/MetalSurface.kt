@@ -22,7 +22,10 @@ import org.jetbrains.skia.SurfaceOrigin
 import platform.CoreGraphics.CGSizeMake
 import platform.Metal.MTLCreateSystemDefaultDevice
 import platform.Metal.MTLPixelFormatBGRA8Unorm
+import platform.QuartzCore.CALayer
 import platform.QuartzCore.CAMetalLayer
+import platform.QuartzCore.kCAGravityBottomLeft
+import platform.QuartzCore.kCAGravityTopLeft
 import platform.QuartzCore.CATransaction
 import platform.darwin.sel_registerName
 import platform.posix.dlsym
@@ -70,17 +73,50 @@ class MetalSurface {
         it.opaque = false
         // The whole reason this layer is ours. See above.
         it.presentsWithTransaction = true
+        // The drawable can be larger than the window (see [resize]); what lies past the
+        // window's edge is not shown.
+        it.masksToBounds = true
     }
 
+    /** The window's size in pixels, which is the size every frame is drawn at. */
+    var widthInPixels = 0
+        private set
+    var heightInPixels = 0
+        private set
+
     /**
-     * Tells the layer how many pixels it is, in the density it is being shown at.
+     * Something drawn over the frame, after it, at the frame's own size: the check that
+     * what reaches the screen is what was drawn puts a pattern here. Null otherwise.
+     */
+    var overlay: ((Canvas, Int, Int) -> Unit)? = null
+
+    /**
+     * Tells the layer how many pixels the window is, in the density it is being shown at.
      *
      * Said before drawing rather than after, because a drawable handed out at the old size
      * would be drawn into at the new one.
+     *
+     * The drawable is the window's size rounded up to [DRAWABLE_STEP] pixels, and every
+     * frame is drawn at the window's own size in its top left corner, shown pixel for pixel
+     * with nothing scaled. A drawable of a new size is a new surface, and Core Animation
+     * hands each one to the window server, which gives it back only once the run loop turns
+     * after the drag: one per event of a drag, 87 MB of them over a 50 event drag and 290
+     * MB over 100 scripted sizes. Rounded up, a drag makes a new one only when it crosses a
+     * step.
      */
     fun resize(widthInPoints: Double, heightInPoints: Double, scale: Double) {
         layer.contentsScale = scale
-        layer.drawableSize = CGSizeMake(widthInPoints * scale, heightInPoints * scale)
+        widthInPixels = kotlin.math.round(widthInPoints * scale).toInt()
+        heightInPixels = kotlin.math.round(heightInPoints * scale).toInt()
+        val width = roundUp(widthInPixels).toDouble()
+        val height = roundUp(heightInPixels).toDouble()
+        layer.drawableSize.useContents {
+            if (this.width != width || this.height != height) {
+                layer.drawableSize = CGSizeMake(width, height)
+            }
+        }
+        val gravity = if (screenTopIsMaxY(layer)) kCAGravityTopLeft else kCAGravityBottomLeft
+        if (layer.contentsGravity != gravity) layer.contentsGravity = gravity
     }
 
     /**
@@ -114,17 +150,19 @@ class MetalSurface {
         sendForObject(interpretCPointer<CPointed>(layer.objcPtr()), NEXT_DRAWABLE)
 
     private fun drawFrame(paint: (Canvas, Int, Int) -> Unit): Boolean {
-        val width: Int
-        val height: Int
+        val drawableWidth: Int
+        val drawableHeight: Int
         layer.drawableSize.useContents {
-            width = this.width.toInt()
-            height = this.height.toInt()
+            drawableWidth = this.width.toInt()
+            drawableHeight = this.height.toInt()
         }
+        val width = minOf(widthInPixels, drawableWidth)
+        val height = minOf(heightInPixels, drawableHeight)
         if (width <= 0 || height <= 0) return false
         val drawable = nextDrawable() ?: return false
         // Owned by the drawable, so it lives exactly as long as the drawable does.
         val texture = sendForObject(drawable, TEXTURE) ?: return false
-        val target = BackendRenderTarget.makeMetal(width, height, texture.rawValue)
+        val target = BackendRenderTarget.makeMetal(drawableWidth, drawableHeight, texture.rawValue)
         val surface = Surface.makeFromBackendRenderTarget(
             context,
             target,
@@ -139,6 +177,7 @@ class MetalSurface {
         try {
             startFrame(surface.canvas)
             paint(surface.canvas, width, height)
+            overlay?.invoke(surface.canvas, width, height)
             surface.flushAndSubmit()
             // Presenting is done by hand because the layer presents with the transaction:
             // the work has to be known to be scheduled before the drawable is handed over,
@@ -173,6 +212,32 @@ class MetalSurface {
     }
 
     companion object {
+        /** What the drawable's size is rounded up to, in pixels. */
+        internal const val DRAWABLE_STEP = 256
+
+        internal fun roundUp(pixels: Int): Int =
+            if (pixels <= 0) 0 else (pixels + DRAWABLE_STEP - 1) / DRAWABLE_STEP * DRAWABLE_STEP
+
+        /**
+         * Whether the top of the screen is the largest y in [layer]'s own coordinates.
+         *
+         * Gravity is named for a y that grows upward: top means the largest y. Each layer
+         * that flips its geometry, this one included, turns that over, so the flips are
+         * counted rather than assumed from which kind of view the layer backs. This one's
+         * own flip counts: a flipped view's layer is flipped, and with only the layers
+         * above counted the frame stood at the bottom of a larger drawable on screen
+         * (compose-rust run 37303613635, the window's own image compared pixel for pixel).
+         */
+        internal fun screenTopIsMaxY(layer: CALayer): Boolean {
+            var flips = 0
+            var above: CALayer? = layer
+            while (above != null) {
+                if (above.geometryFlipped) flips++
+                above = above.superlayer
+            }
+            return flips % 2 == 0
+        }
+
         private val NEXT_DRAWABLE = requireNotNull(sel_registerName("nextDrawable"))
         private val TEXTURE = requireNotNull(sel_registerName("texture"))
         private val PRESENT = requireNotNull(sel_registerName("present"))

@@ -24,6 +24,10 @@ import kotlinx.cinterop.CValue
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.reinterpret
+import kotlinx.cinterop.toKString
+import kotlinx.cinterop.readValue
+import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.useContents
 import kotlinx.cinterop.value
 import platform.CoreGraphics.CGPoint
@@ -65,6 +69,9 @@ import platform.AppKit.NSDraggingDestinationProtocol
 import platform.AppKit.NSDraggingInfoProtocol
 import platform.AppKit.NSFilenamesPboardType
 import platform.AppKit.NSEvent
+import platform.AppKit.NSApplication
+import platform.AppKit.postEvent
+import platform.AppKit.NSEventType
 import platform.AppKit.NSEventModifierFlagControl
 import platform.AppKit.NSTrackingActiveAlways
 import platform.AppKit.NSTrackingActiveInKeyWindow
@@ -688,9 +695,8 @@ class MacosWindow(
     /**
      * DXC_METRICS=1: the scripted drag and its measurements; see [ResizeMetrics].
      *
-     * All 100 sizes are set inside this one block, so the run loop does not turn between
-     * them. That is the hardest case for anything a frame leaves to an autorelease pool,
-     * and it is the case a fast drag of the edge comes closest to.
+     * The scripted drag sets 100 sizes inside one turn of the run loop, which no hand's drag
+     * does, so its readings are reported and not bounded; [dragAnEdge] is the drag that is.
      */
     private fun runMetrics() {
         val phase = { name: String ->
@@ -701,6 +707,14 @@ class MacosWindow(
                         "metal_allocated_mb=${metal.allocatedBytes / 1048576} " +
                         "footprint_mb=${footprint / 1048576} resident_mb=${resident / 1048576}",
                 )
+                // Where the footprint is, by kind, when one number is not enough to say.
+                if (platform.posix.getenv("DXC_METRICS_BREAKDOWN")?.toKString() == "1") {
+                    val pid = platform.posix.getpid()
+                    platform.posix.fflush(null)
+                    platform.posix.system(
+                        "echo 'compose-rust: breakdown $name' 1>&2; /usr/bin/footprint $pid 1>&2",
+                    )
+                }
         }
         ResizeMetrics.run(
             phase = phase,
@@ -730,7 +744,215 @@ class MacosWindow(
         platform.darwin.dispatch_after(
             platform.darwin.dispatch_time(platform.darwin.DISPATCH_TIME_NOW, 2_000_000_000L),
             platform.darwin.dispatch_get_main_queue(),
-        ) { phase("settled") }
+        ) {
+            phase("settled")
+            dragAnEdge(phase)
+        }
+    }
+
+    /**
+     * The same measurement taken through the path a hand takes: a drag of the right edge
+     * made of mouse events, which AppKit turns into a live resize of its own.
+     *
+     * The events are posted one at a time from a timer in the common modes, so they arrive
+     * at 60 a second inside the tracking loop AppKit runs for a live resize, as a hand's
+     * would. 300 of them, long enough to show whether what a drag holds levels off, and the
+     * reading is taken at the last position with the button still held, which is the most
+     * a drag holds.
+     *
+     * Three times during the drag it stops, with the button held, draws a pattern over the
+     * frame and compares the window as the window server shows it with the pattern drawn:
+     * see [checkOnScreen].
+     */
+    private fun dragAnEdge(phase: (String) -> Unit) {
+        val events = 300
+        val distance = 450.0
+        val pause = 15
+        val checkAt = setOf(100, 200, 300)
+        val startWidth = window.frame.useContents { size.width }
+        val y = window.frame.useContents { size.height } / 2
+        // Two points inside the edge, which AppKit counts as the edge.
+        val x0 = startWidth - 2
+        var sent = 0
+        var paused = 0
+        fun post(type: NSEventType, x: Double) {
+            val event = NSEvent.mouseEventWithType(
+                type = type,
+                location = platform.Foundation.NSMakePoint(x, y),
+                modifierFlags = 0u,
+                timestamp = NSProcessInfo.processInfo.systemUptime,
+                windowNumber = window.windowNumber,
+                context = null,
+                eventNumber = 0,
+                clickCount = 1,
+                pressure = 1f,
+            ) ?: return
+            NSApplication.sharedApplication().postEvent(event, atStart = false)
+        }
+        post(platform.AppKit.NSEventTypeLeftMouseDown, x0)
+        val timer = platform.Foundation.NSTimer.timerWithTimeInterval(1.0 / 60, repeats = true) { timer ->
+            when {
+                paused > 0 -> {
+                    paused--
+                    if (paused == 0) {
+                        checkOnScreen(sent)
+                        metal.overlay = null
+                    }
+                }
+                sent < events -> {
+                    sent++
+                    post(platform.AppKit.NSEventTypeLeftMouseDragged, x0 + distance * sent / events)
+                    if (sent in checkAt) {
+                        // Drawn now, with the pattern over it, and looked at once the
+                        // window server has had a few refreshes to show it.
+                        metal.overlay = ::drawCheckPattern
+                        view.needsDisplay = true
+                        view.displayIfNeeded()
+                        platform.QuartzCore.CATransaction.flush()
+                        paused = pause
+                    }
+                }
+                else -> {
+                    val widened = window.frame.useContents { size.width } - startWidth
+                    printError("compose-rust: metrics event-drag widened_by=${widened.toInt()} events=$events")
+                    phase("event-drag")
+                    post(platform.AppKit.NSEventTypeLeftMouseUp, x0 + distance)
+                    timer?.invalidate()
+                    platform.darwin.dispatch_after(
+                        platform.darwin.dispatch_time(platform.darwin.DISPATCH_TIME_NOW, 2_000_000_000L),
+                        platform.darwin.dispatch_get_main_queue(),
+                    ) {
+                        phase("event-settled")
+                        printError("compose-rust: metrics done")
+                    }
+                }
+            }
+        }
+        platform.Foundation.NSRunLoop.currentRunLoop.addTimer(timer, forMode = platform.Foundation.NSRunLoopCommonModes)
+    }
+
+    /**
+     * A pattern of black and white blocks four pixels square, each block's colour a
+     * function of where it is, drawn over the whole frame at the frame's size.
+     *
+     * Where it lands on the screen says where the frame landed: moved by one pixel, or
+     * scaled by any amount, the blocks no longer meet the ones expected.
+     */
+    private fun drawCheckPattern(canvas: Canvas, width: Int, height: Int) {
+        val black = org.jetbrains.skia.Paint().apply { color = 0xFF000000.toInt() }
+        val white = org.jetbrains.skia.Paint().apply { color = 0xFFFFFFFF.toInt() }
+        canvas.drawRect(org.jetbrains.skia.Rect.makeWH(width.toFloat(), height.toFloat()), black)
+        for (by in 0 until (height + 3) / 4) {
+            for (bx in 0 until (width + 3) / 4) {
+                if (checkBlockIsWhite(bx, by)) {
+                    canvas.drawRect(
+                        org.jetbrains.skia.Rect.makeXYWH(bx * 4f, by * 4f, 4f, 4f),
+                        white,
+                    )
+                }
+            }
+        }
+    }
+
+    private fun checkBlockIsWhite(bx: Int, by: Int): Boolean =
+        (((bx * 73856093) xor (by * 19349663)) ushr 4) and 1 == 1
+
+    /**
+     * Takes the window's own image through the public CGWindowListCreateImage, which
+     * captures a process's own windows without any permission, and compares it pixel for
+     * pixel with the pattern the last frame was drawn with.
+     *
+     * Compared inside the view, clear of the title bar and of the rounded corners, at the
+     * place the view sits in the window. Prints the fraction that matched, and the
+     * fraction that would have matched had the frame sat at the other end of a larger
+     * drawable, which is the mistake a wrong anchor makes.
+     */
+    @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+    private fun checkOnScreen(atEvent: Int) {
+        val scale = window.backingScaleFactor
+        // kCGWindowListOptionIncludingWindow; kCGWindowImageBoundsIgnoreFraming and
+        // kCGWindowImageBestResolution, so one pixel of the image is one backing pixel.
+        @Suppress("DEPRECATION")
+        val image = platform.CoreGraphics.CGWindowListCreateImage(
+            platform.CoreGraphics.CGRectNull.readValue(),
+            1u shl 3,
+            window.windowNumber.toUInt(),
+            (1u shl 0) or (1u shl 3),
+        )
+        if (image == null) {
+            printError("compose-rust: metrics capture at=$atEvent error=no-image")
+            return
+        }
+        val imageWidth = platform.CoreGraphics.CGImageGetWidth(image).toInt()
+        val imageHeight = platform.CoreGraphics.CGImageGetHeight(image).toInt()
+        val pixels = ByteArray(imageWidth * imageHeight * 4)
+        pixels.usePinned { pinned ->
+            val space = platform.CoreGraphics.CGColorSpaceCreateDeviceRGB()
+            val context = platform.CoreGraphics.CGBitmapContextCreate(
+                pinned.addressOf(0),
+                imageWidth.toULong(),
+                imageHeight.toULong(),
+                8u,
+                (imageWidth * 4).toULong(),
+                space,
+                platform.CoreGraphics.CGImageAlphaInfo.kCGImageAlphaPremultipliedLast.value,
+            )
+            platform.CoreGraphics.CGContextDrawImage(
+                context,
+                platform.CoreGraphics.CGRectMake(0.0, 0.0, imageWidth.toDouble(), imageHeight.toDouble()),
+                image,
+            )
+            platform.CoreGraphics.CGContextRelease(context)
+            platform.CoreGraphics.CGColorSpaceRelease(space)
+        }
+        platform.CoreGraphics.CGImageRelease(image)
+
+        val windowWidth = window.frame.useContents { size.width }
+        val windowHeight = window.frame.useContents { size.height }
+        val imageScale = imageWidth / windowWidth
+        // Where the view is, in the window, counted from the window's top left in pixels.
+        val viewRect = view.convertRect(view.bounds, toView = null)
+        val viewLeft = viewRect.useContents { origin.x } * scale
+        val viewTop = viewRect.useContents { (windowHeight - (origin.y + size.height)) } * scale
+        val viewWidth = viewRect.useContents { size.width } * scale
+        val viewHeight = viewRect.useContents { size.height } * scale
+        val barBottom = window.contentLayoutRect.useContents { windowHeight - (origin.y + size.height) } * scale
+        val margin = (32 * scale).toInt()
+        val fromX = margin
+        val toX = (viewWidth - margin).toInt()
+        val fromY = maxOf(margin / 4, (barBottom - viewTop).toInt() + margin / 4)
+        val toY = (viewHeight - margin).toInt()
+        val drawnHeight = metal.heightInPixels
+        val slack = MetalSurface.roundUp(drawnHeight) - drawnHeight
+
+        fun matchWithShift(shiftY: Int): Double {
+            var same = 0L
+            var total = 0L
+            for (py in fromY until toY) {
+                val iy = (viewTop + py + shiftY).toInt()
+                if (iy < 0 || iy >= imageHeight) continue
+                for (px in fromX until toX) {
+                    val ix = (viewLeft + px).toInt()
+                    if (ix < 0 || ix >= imageWidth) continue
+                    val at = (iy * imageWidth + ix) * 4
+                    val luminance = (pixels[at].toInt() and 0xFF) + (pixels[at + 1].toInt() and 0xFF) +
+                        (pixels[at + 2].toInt() and 0xFF)
+                    val seenWhite = luminance > 3 * 128
+                    if (seenWhite == checkBlockIsWhite(px / 4, py / 4)) same++
+                    total++
+                }
+            }
+            return if (total == 0L) 0.0 else same.toDouble() / total
+        }
+
+        val match = if (kotlin.math.abs(imageScale - scale) < 0.01) matchWithShift(0) else 0.0
+        val fmt = { v: Double -> (kotlin.math.round(v * 10000) / 10000).toString() }
+        printError(
+            "compose-rust: metrics capture at=$atEvent window=${metal.widthInPixels}x$drawnHeight " +
+                "image_scale=${fmt(imageScale)} backing_scale=${fmt(scale)} match=${fmt(match)} " +
+                "if_anchored_low=${fmt(if (slack > 0) matchWithShift(slack) else 0.0)} " +
+                "if_anchored_high=${fmt(if (slack > 0) matchWithShift(-slack) else 0.0)}",
+        )
     }
 
     /** Physical footprint and resident size of this process, in bytes. */
