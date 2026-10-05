@@ -17,6 +17,7 @@
 package androidx.compose.ui.internal
 
 import androidx.compose.ui.InternalComposeUiApi
+import androidx.compose.ui.awt.awtEventOrNull
 import java.io.File
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
@@ -53,6 +54,11 @@ object ExtendedAwtProbe {
         check(!ExtendedAwt.available) { "compose.awt=false was not read" }
         val name = androidx.compose.ui.input.key.Key.A.toString()
         check(name.startsWith("Key: ")) { name }
+        val event = androidx.compose.ui.input.key.KeyEvent(
+            androidx.compose.ui.input.key.Key.A,
+            androidx.compose.ui.input.key.KeyEventType.KeyDown,
+        )
+        check(event.awtEventOrNull == null) { "an embedder's key event is not an AWT one" }
         println("probe-ok")
     }
 }
