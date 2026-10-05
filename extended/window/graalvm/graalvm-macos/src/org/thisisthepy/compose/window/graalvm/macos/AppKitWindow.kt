@@ -93,8 +93,16 @@ private external fun configureWindow(
     backdrop: Int,
 )
 
-@CFunction("dxc_native_window_caption")
-private external fun windowCaption(view: Pointer?, height: CFloatPointer?, buttonsWidth: CFloatPointer?)
+@CFunction("dxc_native_window_chrome")
+private external fun windowChrome(
+    fullSizeContent: Int,
+    transparentTitleBar: Int,
+    titleHidden: Int,
+    unifiedToolbar: Int,
+)
+
+@CFunction("dxc_native_window_title_bar")
+private external fun windowTitleBar(view: Pointer?, out: CFloatPointer?)
 
 @CFunction("dxc_native_set_icon")
 private external fun setIcon(rgba: CCharPointer?, width: Int, height: Int)
@@ -271,18 +279,48 @@ fun configureNativeWindow(
 )
 
 /**
- * The strip of the window the title bar occupies and the room its three buttons take at the
- * leading edge, as the window reports them, in points.
+ * How the title bar is built, handed over before the window is made: whether the content
+ * runs under the bar, whether the bar is transparent, whether the title is hidden, and
+ * whether the window has an empty unified toolbar, which sets the bar's height and the
+ * window's corner radius on macOS 26.
+ */
+fun configureNativeWindowChrome(
+    fullSizeContentView: Boolean,
+    titlebarAppearsTransparent: Boolean,
+    titleHidden: Boolean,
+    unifiedToolbar: Boolean,
+) = windowChrome(
+    if (fullSizeContentView) 1 else 0,
+    if (titlebarAppearsTransparent) 1 else 0,
+    if (titleHidden) 1 else 0,
+    if (unifiedToolbar) 1 else 0,
+)
+
+/**
+ * What the title bar's size is worked out from, as the window reports it, in points.
  *
  * Measured rather than assumed, because the height follows the platform: it is taller
  * under a toolbar than under the standard bar and has changed between releases.
  */
-fun NativeWindow.measureCaption(): CaptionMetrics {
-    val height = StackValue.get<CFloatPointer>(4)
-    val buttons = StackValue.get<CFloatPointer>(4)
-    windowCaption(WordFactory.pointer(view), height, buttons)
-    return CaptionMetrics(height.read(), buttons.read())
+fun NativeWindow.measureTitleBar(): TitleBarMetrics {
+    val out = StackValue.get<CFloatPointer>(16)
+    windowTitleBar(WordFactory.pointer(view), out)
+    val close = out.read(2)
+    val zoom = out.read(3)
+    return TitleBarMetrics(
+        windowHeight = out.read(0),
+        contentLayoutHeight = out.read(1),
+        closeMinX = close.takeIf { it >= 0f },
+        zoomMaxX = zoom.takeIf { it >= 0f },
+    )
 }
+
+/**
+ * The strip of the window the title bar occupies and the room its three buttons take at the
+ * leading edge, in points, or null while the window is between sizes. The gap in front of
+ * the first button is mirrored after the last.
+ */
+fun NativeWindow.measureCaption(): CaptionMetrics? = measureTitleBar().caption()
 
 /** The paths of the files last dragged over the window, one string, NUL between them. */
 fun readDroppedPaths(): String {

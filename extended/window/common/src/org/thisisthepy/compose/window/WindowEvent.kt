@@ -40,5 +40,18 @@ data class WindowEvent(
         const val PREEDIT_START = 13
         const val PREEDIT_DRAW = 14
         const val PREEDIT_DONE = 15
+
+        /**
+         * An editing action AppKit named by its selector, `selectAll:` or `copy:`, with the
+         * selector in [text]. The Edit menu sends these, and so does a key binding the
+         * scene has not already been shown as a key.
+         */
+        const val EDIT_COMMAND = 16
+
+        /**
+         * Set in [buttons] on a press or release of the secondary button. The pressed
+         * buttons alone cannot say which one was let go.
+         */
+        const val SECONDARY_BUTTON = 1 shl 16
     }
 }
