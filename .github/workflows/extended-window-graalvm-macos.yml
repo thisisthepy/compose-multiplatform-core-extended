@@ -47,6 +47,9 @@ jobs:
             exit 1
           fi
 
+      - name: The window code calls no private AppKit API
+        run: ./scripts/check-no-private-api.sh
+
       - name: The upcall table is generated and current
         run: graalvm/graalvm-macos/tools/gen-upcalls.sh --check
 

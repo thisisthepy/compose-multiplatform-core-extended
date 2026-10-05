@@ -18,6 +18,7 @@ import platform.AppKit.NSWindowZoomButton
 import platform.Foundation.NSMakeRect
 import platform.Foundation.NSProcessInfo
 import kotlin.test.Test
+import org.thisisthepy.compose.window.macosCornerRadius
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -53,7 +54,7 @@ class MacosWindowChromeTest {
         zoomMaxX = window.standardWindowButton(NSWindowZoomButton)?.frame?.useContents {
             origin.x + size.width
         },
-        cornerRadius = systemCornerRadius(window),
+        cornerRadius = systemCornerRadius(chrome),
     )
 
     private val macosMajor: Long =
@@ -92,12 +93,12 @@ class MacosWindowChromeTest {
     }
 
     @Test
-    fun fr19_7_both_styles_take_their_corner_radius_from_the_system() {
+    fun fr19_7_both_styles_take_their_corner_radius_from_the_table() {
         val normal = MacosWindowChrome.Modern
         val simple = MacosWindowChrome.Simple
         val toolbar = assertNotNull(caption(window(normal), normal))
         val plain = assertNotNull(caption(window(simple), simple))
-        assertTrue(plain.cornerRadius.value > 0f, "the system reported no radius for the plain window")
+        assertTrue(plain.cornerRadius.value > 0f, "the table has no radius for the plain window on macOS $macosMajor")
         assertTrue(
             toolbar.cornerRadius >= plain.cornerRadius,
             "a toolbar window is less round (${toolbar.cornerRadius}) than a plain one (${plain.cornerRadius})",
@@ -126,10 +127,10 @@ class MacosWindowChromeTest {
     }
 
     @Test
-    fun fr19_7_the_radius_is_read_under_the_key_the_graalvm_window_uses() {
-        val window = window(MacosWindowChrome.Simple)
-        assertEquals("_cornerRadius", MACOS_CORNER_RADIUS_KEY)
-        assertNotNull(systemCornerRadius(window), "this release answers no corner radius")
+    fun fr19_7_the_radius_is_the_tables_for_the_style_and_release() {
+        val major = macosMajor.toInt()
+        assertEquals(macosCornerRadius(toolbar = true, macosMajor = major), systemCornerRadius(MacosWindowChrome.Modern))
+        assertEquals(macosCornerRadius(toolbar = false, macosMajor = major), systemCornerRadius(MacosWindowChrome.Simple))
     }
 
     @Test
