@@ -49,7 +49,6 @@ import platform.AppKit.NSViewLayerContentsRedrawDuringViewResize
 import platform.CoreGraphics.CGSize
 import platform.Foundation.NSProcessInfo
 import platform.Foundation.runMode
-import platform.Foundation.timeIntervalSinceNow
 import platform.QuartzCore.CALayer
 import platform.QuartzCore.CALayerDelegateProtocol
 import platform.AppKit.NSColor
@@ -756,9 +755,11 @@ class MacosWindow(
      * drag's.
      */
     private fun turnAsADragDoes() {
-        val until = platform.Foundation.NSDate(timeIntervalSinceNow = 1.0 / 60)
+        // Seconds since the reference date, the clock NSDate counts in.
+        val deadline = platform.CoreFoundation.CFAbsoluteTimeGetCurrent() + 1.0 / 60
+        val until = platform.Foundation.NSDate(timeIntervalSinceReferenceDate = deadline)
         val loop = platform.Foundation.NSRunLoop.currentRunLoop
-        while (until.timeIntervalSinceNow > 0 &&
+        while (platform.CoreFoundation.CFAbsoluteTimeGetCurrent() < deadline &&
             loop.runMode(platform.AppKit.NSEventTrackingRunLoopMode, beforeDate = until)
         ) Unit
     }
