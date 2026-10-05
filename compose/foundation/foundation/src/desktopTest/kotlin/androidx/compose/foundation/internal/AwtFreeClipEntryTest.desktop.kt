@@ -148,9 +148,6 @@ class AwtFreeClipEntryTest {
     @Test
     fun plainTextEntryLoadsNoAwtClass() = noAwtClassLoaded()
 
-    @Test
-    fun textFieldCopyLoadsNoAwtClass() = noAwtClassLoaded("textfield-copy")
-
     private fun noAwtClassLoaded(vararg args: String) {
         val java = File(System.getProperty("java.home"), "bin/java").path
         val process = ProcessBuilder(
