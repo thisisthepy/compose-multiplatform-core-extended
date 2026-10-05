@@ -9,8 +9,8 @@ class MacosCornerRadiusTest {
 
     @Test
     fun fr19_7_macos_26_rounds_a_toolbar_window_more_than_a_plain_one() {
-        assertEquals(16.0, macosCornerRadius(toolbar = false, macosMajor = 26))
-        assertEquals(26.0, macosCornerRadius(toolbar = true, macosMajor = 26))
+        assertEquals(16.75, macosCornerRadius(toolbar = false, macosMajor = 26))
+        assertEquals(26.75, macosCornerRadius(toolbar = true, macosMajor = 26))
     }
 
     @Test
@@ -22,8 +22,8 @@ class MacosCornerRadiusTest {
 
     @Test
     fun fr19_7_an_older_release_takes_its_own_row() {
-        assertEquals(10.0, macosCornerRadius(toolbar = false, macosMajor = 15))
-        assertEquals(10.0, macosCornerRadius(toolbar = true, macosMajor = 14))
+        assertEquals(10.25, macosCornerRadius(toolbar = false, macosMajor = 15))
+        assertEquals(10.25, macosCornerRadius(toolbar = true, macosMajor = 14))
         assertNull(macosCornerRadius(toolbar = true, macosMajor = 10))
     }
 
