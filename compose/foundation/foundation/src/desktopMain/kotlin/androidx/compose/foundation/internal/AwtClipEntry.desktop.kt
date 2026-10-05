@@ -40,9 +40,15 @@ import kotlinx.coroutines.withContext
 // This implementation detail is used by Jewel.
 // When removing it, please provide an alternative of retrieving an annotated string,
 // and notify a Jewel developer that they need to change the implementation.
-private val annotatedStringFlavor: DataFlavor by lazy(LazyThreadSafetyMode.PUBLICATION) {
-    DataFlavor(AnnotatedString::class.java, "AnnotatedString")
+//
+// A holder object rather than a lazy property of this file: a property's initialiser runs with
+// the file's class, and a build that switched the toolkit off (ExtendedAwt) would still reach
+// DataFlavor through it.
+private object AnnotatedStringFlavorHolder {
+    val flavor: DataFlavor = DataFlavor(AnnotatedString::class.java, "AnnotatedString")
 }
+
+private val annotatedStringFlavor: DataFlavor get() = AnnotatedStringFlavorHolder.flavor
 
 internal suspend fun ClipEntry.readTransferableText(): String? {
     if (!ExtendedAwt.available || !hasTransferableText()) return null
