@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-@file:OptIn(ExperimentalComposeUiApi::class)
+@file:OptIn(ExperimentalComposeUiApi::class, androidx.compose.ui.InternalComposeUiApi::class)
 
 package androidx.compose.foundation.internal
 
 import androidx.annotation.VisibleForTesting
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.internal.ExtendedAwt
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.Clipboard
 import androidx.compose.ui.platform.asAwtTransferable
@@ -39,12 +40,18 @@ import kotlinx.coroutines.withContext
 // This implementation detail is used by Jewel.
 // When removing it, please provide an alternative of retrieving an annotated string,
 // and notify a Jewel developer that they need to change the implementation.
-private val annotatedStringFlavor: DataFlavor by lazy(LazyThreadSafetyMode.PUBLICATION) {
-    DataFlavor(AnnotatedString::class.java, "AnnotatedString")
+//
+// A holder object rather than a lazy property of this file: a property's initialiser runs with
+// the file's class, and a build that switched the toolkit off (ExtendedAwt) would still reach
+// DataFlavor through it.
+private object AnnotatedStringFlavorHolder {
+    val flavor: DataFlavor = DataFlavor(AnnotatedString::class.java, "AnnotatedString")
 }
 
+private val annotatedStringFlavor: DataFlavor get() = AnnotatedStringFlavorHolder.flavor
+
 internal suspend fun ClipEntry.readTransferableText(): String? {
-    if (!hasTransferableText()) return null
+    if (!ExtendedAwt.available || !hasTransferableText()) return null
 
     val transferable = asAwtTransferable
     return withContext(Dispatchers.IO) {
@@ -58,6 +65,7 @@ internal suspend fun ClipEntry.readTransferableText(): String? {
 }
 
 internal suspend fun ClipEntry.readTransferableAnnotatedString(): AnnotatedString? {
+    if (!ExtendedAwt.available) return null
     if (!hasTransferableAnnotatedString()) {
         if (!hasTransferableText()) return null
         return readTransferableText()?.let { AnnotatedString(it) }
@@ -75,11 +83,13 @@ internal suspend fun ClipEntry.readTransferableAnnotatedString(): AnnotatedStrin
 }
 
 internal fun ClipEntry.hasTransferableAnnotatedString(): Boolean {
+    if (!ExtendedAwt.available) return false
     val transferable = asAwtTransferable ?: return false
     return transferable.isDataFlavorSupported(annotatedStringFlavor)
 }
 
 internal fun ClipEntry.hasTransferableText(): Boolean {
+    if (!ExtendedAwt.available) return false
     val transferable = asAwtTransferable ?: return false
     return transferable.isDataFlavorSupported(DataFlavor.stringFlavor)
 }
@@ -88,12 +98,13 @@ internal fun ClipEntry.hasTransferableText(): Boolean {
 // because getClipEntry is a suspend function, but in ContextMenu.desktop.kt we have older code
 // expecting a synchronous execution.
 internal fun Clipboard.awtNativeClipboardHasText(): Boolean {
+    if (!ExtendedAwt.available) return false
     val awtClipboard = awtClipboard ?: return false
     return awtClipboard.isDataFlavorAvailable(DataFlavor.stringFlavor)
 }
 
 internal fun Clipboard.awtNativeClipboardHasData(): Boolean =
-    awtClipboard?.availableDataFlavors?.isNotEmpty() ?: false
+    ExtendedAwt.available && awtClipboard?.availableDataFlavors?.isNotEmpty() ?: false
 
 // Derived from StringSelection
 @VisibleForTesting
