@@ -823,9 +823,14 @@ class MacosWindow(
         val deadline = platform.CoreFoundation.CFAbsoluteTimeGetCurrent() + 1.0 / 60
         val until = platform.Foundation.NSDate(timeIntervalSinceReferenceDate = deadline)
         val loop = platform.Foundation.NSRunLoop.currentRunLoop
-        while (platform.CoreFoundation.CFAbsoluteTimeGetCurrent() < deadline &&
-            loop.runMode(platform.AppKit.NSEventTrackingRunLoopMode, beforeDate = until)
-        ) Unit
+        // runMode answers at once, and false, when the mode has nothing to wait on, so the
+        // time is spent here rather than left to it: the turn is the event's whole 1/60 s
+        // either way, as it is between the events of a hand's drag.
+        while (platform.CoreFoundation.CFAbsoluteTimeGetCurrent() < deadline) {
+            if (!loop.runMode(platform.AppKit.NSEventTrackingRunLoopMode, beforeDate = until)) {
+                platform.posix.usleep(1000u)
+            }
+        }
     }
 
     /** Physical footprint and resident size of this process, in bytes. */
