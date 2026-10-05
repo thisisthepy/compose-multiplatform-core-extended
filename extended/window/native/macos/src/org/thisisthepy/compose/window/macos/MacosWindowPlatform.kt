@@ -69,7 +69,6 @@ class MacosWindowPlatform(
             width = config.width,
             height = config.height,
             minimumSize = minimum,
-            clipboardHasText = { pasteboard.hasText() },
         )
         created.setContent(content)
         window = created
