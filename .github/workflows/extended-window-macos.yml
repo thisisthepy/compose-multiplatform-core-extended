@@ -26,6 +26,27 @@ permissions:
   contents: read
 
 jobs:
+  corner-radius:
+    # The table has a row per macOS release, so each release with a runner is measured.
+    name: Corner radius (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ macos-14, macos-15, macos-latest ]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: extended/window
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extended/window
+          filter: blob:none
+
+      - name: The corner radius table matches the corner macOS draws
+        run: ./scripts/check-macos-corner-radius.sh
+
   build:
     name: Window macosArm64
     runs-on: macos-latest
@@ -52,9 +73,6 @@ jobs:
 
       - name: The window code calls no private AppKit API
         run: ./scripts/check-no-private-api.sh
-
-      - name: The corner radius table matches the corner macOS draws
-        run: ./scripts/check-macos-corner-radius.sh
 
       - name: Build
         run: ./kotlin build -p macosArm64 -m macos

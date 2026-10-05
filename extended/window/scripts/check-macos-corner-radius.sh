@@ -5,14 +5,10 @@
 # it from MACOS_CORNER_RADII in common/src/org/thisisthepy/compose/window/MacosCornerRadius.kt,
 # keyed by title bar style and release. This opens a window in each style (no toolbar, and
 # an empty unified toolbar, built the way MacosWindow.kt's applyChrome builds them), takes
-# the window's own image with the shadow off through the public CGWindowListCreateImage,
-# and measures how much of the bottom corners is transparent.
-#
-# macOS draws a continuous corner (the curve eases into the straight edge), not a quarter
-# circle, so the transparent area is not that of a circle of the same radius. The probe
-# therefore draws a reference: a borderless window whose layer has the table's radius with
-# the continuous corner curve, captured the same way. The drawn radius is the table's
-# scaled by the square root of the two areas. It fails when that is more than 1pt from the
+# the window's own image with the shadow off through the public CGWindowListCreateImage at
+# one pixel per point, and finds the reference corner (a borderless window whose layer is
+# cut to a given radius, with the continuous or the circular curve) that matches the two
+# bottom corners pixel for pixel. It fails when that radius is more than 1pt from the
 # table's, which is how a new macOS that draws a different corner is caught.
 #
 # Usage: scripts/check-macos-corner-radius.sh   (macOS only)
@@ -49,51 +45,39 @@ static void pump(double seconds) {
     }
 }
 
-// The transparent area in a size by size box at one bottom corner, in pixels.
-static double cut_area(const uint8_t *rgba, size_t width, size_t height, size_t box, int right) {
-    double area = 0;
-    for (size_t y = height - box; y < height; y++) {
-        for (size_t i = 0; i < box; i++) {
-            size_t x = right ? width - 1 - i : i;
-            area += 1.0 - rgba[(y * width + x) * 4 + 3] / 255.0;
-        }
-    }
-    return area;
-}
+// The bottom corners of a window's own image: for each of the two corners a BOX by BOX
+// square of transparency (0 opaque, 1 clear), in points at scale 1.
+#define BOX 48
+struct corners { float clear[2][BOX][BOX]; double scale; };
 
-// Transparent pixels in the bottom row, counted from one corner: the arc's reach.
-static size_t bottom_run(const uint8_t *rgba, size_t width, size_t height) {
-    size_t run = 0;
-    while (run < width / 2 && rgba[((height - 1) * width + run) * 4 + 3] < 128) run++;
-    return run;
-}
-
-// The transparent area at the bottom corners of [window]'s own image, in points squared.
-static int corner_area(NSWindow *window, capture_fn capture, const char *name, double *area_pt) {
+static int capture_corners(NSWindow *window, capture_fn capture, double settle, struct corners *out) {
     [window makeKeyAndOrderFront:nil];
     [NSApp activateIgnoringOtherApps:YES];
-    pump(1.5);
+    pump(settle);
 
     // kCGWindowListOptionIncludingWindow, kCGWindowImageBoundsIgnoreFraming |
-    // kCGWindowImageBestResolution.
-    CGImageRef image = capture(CGRectNull, 1 << 3, (uint32_t)window.windowNumber, (1 << 0) | (1 << 3));
+    // kCGWindowImageNominalResolution, so one pixel is one point on any display.
+    CGImageRef image = capture(CGRectNull, 1 << 3, (uint32_t)window.windowNumber, (1 << 0) | (1 << 4));
     if (image == NULL) {
         [window close];
         return 1;
     }
     size_t width = CGImageGetWidth(image), height = CGImageGetHeight(image);
-    double scale = width / window.frame.size.width;
+    out->scale = width / window.frame.size.width;
     uint8_t *rgba = calloc(width * height * 4, 1);
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
     CGContextRef context = CGBitmapContextCreate(rgba, width, height, 8, width * 4, space,
                                                  (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
     CGContextDrawImage(context, CGRectMake(0, 0, width, height), image);
-    size_t box = (size_t)ceil(48 * scale);
-    double area = (cut_area(rgba, width, height, box, 0) + cut_area(rgba, width, height, box, 1)) / 2;
-    *area_pt = area / (scale * scale);
-    printf("%s scale %.1f image %zux%zu area %.1fpt2 bottom-run %zupx circle-radius %.2fpt\n",
-           name, scale, width, height, *area_pt, bottom_run(rgba, width, height),
-           sqrt(*area_pt / (1 - M_PI / 4)));
+    for (int side = 0; side < 2; side++) {
+        for (int y = 0; y < BOX; y++) {
+            for (int i = 0; i < BOX; i++) {
+                size_t x = side ? width - 1 - i : (size_t)i;
+                size_t row = height - 1 - y;
+                out->clear[side][y][i] = 1.0f - rgba[(row * width + x) * 4 + 3] / 255.0f;
+            }
+        }
+    }
     CGContextRelease(context);
     CGColorSpaceRelease(space);
     CGImageRelease(image);
@@ -102,8 +86,17 @@ static int corner_area(NSWindow *window, capture_fn capture, const char *name, d
     return 0;
 }
 
-// The same area for a borderless window whose layer has [radius] with the continuous curve.
-static int reference_area(double radius, capture_fn capture, double *area_pt) {
+static double area_of(const struct corners *c) {
+    double area = 0;
+    for (int side = 0; side < 2; side++)
+        for (int y = 0; y < BOX; y++)
+            for (int i = 0; i < BOX; i++) area += c->clear[side][y][i];
+    return area / 2;
+}
+
+// A borderless window whose layer is cut to [radius], with the continuous corner curve
+// or a plain quarter circle.
+static int reference(double radius, int continuous, capture_fn capture, struct corners *out) {
     NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(200, 200, 480, 360)
                                                    styleMask:NSWindowStyleMaskBorderless
                                                      backing:NSBackingStoreBuffered
@@ -116,14 +109,26 @@ static int reference_area(double radius, capture_fn capture, double *area_pt) {
     content.wantsLayer = YES;
     content.layer.backgroundColor = NSColor.redColor.CGColor;
     content.layer.cornerRadius = radius;
-    content.layer.cornerCurve = kCACornerCurveContinuous;
+    content.layer.cornerCurve = continuous ? kCACornerCurveContinuous : kCACornerCurveCircular;
     content.layer.masksToBounds = YES;
     window.contentView = content;
-    char name[64];
-    snprintf(name, sizeof name, "reference-%.0f", radius);
-    return corner_area(window, capture, name, area_pt);
+    return capture_corners(window, capture, 0.4, out);
 }
 
+// The drawn radius is the reference radius whose corner matches the window's pixel for
+// pixel (least squares over both bottom corners), tried in quarter points around the table's
+// value with both corner curves.
+//
+// This replaced a comparison of total transparent area against one reference, which read
+// macOS 26 corners about 0.9pt large (16.91 for 16, 26.96 for 26) and macOS 14 and 15 within
+// 0.1pt. The bias was not an edge stroke: the outer ring of a window without a toolbar is
+// fully opaque along its straight edges (printed below as straight-edge clear), and leaving
+// that ring out moved nothing. It is the shape. macOS 14 and 15 draw a quarter circle, and
+// the best fit is circular at 10.25pt. macOS 26 draws a continuous curve whose best fit is
+// the layer's continuous curve at about 0.75pt above the radius the system used to report
+// (16.75 for 16, 26.75 for 26), with a small residual, so its curve is not exactly the
+// layer's at the nominal radius. Fitting the whole pixel map measures that honestly rather
+// than turning a shape difference into an area ratio.
 static int measure(int toolbar, double table, capture_fn capture, double *radius) {
     NSWindow *window = [[NSWindow alloc]
         initWithContentRect:NSMakeRect(200, 200, 480, 360)
@@ -147,11 +152,39 @@ static int measure(int toolbar, double table, capture_fn capture, double *radius
     content.wantsLayer = YES;
     content.layer.backgroundColor = NSColor.redColor.CGColor;
     window.contentView = content;
-    double area = 0, reference = 0;
-    if (corner_area(window, capture, toolbar ? "toolbar" : "simple", &area) != 0) return 1;
-    if (reference_area(table, capture, &reference) != 0 || reference <= 0) return 1;
-    *radius = table * sqrt(area / reference);
-    printf("%s drawn radius %.2fpt (table %.1fpt)\n", toolbar ? "toolbar" : "simple", *radius, table);
+    const char *name = toolbar ? "toolbar" : "simple";
+
+    static struct corners drawn, ref;
+    if (capture_corners(window, capture, 1.5, &drawn) != 0) return 1;
+    // The ring diagnostics: the outermost row and column against the rest.
+    double edge = 0;
+    for (int side = 0; side < 2; side++)
+        for (int k = BOX / 2; k < BOX; k++) edge += drawn.clear[side][0][k] + drawn.clear[side][k][0];
+    printf("%s scale %.1f area %.1fpt2 straight-edge clear %.3f (mean of the outer ring away from the corner)\n",
+           name, drawn.scale, area_of(&drawn), edge / (2 * BOX));
+
+    double best_error = INFINITY, best_radius = 0;
+    int best_curve = 0;
+    for (int continuous = 0; continuous < 2; continuous++) {
+        for (double r = fmax(1, table - 4); r <= table + 4 + 1e-9; r += 0.25) {
+            if (reference(r, continuous, capture, &ref) != 0) return 1;
+            double error = 0;
+            for (int side = 0; side < 2; side++)
+                for (int y = 0; y < BOX; y++)
+                    for (int i = 0; i < BOX; i++) {
+                        double d = drawn.clear[side][y][i] - ref.clear[side][y][i];
+                        error += d * d;
+                    }
+            if (error < best_error) {
+                best_error = error;
+                best_radius = r;
+                best_curve = continuous;
+            }
+        }
+    }
+    *radius = best_radius;
+    printf("%s drawn radius %.2fpt, %s curve, residual %.2f (table %.1fpt)\n", name, best_radius,
+           best_curve ? "continuous" : "circular", best_error, table);
     return 0;
 }
 
