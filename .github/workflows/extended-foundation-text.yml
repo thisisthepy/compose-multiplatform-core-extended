@@ -54,12 +54,16 @@ jobs:
             -Pcompose.platforms=desktop --no-daemon --stacktrace
       - name: The layout cache test ran
         run: |
-          ls compose/foundation/foundation/build/test-results/desktopTest/ | grep -q LayoutCacheWidthChangeTest ||
-            { echo "LayoutCacheWidthChangeTest did not run" >&2; exit 1; }
+          # Wherever this build puts its results (androidx builds may write under out/).
+          found="$(find . -path '*test-results/desktopTest/*' -name '*LayoutCacheWidthChangeTest*.xml' | head -1)"
+          [ -n "$found" ] || { echo "LayoutCacheWidthChangeTest did not run" >&2; exit 1; }
+          echo "$found"; grep -o 'tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*" errors="[0-9]*"' "$found"
       - name: Keep the test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: foundation-text-test-reports
-          path: compose/foundation/foundation/build/reports/tests/
+          path: |
+            **/compose/foundation/foundation/build/reports/tests/
+            **/compose/foundation/foundation/build/test-results/desktopTest/
           retention-days: 7
