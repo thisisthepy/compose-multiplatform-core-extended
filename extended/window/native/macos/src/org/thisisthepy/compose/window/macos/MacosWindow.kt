@@ -68,6 +68,7 @@ import platform.AppKit.NSDraggingInfoProtocol
 import platform.AppKit.NSFilenamesPboardType
 import platform.AppKit.NSEvent
 import platform.AppKit.NSApplication
+import platform.AppKit.postEvent
 import platform.AppKit.NSEventType
 import platform.AppKit.NSEventModifierFlagControl
 import platform.AppKit.NSTrackingActiveAlways
