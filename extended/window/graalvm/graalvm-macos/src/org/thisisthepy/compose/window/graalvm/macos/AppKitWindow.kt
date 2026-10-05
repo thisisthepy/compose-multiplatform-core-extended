@@ -303,7 +303,7 @@ fun configureNativeWindowChrome(
  * under a toolbar than under the standard bar and has changed between releases.
  */
 fun NativeWindow.measureTitleBar(): TitleBarMetrics {
-    val out = StackValue.get<CFloatPointer>(16)
+    val out = StackValue.get<CFloatPointer>(20)
     windowTitleBar(WordFactory.pointer(view), out)
     val close = out.read(2)
     val zoom = out.read(3)
@@ -312,6 +312,7 @@ fun NativeWindow.measureTitleBar(): TitleBarMetrics {
         contentLayoutHeight = out.read(1),
         closeMinX = close.takeIf { it >= 0f },
         zoomMaxX = zoom.takeIf { it >= 0f },
+        cornerRadius = out.read(4).takeIf { it >= 0f },
     )
 }
 
