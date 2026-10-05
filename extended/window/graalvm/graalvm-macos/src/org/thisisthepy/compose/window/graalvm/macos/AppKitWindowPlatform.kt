@@ -40,7 +40,7 @@ class AppKitWindowPlatform : WindowPlatform {
 
     override fun open(config: WindowConfig, listener: WindowListener): Boolean {
         configureNativeWindow(
-            resizable = true,
+            resizable = config.resizable,
             minWidth = config.minWidth,
             minHeight = config.minHeight,
             systemChrome = config.decorated,

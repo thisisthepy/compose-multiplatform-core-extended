@@ -53,9 +53,10 @@ class X11Window : WindowPlatform {
 
     override fun open(config: WindowConfig, listener: WindowListener): Boolean {
         this.listener = listener
+        // Either side may say no: the property set before open, or the config.
         X11Natives.windowConfigure(
-            if (resizable) 1 else 0, config.minWidth, config.minHeight, if (config.decorated) 1 else 0,
-            if (backdrop) 1 else 0,
+            if (resizable && config.resizable) 1 else 0, config.minWidth, config.minHeight,
+            if (config.decorated) 1 else 0, if (backdrop) 1 else 0,
         )
         val title = CTypeConversion.toCString(config.title)
         val out = UnmanagedMemory.calloc<Pointer>(X11Layout.WINDOW_BYTES)

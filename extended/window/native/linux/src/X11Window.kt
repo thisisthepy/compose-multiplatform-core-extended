@@ -28,6 +28,7 @@ import kotlinx.cinterop.set
 import kotlinx.cinterop.value
 import org.jetbrains.skia.Canvas
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.sizeHintsFor
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.ResizeSync
 import org.thisisthepy.compose.window.SystemTheme
@@ -76,6 +77,11 @@ class X11Window : WindowPlatform {
     private var surface: GlSurface? = null
     private var listener: WindowListener? = null
     private var title = ""
+    private var minWidth = 0
+    private var minHeight = 0
+    private var resizable = true
+    private var openedWidth = 0
+    private var openedHeight = 0
 
     private var measured = WindowMeasurement(0, 0, DENSITY)
     private var presentedSinceEvent = false
@@ -180,7 +186,12 @@ class X11Window : WindowPlatform {
         xim = XimContext.open(display, window, ime)?.also { input ->
             XSelectInput(display, window, EVENT_MASK or input.filterMask)
         }
-        if (config.minWidth > 0 || config.minHeight > 0) setMinimumSize(config.minWidth, config.minHeight)
+        minWidth = config.minWidth
+        minHeight = config.minHeight
+        resizable = config.resizable
+        openedWidth = config.width
+        openedHeight = config.height
+        applySizeHints()
         XMapWindow(display, window)
         XFlush(display)
         return true
@@ -255,11 +266,26 @@ class X11Window : WindowPlatform {
     }
 
     override fun setMinimumSize(width: Int, height: Int) {
+        minWidth = width
+        minHeight = height
+        applySizeHints()
+    }
+
+    /** Tells the window manager the sizes [sizeHintsFor] decides on, when there are any. */
+    private fun applySizeHints() {
         val display = display ?: return
+        val decided = sizeHintsFor(minWidth, minHeight, resizable, openedWidth, openedHeight, DENSITY) ?: return
         val hints = XAllocSizeHints() ?: return
-        hints.pointed.flags = P_MIN_SIZE
-        hints.pointed.min_width = width
-        hints.pointed.min_height = height
+        decided.min?.let { (width, height) ->
+            hints.pointed.flags = hints.pointed.flags or P_MIN_SIZE
+            hints.pointed.min_width = width
+            hints.pointed.min_height = height
+        }
+        decided.max?.let { (width, height) ->
+            hints.pointed.flags = hints.pointed.flags or P_MAX_SIZE
+            hints.pointed.max_width = width
+            hints.pointed.max_height = height
+        }
         XSetWMNormalHints(display, window, hints)
         XFree(hints)
         XFlush(display)
@@ -661,6 +687,7 @@ class X11Window : WindowPlatform {
         const val LOW_HALF = 0xFFFFFFFFuL
         const val KEY_TEXT_BYTES = 32
         const val P_MIN_SIZE = 1L shl 4
+        const val P_MAX_SIZE = 1L shl 5
 
         /** The predefined atom XA_STRING, which is the number 31 and a cast in the header. */
         const val XA_STRING_ATOM = 31uL
