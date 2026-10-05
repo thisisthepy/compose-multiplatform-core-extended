@@ -221,14 +221,16 @@ class MetalSurface {
         /**
          * Whether the top of the screen is the largest y in [layer]'s own coordinates.
          *
-         * Gravity is named for a y that grows upward: top means the largest y. A layer's
-         * own coordinates run that way unless an odd number of the layers above it flip
-         * the geometry of what they hold, so that is what is counted, rather than assumed
-         * from which kind of view the layer backs.
+         * Gravity is named for a y that grows upward: top means the largest y. Each layer
+         * that flips its geometry, this one included, turns that over, so the flips are
+         * counted rather than assumed from which kind of view the layer backs. This one's
+         * own flip counts: a flipped view's layer is flipped, and with only the layers
+         * above counted the frame stood at the bottom of a larger drawable on screen
+         * (compose-rust run 37303613635, the window's own image compared pixel for pixel).
          */
         internal fun screenTopIsMaxY(layer: CALayer): Boolean {
             var flips = 0
-            var above = layer.superlayer
+            var above: CALayer? = layer
             while (above != null) {
                 if (above.geometryFlipped) flips++
                 above = above.superlayer
