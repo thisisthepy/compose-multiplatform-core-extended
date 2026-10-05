@@ -25,3 +25,28 @@ object ElementRole {
     const val CHECKBOX = 4
     const val IMAGE = 5
 }
+
+/**
+ * What a macOS title bar's size is worked out from, in points: the window's frame height,
+ * the height of the part below the bar, where the close button starts and where the zoom
+ * button ends (null where the window has no buttons).
+ */
+data class TitleBarMetrics(
+    val windowHeight: Float,
+    val contentLayoutHeight: Float,
+    val closeMinX: Float?,
+    val zoomMaxX: Float?,
+) {
+    /**
+     * The caption these measure, or null while the window is changing size: the frame and
+     * the layout rect are updated at different moments and the difference can be negative
+     * for an instant.
+     */
+    fun caption(): CaptionMetrics? {
+        val height = windowHeight - contentLayoutHeight
+        if (height < 0f) return null
+        val width = if (closeMinX == null || zoomMaxX == null) 0f else zoomMaxX + closeMinX
+        if (width < 0f) return null
+        return CaptionMetrics(height, width)
+    }
+}
