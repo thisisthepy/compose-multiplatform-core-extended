@@ -132,24 +132,24 @@ class MetalSurfaceTest {
     }
 
     /**
-     * The frame sits in the top left corner of a larger drawable whichever way up the
-     * layers above it count.
+     * The frame sits in the bottom left corner of a larger drawable, where the window
+     * server holds the window's layers, whichever way up the layers above it count.
      */
     @Test
-    fun fr19_the_frame_is_anchored_at_the_top_left_without_scaling() {
+    fun fr19_the_frame_is_anchored_at_the_bottom_left_without_scaling() {
         val surface = MetalSurface()
         try {
             surface.resize(300.0, 200.0, 1.0)
-            assertEquals(platform.QuartzCore.kCAGravityTopLeft, surface.layer.contentsGravity)
+            assertEquals(platform.QuartzCore.kCAGravityBottomLeft, surface.layer.contentsGravity)
             assertTrue(surface.layer.masksToBounds, "past the window's edge is not shown")
             val parent = platform.QuartzCore.CALayer()
             parent.geometryFlipped = true
             parent.addSublayer(surface.layer)
             surface.resize(300.0, 200.0, 1.0)
             assertEquals(
-                platform.QuartzCore.kCAGravityBottomLeft,
+                platform.QuartzCore.kCAGravityTopLeft,
                 surface.layer.contentsGravity,
-                "under a flipped layer the largest y is the bottom of the screen",
+                "under a flipped layer the smallest y is the bottom of the screen",
             )
             surface.layer.removeFromSuperlayer()
         } finally {

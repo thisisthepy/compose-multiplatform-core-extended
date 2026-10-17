@@ -6,14 +6,16 @@ Korean: [README_ko.md](https://github.com/thisisthepy/compose-multiplatform-core
 
 ## Features
 
-Status is as of 2026-10-05. Items marked in progress or planned are not on `extended` yet.
+Status is as of 2026-10-17. Items marked in progress or planned are not on `extended` yet.
 
-- AWT-free desktop windows on both paths. macOS works on both: the Kotlin/Native window (AppKit and Metal) and the GraalVM native-image window. Linux (X11) works on the GraalVM path; the Kotlin/Native Linux window is in progress ([#28](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/28)). Windows is in progress: the shared Win32 window, `windows-shared`, is not merged ([#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32)).
-- One shared window module, `org.thisisthepy.compose.window`: the window state machine, minimum size, event normalisation, frame-request coalescing, IME composition state, dark mode and DPI live in a common module that depends on the Kotlin standard library only. Both paths use it. Parity tests that run the same checks against both are planned ([#70](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/70)).
-- Design systems and Liquid Glass: Material 3, Cupertino, Fluent, GNOME, Breeze and Deepin themes, and the Liquid Glass material, as standalone libraries.
+- Two paths to a desktop application with no AWT: GraalVM native-image and Kotlin/Native. Each one ships an application as one executable, with no Java runtime beside it and nothing unpacked at start.
+- AWT-free desktop windows on both paths. macOS works on both: the Kotlin/Native window (AppKit and Metal) and the GraalVM native-image window. Linux (X11) works on both: the GraalVM window and the Kotlin/Native window (Xlib, GLX, XIM and AT-SPI). Windows is in progress: the shared Win32 window, `windows-shared`, is not merged ([#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32)). Until it is, compose-rust's Kotlin/Native renderer keeps its own Windows window ([DarkPyonix/compose-rust#26](https://github.com/DarkPyonix/compose-rust/issues/26)).
+- The window modules, under `extended/window` with the group `org.thisisthepy.compose.window`. The window, its pointer, key and IME input, the text and edit menus, the clipboard, file drops and the window chrome live there, not in any renderer. Their `common` module holds the window state machine, minimum size, event normalisation, frame-request coalescing, IME composition state, dark mode and DPI, and depends on the Kotlin standard library only. Both paths use it. Parity tests that run the same checks against both are planned ([#70](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/70)). See [Window modules](#window-modules).
+- Windows executables are linked by MSVC on both paths. JetBrains builds Skia for Windows with MSVC, so the final link is MSVC's, and there is no MinGW route. The GraalVM path links this way today; the Kotlin/Native link step is open (see [MinGW x64 target](#mingw-x64-target)).
+- Design systems and Liquid Glass: Material 3, Cupertino, Fluent, GNOME, Breeze and Deepin themes, and the Liquid Glass material, as standalone libraries in `extended/design-systems`. They depend on published Compose only and never on a renderer, so they can be published on their own.
 - skiko without JAWT: a static skiko archive that a native image links, with no dependency on the JDK's `libjawt`.
 - AWT-free clipboard and pointer icons, so a window without AWT still copies, pastes and changes its cursor.
-- `linuxX64`, `linuxArm64` and `mingwX64` Kotlin/Native source sets for the Compose UI modules are in the tree. No CI job builds them yet, and running a renderer linked from the `mingwX64` ones on Windows is open in [#3](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/3).
+- `linuxX64`, `linuxArm64` and `mingwX64` Kotlin/Native source sets for the Compose UI modules are in the tree. The Linux ones are built on CI: the "Extended window linux" workflow publishes them before it builds and tests `native/linux`. No CI job builds the `mingwX64` ones yet, and running a renderer linked from them on Windows is open in [#3](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/3).
 - An upstream public API guard: a workflow compares the public API of the Compose modules with upstream's, so existing Compose code keeps compiling. The fork's own API is in separate modules under `extended/`.
 
 To package an application that uses these, see the Gradle plugin fork,
@@ -36,6 +38,8 @@ adds is either a platform source set inside a Compose module or a script under `
 | The native text context menu on macOS (`NSMenu`) | implemented | `foundation` |
 | skiko's JVM natives as a static archive, for a GraalVM native image (macOS arm64, Linux x64, Windows x64) | implemented | [`extended/skiko`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/skiko/README.md) |
 | Skia's ICU data compiled into the Windows static archive | implemented | `extended/skiko/embedded_icu.cpp` |
+| skiko-awt with an AWT switch, so a toolkit-free native image keeps no Swing or `UIManager` | implemented | `extended/skiko/build-skiko-awt.sh` |
+| The window modules: window, input, IME, menus and chrome for both paths | implemented for macOS and Linux; Windows open in [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32) | [`extended/window`](#window-modules) |
 | Compose's window procedure for Windows (caption, title bar, icon) | planned | branch [`feature/windows-window-chrome`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/feature/windows-window-chrome), [DarkPyonix/compose-rust#26](https://github.com/DarkPyonix/compose-rust/issues/26) |
 | `org.thisisthepy.compose` coordinates | planned | branch [`chore/thisisthepy-coordinates`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/chore/thisisthepy-coordinates) |
 | Six design systems and the Liquid Glass material, as compose-rust had them | imported | [`extended/design-systems`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/design-systems/README.md) |
@@ -62,6 +66,14 @@ skiko (v0.144.6) and a patch. The C++ half is compiled in MSVC mode into a stati
 explains why there is no skiko fork and how the halves meet:
 [extended/skiko/README.md](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/skiko/README.md).
 
+The final link of a Windows executable is MSVC's, whichever path built it. A GraalVM native image
+on Windows is linked by MSVC today. A Kotlin/Native `mingwX64` executable is linked the same way:
+Kotlin/Native's MinGW objects are rewritten so the MSVC linker accepts them, and it links them with
+Skia and skiko's MSVC half. There is no MinGW route, because a MinGW-only link would need a Skia
+built for MinGW, which JetBrains does not make. **Status: open.** The Gradle plugin's MSVC link
+step for Kotlin/Native is in
+[compose-multiplatform-extended#31](https://github.com/thisisthepy/compose-multiplatform-extended/pull/31).
+
 Running a renderer linked from these on Windows itself is still open in
 [#3](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/3); so far it has
 run under Wine.
@@ -82,6 +94,28 @@ memory, so the executable needs no data file.
 The Gradle plugin task that consumes this archive is `packageNativeImage` in
 [thisisthepy/compose-multiplatform-extended](https://github.com/thisisthepy/compose-multiplatform-extended/blob/extended/extended/README.md).
 
+### Window modules
+
+The desktop window code lives in `extended/window`, a standalone Amper project like
+`extended/design-systems`. The window, pointer and key input, IME, the text context and edit
+menus, the clipboard, file drops, the window chrome and accessibility are all here. Nothing in it
+may depend on a renderer, its wire protocol or its node table (`extended/window/project.yaml`
+says so), so any Compose application can open a window through it.
+
+| Module | Artifact | Platforms | What it is |
+|---|---|---|---|
+| `common` | `org.thisisthepy.compose.window:common` | JVM, `macosArm64`, `linuxX64`, `linuxArm64`, `mingwX64` | `WindowPlatform`, the event, state and policy types, and the rules every platform layer shares. No toolkit and no Compose |
+| `scene` | `org.thisisthepy.compose.window:scene` | JVM, `macosArm64` | Hosts a Compose scene in a window opened through `WindowPlatform`: the frame loop, and pointer, key and IME text routed through Compose's platform text input |
+| `native/macos` | `org.thisisthepy.compose.window:native-macos` | `macosArm64` | The Kotlin/Native window: AppKit, Metal, the native text and edit menus, the window chrome |
+| `native/linux` | `org.thisisthepy.compose.window:native-linux` | `linuxX64`, `linuxArm64` | The Kotlin/Native window: Xlib, GLX, XIM, and AT-SPI over D-Bus |
+| `graalvm/graalvm-macos` | `org.thisisthepy.compose.window:graalvm-macos` | JVM (native image) | The AppKit window for a native image: `appkit_window.m` and its Kotlin side |
+| `graalvm/graalvm-linux` | `org.thisisthepy.compose.window:graalvm-linux` | JVM (native image) | The X11 window for a native image: `x11_window.c` and its Kotlin side |
+
+Each is at version `0.1.0`. The "Extended window publish" workflow publishes them to the local
+Maven repository the way compose-rust consumes them; `native/linux` joins it in
+[#111](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/111). Nothing is on a public repository yet. The Windows window,
+`windows-shared`, is open in [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32).
+
 ### Windows window chrome (planned)
 
 The branch `feature/windows-window-chrome` adds Compose's window procedure for Windows to the
@@ -94,7 +128,9 @@ application's icon. It is not merged into `extended` yet.
 The design systems compose-rust used to hold in its `design-systems/` directory are in
 [`extended/design-systems`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/design-systems/README.md), unchanged: a standalone Amper project with its own wrapper and
 its own workflow, which builds against published Compose rather than the modules in this
-repository. From there they become libraries, tracked in
+repository. The Liquid Glass material is there too, as the `liquid-glass` module. None of it
+depends on a renderer, and nothing may be added that would make it do so, because that is what
+lets the design systems be published on their own. From there they become libraries, tracked in
 [DarkPyonix/compose-rust#39](https://github.com/DarkPyonix/compose-rust/issues/39):
 
 - `org.thisisthepy.compose.designsystem`: the shared contract (the `DesignSystem` interface,
@@ -187,9 +223,18 @@ from JetBrains:
 | Compose modules | `org.jetbrains.compose.<group>:<artifact>:1.11.1`, for example `org.jetbrains.compose.ui:ui:1.11.1` and its `ui-linuxx64`, `ui-mingwx64`, `ui-macosarm64` targets |
 | Material 3 (with the property above) | `org.jetbrains.compose.material3:material3:1.11.0-alpha07` |
 | skiko for `mingwX64` | `org.jetbrains.skiko:skiko-mingwx64:0.144.6`, with skiko's root metadata extended to name it |
+| skiko-awt with the AWT switch | `org.jetbrains.skiko:skiko-awt:0.144.6`, from `extended/skiko/build-skiko-awt.sh` |
 
-`jetbrains.publication.version.COMPOSE=1.11.1` is set in `gradle.properties`. Nothing is on a
-public repository yet. A consumer puts `mavenLocal()` first:
+`jetbrains.publication.version.COMPOSE=1.11.1` is set in `gradle.properties`, and a build can
+pass another. compose-rust does:
+[`build-compose.sh`](https://github.com/DarkPyonix/compose-rust/blob/develop/renderer/scripts/build-compose.sh)
+publishes the desktop `foundation`, `ui` and `ui-text`, and the macOS `ui` and `foundation`, as
+`1.11.1001`, and its `publish-skiko-awt.sh` publishes skiko-awt as `0.144.6.1`. JetBrains
+publishes those modules at `1.11.1` too, and a resolver that already holds upstream's `1.11.1`
+takes it and never looks in the local repository, so the fork's version has to sort above it.
+The Linux modules stay at `1.11.1`, because JetBrains publishes nothing at those coordinates.
+
+Nothing is on a public repository yet. A consumer puts `mavenLocal()` first:
 
 ```kotlin
 // settings.gradle.kts

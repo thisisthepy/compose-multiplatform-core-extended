@@ -19,6 +19,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
+#import <CoreVideo/CoreVideo.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -26,6 +27,8 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include "appkit_resize.h"
+#include "appkit_vresize_probe.h"
+#include "appkit_frame_time.h"
 #include <unistd.h>
 #include <mach/mach_time.h>
 
@@ -386,6 +389,121 @@ static void dxc_native_resize_report(void) {
             dxc_ticks_to_millis(dxc_resize_stats.callback_max_ticks));
 }
 
+// When the next frame will be on the screen, from the display's own link.
+//
+// An animation moves by the difference between two frame times, so a frame clock that
+// counts frames runs twice as fast on a 120 Hz display and slow whenever a frame is late.
+// The display link says, on a thread of its own and once a refresh, when the coming
+// presentation is and how long a refresh lasts; the callback only writes those down, and
+// the frame reads them when it is drawn. CVDisplayLink rather than a CADisplayLink because
+// it reports from its own thread whatever the main run loop is doing, and on every macOS
+// this window opens on. It is linked through QuartzCore, which re-exports CoreVideo.
+//
+// The link runs only while frames are being drawn. A second with no frame stops it, from
+// the loop's own pump, and the next frame starts it again; until it has reported, and
+// whenever what it reported is stale, the frame is given the time now on the same clock.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+static CVDisplayLinkRef dxc_link;
+static CGDirectDisplayID dxc_link_display;
+static _Atomic uint64_t dxc_link_target;
+static _Atomic uint64_t dxc_link_period;
+static _Atomic uint64_t dxc_link_asked;
+
+static mach_timebase_info_data_t dxc_timebase(void) {
+    static mach_timebase_info_data_t base;
+    if (base.denom == 0) {
+        mach_timebase_info(&base);
+    }
+    return base;
+}
+
+static CVReturn dxc_link_tick(CVDisplayLinkRef link, const CVTimeStamp *now,
+                              const CVTimeStamp *output, CVOptionFlags flags_in,
+                              CVOptionFlags *flags_out, void *context) {
+    (void)link;
+    (void)now;
+    (void)flags_in;
+    (void)flags_out;
+    (void)context;
+    if ((output->flags & kCVTimeStampHostTimeValid) == 0) {
+        return kCVReturnSuccess;
+    }
+    if ((output->flags & kCVTimeStampVideoRefreshPeriodValid) != 0 && output->videoTimeScale > 0) {
+        mach_timebase_info_data_t base = dxc_timebase();
+        double seconds = (double)output->videoRefreshPeriod / (double)output->videoTimeScale;
+        atomic_store(&dxc_link_period, dxc_seconds_to_ticks(seconds, base.numer, base.denom));
+    }
+    atomic_store(&dxc_link_target, output->hostTime);
+    return kCVReturnSuccess;
+}
+
+// The display the window is on, or the main display before there is a window.
+static CGDirectDisplayID dxc_window_display(void) {
+    __block CGDirectDisplayID display = CGMainDisplayID();
+    dxc_on_main(^{
+        NSWindow *window = NSApp.mainWindow ?: NSApp.windows.firstObject;
+        NSNumber *number = window.screen.deviceDescription[@"NSScreenNumber"];
+        if (number != nil) {
+            display = (CGDirectDisplayID)number.unsignedIntValue;
+        }
+    });
+    return display;
+}
+
+static void dxc_link_follow_window(void) {
+    CGDirectDisplayID display = dxc_window_display();
+    if (display != dxc_link_display &&
+        CVDisplayLinkSetCurrentCGDisplay(dxc_link, display) == kCVReturnSuccess) {
+        dxc_link_display = display;
+        // The old display's schedule says nothing about this one's.
+        atomic_store(&dxc_link_target, 0);
+        atomic_store(&dxc_link_period, 0);
+    }
+}
+
+/**
+ * When the frame drawn now will be on the screen, in nanoseconds of host time.
+ *
+ * Asked once a frame, on the thread that draws. Host time is the clock Rust's Instant reads
+ * on macOS, so these times and the Host's are one clock.
+ */
+int64_t dxc_native_frame_time_nanos(void) {
+    uint64_t now = mach_absolute_time();
+    atomic_store(&dxc_link_asked, now);
+    if (dxc_link == NULL) {
+        if (CVDisplayLinkCreateWithActiveCGDisplays(&dxc_link) != kCVReturnSuccess) {
+            dxc_link = NULL;
+        } else {
+            CVDisplayLinkSetOutputCallback(dxc_link, dxc_link_tick, NULL);
+            dxc_link_display = 0;
+        }
+    }
+    if (dxc_link != NULL && !CVDisplayLinkIsRunning(dxc_link)) {
+        dxc_link_follow_window();
+        CVDisplayLinkStart(dxc_link);
+    }
+    uint64_t at = dxc_frame_target(now, atomic_load(&dxc_link_target), atomic_load(&dxc_link_period));
+    mach_timebase_info_data_t base = dxc_timebase();
+    return dxc_ticks_to_nanos(at, base.numer, base.denom);
+}
+
+// Called from the loop's pump: stops the link a second after the last frame, so a window
+// with nothing moving is not woken once a refresh, and keeps it on the window's display.
+static void dxc_link_idle(void) {
+    if (dxc_link == NULL || !CVDisplayLinkIsRunning(dxc_link)) {
+        return;
+    }
+    mach_timebase_info_data_t base = dxc_timebase();
+    uint64_t idle = mach_absolute_time() - atomic_load(&dxc_link_asked);
+    if (dxc_ticks_to_nanos(idle, base.numer, base.denom) > 1000000000LL) {
+        CVDisplayLinkStop(dxc_link);
+    } else {
+        dxc_link_follow_window();
+    }
+}
+#pragma clang diagnostic pop
+
 /**
  * Lets the window answer for itself for a moment.
  *
@@ -397,6 +515,7 @@ static void dxc_native_resize_report(void) {
  * in it costs a call rather than the whole of [seconds].
  */
 void dxc_native_pump(double seconds) {
+    dxc_link_idle();
     // A native image on macOS runs main on a thread of its own and leaves the first thread
     // in a run loop, and AppKit refuses to take events from any thread but that one.
     dxc_on_main(^{
@@ -950,7 +1069,9 @@ void dxc_native_set_cursor(int32_t shape) {
 // old size would be drawn into at the new one, and the scene is told through the queue so
 // that it changes its mind between frames rather than during one.
 - (void)setFrameSize:(NSSize)size {
+    NSSize old_size = self.frame.size;
     [super setFrameSize:size];
+    dxc_vprobe_set_frame(old_size, size);
     CAMetalLayer *layer = (CAMetalLayer *)self.layer;
     CGFloat scale = self.window.backingScaleFactor > 0 ? self.window.backingScaleFactor : 1;
     layer.contentsScale = scale;
@@ -971,7 +1092,9 @@ void dxc_native_set_cursor(int32_t shape) {
     // the window takes while it is being made.
     if (dxc_draw_frame != NULL && !dxc_legacy_resize()) {
         uint64_t begun = mach_absolute_time();
+        dxc_vprobe_via = "set-frame";
         dxc_draw_frame(dxc_draw_thread);
+        dxc_vprobe_via = "loop";
         int64_t spent = (int64_t)(mach_absolute_time() - begun);
         dxc_resize_stats.callback_ticks += spent;
         if (spent > dxc_resize_stats.callback_max_ticks) {
@@ -1223,6 +1346,7 @@ int32_t dxc_native_window_open(
         [window center];
         [window makeKeyAndOrderFront:nil];
         [NSApp activateIgnoringOtherApps:YES];
+        dxc_vprobe_start(window, view, layer);
 
         // Held past this scope. The window owns the view, and the renderer owns the
         // window until it closes it.
@@ -1365,7 +1489,9 @@ int32_t dxc_native_frame_begin(void *layer_pointer, void **texture_out) {
     dxc_on_main(^{
     @autoreleasepool {
         CAMetalLayer *layer = (__bridge CAMetalLayer *)layer_pointer;
+        uint64_t asked = mach_absolute_time();
         id<CAMetalDrawable> drawable = [layer nextDrawable];
+        dxc_vprobe_drawable_wait_ms = dxc_ticks_to_millis((int64_t)(mach_absolute_time() - asked));
         if (drawable == nil) {
             status = 1;
             return;
@@ -1390,6 +1516,8 @@ void dxc_native_frame_end(void *queue_pointer) {
                            (int32_t)drawable.texture.height);
         id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)queue_pointer;
         id<MTLCommandBuffer> buffer = [queue commandBuffer];
+        dxc_vprobe_mark(buffer, drawable.texture, (long)drawable.texture.height,
+                        drawable.layer.contentsScale);
         if (drawable.layer.presentsWithTransaction) {
             // Presented by the layer from inside the window's transaction, once the
             // work is scheduled: the contract of a layer that presents with one.
