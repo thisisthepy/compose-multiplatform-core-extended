@@ -1,0 +1,86 @@
+# The Kotlin/Native macOS window used from a Gradle build rather than Amper:
+# extended/window/samples/gradle-macos depends on the published window modules by their Maven
+# coordinates and on Compose and Material 3 as JetBrains publishes them for macosArm64, hosts a
+# Material 3 screen in native-macos's window, and is started until a frame of it has reached
+# the window.
+name: Extended window Gradle example (macOS)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window-gradle-macos.yml
+  push:
+    branches:
+      - extended
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window-gradle-macos.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  example:
+    name: Gradle example, native-macos with Material 3 (macosArm64)
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extended/window
+          filter: blob:none
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache the Kotlin toolchain, konan and Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/JetBrains/Kotlin
+            ~/.konan
+            ~/.m2/repository
+          key: extended-window-gradle-macos-${{ runner.os }}-${{ hashFiles('extended/window/**/module.yaml', 'extended/window/libs.versions.toml', 'extended/window/kotlin', 'extended/window/samples/gradle-macos/*.kts') }}
+          restore-keys: |
+            extended-window-gradle-macos-${{ runner.os }}-
+
+      # The way extended-window-publish does it: a project of only the modules this needs.
+      - name: Publish common and native-macos to mavenLocal
+        shell: bash
+        working-directory: extended/window
+        run: |
+          set -euo pipefail
+          cp project.yaml project.yaml.all
+          printf 'modules:\n  - common\n  - native/macos\n' > project.yaml
+          ./kotlin publish mavenLocal
+          cp project.yaml.all project.yaml
+          find ~/.m2/repository/org/thisisthepy/compose/window -name '*.module' | sort
+
+      - name: Link the example with Gradle
+        working-directory: extended/window/samples/gradle-macos
+        run: ./gradlew --no-daemon linkDebugExecutableMacosArm64
+
+      - name: What it resolved for Material 3
+        working-directory: extended/window/samples/gradle-macos
+        run: ./gradlew --no-daemon -q dependencies --configuration macosArm64CompileKlibraries | grep -E 'material3|native-macos|compose.ui:ui:' | sort -u || true
+
+      - name: Start it until a frame of the Material 3 content reaches the window
+        working-directory: extended/window/samples/gradle-macos
+        shell: bash
+        run: |
+          set -euo pipefail
+          exe=build/bin/macosArm64/debugExecutable/gradle-macos.kexe
+          ls -la "$exe"
+          status=0
+          HELLO_SELF_CHECK=1 perl -e 'alarm 120; exec @ARGV' "./$exe" > out.txt 2>&1 || status=$?
+          cat out.txt
+          [ "$status" -eq 0 ]
+          grep -q "gradle-macos check ok" out.txt

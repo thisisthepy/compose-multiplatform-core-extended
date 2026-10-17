@@ -116,6 +116,36 @@ Maven repository the way compose-rust consumes them; `native/linux` joins it in
 [#111](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/111). Nothing is on a public repository yet. The Windows window,
 `windows-shared`, is open in [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32).
 
+### Kotlin/Native on macOS from Gradle
+
+The window modules are built with Amper, and a Gradle build uses them by their Maven
+coordinates. [`extended/window/samples/gradle-macos`](window/samples/gradle-macos) is a
+Kotlin Multiplatform project with a `macosArm64` executable that hosts a Material 3 screen in
+the fork's AppKit and Metal window. The "Extended window Gradle example (macOS)" workflow
+publishes `common` and `native-macos` to the local Maven repository, links the example with
+Gradle and starts it until a frame of its content has reached the window.
+
+- **Hosting.** On Kotlin/Native macOS, `native-macos` hosts the Compose scene itself:
+  `MacosWindow(...).setContent { }`, or `MacosWindowPlatform(content)` behind
+  `WindowPlatform`. Its window routes input straight to that scene, which keeps the input
+  method's composition where it is. `scene` is the host for a window that hands it a
+  `WindowSurface` and reports input as `WindowEvent`s, which is the GraalVM path. It builds for
+  `macosArm64` too, but no Kotlin/Native window gives it a surface yet, because `native-macos`
+  does not report its input as events
+  ([#63](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/63) moves it
+  to one event path). So a Kotlin/Native macOS application depends on `native-macos` and not on
+  `scene`.
+- **Material 3.** `material3` for `macosArm64` comes from JetBrains:
+  `org.jetbrains.compose.material3:material3:1.11.0-alpha07` on Maven Central, whose
+  `material3-macosarm64` variant is JetBrains' own build. The fork does not build it for macOS;
+  of the Compose modules only `foundation` and `ui` differ from JetBrains' build there. Material
+  3 asks for `ui` and `foundation` `1.11.0-beta03`, and Gradle takes the highest version the
+  build asks for, so it links against `1.11.1` here, or against the fork's patched modules when
+  they are published at a version above it (compose-rust publishes them as `1.11.1001`).
+- **Kotlin.** The build's Kotlin has to be at least the one the window klibs were compiled
+  with, `2.4.10` today (the `kotlin-stdlib` version in their `.module` files). A klib from a
+  newer compiler does not link.
+
 ### Windows window chrome (planned)
 
 The branch `feature/windows-window-chrome` adds Compose's window procedure for Windows to the
