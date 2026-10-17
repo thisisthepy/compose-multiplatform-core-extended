@@ -87,14 +87,19 @@ esac
 mkdir -p "$work"
 
 if [[ $windows_host -eq 0 ]]; then
-    if [[ " $targets " == *" mingwX64 "* ]]; then
-        # skiko publishes no mingwX64 artifact; Compose for mingwX64 resolves this one.
-        echo "==> 1a. skiko for mingwX64 (both halves)"
-        XWIN_DIR="$xwin" "$here/skiko/build-skiko-mingw.sh" "$work/skiko-mingw"
+    others=()
+    for target in $targets; do [[ "$target" == mingwX64 ]] || others+=("$target"); done
+    if [[ ${#others[@]} -gt 0 ]]; then
+        echo "==> 1. Compose for ${others[*]}, as $version"
+        "$here/compose/publish-local.sh" "${others[@]}"
     fi
-    echo "==> 1. Compose for $targets, as $version"
-    # shellcheck disable=SC2086
-    "$here/compose/publish-local.sh" $targets
+    if [[ " $targets " == *" mingwX64 "* ]]; then
+        # skiko publishes no mingwX64 artifact; Compose for mingwX64 resolves this one. Its
+        # C++ half is compiled with Kotlin/Native's clang, which the builds above fetched.
+        echo "==> 1b. skiko for mingwX64 (both halves), then Compose for mingwX64"
+        XWIN_DIR="$xwin" "$here/skiko/build-skiko-mingw.sh" "$work/skiko-mingw"
+        "$here/compose/publish-local.sh" mingwX64
+    fi
 fi
 
 if [[ $windows_host -eq 0 && " $targets " == *" desktop "* ]]; then
