@@ -235,6 +235,17 @@ class X11Window : WindowPlatform {
         return bytes.decodeToString()
     }
 
+    /** The paths of the files last dropped on the window, one string, NUL between them. */
+    fun readDroppedPaths(): String {
+        if (textBuffer == 0L) return ""
+        val buffer = WordFactory.pointer<Pointer>(textBuffer)
+        val length = X11Natives.droppedPaths(WordFactory.pointer<CCharPointer>(textBuffer), DROPPED_PATHS_BYTES)
+        if (length <= 0) return ""
+        val bytes = ByteArray(length)
+        for (i in 0 until length) bytes[i] = buffer.readByte(i)
+        return bytes.decodeToString()
+    }
+
     override fun writeClipboardText(text: String) {
         val holder = CTypeConversion.toCString(text)
         try {
@@ -277,6 +288,7 @@ class X11Window : WindowPlatform {
         // 4 MiB, the most one X11 property read returns: a longer clipboard answers empty.
         const val TEXT_CAPACITY = 4 * 1024 * 1024
         const val ACTION_CLOSE = 2
+        const val DROPPED_PATHS_BYTES = 64 * 1024
         const val EVENT_TEXT_PASTE = 13
     }
 }
