@@ -37,6 +37,14 @@ data class Version(
      * version means what it means upstream.
      */
     val forkRelease: String? = null,
+    /**
+     * What the fork publishes this version as, when that is not what the fields above spell. The
+     * fork ships every library line on one version (`1.11.1-ext.1`), while each line's sources
+     * are an upstream version of their own (Material 3 is `1.11.0-alpha07`). The fields keep the
+     * upstream version, so every check that asks whether a version is stable, alpha or final
+     * API answers as it does upstream; [toString], which Gradle publishes, gives this.
+     */
+    val publishedAs: String? = null,
 ) : Comparable<Version>, java.io.Serializable {
 
     constructor(
@@ -102,7 +110,7 @@ data class Version(
     /** Whether this is a local development build of a fork release, `ext.<N>-dev`. */
     fun isForkDevelopmentBuild(): Boolean = forkRelease?.endsWith(FORK_DEV_SUFFIX) == true
 
-    override fun toString(): String = buildString {
+    override fun toString(): String = publishedAs ?: buildString {
         append("$major.$minor.$patch")
         if (preRelease != null) {
             append("-$preRelease")

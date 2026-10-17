@@ -107,6 +107,15 @@ class VersionTest {
     }
 
     @Test
+    fun aLinePublishedOnTheForksVersionKeepsItsUpstreamMeaning() {
+        val material3 = Version("1.11.0-alpha07").copy(forkRelease = "ext.1", publishedAs = "1.11.1-ext.1")
+        assertEquals("1.11.1-ext.1", material3.toString())
+        assert(material3.isAlpha())
+        assert(!material3.isStable())
+        assert(!material3.isFinalApi())
+    }
+
+    @Test
     fun testParsingDependencyRanges() {
         assert(Version.isDependencyRange("[1.0.0]") == false)
         assert(Version.isDependencyRange("[1.0.0,2.0.0]") == true)
