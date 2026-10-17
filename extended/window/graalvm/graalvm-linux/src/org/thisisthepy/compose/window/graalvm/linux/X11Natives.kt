@@ -97,6 +97,10 @@ internal object X11Natives {
     external fun setImeSpot(x: Float, y: Float)
 
     @JvmStatic
+    @CFunction("dxc_native_ime_reset")
+    external fun imeReset(out: CCharPointer?, capacity: Int): Int
+
+    @JvmStatic
     @CFunction("dxc_native_clipboard_read")
     external fun clipboardRead(out: CCharPointer?, capacity: Int): Int
 

@@ -34,7 +34,18 @@ enum {
     DXC_EVENT_FILES_ENTERED = 10,
     DXC_EVENT_FILES_DROPPED = 11,
     DXC_EVENT_FILES_EXITED = 12,
-    DXC_EVENT_TEXT_PASTE = 13,
+    // What the input method's preedit callbacks said, passed on as they were said: a
+    // composition began, a run of characters was replaced (first in key_code, how many in
+    // code_point, the caret in x, the new characters in text), the composition ended. What
+    // the composition holds is kept on the Kotlin side, in the model the Kotlin/Native X11
+    // window uses too.
+    DXC_EVENT_PREEDIT_START = 13,
+    DXC_EVENT_PREEDIT_DRAW = 14,
+    DXC_EVENT_PREEDIT_DONE = 15,
+    // A paste is waiting to be taken with dxc_native_take_paste. Not one of the shared event
+    // kinds: the Kotlin side takes the text and turns it into a commit before anything else
+    // reads the record.
+    DXC_EVENT_TEXT_PASTE = 64,
 };
 
 #define DXC_TEXT_BYTES 96
@@ -193,12 +204,10 @@ static int dxc_owns_primary;
 // is on the thread Xlib is used from.
 static volatile int dxc_raise_requested;
 
-// The input method and the context made from it, and the text being composed in it.
+// The input method and the context made from it.
 static XIM dxc_im;
 static XIC dxc_ic;
 #define DXC_PREEDIT_CAPACITY 256
-static wchar_t dxc_preedit[DXC_PREEDIT_CAPACITY];
-static int dxc_preedit_length;
 
 // Files being dragged over the window and the ones last let go on it.
 #define DXC_DROPPED_BYTES (64 * 1024)
@@ -225,52 +234,9 @@ static int32_t dxc_buttons(unsigned int state) {
            ((state & Button2Mask) ? 4 : 0);
 }
 
-// The shared Compose reader uses these four bits, as NSEvent does. Translate at the
-// boundary so the same reader receives the same meaning on every desktop.
-static int32_t dxc_modifiers(unsigned int state) {
-    return ((state & ShiftMask) ? (1 << 17) : 0) |
-           ((state & ControlMask) ? (1 << 18) : 0) |
-           ((state & Mod1Mask) ? (1 << 19) : 0) |
-           ((state & Mod4Mask) ? (1 << 20) : 0);
-}
-
-// The key numbers are the shared reader's, which are the macOS ones: the letters and digits
-// by where they sit on a board, and the special keys by name. A key with no number answers
-// -1, never 0, because 0 is the A key and a shortcut that does not map would otherwise arrive
-// as ctrl and A.
-//
-// Printable keys also carry their code point, obtained from XLookupString for the current
-// keyboard layout.
-static int32_t dxc_key_code(KeySym key) {
-    static const int32_t letters[26] = {
-        0x00, 0x0B, 0x08, 0x02, 0x0E, 0x03, 0x05, 0x04, 0x22, 0x26, 0x28, 0x25, 0x2E,
-        0x2D, 0x1F, 0x23, 0x0C, 0x0F, 0x01, 0x11, 0x20, 0x09, 0x0D, 0x07, 0x10, 0x06,
-    };
-    static const int32_t digits[10] = {
-        0x1D, 0x12, 0x13, 0x14, 0x15, 0x17, 0x16, 0x1A, 0x1C, 0x19,
-    };
-    if (key >= XK_a && key <= XK_z) return letters[key - XK_a];
-    if (key >= XK_A && key <= XK_Z) return letters[key - XK_A];
-    if (key >= XK_0 && key <= XK_9) return digits[key - XK_0];
-    switch (key) {
-        case XK_Return: case XK_KP_Enter: return 0x24;
-        case XK_Tab: case XK_ISO_Left_Tab: return 0x30;
-        case XK_space: return 0x31;
-        case XK_BackSpace: return 0x33;
-        case XK_Escape: return 0x35;
-        case XK_Delete: return 0x75;
-        case XK_Insert: return 0x72;
-        case XK_Left: return 0x7B;
-        case XK_Right: return 0x7C;
-        case XK_Down: return 0x7D;
-        case XK_Up: return 0x7E;
-        case XK_Home: return 0x73;
-        case XK_End: return 0x77;
-        case XK_Prior: return 0x74;
-        case XK_Next: return 0x79;
-        default: return -1;
-    }
-}
+// Keys and modifiers cross as the server wrote them: a keysym and a state word. Turning
+// them into what the shared reader understands is Kotlin's, in the one table both X11
+// windows ask (X11Keys.kt in the common module).
 
 /**
  * Tells the window manager that the drawing it was waiting for is done.
@@ -331,37 +297,28 @@ static int dxc_encode_utf8(unsigned long code, char *out) {
     return 4;
 }
 
-/* Pushes text as an event, cut at a character boundary where it does not fit. */
-static void dxc_push_text(int32_t kind, const char *utf8, size_t length) {
-    struct dxc_event record;
-    memset(&record, 0, sizeof record);
-    record.kind = kind;
+/* Copies UTF-8 into a record's text, cut at a character boundary where it does not fit. */
+static void dxc_record_text(struct dxc_event *record, const char *utf8, size_t length) {
     size_t take = length < DXC_TEXT_BYTES - 1 ? length : DXC_TEXT_BYTES - 1;
     while (take > 0 && take < length && ((unsigned char)utf8[take] & 0xC0) == 0x80) {
         take--;
     }
-    memcpy(record.text, utf8, take);
-    dxc_push_event(record);
-}
-
-/* What is being composed, as the whole run every time, which is what the scene is given. */
-static void dxc_push_preedit(void) {
-    char text[DXC_PREEDIT_CAPACITY * 4 + 1];
-    size_t used = 0;
-    for (int index = 0; index < dxc_preedit_length; index++) {
-        used += (size_t)dxc_encode_utf8((unsigned long)dxc_preedit[index], text + used);
-    }
-    dxc_push_text(DXC_EVENT_TEXT_COMPOSE, text, used);
+    memcpy(record->text, utf8, take);
 }
 
 /*
- * The input method's preedit callbacks. The method says which run of characters changed
- * and what they are now, counted in characters as the protocol counts them, and the whole
- * run is kept here and handed to the scene each time.
+ * The input method's preedit callbacks. Each is passed on as an event and nothing is kept
+ * here: the method says which run of characters changed and what they are now, counted in
+ * characters as the protocol counts them, and the model that applies that to the run being
+ * composed is the shared Kotlin one (ImeComposition.kt), which the Kotlin/Native window uses
+ * too.
  */
 static int dxc_preedit_start(XIC ic, XPointer client, XPointer call) {
     (void)ic; (void)client; (void)call;
-    dxc_preedit_length = 0;
+    struct dxc_event record;
+    memset(&record, 0, sizeof record);
+    record.kind = DXC_EVENT_PREEDIT_START;
+    dxc_push_event(record);
     // No limit on the length of what is composed. The method reads this return value, and
     // a function that returns nothing would leave whatever was in the register.
     return -1;
@@ -370,44 +327,42 @@ static int dxc_preedit_start(XIC ic, XPointer client, XPointer call) {
 static void dxc_preedit_draw(XIC ic, XPointer client, XIMPreeditDrawCallbackStruct *draw) {
     (void)ic; (void)client;
     if (draw == NULL) return;
-    int first = draw->chg_first;
-    int removed = draw->chg_length;
-    if (first < 0) first = 0;
-    if (first > dxc_preedit_length) first = dxc_preedit_length;
-    if (removed < 0) removed = 0;
-    if (first + removed > dxc_preedit_length) removed = dxc_preedit_length - first;
-
-    wchar_t added[DXC_PREEDIT_CAPACITY];
-    int added_length = 0;
+    // The characters the method put in, as UTF-8. Decoding what Xlib handed over is this
+    // file's job; what the characters mean for the composition is not.
+    char utf8[DXC_PREEDIT_CAPACITY * 4 + 1];
+    size_t used = 0;
     XIMText *text = draw->text;
     if (text != NULL) {
         if (text->encoding_is_wchar && text->string.wide_char != NULL) {
-            for (int i = 0; i < (int)text->length && added_length < DXC_PREEDIT_CAPACITY; i++) {
-                added[added_length++] = text->string.wide_char[i];
+            for (int i = 0; i < (int)text->length && i < DXC_PREEDIT_CAPACITY; i++) {
+                used += (size_t)dxc_encode_utf8((unsigned long)text->string.wide_char[i], utf8 + used);
             }
         } else if (text->string.multi_byte != NULL) {
+            wchar_t added[DXC_PREEDIT_CAPACITY];
             size_t count = mbstowcs(added, text->string.multi_byte, DXC_PREEDIT_CAPACITY);
-            if (count != (size_t)-1) added_length = (int)count;
+            if (count != (size_t)-1) {
+                for (size_t i = 0; i < count; i++) {
+                    used += (size_t)dxc_encode_utf8((unsigned long)added[i], utf8 + used);
+                }
+            }
         }
     }
-    int tail = dxc_preedit_length - first - removed;
-    if (first + added_length + tail > DXC_PREEDIT_CAPACITY) {
-        added_length = DXC_PREEDIT_CAPACITY - first - tail;
-        if (added_length < 0) return;
-    }
-    memmove(dxc_preedit + first + added_length, dxc_preedit + first + removed,
-            (size_t)tail * sizeof(wchar_t));
-    memcpy(dxc_preedit + first, added, (size_t)added_length * sizeof(wchar_t));
-    dxc_preedit_length = first + added_length + tail;
-    dxc_push_preedit();
+    struct dxc_event record;
+    memset(&record, 0, sizeof record);
+    record.kind = DXC_EVENT_PREEDIT_DRAW;
+    record.key_code = draw->chg_first;
+    record.code_point = draw->chg_length;
+    record.x = (float)draw->caret;
+    dxc_record_text(&record, utf8, used);
+    dxc_push_event(record);
 }
 
 static void dxc_preedit_done(XIC ic, XPointer client, XPointer call) {
     (void)ic; (void)client; (void)call;
-    if (dxc_preedit_length > 0) {
-        dxc_preedit_length = 0;
-        dxc_push_preedit();
-    }
+    struct dxc_event record;
+    memset(&record, 0, sizeof record);
+    record.kind = DXC_EVENT_PREEDIT_DONE;
+    dxc_push_event(record);
 }
 
 static void dxc_preedit_caret(XIC ic, XPointer client, XPointer call) {
@@ -467,6 +422,25 @@ void dxc_native_set_ime_spot(float x, float y) {
     XVaNestedList list = XVaCreateNestedList(0, XNSpotLocation, &spot, NULL);
     XSetICValues(dxc_ic, XNPreeditAttributes, list, NULL);
     XFree(list);
+}
+
+/**
+ * Ends what the input method is composing where it stands, and copies what it kept into
+ * out as UTF-8. Answers how many bytes that is, zero where there was nothing.
+ */
+int32_t dxc_native_ime_reset(char *out, int32_t capacity) {
+    if (dxc_ic == NULL || capacity <= 0) return 0;
+    char *kept = Xutf8ResetIC(dxc_ic);
+    if (kept == NULL) return 0;
+    size_t length = strlen(kept);
+    if (length > (size_t)capacity - 1) {
+        length = (size_t)capacity - 1;
+        while (length > 0 && ((unsigned char)kept[length] & 0xC0) == 0x80) length--;
+    }
+    memcpy(out, kept, length);
+    out[length] = 0;
+    XFree(kept);
+    return (int32_t)length;
 }
 
 /* The bytes of a text property, or null. */
@@ -911,7 +885,7 @@ static void dxc_pump_events(void) {
                 record.x = (float)event.xmotion.x;
                 record.y = (float)event.xmotion.y;
                 record.buttons = dxc_buttons(event.xmotion.state);
-                record.modifiers = dxc_modifiers(event.xmotion.state);
+                record.modifiers = (int32_t)event.xmotion.state;
                 break;
             case ButtonPress:
             case ButtonRelease: {
@@ -922,17 +896,9 @@ static void dxc_pump_events(void) {
                     record.x = button == 6 ? -3.0f : button == 7 ? 3.0f : 0.0f;
                     record.y = button == 4 ? -3.0f : button == 5 ? 3.0f : 0.0f;
                 } else {
-                    if (event.type == ButtonPress && dxc_ic != NULL && dxc_preedit_length > 0) {
-                        // A click while composing ends the composition and keeps what was
-                        // typed, which is what the other desktops' input methods do.
-                        char *kept = Xutf8ResetIC(dxc_ic);
-                        dxc_preedit_length = 0;
-                        dxc_push_preedit();
-                        if (kept != NULL) {
-                            dxc_push_text(DXC_EVENT_TEXT_COMMIT, kept, strlen(kept));
-                            XFree(kept);
-                        }
-                    }
+                    // A click while composing ends the composition and keeps what was typed.
+                    // That is decided on the Kotlin side, which knows whether anything is being
+                    // composed, and asks dxc_native_ime_reset for what the method kept.
                     record.kind = event.type == ButtonPress ? DXC_EVENT_POINTER_DOWN : DXC_EVENT_POINTER_UP;
                     record.x = (float)event.xbutton.x;
                     record.y = (float)event.xbutton.y;
@@ -943,13 +909,13 @@ static void dxc_pump_events(void) {
                     if (event.type == ButtonPress && button == 2) {
                         // The middle button pastes the primary selection, the way every X
                         // program does: what was last selected, with no copy asked for.
-                        record.modifiers = dxc_modifiers(event.xbutton.state);
+                        record.modifiers = (int32_t)event.xbutton.state;
                         dxc_push_event(record);
                         dxc_paste_selection(dxc_a_primary, dxc_owns_primary);
                         continue;
                     }
                 }
-                record.modifiers = dxc_modifiers(event.xbutton.state);
+                record.modifiers = (int32_t)event.xbutton.state;
                 break;
             }
             case KeyPress:
@@ -974,26 +940,14 @@ static void dxc_pump_events(void) {
                     }
                 }
                 record.kind = event.type == KeyPress ? DXC_EVENT_KEY_DOWN : DXC_EVENT_KEY_UP;
-                record.key_code = dxc_key_code(symbol);
-                record.modifiers = dxc_modifiers(event.xkey.state);
-                if (symbol == XK_Delete && (event.xkey.state & (ShiftMask | ControlMask | Mod1Mask | Mod4Mask)) == ShiftMask) {
-                    // Shift and Delete cut on every X desktop. Compose has no such shortcut,
-                    // so the key arrives as the one it has: control and X.
-                    record.key_code = 0x07;
-                    record.modifiers = dxc_modifiers(ControlMask);
-                }
-                if (count == 1 && (unsigned char)bytes[0] >= 32 && (unsigned char)bytes[0] < 127) {
-                    record.code_point = (unsigned char)bytes[0];
-                }
-                // The key is recorded first and its text after, the order the other desktops
-                // use. A shortcut types nothing: control, alt and the super key held mean
-                // the key is a command.
-                if (event.type == KeyPress && count > 0 &&
-                    (event.xkey.state & (ControlMask | Mod1Mask | Mod4Mask)) == 0 &&
-                    (unsigned char)bytes[0] >= 0x20 && bytes[0] != 0x7f) {
-                    dxc_push_event(record);
-                    dxc_push_text(DXC_EVENT_TEXT_COMMIT, bytes, (size_t)count);
-                    continue;
+                // The keysym, the state word and the text as the server gave them. What the
+                // key means, whether its text is typed or only carried, and Shift and Delete
+                // as a cut, are decided in the shared ImeComposition.kt and X11Keys.kt, the
+                // same code the Kotlin/Native window asks. Text is sent for a press only.
+                record.key_code = (int32_t)symbol;
+                record.modifiers = (int32_t)event.xkey.state;
+                if (event.type == KeyPress && count > 0) {
+                    dxc_record_text(&record, bytes, (size_t)count);
                 }
                 break;
             }

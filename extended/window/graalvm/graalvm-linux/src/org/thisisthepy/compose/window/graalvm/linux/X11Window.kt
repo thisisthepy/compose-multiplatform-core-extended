@@ -17,6 +17,7 @@ import org.thisisthepy.compose.window.WindowListener
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.WindowPlatform
 import org.thisisthepy.compose.window.WindowVisibility
+import org.thisisthepy.compose.window.X11Events
 
 /**
  * The X11 window of the GraalVM path: [WindowPlatform] over `x11_window.c`.
@@ -41,6 +42,11 @@ class X11Window : WindowPlatform {
     private var frameWanted = false
     private var lastScale = 0f
     private var lastTheme: SystemTheme? = null
+
+    // What the C window records, a key as a keysym, a state word and the text it typed and the
+    // preedit callbacks as they came, turned into events by the same code the Kotlin/Native X11
+    // window uses. A click while composing ends the composition with what the method kept.
+    private val x11Events = X11Events(::resetInputMethod)
 
     /** Whether a frame was asked for since the last [present]; [requestFrame] coalesces. */
     val frameRequested: Boolean get() = frameWanted
@@ -87,7 +93,7 @@ class X11Window : WindowPlatform {
                 takePaste()?.let { listener?.onEvent(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, it)) }
                 continue
             }
-            listener?.onEvent(read(eventBuffer))
+            for (event in x11Events.heard(read(eventBuffer))) listener?.onEvent(event)
         }
         val scale = measure().scale
         if (scale != lastScale) {
@@ -123,6 +129,17 @@ class X11Window : WindowPlatform {
             WordFactory.pointer<CIntPointer>(sizeBuffer + 4),
         )
         return origin.readInt(0) to origin.readInt(4)
+    }
+
+    /** Ends the input method's composition where it stands and answers what it kept. */
+    private fun resetInputMethod(): String {
+        if (textBuffer == 0L) return ""
+        val buffer = WordFactory.pointer<Pointer>(textBuffer)
+        val length = X11Natives.imeReset(WordFactory.pointer<CCharPointer>(textBuffer), IME_RESET_BYTES)
+        if (length <= 0) return ""
+        val bytes = ByteArray(length)
+        for (i in 0 until length) bytes[i] = buffer.readByte(i)
+        return bytes.decodeToString()
     }
 
     /** The whole of a paste the window is holding, so that it lands as one edit. */
@@ -321,6 +338,8 @@ class X11Window : WindowPlatform {
         const val TEXT_CAPACITY = 4 * 1024 * 1024
         const val ACTION_CLOSE = 2
         const val DROPPED_PATHS_BYTES = 64 * 1024
-        const val EVENT_TEXT_PASTE = 13
+        /** `DXC_EVENT_TEXT_PASTE`: not a shared event kind, so outside their numbers. */
+        const val EVENT_TEXT_PASTE = 64
+        const val IME_RESET_BYTES = 4096
     }
 }
