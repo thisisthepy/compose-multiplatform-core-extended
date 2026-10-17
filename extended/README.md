@@ -191,7 +191,11 @@ and Windows SDK as cargo-xwin lays them out (`cargo xwin build --target x86_64-p
 once, or set `XWIN_DIR`).
 
 Then publish each module as above with `publishMingwX64PublicationToMavenLocal` in place of
-the Linux task.
+the Linux task, and run `extended/skiko/republish-skiko-mingw.py`. It writes skiko under this
+fork's group, `org.thisisthepy.compose.skiko:skiko-mingwx64`, with the C++ half and Skia as
+its `msvc` zip, and points Compose's mingwX64 modules at it: JetBrains' skiko root on Maven
+Central names no `mingw_x64`. `extended/publish-local-all.sh` does all of it. A program links
+it through `org.thisisthepy.kotlin.native.desktop`, which adds the `msvc` zip to its MSVC link.
 
 ### Static skiko for a native image
 

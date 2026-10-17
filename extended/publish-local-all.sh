@@ -10,15 +10,18 @@
 #
 #   org.thisisthepy.compose.<group>:<artifact>        extended/compose/publish-local.sh
 #   org.thisisthepy.compose.skiko:skiko-awt           extended/skiko/build-skiko-awt.sh (desktop)
+#   org.thisisthepy.compose.skiko:skiko-mingwx64      extended/skiko/build-skiko-mingw.sh, then
+#                                                     republish-skiko-mingw.py (mingwX64)
 #   org.thisisthepy.compose.window:<module>           extended/window, the modules this host builds
-#   org.thisisthepy.compose:compose-gradle-plugin     the plugin, at PLUGIN_REVISION
+#   org.thisisthepy.compose:compose-gradle-plugin     the plugins, at PLUGIN_REVISION: Compose's, and
+#   org.thisisthepy.kotlin:kotlin-native-desktop-...  the one that links a Windows executable with MSVC
 #
 # Which host publishes what. A Kotlin Multiplatform library's root (its .module and the
 # metadata of its shared source sets) has to be written by one build that has every target, or a
 # consumer's shared source set misses the targets another host built. Kotlin/Native compiles
 # every desktop target from macOS, so a Mac publishes everything with a root: Compose for the
-# desktop JVM, macosArm64, linuxX64, linuxArm64 and mingwX64 (the Kotlin half of skiko for
-# mingwX64 first, which skiko does not publish), skiko-awt,
+# desktop JVM, macosArm64, linuxX64, linuxArm64 and mingwX64 (with skiko for mingwX64, which
+# skiko does not publish: its Kotlin half and, as an msvc zip, its C++ half), skiko-awt,
 # the window modules but two, and the plugin. The two that need their own system:
 #
 #   native/linux     its cinterop reads the system's X11, GL and XIM headers; on Linux x86-64
@@ -28,12 +31,14 @@
 # --targets overrides the Compose targets on any host, for a local build of fewer of them.
 #
 # Needs what each step needs: a JDK 21 in JAVA_HOME (the Compose build and the plugin), git,
-# python3, on Linux the X11, GL, fontconfig and FreeType development headers, and on Windows MSVC.
+# python3, on macOS the MSVC runtime and Windows SDK headers as xwin lays them out (XWIN_DIR, for
+# skiko's C++ half for mingwX64), on Linux the X11, GL, fontconfig and FreeType development
+# headers, and on Windows MSVC.
 set -euo pipefail
 
 # The plugin commit published with this fork's commit. Its aliases name the version above.
 PLUGIN_REPOSITORY="https://github.com/thisisthepy/compose-multiplatform-extended.git"
-PLUGIN_REVISION="1e52ea1bb938f555d6941381a0aa97ab422b0477"
+PLUGIN_REVISION="5a799e40cb797c158fad6744bd2be43b933d12c8"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/.." && pwd)"
@@ -93,7 +98,14 @@ full_host=0
 case "$os" in
     Darwin)
         full_host=1
-        [[ -n "$targets" ]] || targets="desktop macosArm64 linuxX64 linuxArm64 mingwX64"
+        if [[ -z "$targets" ]]; then
+            targets="desktop macosArm64 linuxX64 linuxArm64 mingwX64"
+            xwin="${XWIN_DIR:-$HOME/Library/Caches/cargo-xwin/xwin}"
+            [[ -d "$xwin/sdk/include/ucrt" ]] || die "no MSVC runtime and Windows SDK headers under $xwin" \
+                "skiko's C++ half for mingwX64 is compiled against them. Run" \
+                "'xwin --accept-license splat --output $xwin' (or set XWIN_DIR), or pass --targets" \
+                "without mingwX64 for a local build of fewer targets."
+        fi
         window_modules=(common graalvm/graalvm-macos graalvm/graalvm-linux native/macos scene) ;;
     Linux)
         [[ "$arch" == x86_64 ]] || die "native/linux is built on Linux x86-64; Kotlin/Native has no arm64 Linux host"
@@ -106,7 +118,9 @@ case "$os" in
         fi ;;
     MINGW*|MSYS*|CYGWIN*)
         windows_host=1
-        window_modules=(windows-shared) ;;
+        # windows-shared names ../common, so common is in the build; only windows-shared is
+        # this host's to ship, and the workflow takes nothing else from here.
+        window_modules=(common windows-shared) ;;
     *) die "this script publishes from macOS, Linux or Windows (Git Bash); this is $os" ;;
 esac
 mkdir -p "$work"
@@ -119,12 +133,18 @@ if [[ $windows_host -eq 0 && -n "$targets" ]]; then
         "$here/compose/publish-local.sh" "${others[@]}"
     fi
     if [[ " $targets " == *" mingwX64 "* ]]; then
-        # skiko publishes no mingwX64 artifact; Compose for mingwX64 resolves this one. Only its
-        # Kotlin half is published: the C++ half is a static library a Windows executable links,
-        # not a Maven artifact, and build-skiko-mingw.sh builds it where an executable is linked.
-        echo "==> 1b. skiko for mingwX64 (the Kotlin half), then Compose for mingwX64"
-        "$here/skiko/build-skiko-mingw.sh" "$work/skiko-mingw" --kotlin-only
+        # skiko publishes no mingwX64 artifact. build-skiko-mingw.sh builds both halves: the Kotlin
+        # half, which Compose for mingwX64 compiles against, and the C++ half with Skia, which
+        # is MSVC's and so cannot sit in the klib the way JetBrains' halves do. Both then ship
+        # as org.thisisthepy.compose.skiko:skiko-mingwx64, the C++ half as its msvc zip, which
+        # org.thisisthepy.kotlin.native.desktop links into a Windows executable, and Compose's
+        # mingwX64 modules are pointed at it (republish-skiko-mingw.py says why).
+        echo "==> 1b. skiko for mingwX64 (both halves), then Compose for mingwX64"
+        XWIN_DIR="${xwin:-${XWIN_DIR:-}}" "$here/skiko/build-skiko-mingw.sh" "$work/skiko-mingw"
         "$here/compose/publish-local.sh" mingwX64
+        skiko_upstream="$(sed -n 's/^PUBLISHED_AS="\(.*\)"$/\1/p' "$here/skiko/build-skiko-mingw.sh")"
+        python3 "$here/skiko/republish-skiko-mingw.py" "$HOME/.m2/repository" "$skiko_upstream" "$version" \
+            "$work/skiko-mingw/out/windows-x64"
     fi
 fi
 
@@ -171,6 +191,7 @@ git -C "$plugin" -c advice.detachedHead=false checkout -q --force "$PLUGIN_REVIS
 (
     cd "$plugin/gradle-plugins"
     ./gradlew --no-daemon :compose:publishToMavenLocal :jdk-version-probe:publishToMavenLocal \
+        :kotlin-native-desktop:publishToMavenLocal \
         "-Pdeploy.version=$version" "-Pcompose.version=$version" "-Pcompose.material3.version=$version"
 )
 

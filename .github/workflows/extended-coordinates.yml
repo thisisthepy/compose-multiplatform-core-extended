@@ -8,6 +8,8 @@ on:
   pull_request:
     paths:
       - extended/compose/**
+      - extended/skiko/republish-skiko-mingw.py
+      - extended/skiko/tests/republish-skiko-mingw.test.sh
       - .github/actions/fork-compose/**
       - .github/workflows/extended-coordinates.yml
   push:
@@ -15,6 +17,8 @@ on:
       - extended
     paths:
       - extended/compose/**
+      - extended/skiko/republish-skiko-mingw.py
+      - extended/skiko/tests/republish-skiko-mingw.test.sh
       - .github/actions/fork-compose/**
       - .github/workflows/extended-coordinates.yml
 
@@ -33,8 +37,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: extended/compose
+          sparse-checkout: |
+            extended/compose
+            extended/skiko
           filter: blob:none
 
       - name: check-local.py and publish-local.sh --list
         run: extended/compose/tests/check-local.test.sh
+
+      - name: republish-skiko-mingw.py
+        run: extended/skiko/tests/republish-skiko-mingw.test.sh

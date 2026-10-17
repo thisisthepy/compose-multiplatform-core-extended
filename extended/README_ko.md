@@ -189,7 +189,12 @@ unzip, python3, JDK 17 또는 21, `~/.konan` 의 Kotlin/Native LLVM, 그리고 c
 런타임과 Windows SDK 가 필요합니다 (`cargo xwin build --target x86_64-pc-windows-msvc` 를 한 번
 실행하거나 `XWIN_DIR` 을 지정합니다).
 
-그다음 위와 같이 모듈마다 배포하되, Linux 태스크 대신 `publishMingwX64PublicationToMavenLocal` 을 씁니다.
+그다음 위와 같이 모듈마다 배포하되, Linux 태스크 대신 `publishMingwX64PublicationToMavenLocal` 을 쓰고,
+`extended/skiko/republish-skiko-mingw.py` 를 실행합니다. 이 스크립트는 skiko 를 이 fork 의 그룹
+`org.thisisthepy.compose.skiko:skiko-mingwx64` 로 쓰고, C++ 쪽과 Skia 를 그 `msvc` zip 으로 붙이며,
+Compose 의 mingwX64 모듈이 이것을 가리키게 합니다. Maven Central 에 있는 JetBrains 의 skiko 루트에는
+`mingw_x64` 가 없기 때문입니다. `extended/publish-local-all.sh` 가 이 전부를 합니다. 프로그램은
+`org.thisisthepy.kotlin.native.desktop` 으로 링크하며, 이 플러그인이 `msvc` zip 을 MSVC 링크에 더합니다.
 
 ### native image 용 정적 skiko
 
