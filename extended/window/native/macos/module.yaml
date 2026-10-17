@@ -8,18 +8,24 @@ product:
   type: lib
   platforms: [ macosArm64 ]
 
+# Compose's compiler plugin through the template rather than `compose: enabled`, which would add
+# JetBrains' runtime and components-resources and with them JetBrains' Compose next to the fork's.
+apply:
+  - ../../compose.module-template.yaml
+
 dependencies:
   - ../../common
-  - $compose.runtime
   # This fork's Compose, not JetBrains': a consumer that links this module also links the
   # fork's foundation and UI, and two copies of the same classes under different groups are
   # not something a resolver can merge. Published to the local Maven repository first by
-  # extended/compose/publish-local.sh. The runtime may stay JetBrains': it is a stub with no
-  # classes that points at androidx.compose.runtime, as the fork's is.
+  # extended/compose/publish-local.sh. The runtime is the fork's too, a stub with no classes
+  # that points at androidx.compose.runtime.
   #
   # Named by each module's macosArm64 coordinate, every module the window reaches, as
   # native/linux names its Linux ones: through the roots, the test executable's link met
   # animation-core twice ("IrPropertySymbolImpl is already bound").
+  - org.thisisthepy.compose.runtime:runtime-macosarm64:1.11.1-ext.1
+  - org.thisisthepy.compose.runtime:runtime-saveable-macosarm64:1.11.1-ext.1
   - org.thisisthepy.compose.animation:animation-macosarm64:1.11.1-ext.1
   - org.thisisthepy.compose.animation:animation-core-macosarm64:1.11.1-ext.1
   - org.thisisthepy.compose.foundation:foundation-macosarm64:1.11.1-ext.1
@@ -43,8 +49,6 @@ settings:
     group: org.thisisthepy.compose.window
     artifactId: native-macos
     version: 0.1.0
-  compose:
-    enabled: true
   kotlin:
     # A klib's unique_name defaults to the Amper module name, which is the directory name
     # (`common`, `macos`, `linux`). The Kotlin/Native linker refuses two libraries with the
