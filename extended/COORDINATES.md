@@ -1,7 +1,9 @@
 # Coordinates
 
 What this fork publishes, under which coordinates, and at which version. Nothing has been
-published to a public repository yet; the table is what a build of this branch produces.
+published to a public repository yet; the table is what a build of `extended` produces.
+`compose/publish-local.sh` publishes what an application draws with to the local Maven
+repository, and `compose/check-local.py` checks what it left there.
 
 ## Groups
 
@@ -14,8 +16,9 @@ silently replaces the other.
 |---|---|
 | `org.jetbrains.compose.<group>` | `org.thisisthepy.compose.<group>` |
 | `org.jetbrains.androidx.<library>` | `org.thisisthepy.compose.androidx.<library>` |
-| `org.jetbrains.compose.annotation-internal` | `org.thisisthepy.compose.annotation-internal` |
-| `org.jetbrains.compose.collection-internal` | `org.thisisthepy.compose.collection-internal` |
+
+Four projects are not published at all and keep JetBrains' coordinates: the runtime,
+`runtime-saveable`, and the internal annotation and collection libraries (see below).
 
 The libraries JetBrains publishes as `org.jetbrains.androidx.*` keep `androidx` in their
 group so that the mapping is mechanical in both directions, and so that `window`,
@@ -64,8 +67,6 @@ by this fork: the root metadata points them at the androidx artifact.
 
 | Line | JetBrains, Compose Multiplatform 1.11.1 | This fork |
 |---|---|---|
-| `COMPOSE` | `org.jetbrains.compose.annotation-internal:annotation:1.11.1` | `org.thisisthepy.compose.annotation-internal:annotation:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.collection-internal:collection:1.11.1` | `org.thisisthepy.compose.collection-internal:collection:1.11.1-ext.1` |
 | `COMPOSE` | `org.jetbrains.compose.animation:animation:1.11.1` | `org.thisisthepy.compose.animation:animation:1.11.1-ext.1` |
 | `COMPOSE` | `org.jetbrains.compose.animation:animation-core:1.11.1` | `org.thisisthepy.compose.animation:animation-core:1.11.1-ext.1` |
 | `COMPOSE` | `org.jetbrains.compose.animation:animation-graphics:1.11.1` | `org.thisisthepy.compose.animation:animation-graphics:1.11.1-ext.1` |
@@ -74,8 +75,6 @@ by this fork: the root metadata points them at the androidx artifact.
 | `COMPOSE` | `org.jetbrains.compose.material:material:1.11.1` | `org.thisisthepy.compose.material:material:1.11.1-ext.1` |
 | `COMPOSE` | `org.jetbrains.compose.material:material-navigation:1.11.1` | `org.thisisthepy.compose.material:material-navigation:1.11.1-ext.1` |
 | `COMPOSE` | `org.jetbrains.compose.material:material-ripple:1.11.1` | `org.thisisthepy.compose.material:material-ripple:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.runtime:runtime:1.11.1` | `org.thisisthepy.compose.runtime:runtime:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.runtime:runtime-saveable:1.11.1` | `org.thisisthepy.compose.runtime:runtime-saveable:1.11.1-ext.1` |
 | `COMPOSE` | `org.jetbrains.compose.ui:ui:1.11.1` | `org.thisisthepy.compose.ui:ui:1.11.1-ext.1` |
 | `COMPOSE` | `org.jetbrains.compose.ui:ui-geometry:1.11.1` | `org.thisisthepy.compose.ui:ui-geometry:1.11.1-ext.1` |
 | `COMPOSE` | `org.jetbrains.compose.ui:ui-backhandler:1.11.1` | `org.thisisthepy.compose.ui:ui-backhandler:1.11.1-ext.1` |
@@ -119,6 +118,20 @@ by this fork: the root metadata points them at the androidx artifact.
   JetBrains' sources with a patch, into a local repository, under JetBrains' own
   `org.jetbrains.skiko`. It is not published by this fork, and every Compose module asks for
   skiko by that coordinate.
+- **The runtime, `runtime-saveable`, annotation and collection.** This fork does not change
+  them, and builds them only to compile against. Its modules depend on JetBrains' own, at the
+  upstream version (`org.jetbrains.compose.runtime:runtime:1.11.1`,
+  `org.jetbrains.compose.runtime:runtime-saveable:1.11.1`,
+  `org.jetbrains.compose.annotation-internal:annotation:1.11.1`,
+  `org.jetbrains.compose.collection-internal:collection:1.11.1`), and their publishing tasks
+  are disabled. JetBrains' lifecycle, navigation and savedstate libraries, and every build
+  that enables the Compose compiler, ask for the runtime by JetBrains' coordinates; a second
+  copy under this fork's group would put the same classes in the graph twice.
+  `JetBrainsPublication.takenFromJetBrains` lists them.
+- **skiko-awt** keeps `org.jetbrains.skiko` too, and gets a version of its own instead:
+  `extended/skiko/build-skiko-awt.sh` publishes the patched jar as `0.144.6.1`, which sorts
+  above JetBrains' `0.144.6` in Gradle and Maven alike. Its natives are JetBrains'
+  `skiko-awt-runtime-*` jars at `0.144.6`.
 - **Stubs this fork depends on from JetBrains.** Some modules depend on JetBrains artifacts
   at fixed versions that carry no classes and only point at androidx (the runtime, lifecycle,
   savedstate, navigationevent, window, and the internal annotation and collection libraries).
