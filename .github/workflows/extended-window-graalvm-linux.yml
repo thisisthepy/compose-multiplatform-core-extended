@@ -74,6 +74,15 @@ jobs:
           cc -O1 -Wall -o build/resize_test test/c/resize_test.c -lX11 -lXext -lGL
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/resize_test
 
+      - name: A resize through a window manager that honours the sync counter (openbox, under a virtual display)
+        working-directory: extended/window/graalvm/graalvm-linux
+        env:
+          WM_DRAG_SCRIPT: ${{ github.workspace }}/extended/window/scripts/wm-drag.sh
+        run: |
+          sudo apt-get install -y openbox xdotool x11-utils
+          cc -O1 -Wall -pthread -o build/wm_resize_test test/c/wm_resize_test.c -lX11 -lXext -lGL
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/wm_resize_test | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: The semantics reader is the Kotlin/Native window's, unchanged
         working-directory: extended/window
         run: |
