@@ -3,7 +3,8 @@
 // (ResizeSoak.kt in native/macos), with the same lines, so one reader judges both.
 //
 // Each round is one drag made of mouse events, as a hand makes it: the right edge is
-// pressed, moved 450 points out and back in 100 events at 60 a second, and let go. AppKit
+// pressed, moved 450 points out and back in 100 events at 60 a second (see dxc_soak_events),
+// and let go. AppKit
 // runs its own live resize for that, so every event is a frame drawn at a new size from
 // inside the resize. Memory is read with the button still held at the end of each round
 // ("held") and two seconds after it is let go ("settled"), once the run loop has turned and
@@ -26,7 +27,19 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-#define DXC_SOAK_EVENTS 100
+// Events in a round: 100, or DXC_RESIZE_SOAK_EVENTS, which tells memory kept per drag from
+// memory kept per size by changing how many sizes a drag passes through.
+static int dxc_soak_events(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *value = getenv("DXC_RESIZE_SOAK_EVENTS");
+        cached = value != NULL ? atoi(value) : 100;
+        if (cached < 2) cached = 2;
+        cached -= cached % 2;
+    }
+    return cached;
+}
+#define DXC_SOAK_EVENTS dxc_soak_events()
 #define DXC_SOAK_DISTANCE 450.0
 
 static int dxc_soak_rounds(void) {

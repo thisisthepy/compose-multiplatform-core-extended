@@ -49,7 +49,13 @@ internal object ResizeSoak {
     val rounds: Int = platform.posix.getenv("DXC_RESIZE_SOAK")?.toKString()?.toIntOrNull() ?: 0
     val enabled: Boolean get() = rounds > 0
 
-    private const val EVENTS_PER_ROUND = 100
+    /**
+     * Events in a round: 100, or DXC_RESIZE_SOAK_EVENTS, which tells memory kept per drag from
+     * memory kept per size by changing how many sizes a drag passes through.
+     */
+    private val EVENTS_PER_ROUND: Int =
+        (platform.posix.getenv("DXC_RESIZE_SOAK_EVENTS")?.toKString()?.toIntOrNull() ?: 100)
+            .coerceAtLeast(2).let { it - it % 2 }
     private const val DISTANCE = 450.0
 
     fun start(window: NSWindow, metal: MetalSurface) {
