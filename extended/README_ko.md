@@ -11,7 +11,7 @@ English: [README.md](https://github.com/thisisthepy/compose-multiplatform-core-e
 - AWT 없는 데스크톱 애플리케이션으로 가는 두 경로: GraalVM native-image 와 Kotlin/Native. 어느 경로든 애플리케이션을 실행 파일 하나로 내보내며, 옆에 Java 런타임을 두지 않고 시작할 때 풀어내는 것도 없습니다.
 - 두 경로의 AWT 없는 데스크톱 창. macOS 는 두 경로 모두 동작합니다(Kotlin/Native 창은 AppKit 과 Metal, GraalVM native-image 창). Linux(X11)도 두 경로 모두 동작합니다(GraalVM 창, 그리고 Xlib, GLX, XIM, AT-SPI 를 쓰는 Kotlin/Native 창). Windows 는 진행 중이며, 공유 Win32 창 `windows-shared` 는 아직 병합되지 않았습니다([#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32)). 병합될 때까지 compose-rust 의 Kotlin/Native 렌더러가 자기 Windows 창을 유지합니다([DarkPyonix/compose-rust#26](https://github.com/DarkPyonix/compose-rust/issues/26)).
 - 창 모듈: `extended/window` 아래에 있고 그룹은 `org.thisisthepy.compose.window` 입니다. 창, 포인터와 키와 IME 입력, 텍스트 메뉴와 편집 메뉴, 클립보드, 파일 드롭, 창 크롬이 어느 렌더러도 아닌 이곳에 있습니다. `common` 모듈에는 창 상태 기계, 최소 크기, 이벤트 정규화, 프레임 요청 병합, IME 조합 상태, 다크 모드와 DPI 가 있고, Kotlin 표준 라이브러리에만 의존합니다. 두 경로가 이를 함께 씁니다. 같은 검사를 양쪽에 실행하는 패리티 테스트는 계획입니다([#70](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/70)). [창 모듈](#창-모듈) 을 보십시오.
-- Windows 실행 파일은 두 경로 모두 MSVC 가 링크합니다. JetBrains 가 Windows 용 Skia 를 MSVC 로 빌드하므로 최종 링크는 MSVC 의 것이고, MinGW 경로는 없습니다. GraalVM 경로는 지금 이렇게 링크하고, Kotlin/Native 링크 단계는 열려 있습니다([MinGW x64 타깃](#mingw-x64-타깃) 참고).
+- Windows 실행 파일은 두 경로 모두 MSVC 가 링크합니다. JetBrains 가 Windows 용 Skia 를 MSVC 로 빌드하므로 최종 링크는 MSVC 의 것이고, MinGW 경로는 없습니다. 두 경로 모두 이렇게 링크합니다. GraalVM 의 native image 와, `org.thisisthepy.kotlin.native.desktop` 을 거치는 Kotlin/Native 입니다([MinGW x64 타깃](#mingw-x64-타깃) 참고).
 - 디자인 시스템과 Liquid Glass: Material 3, Cupertino, Fluent, GNOME, Breeze, Deepin 테마와 Liquid Glass 소재를 `extended/design-systems` 의 독립 라이브러리로 제공합니다. 배포된 Compose 에만 의존하고 렌더러에는 절대 의존하지 않으므로, 따로 배포할 수 있습니다.
 - JAWT 없는 skiko: native image 가 링크하는 정적 skiko 아카이브로, JDK 의 `libjawt` 에 의존하지 않습니다.
 - AWT 없는 클립보드와 포인터 아이콘: AWT 없는 창도 복사, 붙여넣기, 커서 변경을 할 수 있습니다.
@@ -71,10 +71,12 @@ Windows 실행 파일의 최종 링크는 어느 경로로 빌드했든 MSVC 의
 image 는 지금 MSVC 가 링크합니다. Kotlin/Native `mingwX64` 실행 파일도 같은 방식으로 링크합니다.
 Kotlin/Native 의 MinGW 오브젝트를 MSVC 링커가 받아들이도록 고쳐 쓰고, MSVC 링커가 이를 Skia 와
 skiko 의 MSVC 쪽과 함께 링크합니다. MinGW 경로는 없습니다. MinGW 만으로 링크하려면 MinGW 용으로
-빌드한 Skia 가 있어야 하는데, JetBrains 는 이를 만들지 않기 때문입니다. **상태: 열림.** Kotlin/Native
-용 Gradle 플러그인의 MSVC 링크 단계는
-[compose-multiplatform-extended#31](https://github.com/thisisthepy/compose-multiplatform-extended/pull/31)
-에 있습니다.
+빌드한 Skia 가 있어야 하는데, JetBrains 는 이를 만들지 않기 때문입니다. **상태: 완료.** Gradle 플러그인
+`org.thisisthepy.kotlin.native.desktop`
+([compose-multiplatform-extended#31](https://github.com/thisisthepy/compose-multiplatform-extended/pull/31))
+이 이 링크를 하며, skiko-mingwx64 의 `msvc` zip 에서 skiko 의 MSVC 쪽, Skia, ICU 데이터를 더하므로 프로그램은
+파일 하나입니다. `extended-publish-local.yml` 이 게시된 저장소만으로 Compose 프로그램을 이렇게 링크해 Windows 에서
+실행합니다.
 
 이것으로 링크한 렌더러를 Windows 에서 직접 실행하는 확인은
 [#3](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/3) 에 남아 있습니다.

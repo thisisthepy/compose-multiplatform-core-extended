@@ -11,7 +11,7 @@ Status is as of 2026-10-17. Items marked in progress or planned are not on `exte
 - Two paths to a desktop application with no AWT: GraalVM native-image and Kotlin/Native. Each one ships an application as one executable, with no Java runtime beside it and nothing unpacked at start.
 - AWT-free desktop windows on both paths. macOS works on both: the Kotlin/Native window (AppKit and Metal) and the GraalVM native-image window. Linux (X11) works on both: the GraalVM window and the Kotlin/Native window (Xlib, GLX, XIM and AT-SPI). Windows is in progress: the shared Win32 window, `windows-shared`, is not merged ([#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32)). Until it is, compose-rust's Kotlin/Native renderer keeps its own Windows window ([DarkPyonix/compose-rust#26](https://github.com/DarkPyonix/compose-rust/issues/26)).
 - The window modules, under `extended/window` with the group `org.thisisthepy.compose.window`. The window, its pointer, key and IME input, the text and edit menus, the clipboard, file drops and the window chrome live there, not in any renderer. Their `common` module holds the window state machine, minimum size, event normalisation, frame-request coalescing, IME composition state, dark mode and DPI, and depends on the Kotlin standard library only. Both paths use it. Parity tests that run the same checks against both are planned ([#70](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/70)). See [Window modules](#window-modules).
-- Windows executables are linked by MSVC on both paths. JetBrains builds Skia for Windows with MSVC, so the final link is MSVC's, and there is no MinGW route. The GraalVM path links this way today; the Kotlin/Native link step is open (see [MinGW x64 target](#mingw-x64-target)).
+- Windows executables are linked by MSVC on both paths. JetBrains builds Skia for Windows with MSVC, so the final link is MSVC's, and there is no MinGW route. Both paths link this way: GraalVM's native image, and Kotlin/Native through `org.thisisthepy.kotlin.native.desktop` (see [MinGW x64 target](#mingw-x64-target)).
 - Design systems and Liquid Glass: Material 3, Cupertino, Fluent, GNOME, Breeze and Deepin themes, and the Liquid Glass material, as standalone libraries in `extended/design-systems`. They depend on published Compose only and never on a renderer, so they can be published on their own.
 - skiko without JAWT: a static skiko archive that a native image links, with no dependency on the JDK's `libjawt`.
 - AWT-free clipboard and pointer icons, so a window without AWT still copies, pastes and changes its cursor.
@@ -70,9 +70,12 @@ The final link of a Windows executable is MSVC's, whichever path built it. A Gra
 on Windows is linked by MSVC today. A Kotlin/Native `mingwX64` executable is linked the same way:
 Kotlin/Native's MinGW objects are rewritten so the MSVC linker accepts them, and it links them with
 Skia and skiko's MSVC half. There is no MinGW route, because a MinGW-only link would need a Skia
-built for MinGW, which JetBrains does not make. **Status: open.** The Gradle plugin's MSVC link
-step for Kotlin/Native is in
-[compose-multiplatform-extended#31](https://github.com/thisisthepy/compose-multiplatform-extended/pull/31).
+built for MinGW, which JetBrains does not make. **Status: done.** The Gradle plugin
+`org.thisisthepy.kotlin.native.desktop`
+([compose-multiplatform-extended#31](https://github.com/thisisthepy/compose-multiplatform-extended/pull/31))
+does that link, adding skiko's MSVC half, Skia and the ICU data from skiko-mingwx64's `msvc` zip,
+so the program is one file. `extended-publish-local.yml` links a Compose program that way from
+the published repository alone and runs it on Windows.
 
 Running a renderer linked from these on Windows itself is still open in
 [#3](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/3); so far it has
