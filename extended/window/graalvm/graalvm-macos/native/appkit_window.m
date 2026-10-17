@@ -954,18 +954,17 @@ void dxc_native_set_cursor(int32_t shape) {
     NSSize old_size = self.frame.size;
     [super setFrameSize:size];
     dxc_vprobe_set_frame(old_size, size);
+    // The window's new frame and the frame drawn for it reach the screen together. Without
+    // this the window server takes them as they arrive: the layer's new size first and the
+    // window's frame a few milliseconds later, and in between the content stood a step's
+    // height off where it belongs (compose-rust's vertical drag check, which takes the
+    // window's own image throughout a drag). Held until the window next flushes, which is
+    // the commit that carries this size and the frame drawn for it below.
+    if (!dxc_legacy_resize() && !NSEqualSizes(old_size, size)) {
+        [self.window disableScreenUpdatesUntilFlush];
+    }
     CAMetalLayer *layer = (CAMetalLayer *)self.layer;
     CGFloat scale = self.window.backingScaleFactor > 0 ? self.window.backingScaleFactor : 1;
-    // Once per size. A drag of an edge has AppKit size the view twice a step, the second
-    // time at the size it already has, and a frame drawn for each is two drawables a step
-    // presented with the transaction. Each is held until the window server has shown it, so
-    // the layer's three run out before the screen gives any back, and the frame drawn for a
-    // size then waits for a drawable while the transaction carrying that size goes out
-    // without it.
-    if (NSEqualSizes(old_size, size) && layer.contentsScale == scale &&
-        CGSizeEqualToSize(layer.drawableSize, CGSizeMake(size.width * scale, size.height * scale))) {
-        return;
-    }
     layer.contentsScale = scale;
     layer.drawableSize = CGSizeMake(size.width * scale, size.height * scale);
 
@@ -1360,24 +1359,6 @@ void dxc_native_window_size(void *layer_pointer, int32_t *width, int32_t *height
 static id<CAMetalDrawable> dxc_pending_drawable;
 
 /**
- * The gravity that keeps a drawable at the layer's top left corner as the screen shows it.
- *
- * Gravity is named for a y that grows upward: top is the largest y. A layer whose geometry
- * is flipped turns that over, and so does every flipped layer above it; this view is flipped,
- * so AppKit flips its layer, and "top left" there is the bottom left on the screen. A frame
- * of another height than the layer, which a drag shows for a moment, then stood at the
- * bottom of the window: measured 2 pt low on screen during a drag of 2 pt steps. The flips
- * are counted rather than assumed, as the Kotlin/Native window does.
- */
-static NSString *dxc_top_left_gravity(CALayer *layer) {
-    int flips = 0;
-    for (CALayer *above = layer; above != nil; above = above.superlayer) {
-        if (above.geometryFlipped) flips++;
-    }
-    return flips % 2 == 0 ? kCAGravityTopLeft : kCAGravityBottomLeft;
-}
-
-/**
  * Takes the next drawable and answers the texture to paint into.
  *
  * Zero when the system has none to give, which happens when frames are being produced
@@ -1389,10 +1370,6 @@ int32_t dxc_native_frame_begin(void *layer_pointer, void **texture_out) {
     dxc_on_main(^{
     @autoreleasepool {
         CAMetalLayer *layer = (__bridge CAMetalLayer *)layer_pointer;
-        if (!dxc_legacy_resize()) {
-            NSString *gravity = dxc_top_left_gravity(layer);
-            if (![layer.contentsGravity isEqualToString:gravity]) layer.contentsGravity = gravity;
-        }
         uint64_t asked = mach_absolute_time();
         id<CAMetalDrawable> drawable = [layer nextDrawable];
         dxc_vprobe_drawable_wait_ms = dxc_ticks_to_millis((int64_t)(mach_absolute_time() - asked));
