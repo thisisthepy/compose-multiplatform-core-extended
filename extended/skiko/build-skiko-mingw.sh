@@ -190,11 +190,12 @@ built=$(ls "$obj"/*.obj | wc -l | tr -d ' ')
 
 # ICU's data, compiled in rather than shipped as icudtl.dat beside the executable: a program
 # is one file. A separate object, linked whole, so its SkLoadICU is the one the link keeps and
-# Skia's, which reads the file, is a library member nothing asks for. /J makes char unsigned:
-# clang 19's #embed gives its bytes the type char, and a signed char cannot narrow into the
-# unsigned char array.
-"$llvm_bin/clang" --driver-mode=cl --target=x86_64-pc-windows-msvc /std:c++latest /O2 /MT /J /c /nologo \
-    "${msvc_headers[@]}" -Wno-c23-extensions "/clang:--embed-dir=$skia_out" "/Fo$out/embedded_icu.obj" -- "$HERE/embedded_icu.cpp" ||
+# Skia's, which reads the file, is a library member nothing asks for. Kotlin/Native's clang 19
+# gives #embed's bytes a signed value (-112 for 0x90) even with char unsigned, and narrowing that
+# into the unsigned char array is an error by default; the conversion itself gives back the byte,
+# so the narrowing diagnostic is turned off for this one file.
+"$llvm_bin/clang" --driver-mode=cl --target=x86_64-pc-windows-msvc /std:c++latest /O2 /MT /c /nologo \
+    "${msvc_headers[@]}" -Wno-c23-extensions -Wno-c++11-narrowing "/clang:--embed-dir=$skia_out" "/Fo$out/embedded_icu.obj" -- "$HERE/embedded_icu.cpp" ||
     die "embedded_icu.cpp did not compile" "It needs clang 19 or later for #embed; Kotlin/Native's LLVM is that from Kotlin 2.2."
 
 mkdir -p "$out/skia"
