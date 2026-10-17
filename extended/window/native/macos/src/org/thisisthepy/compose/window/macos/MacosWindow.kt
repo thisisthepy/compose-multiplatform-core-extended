@@ -512,7 +512,11 @@ class MacosWindow(
          * through the view's own drawing, and AppKit has already made the view the layer's
          * delegate by the time anything needs displaying.
          */
-        override fun displayLayer(layer: CALayer) = updateLayer()
+        override fun displayLayer(layer: CALayer) {
+            VerticalResizeProbe.via = "display"
+            updateLayer()
+            VerticalResizeProbe.via = "loop"
+        }
 
         override fun updateLayer() {
             val scale = window?.backingScaleFactor ?: 1.0
@@ -529,7 +533,10 @@ class MacosWindow(
         // Redrawn when it is resized rather than stretched, which is what a layer does with
         // its old contents by default and is exactly the trailing edge this window is for.
         override fun setFrameSize(newSize: CValue<CGSize>) {
+            val oldSize = frame.useContents { this.size.width to this.size.height }
             super.setFrameSize(newSize)
+            val size = newSize.useContents { this.width to this.height }
+            VerticalResizeProbe.setFrame(oldSize, size)
             // A window that went full screen has no buttons to avoid, and one that came
             // back has them again, and both arrive as a change of size.
             measureCaption()
@@ -537,7 +544,11 @@ class MacosWindow(
             // cycle, and because this layer presents with the transaction the window's own
             // frame then waits for it: the edge still never comes away from the drawing,
             // but it advances in jumps of a hundred pixels instead of following the hand.
-            if (window != null) updateLayer()
+            if (window != null) {
+                VerticalResizeProbe.via = "set-frame"
+                updateLayer()
+                VerticalResizeProbe.via = "loop"
+            }
         }
         override fun acceptsFirstResponder() = true
 
@@ -725,6 +736,12 @@ class MacosWindow(
                 platform.darwin.dispatch_time(platform.darwin.DISPATCH_TIME_NOW, 3_000_000_000L),
                 platform.darwin.dispatch_get_main_queue(),
             ) { runMetrics() }
+        }
+        if (VerticalResizeProbe.enabled) {
+            metal.overlay = { canvas, width, height ->
+                VerticalResizeProbe.mark(canvas, width, height, window.backingScaleFactor, metal.drawableWaitMillis)
+            }
+            VerticalResizeProbe.start(window, view, metal.layer)
         }
     }
 

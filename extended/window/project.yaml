@@ -9,3 +9,4 @@ modules:
   - graalvm/graalvm-linux
   - native/linux
   - scene
+  - windows-shared
