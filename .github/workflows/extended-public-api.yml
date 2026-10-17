@@ -83,7 +83,10 @@ jobs:
               # runtime's integration tests publish no desktop API.
               case "$d" in *-compatibility-stub|*/integration-tests) continue ;; esac
               [ -d "$d-compatibility-stub" ] && continue
-              t=":$(echo "$d" | tr / :):desktopApiCheck"
+              p=":$(echo "$d" | tr / :)"
+              # Only directories this build includes as that project (settings.gradle).
+              grep -q "includeProject(\"$p\"" settings.gradle || continue
+              t="$p:desktopApiCheck"
               case " $tasks " in *" $t "*) ;; *) tasks="$tasks $t" ;; esac
             done
           fi
