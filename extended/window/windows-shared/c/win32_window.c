@@ -1731,7 +1731,8 @@ static void dxc_trace_message(HWND window, UINT message, WPARAM wparam, LPARAM l
  * WM_SIZE runs inside the SetWindowPos that changed the window, and that call does not
  * return until this does, so the next step of a drag cannot begin before this frame is
  * presented. The window keeps its redirection surface, so until the present lands DWM
- * shows the last frame unscaled (the swapchain is DXGI_SCALING_NONE), never a gap. The
+ * shows the last frame (a copy-model swapchain, DXGI_SWAP_EFFECT_SEQUENTIAL with
+ * DXGI_SCALING_STRETCH, refitted to the client size first, so 1:1), never a gap. The
  * DwmFlush makes the next step wait until DWM has composed this one; without it steps
  * queue faster than DWM shows them and an older size can be on screen with a newer
  * rectangle.
