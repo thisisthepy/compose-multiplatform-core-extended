@@ -91,7 +91,13 @@ add_task() {
 # plain one, which is then skipped; other modules have no Decorated publication at all. Both
 # are asked for, as optional tasks (a leading `?`, see publish-local.init.gradle).
 add_module() {
-    add_task ":$1:publish$2PublicationToMavenLocal"
+    # annotation and collection declare a plain jvm() target where Compose declares desktop(),
+    # so their desktop publication is the Jvm one.
+    if [[ "$2" == Desktop && ( "$1" == annotation:annotation || "$1" == collection:collection ) ]]; then
+        add_task ":$1:publishJvmPublicationToMavenLocal"
+    else
+        add_task ":$1:publish$2PublicationToMavenLocal"
+    fi
     add_task "?:$1:publishKotlinMultiplatformPublicationToMavenLocal"
     add_task "?:$1:publishKotlinMultiplatformDecoratedPublicationToMavenLocal"
 }

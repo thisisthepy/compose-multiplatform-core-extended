@@ -41,6 +41,21 @@ grep -q "fork version at JetBrains' coordinates" <<< "$out" || fail "a fork vers
 
 python3 -I "$compose/check-local.py" "$work/empty" >/dev/null 2>&1 && fail "an empty repository passes"
 
+# A root lists a variant for every target the build configured; a dependency of a target that
+# was not built here (ui-uikit, iOS only) is not one a consumer of the built targets reaches.
+roots="$work/roots"
+mkdir -p "$roots/org/thisisthepy/compose/ui/ui/1.11.1-ext.1" "$roots/org/thisisthepy/compose/ui/ui-linuxx64/1.11.1-ext.1"
+printf '{"variants":[{"name":"linuxX64ApiElements-published","dependencies":[]},{"name":"iosArm64ApiElements-published","dependencies":[%s]}]}\n' \
+    "$(dep org.thisisthepy.compose.ui ui-uikit 1.11.1-ext.1)" > "$roots/org/thisisthepy/compose/ui/ui/1.11.1-ext.1/ui-1.11.1-ext.1.module"
+printf '{"variants":[{"name":"linuxX64ApiElements-published","dependencies":[]}]}\n' > "$roots/org/thisisthepy/compose/ui/ui-linuxx64/1.11.1-ext.1/ui-linuxx64-1.11.1-ext.1.module"
+printf '<project><dependencyManagement><dependencies><dependency><groupId>org.thisisthepy.compose.ui</groupId><artifactId>ui-tooling</artifactId><version>1.11.1-ext.1</version></dependency></dependencies></dependencyManagement></project>\n' \
+    > "$roots/org/thisisthepy/compose/ui/ui/1.11.1-ext.1/ui-1.11.1-ext.1.pom"
+python3 -I "$compose/check-local.py" "$roots" >/dev/null || fail "an unbuilt target's dependency or a managed version is reported as missing"
+printf '{"variants":[{"name":"linuxX64ApiElements-published","dependencies":[%s]}]}\n' "$(dep org.thisisthepy.compose.ui ui-text 1.11.1-ext.1)" \
+    > "$roots/org/thisisthepy/compose/ui/ui-linuxx64/1.11.1-ext.1/ui-linuxx64-1.11.1-ext.1.module"
+out="$(python3 -I "$compose/check-local.py" "$roots" || true)"
+grep -q "ui-text:1.11.1-ext.1 is not published" <<< "$out" || fail "a built target's missing dependency is not reported"
+
 echo "publish-local.sh --list"
 
 tasks="$("$compose/publish-local.sh" --list macosArm64)"
@@ -50,5 +65,6 @@ grep -qx ':compose:runtime:runtime:publishMacosArm64PublicationToMavenLocal' <<<
 desktop="$("$compose/publish-local.sh" --list desktop)"
 grep -qx ':compose:desktop:desktop:publishJvmmacos-arm64PublicationToMavenLocal' <<< "$desktop" || fail "the desktop module's macOS jar is not published"
 grep -qx ':compose:ui:ui-test-junit4:publishDesktopPublicationToMavenLocal' <<< "$desktop" || fail "ui-test-junit4 is not published for the desktop"
+grep -qx ':annotation:annotation:publishJvmPublicationToMavenLocal' <<< "$desktop" || fail "annotation's desktop publication is not its Jvm one"
 
 if [[ "$failures" -eq 0 ]]; then echo "  ok"; else exit 1; fi

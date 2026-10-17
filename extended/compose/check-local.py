@@ -50,13 +50,31 @@ def has(repository, group, artifact, version):
     return os.path.isfile(base + ".pom") or os.path.isfile(base + ".module")
 
 
-def dependencies_of(path):
-    """(group, module, version) for every dependency and constraint a .module or .pom names."""
+VARIANT_TARGET = re.compile(r"^([a-z][A-Za-z0-9]*?)(?:Api|Runtime|Sources|Metadata|Javadoc)Elements")
+
+
+def variant_is_published(repository, group, artifact, name):
+    """Whether a consumer can reach this variant here: a root lists a variant for every target
+    the build configured, and only the targets built here have their own module beside it."""
+    match = VARIANT_TARGET.match(name)
+    if not match:
+        return True
+    target = match.group(1).lower()
+    if target == "metadata" or artifact.endswith("-" + target):
+        return True
+    return os.path.isdir(os.path.join(repository, *group.split("."), f"{artifact}-{target}"))
+
+
+def dependencies_of(path, repository=None, group=None, artifact=None):
+    """(group, module, version, required) for the dependencies and constraints a .module or
+    .pom names: required for a dependency, not for a constraint or a managed version."""
     found = []
     if path.endswith(".module"):
         with open(path, encoding="utf-8") as handle:
             metadata = json.load(handle)
         for variant in metadata.get("variants", []):
+            if repository and not variant_is_published(repository, group, artifact, variant.get("name", "")):
+                continue
             for key in ("dependencies", "dependencyConstraints"):
                 for dependency in variant.get(key, []):
                     version = dependency.get("version", {})
@@ -72,6 +90,8 @@ def dependencies_of(path):
     else:
         with open(path, encoding="utf-8") as handle:
             text = handle.read()
+        # A managed version names a module without asking for it (an atomic group names them all).
+        text = re.sub(r"<dependencyManagement>.*?</dependencyManagement>", "", text, flags=re.S)
         for body in re.findall(r"<dependency>(.*?)</dependency>", text, re.S):
             group = re.search(r"<groupId>\s*([^<\s]+)", body)
             artifact = re.search(r"<artifactId>\s*([^<\s]+)", body)
@@ -92,11 +112,15 @@ def main():
             if not (name.endswith(".module") or name.endswith(".pom")):
                 continue
             path = os.path.join(directory, name)
+            # Gradle and the Kotlin toolchain read the .module where there is one; the .pom
+            # beside it is for Maven, and lists every target's dependencies in one place.
+            if name.endswith(".pom") and os.path.isfile(path[: -len(".pom")] + ".module"):
+                continue
             group, artifact, version = coordinates_of(repository, path)
             if group.startswith(OWN_VERSIONED):
                 continue
             published += 1
-            for dep_group, dep_module, dep_version, required in dependencies_of(path):
+            for dep_group, dep_module, dep_version, required in dependencies_of(path, repository, group, artifact):
                 if dep_group.startswith(FORK) and not dep_group.startswith(OWN_VERSIONED):
                     if required and dep_version and not has(repository, dep_group, dep_module, dep_version):
                         problems.append(f"{dep_group}:{dep_module}:{dep_version} is not published, named by {path}")
