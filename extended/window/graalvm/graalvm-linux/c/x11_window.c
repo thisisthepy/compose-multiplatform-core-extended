@@ -124,6 +124,19 @@ static int dxc_focused = 1;
 // whose frame it never drew.
 static int64_t dxc_resize_serial;
 
+// DXC_REPORT_RESIZE_DETAIL: one line on standard error for every size asked for by the scripted
+// drag and every size the server confirmed, so a frame presented at the wrong size can be
+// placed among them. Read once, when the window opens.
+static int dxc_resize_detail;
+
+static void dxc_detail(const char *what, int32_t width, int32_t height) {
+    if (!dxc_resize_detail) return;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    fprintf(stderr, "dxc resize detail: t=%lldus %s %dx%d\n",
+            (long long)now.tv_sec * 1000000LL + now.tv_nsec / 1000, what, width, height);
+}
+
 // An eventfd that another thread writes to end the frame's wait in dxc_native_pump early.
 // Made the first time anyone asks for it, from whichever thread that is, and kept for the
 // life of the process; -1 until then, or where the kernel would not make one.
@@ -989,6 +1002,7 @@ static void dxc_pump_events(void) {
                 // Counted before the frame is asked for, so that the frame drawn for this size
                 // is counted against it (dxc_native_resize_serial).
                 dxc_resize_serial++;
+                dxc_detail("configure", dxc_width, dxc_height);
                 // The frame is drawn here, inside the handling of the size change, rather
                 // than written down for the next turn of the loop.
                 //
@@ -1219,6 +1233,7 @@ int32_t dxc_native_window_open(const char *title, int32_t width, int32_t height,
     memset(out, 0, sizeof *out);
     dxc_display = XOpenDisplay(NULL);
     if (dxc_display == NULL) return 1;
+    dxc_resize_detail = getenv("DXC_REPORT_RESIZE_DETAIL") != NULL;
     int screen = DefaultScreen(dxc_display);
     // The size asked for is in points; the window is made in the pixels they come to on
     // this display.
@@ -1493,6 +1508,7 @@ void dxc_native_debug_resize(void *window_pointer, void *view_pointer, int32_t f
         int32_t height = from_height + (int32_t)((to_height - from_height) * t);
         if (width < 1) width = 1;
         if (height < 1) height = 1;
+        dxc_detail("request", width, height);
         XResizeWindow(dxc_display, dxc_window, (unsigned)width, (unsigned)height);
         XFlush(dxc_display);
         dxc_native_pump(pause_micros / 1.0e6);
