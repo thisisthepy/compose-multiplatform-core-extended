@@ -30,10 +30,13 @@ kotlin {
 // Compose groups whose JetBrains copy carries classes: one of them next to the fork's puts the
 // same classes on the path twice. The runtime and the internal annotation and collection
 // libraries are stubs that point at androidx, as the fork's are, and may come from JetBrains.
+// The components (resources and the rest) are JetBrains' by design: the fork does not build
+// them, and they hold none of the classes the fork's modules do.
 val jetbrainsStubs = setOf(
     "org.jetbrains.compose.runtime",
     "org.jetbrains.compose.annotation-internal",
     "org.jetbrains.compose.collection-internal",
+    "org.jetbrains.compose.components",
 )
 
 tasks.register("checkResolution") {
