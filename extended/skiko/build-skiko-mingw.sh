@@ -143,11 +143,13 @@ obj="$WORK/obj"
 rm -rf "$out" "$obj"
 mkdir -p "$out" "$obj"
 src="$checkout/skiko/src"
-flags=(
-    --driver-mode=cl --target=x86_64-pc-windows-msvc /std:c++17 /O2 /MT /GR- /c /nologo
-    -Wno-everything
+msvc_headers=(
     -imsvc "$xwin/crt/include" -imsvc "$xwin/sdk/include/ucrt"
     -imsvc "$xwin/sdk/include/um" -imsvc "$xwin/sdk/include/shared"
+)
+flags=(
+    --driver-mode=cl --target=x86_64-pc-windows-msvc /std:c++17 /O2 /MT /GR- /c /nologo
+    -Wno-everything "${msvc_headers[@]}"
     /DSK_ALLOW_STATIC_GLOBAL_INITIALIZERS=1 /DSK_FORCE_DISTANCE_FIELD_TEXT=0 /DSK_GAMMA_APPLY_TO_A8
     /DSK_GAMMA_SRGB /DSK_SCALAR_TO_FLOAT_EXCLUDED /DSK_SUPPORT_GPU=1 /DSK_GANESH /DSK_GL
     /DSK_SHAPER_HARFBUZZ_AVAILABLE /DSK_UNICODE_AVAILABLE /DSK_SHAPER_UNICODE_AVAILABLE
@@ -190,7 +192,7 @@ built=$(ls "$obj"/*.obj | wc -l | tr -d ' ')
 # is one file. A separate object, linked whole, so its SkLoadICU is the one the link keeps and
 # Skia's, which reads the file, is a library member nothing asks for.
 "$llvm_bin/clang" --driver-mode=cl --target=x86_64-pc-windows-msvc /std:c++latest /O2 /MT /c /nologo \
-    -Wno-c23-extensions "/clang:--embed-dir=$skia_out" "/Fo$out/embedded_icu.obj" -- "$HERE/embedded_icu.cpp" ||
+    "${msvc_headers[@]}" -Wno-c23-extensions "/clang:--embed-dir=$skia_out" "/Fo$out/embedded_icu.obj" -- "$HERE/embedded_icu.cpp" ||
     die "embedded_icu.cpp did not compile" "It needs clang 19 or later for #embed; Kotlin/Native's LLVM is that from Kotlin 2.2."
 
 mkdir -p "$out/skia"
