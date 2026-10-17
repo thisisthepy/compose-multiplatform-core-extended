@@ -980,8 +980,18 @@ void dxc_native_set_cursor(int32_t shape) {
     }
 }
 
+// A drag of an edge is a run of frames that must reach the screen in step with the
+// window's own geometry. The layer presents inside the transaction that moves the window
+// for as long as the drag lasts, so a frame and the edge it was drawn for appear together
+// rather than the edge arriving first and the picture a frame later.
+- (void)viewWillStartLiveResize {
+    [super viewWillStartLiveResize];
+    ((CAMetalLayer *)self.layer).presentsWithTransaction = !dxc_legacy_resize();
+}
+
 - (void)viewDidEndLiveResize {
     [super viewDidEndLiveResize];
+    ((CAMetalLayer *)self.layer).presentsWithTransaction = NO;
     dxc_native_resize_report();
 }
 
@@ -1166,18 +1176,6 @@ int32_t dxc_native_window_open(
         // and cropped rather than scaled: a stale frame then looks like an old picture
         // that has not caught up, not like a stretched one.
         if (!dxc_legacy_resize()) layer.contentsGravity = kCAGravityTopLeft;
-        // A drag of an edge is a run of frames that must reach the screen in step with the
-        // window's own geometry, so the layer presents inside the transaction that moves the
-        // window, and a frame and the edge it was drawn for appear together rather than the
-        // edge arriving first and the picture a frame later.
-        //
-        // Set once, for the life of the layer, as the Kotlin/Native window does. It used to
-        // be turned on when a drag started and off when it ended, and each turn kept two
-        // 64 KB regions of the graphics driver's memory that were never given back: 128 KB a
-        // drag, 1.9 MB over 15 drags of 100 events (compose-rust's resize soak, CI run
-        // 39028159924), and no end to it. Frames outside a drag are drawn on the main
-        // thread too, where the run loop commits the transaction they present in.
-        layer.presentsWithTransaction = !dxc_legacy_resize();
         // Drawn at the density of the screen the window is on rather than in points, so
         // text is as sharp as the display can draw it.
         layer.contentsScale = window.backingScaleFactor;
