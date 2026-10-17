@@ -14,9 +14,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/eventfd.h>
 #include <sys/select.h>
 #include <sys/time.h>
 #include <time.h>
+#include <unistd.h>
 
 enum {
     DXC_EVENT_POINTER_MOVE = 1,
@@ -105,6 +107,25 @@ static int dxc_pumping;
 // Whether the window has the keyboard, as the focus events last said. A window is mapped
 // with the keyboard on every desktop this runs on, and the first FocusOut corrects it.
 static int dxc_focused = 1;
+
+// An eventfd that another thread writes to end the frame's wait in dxc_native_pump early.
+// Made the first time anyone asks for it, from whichever thread that is, and kept for the
+// life of the process; -1 until then, or where the kernel would not make one.
+static int dxc_wake = -1;
+
+static int dxc_wake_descriptor(void) {
+    int current = __atomic_load_n(&dxc_wake, __ATOMIC_ACQUIRE);
+    if (current >= 0) return current;
+    int made = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (made < 0) return -1;
+    int expected = -1;
+    if (!__atomic_compare_exchange_n(&dxc_wake, &expected, made, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        // Another thread made one first, and its is the one everybody uses.
+        close(made);
+        return expected;
+    }
+    return made;
+}
 
 // What the renderer registered for drawing a frame, and the thread it asked to be called
 // back on.
@@ -1435,6 +1456,7 @@ void dxc_native_pump(double seconds) {
     if (dxc_display == NULL) {
         return;
     }
+    int wake = dxc_wake_descriptor();
     // XPending sends whatever is still in the output buffer before it answers, so the
     // frame just swapped is on its way out before this thread goes to sleep.
     if (seconds > 0.0 && XPending(dxc_display) == 0) {
@@ -1442,12 +1464,41 @@ void dxc_native_pump(double seconds) {
         fd_set readable;
         FD_ZERO(&readable);
         FD_SET(connection, &readable);
+        int highest = connection;
+        // A wake from another thread ends the wait as an event would. One that came before
+        // the wait began is still counted, so it ends this wait at once rather than the next.
+        if (wake >= 0) {
+            FD_SET(wake, &readable);
+            if (wake > highest) highest = wake;
+        }
         struct timeval limit;
         limit.tv_sec = (time_t)seconds;
         limit.tv_usec = (suseconds_t)((seconds - (double)limit.tv_sec) * 1000000.0);
-        select(connection + 1, &readable, NULL, NULL, &limit);
+        select(highest + 1, &readable, NULL, NULL, &limit);
+    }
+    // Every wake up to here is answered by this turn, whether it ended the wait or not.
+    if (wake >= 0) {
+        uint64_t count;
+        ssize_t taken = read(wake, &count, sizeof count);
+        (void)taken;
     }
     dxc_pump_events();
+}
+
+/**
+ * Ends the wait in dxc_native_pump early. Any thread may call it, at any time, before the
+ * window opens and after it closes as well.
+ *
+ * Work for the window's thread that arrives from another one (a Host worker asking for a
+ * frame, a coroutine resumed on the main dispatcher) would otherwise wait for the rest of
+ * the frame's wait, up to a frame's length, before the loop turned and noticed it.
+ */
+void dxc_native_wake(void) {
+    int wake = dxc_wake_descriptor();
+    if (wake < 0) return;
+    uint64_t one = 1;
+    ssize_t written = write(wake, &one, sizeof one);
+    (void)written;
 }
 
 /** Where the window's top left corner is on the screen, in pixels. Zero where there is no window. */

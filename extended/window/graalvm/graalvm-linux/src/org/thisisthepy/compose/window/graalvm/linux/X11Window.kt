@@ -104,6 +104,13 @@ class X11Window : WindowPlatform {
         }
     }
 
+    /**
+     * Ends the wait in [pump] early, so the loop turns now rather than at the end of the
+     * frame's wait. Any thread may call it, before the window opens and after it closes too:
+     * it is how work sent to the window's thread from another one is noticed at once.
+     */
+    override fun wake() = X11Natives.wake()
+
     /** Whether the window has the keyboard, as the server last said. */
     val isFocused: Boolean get() = X11Natives.windowFocused() != 0
 

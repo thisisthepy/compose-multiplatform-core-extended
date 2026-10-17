@@ -11,8 +11,8 @@ import org.graalvm.word.Pointer
 /**
  * The functions `c/x11_window.c` exports, declared once for the native-image build.
  *
- * Every call here is a downcall into C on the thread that owns the window. Nothing in this
- * file reaches back out: what C needs to call on this side is in [X11Upcalls].
+ * Every call here is a downcall into C on the thread that owns the window, except [wake],
+ * which any thread may make. Nothing in this file reaches back out: what C needs to call on this side is in [X11Upcalls].
  */
 internal object X11Natives {
     @JvmStatic
@@ -54,6 +54,11 @@ internal object X11Natives {
     @JvmStatic
     @CFunction("dxc_native_pump")
     external fun pump(seconds: Double)
+
+    /** Ends a wait in [pump] early. The one call here that any thread may make. */
+    @JvmStatic
+    @CFunction("dxc_native_wake")
+    external fun wake()
 
     @JvmStatic
     @CFunction("dxc_native_window_origin")

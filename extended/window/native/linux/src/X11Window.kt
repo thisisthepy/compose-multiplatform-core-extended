@@ -39,8 +39,18 @@ import org.thisisthepy.compose.window.WindowListener
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.WindowPlatform
 import org.thisisthepy.compose.window.WindowVisibility
+import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.usePinned
 import platform.posix.CLOCK_MONOTONIC
+import platform.posix.F_SETFD
+import platform.posix.F_SETFL
+import platform.posix.FD_CLOEXEC
+import platform.posix.O_NONBLOCK
 import platform.posix.POLLIN
+import platform.posix.fcntl
+import platform.posix.pipe
+import platform.posix.read
+import platform.posix.write
 import platform.posix.clock_gettime
 import platform.posix.timespec
 import platform.posix.getenv
@@ -90,6 +100,36 @@ class X11Window : WindowPlatform {
     private var presentedSinceEvent = false
     private val frameRequests = FrameRequestCoalescer().also { it.request() }
     private var ownedClipboard: String? = null
+
+    /**
+     * A pipe another thread writes a byte into to end the wait in [pump] early, both ends
+     * made before the window so that [wake] is safe from any thread at any time. -1 where the
+     * process could not make one; then the wait runs its course, as it did before there was one.
+     */
+    private val wakeRead: Int
+    private val wakeWrite: Int
+
+    init {
+        val ends = IntArray(2) { -1 }
+        val made = ends.usePinned { pipe(it.addressOf(0)) } == 0
+        if (made) {
+            for (end in ends) {
+                fcntl(end, F_SETFL, O_NONBLOCK)
+                fcntl(end, F_SETFD, FD_CLOEXEC)
+            }
+        }
+        wakeRead = if (made) ends[0] else -1
+        wakeWrite = if (made) ends[1] else -1
+    }
+
+    // Closed with the object rather than in [close], because another thread may still call
+    // [wake] after the window has closed, and a number closed here could already name some
+    // other file by then.
+    @OptIn(kotlin.experimental.ExperimentalNativeApi::class)
+    @Suppress("unused")
+    private val closeWakePipe = kotlin.native.ref.createCleaner(intArrayOf(wakeRead, wakeWrite)) { ends ->
+        for (end in ends) if (end >= 0) platform.posix.close(end)
+    }
 
     private val log = WindowEventLog()
     private val drained = mutableListOf<WindowEvent>()
@@ -209,12 +249,18 @@ class X11Window : WindowPlatform {
         val display = display ?: return
         if (timeoutMillis > 0 && XPending(display) == 0) {
             memScoped {
-                val watched = alloc<pollfd>()
-                watched.fd = XConnectionNumber(display)
-                watched.events = POLLIN.toShort()
-                poll(watched.ptr, 1.convert(), timeoutMillis.toInt())
+                // The display connection, and the wake pipe: a byte from another thread ends
+                // the wait as an event would. One sent before the wait began is still in the
+                // pipe, so it ends this wait at once rather than the next.
+                val watched = allocArray<pollfd>(2)
+                watched[0].fd = XConnectionNumber(display)
+                watched[0].events = POLLIN.toShort()
+                watched[1].fd = wakeRead
+                watched[1].events = POLLIN.toShort()
+                poll(watched, (if (wakeRead >= 0) 2 else 1).convert(), timeoutMillis.toInt())
             }
         }
+        drainWakes()
         log.read {
             memScoped {
                 val event = alloc<XEvent>()
@@ -228,6 +274,29 @@ class X11Window : WindowPlatform {
         log.drain(drained)
         val target = listener ?: return
         for (event in drained) target.onEvent(event)
+    }
+
+    /**
+     * Ends the wait in [pump] early, so the loop turns now rather than at the end of the
+     * frame's wait. Any thread may call it, before the window opens and after it closes too:
+     * it is how work sent to the window's thread from another one is noticed at once.
+     */
+    override fun wake() {
+        if (wakeWrite < 0) return
+        val one = byteArrayOf(1)
+        // A full pipe already holds a wake, so a write that would block is not needed.
+        one.usePinned { write(wakeWrite, it.addressOf(0), 1.convert()) }
+    }
+
+    /** Every wake up to here is answered by this turn, whether it ended the wait or not. */
+    private fun drainWakes() {
+        if (wakeRead < 0) return
+        val sink = ByteArray(WAKE_DRAIN_BYTES)
+        sink.usePinned { pinned ->
+            while (read(wakeRead, pinned.addressOf(0), WAKE_DRAIN_BYTES.convert()) > 0) {
+                // Read until empty; the count does not matter.
+            }
+        }
     }
 
     override fun measure(): WindowMeasurement = measured
@@ -705,6 +774,7 @@ class X11Window : WindowPlatform {
         const val SOURCE_APPLICATION = 1L
         const val SOURCE_PAGER = 2L
         const val DENSITY = 1.0f
+        const val WAKE_DRAIN_BYTES = 64
         const val LOW_HALF = 0xFFFFFFFFuL
         const val KEY_TEXT_BYTES = 32
         const val P_MIN_SIZE = 1L shl 4
