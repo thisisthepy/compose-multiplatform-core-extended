@@ -18,7 +18,6 @@ package org.jetbrains.androidx.build
 
 import androidx.build.Version
 import org.gradle.api.Project
-import org.gradle.api.publish.maven.tasks.AbstractPublishToMaven
 
 fun Project.changeMavenCoordinatesToJetBrains() {
     // we are interested in changing coordinates only for what we publish
@@ -26,21 +25,9 @@ fun Project.changeMavenCoordinatesToJetBrains() {
     val versions = JetBrainsVersionsService.versions(project)
 
     val group = JetBrainsPublication.mavenGroupFor(path)
-    val takenFromJetBrains = JetBrainsPublication.isTakenFromJetBrains(path)
-    val declared = versions.versionOf(component.library())
-    // A project kept at JetBrains' coordinates is the artifact JetBrains published for the
-    // upstream version, so that is what the modules depending on it name.
-    val version = Version(if (takenFromJetBrains) Version.upstreamPart(declared) else declared)
+    val version = Version(versions.versionOf(component.library()))
     this.group = group
     this.version = version
-
-    if (takenFromJetBrains) {
-        // Published from here it would sit at JetBrains' own coordinates, where a resolver
-        // cannot tell it from JetBrains' build and takes whichever it finds first.
-        tasks.withType(AbstractPublishToMaven::class.java).configureEach { task ->
-            task.enabled = false
-        }
-    }
 
     afterEvaluate {
         check(this.group == group) {

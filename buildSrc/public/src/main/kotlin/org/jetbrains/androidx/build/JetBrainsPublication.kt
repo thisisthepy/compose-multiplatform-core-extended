@@ -52,27 +52,6 @@ object JetBrainsPublication {
     private const val JETBRAINS_FORK_GROUP_PREFIX = "org.jetbrains.androidx."
     private const val JETBRAINS_ANNOTATION_GROUP = JETBRAINS_COMPOSE_GROUP_PREFIX + "annotation-internal"
     private const val JETBRAINS_COLLECTION_GROUP = JETBRAINS_COMPOSE_GROUP_PREFIX + "collection-internal"
-    private const val JETBRAINS_RUNTIME_GROUP = JETBRAINS_COMPOSE_GROUP_PREFIX + "runtime"
-
-    /**
-     * Projects this fork builds against but does not publish, with the JetBrains group they
-     * keep. This fork does not change them, and every Compose library outside it asks for them
-     * by JetBrains' coordinates: JetBrains' lifecycle, navigation and savedstate libraries name
-     * `org.jetbrains.compose.runtime:runtime`, and so do builds that enable the Compose compiler.
-     * Published again under this fork's group they would be a second copy of the same classes
-     * in every such graph, which no resolver can merge because the groups differ. So the fork's
-     * modules depend on JetBrains' artifacts, at the upstream version this fork's line stands
-     * for (`1.11.1` for `1.11.1-ext.1`), and nothing here publishes them.
-     */
-    private val takenFromJetBrains: Map<String, String> = mapOf(
-        ":annotation:annotation" to JETBRAINS_ANNOTATION_GROUP,
-        ":collection:collection" to JETBRAINS_COLLECTION_GROUP,
-        ":compose:runtime:runtime" to JETBRAINS_RUNTIME_GROUP,
-        ":compose:runtime:runtime-saveable" to JETBRAINS_RUNTIME_GROUP,
-    )
-
-    /** Whether [projectPath] is a project whose JetBrains artifact is used rather than published. */
-    fun isTakenFromJetBrains(projectPath: String): Boolean = projectPath in takenFromJetBrains
 
     val libraryToComponents = mapOf(
         "COMPOSE" to listOf(
@@ -193,7 +172,6 @@ object JetBrainsPublication {
     }
 
     fun mavenGroupFor(projectPath: String): String = when {
-        projectPath in takenFromJetBrains -> takenFromJetBrains.getValue(projectPath)
         projectPath == ":annotation:annotation" -> FORK_ANNOTATION_GROUP
         projectPath == ":collection:collection" -> FORK_COLLECTION_GROUP
         projectPath.startsWith(":compose:") ->
