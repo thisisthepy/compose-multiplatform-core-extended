@@ -34,6 +34,7 @@ class JetBrainsPublicationTest {
     @Test
     fun everyPublishedGroupIsUnderTheForkPrefix() {
         for (path in JetBrainsPublication.projectPathToComponent.keys) {
+            if (JetBrainsPublication.isTakenFromJetBrains(path)) continue
             val group = JetBrainsPublication.mavenGroupFor(path)
             assertTrue(
                 "$path is published as $group, which is not under org.thisisthepy.compose",
@@ -76,14 +77,20 @@ class JetBrainsPublicationTest {
     }
 
     @Test
-    fun annotationAndCollectionKeepTheirInternalGroups() {
-        assertEquals(
-            "org.thisisthepy.compose.annotation-internal",
-            JetBrainsPublication.mavenGroupFor(":annotation:annotation"),
+    fun projectsThisForkDoesNotChangeKeepJetBrainsGroups() {
+        val expected = mapOf(
+            ":annotation:annotation" to "org.jetbrains.compose.annotation-internal",
+            ":collection:collection" to "org.jetbrains.compose.collection-internal",
+            ":compose:runtime:runtime" to "org.jetbrains.compose.runtime",
+            ":compose:runtime:runtime-saveable" to "org.jetbrains.compose.runtime",
         )
-        assertEquals(
-            "org.thisisthepy.compose.collection-internal",
-            JetBrainsPublication.mavenGroupFor(":collection:collection"),
+        for ((path, group) in expected) {
+            assertTrue("$path should be taken from JetBrains", JetBrainsPublication.isTakenFromJetBrains(path))
+            assertEquals(group, JetBrainsPublication.mavenGroupFor(path))
+        }
+        assertTrue(
+            "Compose UI is changed by this fork and must be published under its group",
+            !JetBrainsPublication.isTakenFromJetBrains(":compose:ui:ui"),
         )
     }
 
