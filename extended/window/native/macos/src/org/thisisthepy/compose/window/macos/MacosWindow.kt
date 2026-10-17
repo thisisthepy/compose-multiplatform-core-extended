@@ -37,6 +37,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.enableSavedStateHandles
 import kotlinx.coroutines.Dispatchers
 import org.jetbrains.skia.Canvas
+import org.thisisthepy.compose.window.FrameClock
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.macosCornerRadius
 import androidx.compose.ui.input.pointer.PointerIcon
@@ -168,6 +169,17 @@ class MacosWindow(
     }
     private val metal = MetalSurface()
 
+    /**
+     * When a frame is drawn, in nanoseconds of host time: the time now, read in the view's
+     * own display, which AppKit runs on the display's refresh. A test sets a display of its
+     * own here.
+     */
+    internal var frameTime: () -> Long = ::uptimeNanos
+
+    // What every frame is drawn at, so an animation moves at the speed of the wall clock
+    // whatever the refresh rate and however late a frame.
+    private val frameClock = FrameClock { frameTime() }
+
     // What the window says about itself, kept in step with the scene by the listener the
     // context carries. Pushed on change rather than asked for.
     private val semantics = NativeSemantics { elements -> describeToReader(elements) }
@@ -228,14 +240,11 @@ class MacosWindow(
      * view's own display, so during a drag of the window's edge the drawing and the frame
      * the window server has already moved are committed together.
      */
-    private fun paintFrame(canvas: Canvas, widthInPixels: Int, heightInPixels: Int) {
+    internal fun paintFrame(canvas: Canvas, widthInPixels: Int, heightInPixels: Int) {
         val size = IntSize(widthInPixels, heightInPixels)
         measured = size
         scene.size = size
-        scene.render(
-            canvas.asComposeCanvas(),
-            (NSProcessInfo.processInfo.systemUptime * 1_000_000_000.0).toLong(),
-        )
+        scene.render(canvas.asComposeCanvas(), frameClock.frameNanos())
         // After the drawing, because that is when what is in the window has been placed
         // and can say where it is. Asked before, every control answers with an empty
         // rectangle and a reader finds the screen stacked in one corner.
@@ -1194,3 +1203,9 @@ internal fun applyChrome(window: NSWindow, chrome: MacosWindowChrome) {
         window.toolbar = null
     }
 }
+
+/**
+ * The time now in nanoseconds of host time, the clock AppKit stamps events with and the one
+ * Rust's `Instant` reads on macOS.
+ */
+internal fun uptimeNanos(): Long = (NSProcessInfo.processInfo.systemUptime * 1_000_000_000.0).toLong()
