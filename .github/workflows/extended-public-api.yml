@@ -74,8 +74,19 @@ jobs:
           # A build-wide change checks every module's desktop API, the same check as above for
           # each module. Not jbApiCheck, which also checks every target's klib dump and so
           # compiles mingwX64 klibs this repository cannot resolve yet (#120).
-          # Unqualified, so Gradle runs it in every project that has one.
-          if [ "$all" = 1 ]; then tasks="desktopApiCheck"; fi
+          if [ "$all" = 1 ]; then
+            tasks=""
+            for dump in $(git ls-files -- ':(glob)**/api/desktop/*.api' ':!extended'); do
+              d="${dump%/api/desktop/*}"
+              # Not a project of its own: a compatibility stub takes the name of the directory
+              # beside it (settings.gradle), whose dumps then belong to no project here, and the
+              # runtime's integration tests publish no desktop API.
+              case "$d" in *-compatibility-stub|*/integration-tests) continue ;; esac
+              [ -d "$d-compatibility-stub" ] && continue
+              t=":$(echo "$d" | tr / :):desktopApiCheck"
+              case " $tasks " in *" $t "*) ;; *) tasks="$tasks $t" ;; esac
+            done
+          fi
           echo "tasks=$tasks" >> "$GITHUB_OUTPUT"
           echo "gradle tasks: ${tasks:-none}"
 
