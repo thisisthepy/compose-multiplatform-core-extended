@@ -72,7 +72,19 @@ internal object VerticalResizeProbe {
     private fun px(points: Double): Float = kotlin.math.round(points * scale).toFloat()
 
     /** Lays the marks over a frame [width] by [height] pixels, drawn at [pixelsPerPoint]. */
-    fun mark(canvas: Canvas, width: Int, height: Int, pixelsPerPoint: Double) {
+    /** What the frame being drawn came from, for the line printed about it. */
+    var via = "loop"
+
+    /** The view was given a size; said only while the drag is being watched. */
+    fun setFrame(from: Pair<Double, Double>, to: Pair<Double, Double>) {
+        if (!sampling) return
+        printError(
+            "compose-rust: vresize set-frame t_ms=${ms()} from=${f1(from.first)}x${f1(from.second)} " +
+                "to=${f1(to.first)}x${f1(to.second)} changed=${if (from == to) 0 else 1}",
+        )
+    }
+
+    fun mark(canvas: Canvas, width: Int, height: Int, pixelsPerPoint: Double, drawableWaitMillis: Double) {
         scale = pixelsPerPoint
         val frame = ++frames
         lastHeight = height
@@ -85,7 +97,7 @@ internal object VerticalResizeProbe {
         if (sampling) {
             printError(
                 "compose-rust: vresize drawn t_ms=${ms()} frame=$frame texture=${width}x$height " +
-                    "height_px=$height",
+                    "height_px=$height via=$via drawable_wait_ms=${format(drawableWaitMillis)}",
             )
         }
     }

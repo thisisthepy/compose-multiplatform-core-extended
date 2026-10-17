@@ -46,6 +46,10 @@ static atomic_int dxc_vprobe_last_height;
 static uint32_t dxc_vprobe_window_number;
 static double dxc_vprobe_scale = 1;
 static uint64_t dxc_vprobe_started;
+// What the frame being drawn came from, and how long its drawable took to get, for the lines
+// the probe prints about each frame.
+static const char *dxc_vprobe_via = "loop";
+static double dxc_vprobe_drawable_wait_ms;
 
 static int dxc_vprobe_enabled(void) {
     static int cached = -1;
@@ -111,7 +115,7 @@ static void dxc_vprobe_mark(id<MTLCommandBuffer> buffer, id<MTLTexture> texture,
     atomic_store(&dxc_vprobe_last_height, (int)height);
     id<MTLDevice> device = texture.device;
     id<MTLBuffer> magenta = dxc_vprobe_colour(device, 0, 0xFFFF00FF);
-    id<MTLBuffer> cyan = dxc_vprobe_colour(device, 1, 0xFFFFFF00);
+    id<MTLBuffer> cyan = dxc_vprobe_colour(device, 1, 0xFF00FFFF);
     id<MTLBuffer> white = dxc_vprobe_colour(device, 2, 0xFFFFFFFF);
     id<MTLBuffer> black = dxc_vprobe_colour(device, 3, 0xFF000000);
     id<MTLBlitCommandEncoder> blit = [buffer blitCommandEncoder];
@@ -124,9 +128,10 @@ static void dxc_vprobe_mark(id<MTLCommandBuffer> buffer, id<MTLTexture> texture,
     dxc_vprobe_bits(blit, texture, white, black, 1, (uint32_t)height, scale);
     [blit endEncoding];
     if (atomic_load(&dxc_vprobe_sampling)) {
-        fprintf(stderr, "compose-rust: vresize drawn t_ms=%.2f frame=%d texture=%lux%lu height_px=%ld\n",
+        fprintf(stderr, "compose-rust: vresize drawn t_ms=%.2f frame=%d texture=%lux%lu height_px=%ld "
+                "via=%s drawable_wait_ms=%.2f\n",
                 dxc_vprobe_ms(), frame, (unsigned long)texture.width,
-                (unsigned long)texture.height, height);
+                (unsigned long)texture.height, height, dxc_vprobe_via, dxc_vprobe_drawable_wait_ms);
     }
 }
 
@@ -203,6 +208,14 @@ static void dxc_vprobe_sample(dxc_vprobe_capture_fn capture, int index) {
             top >= 0 ? (bottom - top + 1) / scale : -1.0,
             cyan_bottom >= 0 ? ((long)height - 1 - cyan_bottom) / scale : -1.0, frame, drawn,
             height, atomic_load(&dxc_vprobe_frame_count), atomic_load(&dxc_vprobe_last_height));
+}
+
+/** The view was given a size; said only while the drag is being watched. */
+static void dxc_vprobe_set_frame(NSSize old_size, NSSize size) {
+    if (!atomic_load(&dxc_vprobe_sampling)) return;
+    fprintf(stderr, "compose-rust: vresize set-frame t_ms=%.2f from=%.1fx%.1f to=%.1fx%.1f changed=%d\n",
+            dxc_vprobe_ms(), old_size.width, old_size.height, size.width, size.height,
+            NSEqualSizes(old_size, size) ? 0 : 1);
 }
 
 static void dxc_vprobe_geometry(NSWindow *window, NSView *view, CAMetalLayer *layer,

@@ -90,6 +90,10 @@ class MetalSurface {
      */
     var overlay: ((Canvas, Int, Int) -> Unit)? = null
 
+    /** How long the last frame waited for its drawable, in milliseconds, for measuring. */
+    var drawableWaitMillis = 0.0
+        private set
+
     /**
      * Tells the layer how many pixels the window is, in the density it is being shown at.
      *
@@ -159,7 +163,10 @@ class MetalSurface {
         val width = minOf(widthInPixels, drawableWidth)
         val height = minOf(heightInPixels, drawableHeight)
         if (width <= 0 || height <= 0) return false
-        val drawable = nextDrawable() ?: return false
+        val asked = kotlin.time.TimeSource.Monotonic.markNow()
+        val drawable = nextDrawable()
+        drawableWaitMillis = asked.elapsedNow().inWholeMicroseconds / 1000.0
+        if (drawable == null) return false
         // Owned by the drawable, so it lives exactly as long as the drawable does.
         val texture = sendForObject(drawable, TEXTURE) ?: return false
         val target = BackendRenderTarget.makeMetal(drawableWidth, drawableHeight, texture.rawValue)
