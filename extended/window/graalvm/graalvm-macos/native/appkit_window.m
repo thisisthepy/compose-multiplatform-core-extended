@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include "appkit_resize.h"
+#include "appkit_vresize_probe.h"
 #include <unistd.h>
 #include <mach/mach_time.h>
 
@@ -1214,6 +1215,7 @@ int32_t dxc_native_window_open(
         [window center];
         [window makeKeyAndOrderFront:nil];
         [NSApp activateIgnoringOtherApps:YES];
+        dxc_vprobe_start(window, view, layer);
 
         // Held past this scope. The window owns the view, and the renderer owns the
         // window until it closes it.
@@ -1380,6 +1382,8 @@ void dxc_native_frame_end(void *queue_pointer) {
                            (int32_t)drawable.texture.height);
         id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)queue_pointer;
         id<MTLCommandBuffer> buffer = [queue commandBuffer];
+        dxc_vprobe_mark(buffer, drawable.texture, (long)drawable.texture.height,
+                        drawable.layer.contentsScale);
         if (drawable.layer.presentsWithTransaction) {
             // Presented by the layer from inside the window's transaction, once the
             // work is scheduled: the contract of a layer that presents with one.
