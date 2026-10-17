@@ -58,7 +58,9 @@ jobs:
           python3 -I - "$base/skiko-awt-1.11.1-ext.1.module" <<'PY'
           import json, sys
           metadata = json.load(open(sys.argv[1]))
-          assert metadata["component"] == {"group": "org.thisisthepy.compose.skiko", "module": "skiko-awt", "version": "1.11.1-ext.1"}, metadata["component"]
+          component = {k: metadata["component"][k] for k in ("group", "module", "version")}
+          assert component == {"group": "org.thisisthepy.compose.skiko", "module": "skiko-awt", "version": "1.11.1-ext.1"}, metadata["component"]
+          assert "url" not in metadata["component"], metadata["component"]
           for variant in metadata["variants"]:
               names = {(c["group"], c["name"]) for c in variant.get("capabilities", [])}
               assert ("org.jetbrains.skiko", "skiko-awt") in names, variant["name"]
