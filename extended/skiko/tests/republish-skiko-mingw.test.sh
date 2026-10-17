@@ -42,8 +42,9 @@ echo '{"variants":[{"name":"a","dependencies":[{"group":"org.jetbrains.skiko","m
 cpp="$work/cpp"
 mkdir -p "$cpp/skia"
 echo bridges > "$cpp/skiko-bridges.lib"
+echo icu > "$cpp/embedded_icu.obj"
 echo skia > "$cpp/skia/skia.lib"
-echo icu > "$cpp/skia/icudtl.dat"
+echo data > "$cpp/skia/icudtl.dat"
 
 echo "republish-skiko-mingw.py"
 python3 -I "$script" "$repo" 0.144.6 1.11.1-ext.1 "$cpp" > /dev/null || fail "a complete input is refused"
@@ -63,7 +64,8 @@ python3 -I - "$out/skiko-mingwx64-1.11.1-ext.1-msvc.zip" <<'PY' || fail "the msv
 import sys, zipfile
 z = zipfile.ZipFile(sys.argv[1])
 names = set(z.namelist())
-assert {"lib/skiko-bridges.lib", "lib/skia.lib", "runtime/icudtl.dat", "msvc-link.properties"} <= names, names
+assert {"obj/embedded_icu.obj", "lib/skiko-bridges.lib", "lib/skia.lib", "msvc-link.properties"} <= names, names
+assert not any(n.endswith(".dat") or n.startswith("runtime/") for n in names), names
 props = z.read("msvc-link.properties").decode()
 assert "cppStandardLibrary=true" in props and "opengl32.lib" in props, props
 PY
@@ -76,6 +78,9 @@ PY
 grep -q '<artifactId>skiko-mingwx64</artifactId>' "$ui/ui-graphics-mingwx64-1.11.1-ext.1.pom" || fail "the mingwX64 pom still names JetBrains' skiko"
 grep -q '"org.jetbrains.skiko"' "$desktop/ui-graphics-desktop-1.11.1-ext.1.module" || fail "a desktop module was changed"
 
+rm -f "$cpp/embedded_icu.obj"
+python3 -I "$script" "$repo" 0.144.6 1.11.1-ext.1 "$cpp" > /dev/null 2>&1 && fail "a missing embedded ICU object is not refused"
+echo icu > "$cpp/embedded_icu.obj"
 rm -rf "$cpp/skiko-bridges.lib"
 python3 -I "$script" "$repo" 0.144.6 1.11.1-ext.1 "$cpp" > /dev/null 2>&1 && fail "a missing C++ half is not refused"
 

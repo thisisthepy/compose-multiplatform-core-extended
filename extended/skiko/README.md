@@ -34,8 +34,11 @@ only and the C++ half ships beside it as the `msvc` zip. A program is linked int
 executable by `org.thisisthepy.kotlin.native.desktop` (thisisthepy/compose-multiplatform-extended),
 which adds that zip, and which deals with the two MinGW conventions that link meets: static
 constructors in `.ctors` that the MSVC runtime never runs, and per-function unwind data that
-an MSVC-mode linker discards. `.github/workflows/extended-publish-local.yml` links and runs a
-small Compose program that way from the published repository alone.
+an MSVC-mode linker discards. Skia's ICU data goes in as `embedded_icu.obj`, linked whole,
+so the program is one file with no `icudtl.dat` beside it.
+`.github/workflows/extended-publish-local.yml` links a small Compose program that way from the
+published repository alone, checks it is one file, and runs it alone on a runner with every
+`icudtl.dat` removed: it draws, and shapes 한 and 글 into distinct inked glyphs.
 
 ## Build order
 

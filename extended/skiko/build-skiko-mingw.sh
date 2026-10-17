@@ -25,6 +25,8 @@
 #
 # Output, in <work-dir>/out/windows-x64/:
 #   skiko-bridges.lib   skiko's C++ half, MSVC, static C runtime (/MT)
+#   embedded_icu.obj    Skia's ICU data compiled in (embedded_icu.cpp), to link whole: Skia
+#                       on Windows would otherwise read icudtl.dat from beside the executable
 #   skia/               the prebuilt Skia libraries the bridges link against
 #   skia-include/       Skia's distribution, for anything else compiled against it
 #
@@ -184,9 +186,15 @@ built=$(ls "$obj"/*.obj | wc -l | tr -d ' ')
 [[ "$built" -eq "$count" ]] || die "compiled $built of skiko's $count C++ files"
 "$llvm_bin/llvm-ar" rcs "$out/skiko-bridges.lib" "$obj"/*.obj
 
+# ICU's data, compiled in rather than shipped as icudtl.dat beside the executable: a program
+# is one file. A separate object, linked whole, so its SkLoadICU is the one the link keeps and
+# Skia's, which reads the file, is a library member nothing asks for.
+"$llvm_bin/clang" --driver-mode=cl --target=x86_64-pc-windows-msvc /std:c++latest /O2 /MT /c /nologo \
+    -Wno-c23-extensions "/clang:--embed-dir=$skia_out" "/Fo$out/embedded_icu.obj" -- "$HERE/embedded_icu.cpp" ||
+    die "embedded_icu.cpp did not compile" "It needs clang 19 or later for #embed; Kotlin/Native's LLVM is that from Kotlin 2.2."
+
 mkdir -p "$out/skia"
 cp "$skia_out"/*.lib "$out/skia/"
-cp "$skia_out/icudtl.dat" "$out/skia/"
 ln -sfn "$skia" "$out/skia-include"
 
 echo "skiko $PUBLISHED_AS for mingwX64 published to the local Maven repository"

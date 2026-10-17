@@ -226,7 +226,15 @@ jobs:
           name: org-thisisthepy-mac
           path: ~/.m2/repository/org/thisisthepy
 
-      - name: Link with MSVC through org.thisisthepy.kotlin.native.desktop, then run it
+      - name: Take every ICU data file off the runner
+        # The program has to shape Korean with the ICU data linked into it. A hosted runner ships
+        # browsers that carry icudtl.dat, so they are removed and the next step confirms none is
+        # left anywhere the program could be pointed at one.
+        run: |
+          { find "/c/Program Files" "/c/Program Files (x86)" /c/Users /c/Windows /d -name 'icudtl.dat' 2>/dev/null || true; } |
+            while IFS= read -r file; do echo "removing $file"; rm -f "$file"; done
+
+      - name: Link with MSVC through org.thisisthepy.kotlin.native.desktop, then run it alone
         run: |
           set -euo pipefail
           version="$(sed -n 's/^jetbrains.publication.version.COMPOSE=//p' gradle.properties)"
@@ -236,7 +244,25 @@ jobs:
           fi
           project=extended/compose/consumer-check/mingw-program
           gradle -p "$project" linkReleaseExecutableMingwX64 --no-daemon --console=plain "-PforkVersion=$version"
-          exe="$project/build/bin/mingwX64/releaseExecutable/mingw-program.exe"
-          ls -la "$(dirname "$exe")"
-          "$exe" | tee run.log
+
+          # One file: no DLL, no icudtl.dat, nothing else beside the executable.
+          out="$project/build/bin/mingwX64/releaseExecutable"
+          ls -la "$out"
+          files="$(find "$out" -mindepth 1 | wc -l | tr -d ' ')"
+          if [ "$files" != 1 ] || [ ! -f "$out/mingw-program.exe" ]; then
+            echo "the output holds $files entries, not mingw-program.exe alone" >&2
+            exit 1
+          fi
+          icu="$({ find "/c/Program Files" "/c/Program Files (x86)" /c/Users /c/Windows /d -name 'icudtl.dat' 2>/dev/null || true; } | head -20)"
+          if [ -n "$icu" ]; then
+            echo "an ICU data file is on this runner, so the Korean check would not prove anything:" >&2
+            echo "$icu" >&2
+            exit 1
+          fi
+
+          # Alone in an empty directory.
+          run="$RUNNER_TEMP/alone"
+          rm -rf "$run" && mkdir -p "$run"
+          cp "$out/mingw-program.exe" "$run/"
+          (cd "$run" && ./mingw-program.exe) | tee run.log
           grep -q 'mingw program ok' run.log

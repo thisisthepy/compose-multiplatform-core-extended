@@ -6,7 +6,7 @@ Usage: republish-skiko-mingw.py <repository> <upstream-version> <version> <cpp-d
 
 <repository> is the local Maven repository (~/.m2/repository). build-skiko-mingw.sh published
 the Kotlin half there as org.jetbrains.skiko:skiko-mingwx64:<upstream-version> and wrote the C++
-half to <cpp-dir> (skiko-bridges.lib, skia/*.lib, skia/icudtl.dat). JetBrains publishes no
+half to <cpp-dir> (skiko-bridges.lib, embedded_icu.obj, skia/*.lib). JetBrains publishes no
 skiko for mingwX64, so nothing under org.jetbrains can ship it; this writes:
 
   org/thisisthepy/compose/skiko/skiko-mingwx64/<version>/
@@ -19,8 +19,9 @@ MinGW's and the C++ half is MSVC's (it has to match JetBrains' prebuilt Windows 
 executable is linked by MSVC instead, by the org.thisisthepy.kotlin.native.desktop plugin,
 which finds this module among a program's dependencies and links the zip's contents:
 
+  obj/embedded_icu.obj         Skia's ICU data compiled in, linked whole: the program is one
+                               file, with no icudtl.dat beside it
   lib/*.lib                    skiko's bridges and Skia, static C runtime (/MT)
-  runtime/icudtl.dat           copied next to the executable; Skia's ICU reads it from there
   msvc-link.properties         systemLibraries (Windows import libraries Skia calls into) and
                                cppStandardLibrary=true (Skia is C++ built with MSVC)
 
@@ -97,19 +98,21 @@ def republish(repository, upstream, version):
 
 def package_cpp(target, version, cpp):
     bridges = os.path.join(cpp, "skiko-bridges.lib")
+    icu = os.path.join(cpp, "embedded_icu.obj")
     skia = os.path.join(cpp, "skia")
-    if not os.path.isfile(bridges) or not os.path.isdir(skia):
-        sys.exit(f"error: {cpp} holds no skiko-bridges.lib and skia/; run build-skiko-mingw.sh without --kotlin-only")
+    if not os.path.isfile(bridges) or not os.path.isfile(icu) or not os.path.isdir(skia):
+        sys.exit(f"error: {cpp} holds no skiko-bridges.lib, embedded_icu.obj and skia/; "
+                 "run build-skiko-mingw.sh without --kotlin-only")
     archive = os.path.join(target, f"{ARTIFACT}-{version}-msvc.zip")
     libraries = 0
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zip:
+        zip.write(icu, "obj/embedded_icu.obj")
         zip.write(bridges, "lib/skiko-bridges.lib")
+        # Libraries only: nothing goes beside the executable, icudtl.dat least of all.
         for name in sorted(os.listdir(skia)):
             if name.endswith(".lib"):
                 zip.write(os.path.join(skia, name), f"lib/{name}")
                 libraries += 1
-            elif name.endswith(".dat"):
-                zip.write(os.path.join(skia, name), f"runtime/{name}")
         zip.writestr("msvc-link.properties",
                      "systemLibraries=" + ",".join(SYSTEM_LIBRARIES) + "\ncppStandardLibrary=true\n")
     if libraries == 0:
