@@ -56,6 +56,15 @@ jobs:
           cc -O1 -Wall -pthread -o build/wake_test test/c/wake_test.c -lX11 -lXext -lGL
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/wake_test
 
+      - name: The semantics reader is the Kotlin/Native window's, unchanged
+        working-directory: extended/window
+        run: |
+          cmp native/linux/src/AtspiSemantics.kt \
+            graalvm/graalvm-linux/src/org/thisisthepy/compose/window/atspi/AtspiSemantics.kt || {
+            echo "graalvm-linux's AtspiSemantics.kt differs from native/linux's; change both together" >&2
+            exit 1
+          }
+
       - name: The Kotlin module has no java.awt
         working-directory: extended/window/graalvm/graalvm-linux
         run: |
