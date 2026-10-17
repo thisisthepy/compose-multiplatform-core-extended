@@ -780,6 +780,7 @@ class MacosWindow(
                 platform.darwin.dispatch_get_main_queue(),
             ) { runMetrics() }
         }
+        if (ResizeSoak.enabled) ResizeSoak.start(window, metal)
         if (VerticalResizeProbe.enabled) {
             metal.overlay = { canvas, width, height ->
                 VerticalResizeProbe.mark(canvas, width, height, window.backingScaleFactor, metal.drawableWaitMillis)

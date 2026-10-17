@@ -58,8 +58,12 @@ class MetalSurface {
     /** What Metal has allocated for this device, in bytes, for measuring. */
     val allocatedBytes: Long get() = device.currentAllocatedSize.toLong()
 
-    /** Skia's resource cache limit, in bytes, for measuring. */
-    val cacheLimitBytes: Long get() = context.resourceCacheLimit
+    /** Skia's resource cache limit, in bytes: read for measuring, set to measure with less. */
+    var cacheLimitBytes: Long
+        get() = context.resourceCacheLimit
+        set(value) {
+            context.resourceCacheLimit = value
+        }
 
     val layer = CAMetalLayer().also {
         @Suppress("CAST_NEVER_SUCCEEDS")

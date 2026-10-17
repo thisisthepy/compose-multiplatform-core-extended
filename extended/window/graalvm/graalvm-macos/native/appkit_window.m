@@ -1204,6 +1204,15 @@ void dxc_native_window_chrome(
  * Returns zero on success, one or two for unavailable Metal resources, and three if the
  * process cannot be registered as a foreground application.
  */
+#include "appkit_resize_soak.h"
+
+/**
+ * Where the resize soak is (see appkit_resize_soak.h), which the renderer polls to know
+ * when to print its heap line and when to collect. Defined here, with the other names the
+ * renderer reaches, rather than in the header.
+ */
+int32_t dxc_native_soak_state(void) { return dxc_soak_state; }
+
 int32_t dxc_native_window_open(
     const char *title,
     int32_t width,
@@ -1346,6 +1355,7 @@ int32_t dxc_native_window_open(
         out->device = (__bridge_retained void *)device;
         out->queue = (__bridge_retained void *)queue;
         out->layer = (__bridge_retained void *)layer;
+        dxc_soak_start(window, device);
     }
     });
     return status;
@@ -1467,6 +1477,28 @@ void dxc_native_window_size(void *layer_pointer, int32_t *width, int32_t *height
 // of the window rather than a file-level one.
 static id<CAMetalDrawable> dxc_pending_drawable;
 
+// The autorelease pool a frame is drawn in, from the drawable being taken to its being handed
+// to the screen. Public runtime calls, declared here because the header that has them is not
+// part of the SDK's public set.
+extern void *objc_autoreleasePoolPush(void);
+extern void objc_autoreleasePoolPop(void *pool);
+
+// What Skia hands the frame (its command buffers among them) comes back autoreleased, on the
+// thread that draws. A frame the window draws from inside a resize is inside the pool the
+// event pump drains, but one the renderer's loop draws is not inside any: that thread runs
+// no run loop of its own and nothing drains for it, so everything autoreleased there was
+// kept for the life of the process. A command buffer keeps 64 KB of the graphics driver's
+// memory for tracking its progress, which is what compose-rust's resize soak saw grow by
+// two regions after every drag, without end (CI runs 39049234802 and 39052658073: 128 KB a
+// drag over 60 drags, allocated under -[_MTLCommandBuffer initProgressTracking]). The
+// Kotlin/Native window draws each frame in a pool of its own for the same reason.
+//
+// A stack, because a frame can be asked for while another is open (a resize drawing from
+// inside the view while a frame is under way), and pools close in the order they opened.
+#define DXC_FRAME_POOLS 8
+static void *dxc_frame_pools[DXC_FRAME_POOLS];
+static int dxc_frame_pool_depth;
+
 /**
  * Takes the next drawable and answers the texture to paint into.
  *
@@ -1476,6 +1508,10 @@ static id<CAMetalDrawable> dxc_pending_drawable;
  */
 int32_t dxc_native_frame_begin(void *layer_pointer, void **texture_out) {
     __block int32_t status = 0;
+    // Opened on the drawing thread, before anything of the frame exists, and closed by
+    // dxc_native_frame_end on the same thread, which every frame that was given a drawable
+    // reaches. A frame that was not given one draws nothing and closes nothing.
+    void *pool = objc_autoreleasePoolPush();
     dxc_on_main(^{
     @autoreleasepool {
         CAMetalLayer *layer = (__bridge CAMetalLayer *)layer_pointer;
@@ -1490,6 +1526,11 @@ int32_t dxc_native_frame_begin(void *layer_pointer, void **texture_out) {
         *texture_out = (__bridge void *)drawable.texture;
     }
     });
+    if (status == 0 && dxc_frame_pool_depth < DXC_FRAME_POOLS) {
+        dxc_frame_pools[dxc_frame_pool_depth++] = pool;
+    } else {
+        objc_autoreleasePoolPop(pool);
+    }
     return status;
 }
 
@@ -1520,6 +1561,9 @@ void dxc_native_frame_end(void *queue_pointer) {
         }
     }
     });
+    if (dxc_frame_pool_depth > 0) {
+        objc_autoreleasePoolPop(dxc_frame_pools[--dxc_frame_pool_depth]);
+    }
 }
 
 /**
