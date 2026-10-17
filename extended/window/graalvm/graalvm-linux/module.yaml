@@ -5,6 +5,11 @@ dependencies:
   # Annotations and C interop types for @CFunction and @CEntryPoint. The native-image
   # builder supplies them at image build time, so they are not bundled.
   - org.graalvm.sdk:nativeimage:25.0.1: compile-only
+  # The semantics reader for AT-SPI reads Compose's semantics tree. The renderer that hosts
+  # the window brings Compose UI itself, at the version it is built with, so this module only
+  # compiles against it and does not choose one for it. No @Composable is declared here, so
+  # the Compose compiler is not needed either.
+  - org.jetbrains.compose.ui:ui-desktop:1.11.1: compile-only
 
 test-dependencies:
   - $kotlin.test

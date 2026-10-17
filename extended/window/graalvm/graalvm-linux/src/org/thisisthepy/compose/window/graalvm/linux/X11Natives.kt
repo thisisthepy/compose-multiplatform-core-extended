@@ -56,6 +56,14 @@ internal object X11Natives {
     external fun pump(seconds: Double)
 
     @JvmStatic
+    @CFunction("dxc_native_window_origin")
+    external fun windowOrigin(x: CIntPointer?, y: CIntPointer?)
+
+    @JvmStatic
+    @CFunction("dxc_native_window_focused")
+    external fun windowFocused(): Int
+
+    @JvmStatic
     @CFunction("dxc_native_take_paste")
     external fun takePaste(out: CCharPointer?, capacity: Int): Int
 

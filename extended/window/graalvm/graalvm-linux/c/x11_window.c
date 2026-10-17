@@ -102,6 +102,10 @@ static int dxc_event_count;
 // place, dxc_native_pump, and this is what keeps it that way whoever calls in next.
 static int dxc_pumping;
 
+// Whether the window has the keyboard, as the focus events last said. A window is mapped
+// with the keyboard on every desktop this runs on, and the first FocusOut corrects it.
+static int dxc_focused = 1;
+
 // What the renderer registered for drawing a frame, and the thread it asked to be called
 // back on.
 //
@@ -973,9 +977,11 @@ static void dxc_pump_events(void) {
                 break;
             }
             case FocusIn:
+                dxc_focused = 1;
                 if (dxc_ic != NULL) XSetICFocus(dxc_ic);
                 continue;
             case FocusOut:
+                dxc_focused = 0;
                 if (dxc_ic != NULL) XUnsetICFocus(dxc_ic);
                 continue;
             case SelectionRequest:
@@ -1442,6 +1448,25 @@ void dxc_native_pump(double seconds) {
         select(connection + 1, &readable, NULL, NULL, &limit);
     }
     dxc_pump_events();
+}
+
+/** Where the window's top left corner is on the screen, in pixels. Zero where there is no window. */
+void dxc_native_window_origin(int32_t *x, int32_t *y) {
+    *x = 0;
+    *y = 0;
+    if (dxc_display == NULL || dxc_window == None) return;
+    int root_x = 0, root_y = 0;
+    Window child;
+    if (XTranslateCoordinates(dxc_display, dxc_window, DefaultRootWindow(dxc_display), 0, 0,
+                              &root_x, &root_y, &child)) {
+        *x = root_x;
+        *y = root_y;
+    }
+}
+
+/** Whether the window has the keyboard, as the focus events last said. */
+int32_t dxc_native_window_focused(void) {
+    return dxc_focused;
 }
 
 /** True once the reader has closed the window. */

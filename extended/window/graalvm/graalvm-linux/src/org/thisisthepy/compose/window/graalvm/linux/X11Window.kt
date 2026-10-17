@@ -104,6 +104,20 @@ class X11Window : WindowPlatform {
         }
     }
 
+    /** Whether the window has the keyboard, as the server last said. */
+    val isFocused: Boolean get() = X11Natives.windowFocused() != 0
+
+    /** Where the window's top left corner is on the screen, in pixels. */
+    fun originOnScreen(): Pair<Int, Int> {
+        if (sizeBuffer == 0L) return 0 to 0
+        val origin = WordFactory.pointer<Pointer>(sizeBuffer)
+        X11Natives.windowOrigin(
+            WordFactory.pointer<CIntPointer>(sizeBuffer),
+            WordFactory.pointer<CIntPointer>(sizeBuffer + 4),
+        )
+        return origin.readInt(0) to origin.readInt(4)
+    }
+
     /** The whole of a paste the window is holding, so that it lands as one edit. */
     private fun takePaste(): String? {
         if (textBuffer == 0L) return null
