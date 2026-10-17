@@ -27,7 +27,7 @@
 #                       forced: its module archives (skottie, sksg, svg) each carry their own
 #                       copy of Skia's core objects, and forcing them in defines those twice.
 #
-# macOS arm64, Linux x64 (g++, ar, and the X11, GL, fontconfig and dbus development
+# macOS arm64, Linux x64 and arm64 (g++, ar, and the X11, GL, fontconfig and dbus development
 # headers skiko compiles against), and Windows x64 run from Git Bash with the MSVC tools on PATH (a Developer
 # prompt, or ilammy/msvc-dev-cmd on CI). Needs git and a JDK 17 or 21 in JAVA_HOME; the JDK's
 # headers are what static_jawt.c compiles against.
@@ -67,6 +67,13 @@ case "$(uname -s)-$(uname -m)" in
         skia_glob="*-linux-Release-x64"
         platform="linux-x64"
         ;;
+    Linux-aarch64)
+        host="linux"
+        tasks=("compileJvmBindingsLinuxArm64")
+        object_dirs=("compile/Release-linux-jvm-arm64")
+        skia_glob="*-linux-Release-arm64"
+        platform="linux-arm64"
+        ;;
     MINGW*-x86_64|MSYS*-x86_64)
         host="windows"
         tasks=("compileJvmBindingsWindowsX64")
@@ -74,7 +81,7 @@ case "$(uname -s)-$(uname -m)" in
         skia_glob="*-windows-Release-x64"
         platform="windows-x64"
         ;;
-    *) die "this builds macOS arm64, Linux x64 and Windows x64 only so far (this is $(uname -s) $(uname -m))" ;;
+    *) die "this builds macOS arm64, Linux x64 and arm64, and Windows x64 only so far (this is $(uname -s) $(uname -m))" ;;
 esac
 
 # skiko compiles its Windows bindings with clang-cl, which Visual Studio's C++ workload does
