@@ -78,6 +78,9 @@ jobs:
             tasks=""
             for dump in $(git ls-files -- ':(glob)**/api/desktop/*.api' ':!extended'); do
               d="${dump%/api/desktop/*}"
+              # A compatibility stub is the project of its parent's name (settings.gradle), and
+              # carries no API of its own.
+              case "$d" in *-compatibility-stub) continue ;; esac
               t=":$(echo "$d" | tr / :):desktopApiCheck"
               case " $tasks " in *" $t "*) ;; *) tasks="$tasks $t" ;; esac
             done

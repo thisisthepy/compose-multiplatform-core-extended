@@ -66,8 +66,9 @@ def variant_is_published(repository, group, artifact, name):
 
 
 def dependencies_of(path, repository=None, group=None, artifact=None):
-    """(group, module, version, required) for the dependencies and constraints a .module or
-    .pom names: required for a dependency, not for a constraint or a managed version."""
+    """(group, module, version, required, metadata) for the dependencies and constraints a
+    .module or .pom names: required for a dependency, not for a constraint or a managed
+    version; metadata when only the root's shared metadata variant names it."""
     found = []
     if path.endswith(".module"):
         with open(path, encoding="utf-8") as handle:
@@ -83,6 +84,7 @@ def dependencies_of(path, repository=None, group=None, artifact=None):
                         dependency["module"],
                         version.get("requires") or version.get("strictly") or version.get("prefers"),
                         key == "dependencies",
+                        variant.get("name", "").startswith("metadata"),
                     ))
             # A root's variants point at every target's own module with available-at; only the
             # targets that were built are here, and a consumer reads only its own, so those are
@@ -97,13 +99,14 @@ def dependencies_of(path, repository=None, group=None, artifact=None):
             artifact = re.search(r"<artifactId>\s*([^<\s]+)", body)
             version = re.search(r"<version>\s*([^<\s]+)", body)
             if group and artifact:
-                found.append((group.group(1), artifact.group(1), version.group(1) if version else None, True))
+                found.append((group.group(1), artifact.group(1), version.group(1) if version else None, True, False))
     return found
 
 
 def main():
     repository = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/.m2/repository")
     problems = []
+    warnings = []
     published = 0
 
     fork_root = os.path.join(repository, *FORK.split("."))
@@ -120,10 +123,14 @@ def main():
             if group.startswith(OWN_VERSIONED):
                 continue
             published += 1
-            for dep_group, dep_module, dep_version, required in dependencies_of(path, repository, group, artifact):
+            for dep_group, dep_module, dep_version, required, metadata in dependencies_of(path, repository, group, artifact):
                 if dep_group.startswith(FORK) and not dep_group.startswith(OWN_VERSIONED):
                     if required and dep_version and not has(repository, dep_group, dep_module, dep_version):
-                        problems.append(f"{dep_group}:{dep_module}:{dep_version} is not published, named by {path}")
+                        line = f"{dep_group}:{dep_module}:{dep_version} is not published, named by {path}"
+                        # The shared metadata variant lists the dependencies of every source
+                        # set, a target nobody built here included (ui-uikit for iOS). Whether a
+                        # consumer of the built targets needs it is the consumer's build to say.
+                        (warnings if metadata else problems).append(line)
                 elif required and dep_group.startswith("org.jetbrains.compose") and dep_group not in TAKEN_FROM_JETBRAINS:
                     problems.append(
                         f"{dep_group}:{dep_module}:{dep_version} is JetBrains' copy of a module this fork "
@@ -139,6 +146,8 @@ def main():
 
     if published == 0:
         problems.append(f"nothing is published under {fork_root}")
+    for warning in sorted(set(warnings)):
+        print(f"warning: {warning} (in the shared metadata variant only)")
     for problem in sorted(set(problems)):
         print(problem)
     if problems:

@@ -111,6 +111,10 @@ for target in "${targets[@]}"; do
         mingwX64) publication=MingwX64; windows=1 ;;
     esac
     for module in "${common_modules[@]}"; do add_module "$module" "$publication"; done
+    # Compose UI's shared metadata names ui-uikit, its iOS half. Its root is asked for wherever
+    # the build has one, so a consumer resolving that metadata finds it.
+    add_task "?:compose:ui:ui-uikit:publishKotlinMultiplatformPublicationToMavenLocal"
+    add_task "?:compose:ui:ui-uikit:publishKotlinMultiplatformDecoratedPublicationToMavenLocal"
     if [[ "$target" == desktop ]]; then
         for module in "${desktop_modules[@]}"; do add_module "$module" "$publication"; done
         add_task "?:compose:desktop:desktop:publishKotlinMultiplatformPublicationToMavenLocal"
