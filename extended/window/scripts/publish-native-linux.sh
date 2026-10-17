@@ -9,6 +9,11 @@
 # target's own. So this publishes the module twice, each time as a one-target module whose
 # dependency list is that target's, and puts module.yaml and project.yaml back afterwards.
 #
+# Each run also writes the root coordinate (native-linux), listing only its own target, so the
+# second run would leave the root naming one architecture. The two root .module files are merged
+# afterwards so a consumer of the root resolves either architecture; the per-architecture
+# coordinates (native-linux-linuxx64, native-linux-linuxarm64) are distinct and are not touched.
+#
 # Run from extended/window. The Compose modules must already be in the local repository.
 set -euo pipefail
 
@@ -21,6 +26,9 @@ restore() {
     mv project.yaml.orig project.yaml
 }
 trap restore EXIT
+
+root="$HOME/.m2/repository/org/thisisthepy/compose/window/native-linux/0.1.0/native-linux-0.1.0.module"
+roots="$(mktemp -d)"
 
 for arch in linuxX64 linuxArm64; do
     cp "$module.orig" "$module"
@@ -48,4 +56,24 @@ PY
     echo "== native/linux as a one-target module: $arch"
     cat "$module"
     ./kotlin publish mavenLocal
+    [[ -f "$root" ]] || { echo "the publish left no root module at $root" >&2; exit 1; }
+    cp "$root" "$roots/$arch.module"
 done
+
+python3 - "$roots/linuxX64.module" "$roots/linuxArm64.module" "$root" <<'PY'
+import json
+import sys
+
+first, second, out = sys.argv[1:4]
+merged = json.load(open(first))
+other = json.load(open(second))
+seen = {json.dumps(v, sort_keys=True) for v in merged["variants"]}
+for variant in other["variants"]:
+    key = json.dumps(variant, sort_keys=True)
+    if key not in seen:
+        merged["variants"].append(variant)
+        seen.add(key)
+json.dump(merged, open(out, "w"), indent=2)
+PY
+echo "== the root module after merging:"
+cat "$root"

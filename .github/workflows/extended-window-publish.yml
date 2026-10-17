@@ -131,9 +131,23 @@ jobs:
           find ~/.m2/repository/org/thisisthepy/compose/window -name '*.pom' -o -name '*.jar' -o -name '*.klib' -o -name '*.module' | sort
           test -n "$(find ~/.m2/repository/org/thisisthepy/compose/window -name '*.pom')"
 
-      - name: native-linux was published
+      - name: What a consumer resolves for native-linux
         if: ${{ matrix.compose_linux }}
         shell: bash
         run: |
-          find ~/.m2/repository/org/thisisthepy/compose/window/native-linux* -name '*.pom' -o -name '*.klib' | sort
-          test -n "$(find ~/.m2/repository/org/thisisthepy/compose/window/native-linux* -name '*.pom')"
+          set -euo pipefail
+          base=~/.m2/repository/org/thisisthepy/compose/window
+          for arch in linuxx64 linuxarm64; do
+            dir="$base/native-linux-$arch/0.1.0"
+            for file in "native-linux-$arch-0.1.0.klib" "native-linux-$arch-0.1.0.module" "native-linux-$arch-0.1.0.pom"; do
+              test -s "$dir/$file" || { echo "missing $dir/$file" >&2; exit 1; }
+            done
+            echo "ok    native-linux-$arch is published as its own coordinate"
+          done
+          root="$base/native-linux/0.1.0/native-linux-0.1.0.module"
+          test -s "$root" || { echo "missing the root module $root" >&2; exit 1; }
+          cat "$root"
+          for arch in linuxx64 linuxarm64; do
+            grep -qi "native-linux-$arch" "$root" || { echo "the root module does not list $arch" >&2; exit 1; }
+          done
+          echo "ok    the root module lists both architectures"
