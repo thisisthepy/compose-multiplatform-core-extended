@@ -111,13 +111,13 @@ jobs:
           set -euo pipefail
           base=~/.m2/repository/org/thisisthepy/compose/window
           for arch in linuxx64 linuxarm64; do
-            dir="$base/native-linux-$arch/0.1.0"
-            for file in "native-linux-$arch-0.1.0.klib" "native-linux-$arch-0.1.0.module" "native-linux-$arch-0.1.0.pom"; do
+            dir="$base/native-linux-$arch/1.11.1-ext.1"
+            for file in "native-linux-$arch-1.11.1-ext.1.klib" "native-linux-$arch-1.11.1-ext.1.module" "native-linux-$arch-1.11.1-ext.1.pom"; do
               test -s "$dir/$file" || { echo "missing $dir/$file" >&2; exit 1; }
             done
             echo "ok    native-linux-$arch is published as its own coordinate"
           done
-          root="$base/native-linux/0.1.0/native-linux-0.1.0.module"
+          root="$base/native-linux/1.11.1-ext.1/native-linux-1.11.1-ext.1.module"
           test -s "$root" || { echo "missing the root module $root" >&2; exit 1; }
           cat "$root"
           for arch in linuxx64 linuxarm64; do
