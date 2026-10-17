@@ -1,11 +1,14 @@
-package org.thisisthepy.compose.window.linux
-// The D-Bus wire types stay here: common has no D-Bus code.
+package org.thisisthepy.compose.window.atspi
+
+// The D-Bus wire: messages, their headers and the authentication line. Plain Kotlin, so the
+// Kotlin/Native and GraalVM X11 windows read and write the bus with the same code and only
+// the socket under it differs.
 
 /**
  * One connection to the session bus, already authenticated, that carries whole messages.
  *
- * Two renderers open one: the native image on Linux, through a Java socket channel, and the
- * Kotlin/Native renderer, through the C library's socket calls. Everything above this line
+ * Two windows open one: the GraalVM X11 window, through a Java socket channel, and the
+ * Kotlin/Native X11 window, through the C library's socket calls. Everything above this line
  * is the same for both, which is why it is written once here.
  */
 interface BusConnection {

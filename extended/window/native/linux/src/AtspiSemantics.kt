@@ -1,6 +1,6 @@
 @file:OptIn(androidx.compose.ui.InternalComposeUiApi::class)
 
-package org.thisisthepy.compose.window.linux
+package org.thisisthepy.compose.window.atspi
 
 import androidx.compose.ui.platform.PlatformContext
 import androidx.compose.ui.semantics.Role
@@ -18,6 +18,10 @@ import androidx.compose.ui.semantics.getOrNull
  * empty rectangle, and a reader given those finds the whole window stacked in one corner), and
  * keeps the live nodes so that an action asked for over the bus is performed on the control it
  * was asked of.
+ *
+ * Both X11 windows use this one file: the Kotlin/Native window compiles it here, and the GraalVM
+ * window's module links it into its own source tree, because it is the only part of the
+ * accessibility code that needs Compose and the shared module has none.
  *
  * Everything runs on the thread that draws. The bus is read on that thread too, so an action
  * arrives between frames and nothing here is shared.

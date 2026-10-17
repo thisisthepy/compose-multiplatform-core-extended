@@ -1,4 +1,4 @@
-package org.thisisthepy.compose.window.linux
+package org.thisisthepy.compose.window.atspi
 
 import org.thisisthepy.compose.window.appendPoint
 import org.thisisthepy.compose.window.codePointsOf
