@@ -34,7 +34,7 @@ jobs:
           - os: macos-latest
             modules: "common scene native/macos graalvm/graalvm-macos graalvm/graalvm-linux"
           - os: ubuntu-24.04
-            modules: "common scene graalvm/graalvm-macos graalvm/graalvm-linux native/linux"
+            modules: "common scene graalvm/graalvm-macos graalvm/graalvm-linux"
             compose_linux: true
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
@@ -109,19 +109,6 @@ jobs:
             "-Pjetbrains.publication.version.COMPOSE_MATERIAL3=$MATERIAL3_VERSION" \
             "${tasks[@]}"
 
-      - name: Which Amper tasks the window project has (diagnostic)
-        if: ${{ always() && matrix.compose_linux }}
-        continue-on-error: true
-        run: |
-          ./kotlin show tasks 2>&1 | grep -i -E "publish|:linux:" | head -80 | while IFS= read -r line; do echo "::notice::$line"; done
-
-      - name: Probe, publish only the per-target native/linux klibs (diagnostic)
-        if: ${{ always() && matrix.compose_linux }}
-        continue-on-error: true
-        run: |
-          ./kotlin task :linux:publishLinuxX64ToMavenLocal :linux:publishLinuxArm64ToMavenLocal 2>&1 | tail -30 | while IFS= read -r line; do echo "::notice::$line"; done
-          find ~/.m2/repository/org/thisisthepy/compose/window -maxdepth 2 | while IFS= read -r line; do echo "::notice::$line"; done
-
       - name: Publish to the local repository
         shell: bash
         run: |
@@ -133,6 +120,11 @@ jobs:
           ./kotlin publish mavenLocal
           cp project.yaml.all project.yaml
 
+      - name: Publish native/linux, one architecture at a time
+        if: ${{ matrix.compose_linux }}
+        shell: bash
+        run: ./scripts/publish-native-linux.sh
+
       - name: What was published
         shell: bash
         run: |
@@ -142,4 +134,6 @@ jobs:
       - name: native-linux was published
         if: ${{ matrix.compose_linux }}
         shell: bash
-        run: test -n "$(find ~/.m2/repository/org/thisisthepy/compose/window/native-linux* -name '*.pom')"
+        run: |
+          find ~/.m2/repository/org/thisisthepy/compose/window/native-linux* -name '*.pom' -o -name '*.klib' | sort
+          test -n "$(find ~/.m2/repository/org/thisisthepy/compose/window/native-linux* -name '*.pom')"
