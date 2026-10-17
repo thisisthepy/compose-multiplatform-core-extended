@@ -37,6 +37,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.enableSavedStateHandles
 import kotlinx.coroutines.Dispatchers
 import org.jetbrains.skia.Canvas
+import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.macosCornerRadius
 import androidx.compose.ui.input.pointer.PointerIcon
 import platform.AppKit.NSBackingStoreBuffered
@@ -244,6 +245,30 @@ class MacosWindow(
     /** Asks for a frame, which is drawn where AppKit next draws the view. */
     fun requestFrame() {
         view.needsDisplay = true
+    }
+
+    /**
+     * Told after each frame the scene painted has reached the window, with the size it was
+     * drawn at in pixels.
+     *
+     * For whoever opened the window to say how far its start got. A window that opened and
+     * never drew looks, from outside, exactly like one that did, and a frame that reached
+     * the window is the one thing that tells them apart. Nothing in the window depends on it.
+     */
+    var onFrameDrawn: ((widthInPixels: Int, heightInPixels: Int) -> Unit)? = null
+
+    /**
+     * The content's size in pixels, and how many of them go to a point.
+     *
+     * What the native image's window answers for the same question, so the two can report a
+     * start in the same words. Pixels rather than points because the scene is told pixels:
+     * its size and the drawable's are this.
+     */
+    fun measure(): WindowMeasurement {
+        val scale = window.backingScaleFactor
+        return view.bounds.useContents {
+            WindowMeasurement((size.width * scale).toInt(), (size.height * scale).toInt(), scale.toFloat())
+        }
     }
 
     /** Whether anything has ever asked this window what is in it. */
@@ -484,10 +509,12 @@ class MacosWindow(
             val scale = window?.backingScaleFactor ?: 1.0
             bounds.useContents { metal.resize(size.width, size.height, scale) }
             ResizeMetrics.frameBegin()
-            metal.draw(::paintFrame)
+            val drew = metal.draw(::paintFrame)
             bounds.useContents {
                 ResizeMetrics.frameEnd((size.width * scale).toInt(), (size.height * scale).toInt())
             }
+            // [measured] is what [paintFrame] was handed, which is the size this frame has.
+            if (drew) onFrameDrawn?.invoke(measured.width, measured.height)
         }
 
         // Redrawn when it is resized rather than stretched, which is what a layer does with
