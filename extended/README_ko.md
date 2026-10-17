@@ -42,7 +42,7 @@ English: [README.md](https://github.com/thisisthepy/compose-multiplatform-core-e
 | 툴킷 없는 native image 에 Swing 과 `UIManager` 가 남지 않도록 AWT 스위치를 단 skiko-awt | 구현 | `extended/skiko/build-skiko-awt.sh` |
 | 창 모듈: 두 경로의 창, 입력, IME, 메뉴, 크롬 | macOS 와 Linux 구현, Windows 는 [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32) 에서 열려 있음 | [`extended/window`](#창-모듈) |
 | Windows 용 Compose 창 프로시저 (캡션, 제목 표시줄, 아이콘) | 계획 | 브랜치 [`feature/windows-window-chrome`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/feature/windows-window-chrome), [DarkPyonix/compose-rust#26](https://github.com/DarkPyonix/compose-rust/issues/26) |
-| `org.thisisthepy.compose` 좌표, 버전은 `<upstream version>-ext.<N>` | 구현됨 | [`extended/COORDINATES.md`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/COORDINATES.md), [Maven 좌표](#maven-좌표) |
+| `org.thisisthepy.compose` 좌표, 한 버전 줄 `1.11.1-ext.<N>` | 구현됨 | [`extended/COORDINATES.md`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/COORDINATES.md), [Maven 좌표](#maven-좌표) |
 | compose-rust에 있던 그대로의 디자인 시스템 여섯 개와 Liquid Glass 재질 | 가져옴 | [`extended/design-systems`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/design-systems/README.md) |
 | `org.thisisthepy.compose.*` 라이브러리로 나오는 디자인 시스템 | 계획 | [DarkPyonix/compose-rust#39](https://github.com/DarkPyonix/compose-rust/issues/39) |
 
@@ -114,7 +114,7 @@ Windows 에서 Skia 는 실행 파일 옆의 `icudtl.dat` 를 찾고, 없으면 
 | `graalvm/graalvm-macos` | `org.thisisthepy.compose.window:graalvm-macos` | JVM (native image) | native image 용 AppKit 창: `appkit_window.m` 과 그 Kotlin 쪽 |
 | `graalvm/graalvm-linux` | `org.thisisthepy.compose.window:graalvm-linux` | JVM (native image) | native image 용 X11 창: `x11_window.c` 와 그 Kotlin 쪽 |
 
-버전은 모두 `0.1.0` 입니다. "Extended window publish" 워크플로가 compose-rust 가 쓰는 방식대로 이를
+버전은 모두 포크의 한 버전 `1.11.1-ext.1` 입니다. "Extended window publish" 워크플로가 compose-rust 가 쓰는 방식대로 이를
 로컬 Maven 저장소에 배포합니다. `native/linux` 는 [#111](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/111) 에서 여기에 더해집니다.
 아직 공개 저장소에 올린 것은 없습니다. Windows 창 `windows-shared` 는 [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32) 에서
 열려 있습니다.
@@ -218,21 +218,24 @@ JetBrains 의 것 그대로이고 그룹과 버전만 다릅니다. 모든 좌�
 | 대상 | 좌표 |
 |---|---|
 | Compose 모듈 | `org.thisisthepy.compose.<group>:<artifact>:1.11.1-ext.1`. 예: `org.thisisthepy.compose.ui:ui:1.11.1-ext.1` 과 그 타깃 `ui-desktop`, `ui-linuxx64`, `ui-mingwx64`, `ui-macosarm64` |
-| Material 3 | `org.thisisthepy.compose.material3:material3:1.11.0-alpha07-ext.1` |
+| Material 3 | `org.thisisthepy.compose.material3:material3:1.11.1-ext.1` |
 | JetBrains 가 `org.jetbrains.androidx.*` 로 내는 라이브러리 | `org.thisisthepy.compose.androidx.<library>`. 예: `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:2.11.0-beta01-ext.1` |
 | runtime, `runtime-saveable`, annotation, collection | `org.thisisthepy.compose.runtime:runtime:1.11.1-ext.1` 등. JetBrains 의 것과 같이 클래스 없이 `androidx.compose.runtime` 을 가리키는 스텁입니다 |
-| 창 모듈 | `org.thisisthepy.compose.window:<module>:0.1.0` |
+| 창 모듈 | `org.thisisthepy.compose.window:<module>:1.11.1-ext.1` |
 | `mingwX64` 용 skiko | `org.jetbrains.skiko:skiko-mingwx64:0.144.6`. skiko 루트 메타데이터에 이 타깃을 더합니다 |
-| AWT 스위치를 단 skiko-awt | `org.jetbrains.skiko:skiko-awt:0.144.6.1`. `extended/skiko/build-skiko-awt.sh` 가 만듭니다 |
+| AWT 스위치를 단 skiko-awt | `org.thisisthepy.compose.skiko:skiko-awt:1.11.1-ext.1`. `extended/skiko/build-skiko-awt.sh` 가 만들고, `org.jetbrains.skiko:skiko-awt` 를 대신합니다 |
 
-버전은 `<upstream version>-ext.<N>` 입니다. 앞은 JetBrains 가 같은 소스를 낸 버전이고, `N` 은 그
-버전에 대한 이 포크의 릴리스 횟수입니다. 릴리스가 아닌 로컬 빌드는 `-Pextended.publication.dev=true`
-를 주고 `-ext.<N>-dev` 로 배포합니다. 접미사가 없는 버전은 거부합니다.
+모든 것이 한 버전 줄 `<Compose Multiplatform version>-ext.<N>`(`1.11.1-ext.1`)에 있습니다. Compose
+라이브러리와 다른 라이브러리 줄, 창 모듈, skiko-awt, Gradle 플러그인이 모두 그렇습니다. 그래서 사용하는
+쪽은 한 벌만 고정합니다. `N` 은 그 Compose 에 대한 이 포크의 릴리스 횟수입니다. 각 아티팩트의 소스가
+어느 업스트림 버전인지는 POM 의 description 에 있습니다. 릴리스가 아닌 로컬 빌드는
+`-Pextended.publication.dev=true` 를 주고 `-ext.<N>-dev` 로 배포합니다. 접미사가 없는 버전은
+거부합니다. `extended/publish-local-all.sh` 가 이 모두를 로컬에 배포합니다.
 
-skiko 는 JetBrains 그룹을 유지합니다. 모든 Compose 모듈이 skiko 를 그 그룹으로 찾기 때문입니다.
-그래서 패치한 skiko-awt 는 자기 버전 `0.144.6.1` 을 받습니다. 이 버전은 Gradle 에서도 Maven 에서도
-JetBrains 의 `0.144.6` 보다 높게 정렬되므로, 이것을 지정한 쪽은 Compose 가 `0.144.6` 을 끌어와도 이것을
-받습니다. 네이티브는 JetBrains 의 `0.144.6` 런타임 jar 입니다.
+skiko 는 JetBrains 그룹을 유지합니다. 모든 Compose 모듈이 skiko 를 그 그룹으로 찾기 때문입니다. 다만
+패치한 skiko-awt 는 이 포크의 `org.thisisthepy.compose.skiko:skiko-awt` 입니다. 그 메타데이터가
+`org.jetbrains.skiko:skiko-awt` 를 JetBrains 의 `0.144.6` 보다 높은 `0.144.6.1` capability 로 선언하므로,
+Gradle 빌드는 둘을 한 라이브러리로 보고 이것을 남깁니다. 네이티브는 JetBrains 의 `0.144.6` 런타임 jar 입니다.
 
 아직 공개 저장소에 올린 것은 없습니다. 사용하는 쪽은 `mavenLocal()` 을 맨 앞에 둡니다.
 
@@ -253,7 +256,7 @@ kotlin {
     linuxX64()
     sourceSets.commonMain.dependencies {
         implementation("org.thisisthepy.compose.foundation:foundation:1.11.1-ext.1")
-        implementation("org.thisisthepy.compose.material3:material3:1.11.0-alpha07-ext.1")
+        implementation("org.thisisthepy.compose.material3:material3:1.11.1-ext.1")
     }
 }
 ```

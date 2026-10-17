@@ -41,7 +41,7 @@ adds is either a platform source set inside a Compose module or a script under `
 | skiko-awt with an AWT switch, so a toolkit-free native image keeps no Swing or `UIManager` | implemented | `extended/skiko/build-skiko-awt.sh` |
 | The window modules: window, input, IME, menus and chrome for both paths | implemented for macOS and Linux; Windows open in [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32) | [`extended/window`](#window-modules) |
 | Compose's window procedure for Windows (caption, title bar, icon) | planned | branch [`feature/windows-window-chrome`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/feature/windows-window-chrome), [DarkPyonix/compose-rust#26](https://github.com/DarkPyonix/compose-rust/issues/26) |
-| `org.thisisthepy.compose` coordinates, versioned `<upstream version>-ext.<N>` | implemented | [`extended/COORDINATES.md`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/COORDINATES.md), [Maven coordinates](#maven-coordinates) |
+| `org.thisisthepy.compose` coordinates, on one version line `1.11.1-ext.<N>` | implemented | [`extended/COORDINATES.md`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/COORDINATES.md), [Maven coordinates](#maven-coordinates) |
 | Six design systems and the Liquid Glass material, as compose-rust had them | imported | [`extended/design-systems`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/design-systems/README.md) |
 | Design systems as `org.thisisthepy.compose.*` libraries | planned | [DarkPyonix/compose-rust#39](https://github.com/DarkPyonix/compose-rust/issues/39) |
 
@@ -111,7 +111,7 @@ says so), so any Compose application can open a window through it.
 | `graalvm/graalvm-macos` | `org.thisisthepy.compose.window:graalvm-macos` | JVM (native image) | The AppKit window for a native image: `appkit_window.m` and its Kotlin side |
 | `graalvm/graalvm-linux` | `org.thisisthepy.compose.window:graalvm-linux` | JVM (native image) | The X11 window for a native image: `x11_window.c` and its Kotlin side |
 
-Each is at version `0.1.0`. The "Extended window publish" workflow publishes them to the local
+Each is at the fork's one version, `1.11.1-ext.1`. The "Extended window publish" workflow publishes them to the local
 Maven repository the way compose-rust consumes them; `native/linux` joins it in
 [#111](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/111). Nothing is on a public repository yet. The Windows window,
 `windows-shared`, is open in [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32).
@@ -220,22 +220,25 @@ version differ. [`COORDINATES.md`](COORDINATES.md) lists every coordinate.
 | What | Coordinate |
 |---|---|
 | Compose modules | `org.thisisthepy.compose.<group>:<artifact>:1.11.1-ext.1`, for example `org.thisisthepy.compose.ui:ui:1.11.1-ext.1` and its `ui-desktop`, `ui-linuxx64`, `ui-mingwx64`, `ui-macosarm64` targets |
-| Material 3 | `org.thisisthepy.compose.material3:material3:1.11.0-alpha07-ext.1` |
+| Material 3 | `org.thisisthepy.compose.material3:material3:1.11.1-ext.1` |
 | Libraries JetBrains publishes as `org.jetbrains.androidx.*` | `org.thisisthepy.compose.androidx.<library>`, for example `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:2.11.0-beta01-ext.1` |
 | Runtime, `runtime-saveable`, annotation and collection | `org.thisisthepy.compose.runtime:runtime:1.11.1-ext.1` and the others: stubs with no classes that point at `androidx.compose.runtime`, as JetBrains' do |
-| The window modules | `org.thisisthepy.compose.window:<module>:0.1.0` |
+| The window modules | `org.thisisthepy.compose.window:<module>:1.11.1-ext.1` |
 | skiko for `mingwX64` | `org.jetbrains.skiko:skiko-mingwx64:0.144.6`, with skiko's root metadata extended to name it |
-| skiko-awt with the AWT switch | `org.jetbrains.skiko:skiko-awt:0.144.6.1`, from `extended/skiko/build-skiko-awt.sh` |
+| skiko-awt with the AWT switch | `org.thisisthepy.compose.skiko:skiko-awt:1.11.1-ext.1`, from `extended/skiko/build-skiko-awt.sh`, standing in for `org.jetbrains.skiko:skiko-awt` |
 
-Versions are `<upstream version>-ext.<N>`: the version JetBrains published the same sources as,
-and the count of this fork's releases of it. A local build that is not a release passes
-`-Pextended.publication.dev=true` and publishes `-ext.<N>-dev`. A version without the suffix
-is refused.
+Everything is on one version line, `<Compose Multiplatform version>-ext.<N>` (`1.11.1-ext.1`):
+the Compose libraries and every other library line, the window modules, skiko-awt and the
+Gradle plugin, so a consumer pins one set. `N` counts this fork's releases on that Compose. The
+upstream version each artifact's sources are is in its POM's description. A local build that is
+not a release passes `-Pextended.publication.dev=true` and publishes `-ext.<N>-dev`. A version
+without the suffix is refused. `extended/publish-local-all.sh` publishes all of it locally.
 
-skiko keeps JetBrains' group, because every Compose module asks for it there. The patched
-skiko-awt therefore gets a version of its own, `0.144.6.1`, which sorts above JetBrains'
-`0.144.6` in Gradle and in Maven, so a consumer that names it gets it even when Compose brings
-in `0.144.6`; its natives are JetBrains' runtime jars at `0.144.6`.
+skiko keeps JetBrains' group, because every Compose module asks for it there, except for the
+patched skiko-awt, which is this fork's `org.thisisthepy.compose.skiko:skiko-awt`. Its metadata
+declares `org.jetbrains.skiko:skiko-awt` as a capability at `0.144.6.1`, above JetBrains'
+`0.144.6`, so a Gradle build sees the two as one library and keeps this one; its natives are
+JetBrains' runtime jars at `0.144.6`.
 
 Nothing is on a public repository yet. A consumer puts `mavenLocal()` first:
 
@@ -256,7 +259,7 @@ kotlin {
     linuxX64()
     sourceSets.commonMain.dependencies {
         implementation("org.thisisthepy.compose.foundation:foundation:1.11.1-ext.1")
-        implementation("org.thisisthepy.compose.material3:material3:1.11.0-alpha07-ext.1")
+        implementation("org.thisisthepy.compose.material3:material3:1.11.1-ext.1")
     }
 }
 ```
