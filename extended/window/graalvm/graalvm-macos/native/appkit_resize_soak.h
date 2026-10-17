@@ -12,7 +12,8 @@
 // two seconds on ("collected"), which the renderer can take a collection before.
 //
 // The heap is the image's and is not visible from here: the renderer prints its own line
-// for it ("compose-rust: soak heap ...") while a soak is running, see dxc_native_soak_state.
+// for it ("compose-rust: soak heap ...") while a soak is running, asking dxc_native_soak_state
+// in appkit_window.m.
 //
 // Nothing here runs unless asked for, and it touches nothing the window does on its own.
 #ifndef DXC_APPKIT_RESIZE_SOAK_H
@@ -41,9 +42,6 @@ static int dxc_soak_rounds(void) {
 // The phase the soak is in, for the renderer's heap line: 0 not running or done, 1 running,
 // 2 the last round has ended and a collection is wanted before the final reading.
 static volatile int dxc_soak_state;
-
-/** What the renderer polls to know whether to print its heap line and when to collect. */
-int32_t dxc_native_soak_state(void) { return dxc_soak_state; }
 
 static long dxc_soak_mb(long long bytes) { return bytes < 0 ? -1 : (long)((bytes + 524288) / 1048576); }
 

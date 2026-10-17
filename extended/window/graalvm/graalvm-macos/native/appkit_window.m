@@ -1083,6 +1083,13 @@ void dxc_native_window_chrome(
  */
 #include "appkit_resize_soak.h"
 
+/**
+ * Where the resize soak is (see appkit_resize_soak.h), which the renderer polls to know
+ * when to print its heap line and when to collect. Defined here, with the other names the
+ * renderer reaches, rather than in the header.
+ */
+int32_t dxc_native_soak_state(void) { return dxc_soak_state; }
+
 int32_t dxc_native_window_open(
     const char *title,
     int32_t width,
