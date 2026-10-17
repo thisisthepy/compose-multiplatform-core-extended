@@ -16,6 +16,7 @@
 #include <string.h>
 #include <sys/select.h>
 #include <sys/time.h>
+#include <time.h>
 
 enum {
     DXC_EVENT_POINTER_MOVE = 1,
@@ -1114,6 +1115,16 @@ void dxc_native_window_configure(
     dxc_options.min_height = min_height;
     dxc_options.system_chrome = system_chrome;
     dxc_options.backdrop = backdrop;
+}
+
+// When the frame drawn now will be on the screen, in nanoseconds. The macOS window answers
+// from its display link; the native image's shared Kotlin declares it, so this platform
+// answers too, with the monotonic clock now. That is the clock the X11 window's frames are
+// timed on (System.nanoTime reads it) and the one Rust's Instant reads on Linux.
+int64_t dxc_native_frame_time_nanos(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (int64_t)now.tv_sec * 1000000000LL + now.tv_nsec;
 }
 
 // macOS only: the native image's shared Kotlin declares them, so every platform defines

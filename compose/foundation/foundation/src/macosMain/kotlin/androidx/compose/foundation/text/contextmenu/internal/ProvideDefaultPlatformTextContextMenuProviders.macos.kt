@@ -64,6 +64,17 @@ internal actual fun ProvideDefaultPlatformTextContextMenuProviders(
     modifier: Modifier,
     content: @Composable () -> Unit,
 ) {
+    // An application that gave its own menu, dropdown or toolbar, keeps it alone: the
+    // system's is the default, not a second menu on top of the one asked for.
+    if (LocalTextContextMenuDropdownProvider.current != null ||
+        LocalTextContextMenuToolbarProvider.current != null
+    ) {
+        androidx.compose.foundation.layout.Box(modifier, propagateMinConstraints = true) {
+            content()
+        }
+        return
+    }
+
     // Where the menu is put is in the coordinates of whatever the menu is for, so the
     // layout it belongs to has to be known before one can be shown.
     val anchor = remember { AnchorCoordinates() }
