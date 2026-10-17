@@ -46,6 +46,26 @@ die() {
     exit 1
 }
 
+# The PATH kotlin.bat runs with on Windows: System32 first, and none of Git's own directories
+# but Git\cmd (git itself). Started from Git Bash, kotlin.bat would otherwise unpack its toolchain
+# with Git's GNU tar, which takes C:\... for a remote host ("Cannot connect to C: resolve failed").
+windows_tool_path() {
+    local git_root entry native kept
+    git_root="$(cygpath -w / | tr 'A-Z' 'a-z')"
+    git_root="${git_root%\\}"
+    kept="$(cygpath -u "${SYSTEMROOT:-C:\\Windows}")/System32"
+    local IFS=:
+    for entry in $PATH; do
+        native="$(cygpath -w "$entry" 2>/dev/null | tr 'A-Z' 'a-z')"
+        native="${native%\\}"
+        if [[ "$native" == "$git_root" || "$native" == "$git_root"\\* ]] && [[ "$native" != "$git_root\\cmd" ]]; then
+            continue
+        fi
+        kept="$kept:$entry"
+    done
+    echo "$kept"
+}
+
 [[ $# -ge 1 ]] || die "no work directory given" "usage: publish-local-all.sh <work-dir> [--targets \"<targets>\"]"
 work="$1"
 shift
@@ -130,7 +150,11 @@ echo "==> 3. the window modules: ${window_modules[*]}"
         echo "modules:"
         for module in "${window_modules[@]}"; do echo "  - $module"; done
     } > project.yaml
-    if [[ $windows_host -eq 1 ]]; then cmd //c kotlin.bat publish mavenLocal; else ./kotlin publish mavenLocal; fi
+    if [[ $windows_host -eq 1 ]]; then
+        PATH="$(windows_tool_path)" cmd //c kotlin.bat publish mavenLocal
+    else
+        ./kotlin publish mavenLocal
+    fi
 )
 fi
 if [[ $native_linux -eq 1 ]]; then

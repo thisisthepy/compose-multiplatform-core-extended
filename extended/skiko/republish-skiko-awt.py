@@ -9,7 +9,8 @@ Usage: republish-skiko-awt.py <from-dir> <to-dir> <upstream-version> <group> <ve
 - the jar and the sources jar, renamed and otherwise as they are;
 - the .pom with its own group and version, the upstream version in its description, and the
   dependencies (the natives, skiko-awt-runtime-*) as they were;
-- the .module with its own component, the files renamed, and every variant declaring two
+- the .module with its own component (no longer pointing at JetBrains' skiko root), the files
+  renamed, and every variant declaring two
   capabilities: its own coordinate, and JetBrains' org.jetbrains.skiko:skiko-awt at
   <capability-version>, so Gradle treats the two as one library and a build that resolves the
   conflict by version keeps this one.
@@ -54,6 +55,10 @@ def main(argv):
         elif name.endswith(".module"):
             metadata = json.load(open(path, encoding="utf-8"))
             metadata["component"].update({"group": group, "module": ARTIFACT, "version": version})
+            # skiko-awt's own metadata says it is a variant of JetBrains' skiko root ("url" to
+            # skiko/<version>/skiko-<version>.module), which would send a consumer back to JetBrains'
+            # coordinates. Published on its own, it is its own component.
+            metadata["component"].pop("url", None)
             for variant in metadata.get("variants", []):
                 for entry in variant.get("files", []):
                     for key in ("name", "url"):
