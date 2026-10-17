@@ -9,8 +9,9 @@ product:
 
 # Compose Multiplatform publishes no Kotlin/Native target for Linux, so the modules below are
 # this fork's, built from this repository and published to the local Maven repository first
-# (extended/compose/publish-local.sh linuxX64 linuxArm64). The runtime is JetBrains' own,
-# which has a Linux target and which this fork does not publish. skiko has a published
+# (extended/compose/publish-local.sh linuxX64 linuxArm64). The runtime may stay JetBrains':
+# it is a stub with no classes that points at androidx.compose.runtime, which has a Linux
+# target, as the fork's runtime stub does. skiko has a published
 # linuxX64 target and is resolved normally as a dependency of Compose UI.
 repositories:
   - id: mavenLocal

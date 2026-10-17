@@ -165,11 +165,9 @@ consumer is told the module does not support the platform. Material 2's navigati
 adaptive family and the navigation suite are not on the list, because each depends on a
 published artifact with no Linux variant.
 
-The runtime, `runtime-saveable` and the internal annotation and collection libraries are not
-published: this fork does not change them, and its modules depend on JetBrains' own at
-`1.11.1`. JetBrains' lifecycle and navigation libraries, and the Compose compiler, ask for the
-runtime by JetBrains' coordinates, so a second copy under this fork's group would put the
-same classes in the graph twice.
+The runtime, `runtime-saveable` and the internal annotation and collection libraries are on
+the list although they carry no classes. They are compatibility stubs that point at the
+androidx artifacts, as JetBrains' are, and the modules above name them at this fork's version.
 
 The CI jobs that build the window modules run this through `.github/actions/fork-compose`,
 which caches the result until the Compose sources change.
@@ -224,7 +222,7 @@ version differ. [`COORDINATES.md`](COORDINATES.md) lists every coordinate.
 | Compose modules | `org.thisisthepy.compose.<group>:<artifact>:1.11.1-ext.1`, for example `org.thisisthepy.compose.ui:ui:1.11.1-ext.1` and its `ui-desktop`, `ui-linuxx64`, `ui-mingwx64`, `ui-macosarm64` targets |
 | Material 3 | `org.thisisthepy.compose.material3:material3:1.11.0-alpha07-ext.1` |
 | Libraries JetBrains publishes as `org.jetbrains.androidx.*` | `org.thisisthepy.compose.androidx.<library>`, for example `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:2.11.0-beta01-ext.1` |
-| Runtime, `runtime-saveable`, annotation and collection | not published; JetBrains' `org.jetbrains.compose.runtime:runtime:1.11.1` and the others are used as they are |
+| Runtime, `runtime-saveable`, annotation and collection | `org.thisisthepy.compose.runtime:runtime:1.11.1-ext.1` and the others: stubs with no classes that point at `androidx.compose.runtime`, as JetBrains' do |
 | The window modules | `org.thisisthepy.compose.window:<module>:0.1.0` |
 | skiko for `mingwX64` | `org.jetbrains.skiko:skiko-mingwx64:0.144.6`, with skiko's root metadata extended to name it |
 | skiko-awt with the AWT switch | `org.jetbrains.skiko:skiko-awt:0.144.6.1`, from `extended/skiko/build-skiko-awt.sh` |

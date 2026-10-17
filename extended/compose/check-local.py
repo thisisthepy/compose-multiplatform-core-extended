@@ -9,10 +9,11 @@ printed with the file that shows it:
 1. Every dependency a published module names under org.thisisthepy.compose is in the
    repository at the version it names. One that is not sends the consumer's build to the
    network for a coordinate nobody publishes.
-2. No published module names a JetBrains Compose module this fork changes (anything under
+2. No published module names a JetBrains Compose module that carries classes (anything under
    org.jetbrains.compose other than the runtime and the internal annotation and collection
-   libraries, which this fork takes from JetBrains). Such a dependency puts JetBrains' copy of
-   the same classes next to this fork's, which no resolver can merge because the groups differ.
+   libraries, which are stubs pointing at androidx, as this fork's are). Such a dependency puts
+   JetBrains' copy of the same classes next to this fork's, which no resolver can merge because
+   the groups differ.
 3. Nothing under org.jetbrains.compose or org.jetbrains.androidx carries a version of this
    fork (-ext.<N>). An artifact at JetBrains' coordinates that JetBrains did not build is one
    a consumer cannot tell from the real thing.
@@ -28,7 +29,8 @@ import sys
 FORK = "org.thisisthepy.compose"
 # The window modules are this fork's too, but versioned on their own and built by Amper.
 OWN_VERSIONED = ("org.thisisthepy.compose.window",)
-# JetBrains groups this fork's modules may depend on: the projects it does not publish.
+# JetBrains groups this fork's modules may depend on: compatibility stubs with no classes,
+# which point at the same androidx artifacts as this fork's own stubs do.
 TAKEN_FROM_JETBRAINS = {
     "org.jetbrains.compose.runtime",
     "org.jetbrains.compose.annotation-internal",

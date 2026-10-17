@@ -164,10 +164,9 @@ python3 extended/compose/check-local.py             # ~/.m2 에 남은 것이 �
 않는다는 답을 받습니다. Material 2 의 navigation, adaptive 계열, navigation suite 는 목록에 없습니다.
 각각 Linux 변형이 없는 배포 아티팩트에 의존하기 때문입니다.
 
-runtime, `runtime-saveable`, 내부용 annotation 과 collection 라이브러리는 배포하지 않습니다. 이
-포크는 그것들을 바꾸지 않고, 포크의 모듈은 JetBrains 의 `1.11.1` 에 의존합니다. JetBrains 의
-lifecycle 과 navigation 라이브러리, 그리고 Compose 컴파일러가 runtime 을 JetBrains 좌표로 찾기
-때문에, 포크 그룹으로 한 벌 더 내면 같은 클래스가 그래프에 두 번 들어옵니다.
+runtime, `runtime-saveable`, 내부용 annotation 과 collection 라이브러리도 목록에 있습니다. 클래스는
+없습니다. JetBrains 의 것과 같이 androidx 아티팩트를 가리키는 호환 스텁이고, 위 모듈들이 이 포크의
+버전으로 그것들을 찾기 때문입니다.
 
 창 모듈을 빌드하는 CI 작업은 `.github/actions/fork-compose` 로 이것을 실행하고, Compose 소스가 바뀔
 때까지 결과를 캐시합니다.
@@ -221,7 +220,7 @@ JetBrains 의 것 그대로이고 그룹과 버전만 다릅니다. 모든 좌�
 | Compose 모듈 | `org.thisisthepy.compose.<group>:<artifact>:1.11.1-ext.1`. 예: `org.thisisthepy.compose.ui:ui:1.11.1-ext.1` 과 그 타깃 `ui-desktop`, `ui-linuxx64`, `ui-mingwx64`, `ui-macosarm64` |
 | Material 3 | `org.thisisthepy.compose.material3:material3:1.11.0-alpha07-ext.1` |
 | JetBrains 가 `org.jetbrains.androidx.*` 로 내는 라이브러리 | `org.thisisthepy.compose.androidx.<library>`. 예: `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:2.11.0-beta01-ext.1` |
-| runtime, `runtime-saveable`, annotation, collection | 배포하지 않습니다. JetBrains 의 `org.jetbrains.compose.runtime:runtime:1.11.1` 등을 그대로 씁니다 |
+| runtime, `runtime-saveable`, annotation, collection | `org.thisisthepy.compose.runtime:runtime:1.11.1-ext.1` 등. JetBrains 의 것과 같이 클래스 없이 `androidx.compose.runtime` 을 가리키는 스텁입니다 |
 | 창 모듈 | `org.thisisthepy.compose.window:<module>:0.1.0` |
 | `mingwX64` 용 skiko | `org.jetbrains.skiko:skiko-mingwx64:0.144.6`. skiko 루트 메타데이터에 이 타깃을 더합니다 |
 | AWT 스위치를 단 skiko-awt | `org.jetbrains.skiko:skiko-awt:0.144.6.1`. `extended/skiko/build-skiko-awt.sh` 가 만듭니다 |

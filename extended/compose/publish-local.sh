@@ -17,8 +17,8 @@
 # a sibling at this fork's version. Material 2's navigation, the adaptive family and the
 # navigation suite are left off because each asks for a published artifact that has no Linux
 # variant. The runtime, runtime-saveable and the internal annotation and collection libraries
-# are not on it because this fork does not publish them: its modules depend on JetBrains' own
-# (JetBrainsPublication.takenFromJetBrains).
+# are on it although they carry no classes: they are compatibility stubs that point at the
+# androidx artifacts, and the modules above name them at this fork's version.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,6 +33,10 @@ die() {
 
 # The modules every target needs.
 common_modules=(
+    annotation:annotation
+    collection:collection
+    compose:runtime:runtime
+    compose:runtime:runtime-saveable
     compose:animation:animation
     compose:animation:animation-core
     compose:foundation:foundation
