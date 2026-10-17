@@ -6,7 +6,11 @@
 //
 // The build configures on demand, so a project nothing has asked for yet has no tasks; each
 // one named is configured here first (evaluationDependsOn) before its task is looked up.
+// Included builds (buildSrc's and the others) get nothing: they hold none of these projects.
 gradle.rootProject { root ->
+    // An init script reaches every build in the invocation, included builds too; only the one
+    // that holds Compose has the projects named.
+    if (gradle.parent != null) return
     root.afterEvaluate {
         def requested = (root.findProperty("extended.publish.tasks") ?: "").toString().split(",").findAll { it }
         def aggregate = root.tasks.register("extendedPublishLocal")
