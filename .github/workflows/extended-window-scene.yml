@@ -83,6 +83,15 @@ jobs:
       - name: Test (macosArm64)
         run: ./kotlin test -p macosArm64 -m scene
 
+      - name: What the test link was given (on failure)
+        if: failure()
+        run: |
+          ./kotlin show dependencies || true
+          find ~/.m2/repository -path '*animation-core*' \( -name '*.klib' -o -name '*.module' \) | sort
+          find build -type f \( -name '*.args' -o -name '*argfile*' -o -name '*.rsp' \) 2>/dev/null | head -20 |
+            while read -r f; do echo "== $f"; grep -n 'animation' "$f" | head -20; done
+          find ~/.cache/JetBrains ~/Library/Caches/JetBrains -name '*.klib' -path '*animation*' 2>/dev/null | head -20
+
       - name: The Linux GraalVM layer compiles with the GL frame entry
         run: ./kotlin build -p jvm -m graalvm-linux
 
