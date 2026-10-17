@@ -387,6 +387,18 @@ class X11Window : WindowPlatform {
             detail("request ${width}x$height")
             XResizeWindow(display, window, width.convert(), height.convert())
             XFlush(display)
+            // The next size is asked for only once the server has confirmed this one and its
+            // frame has been drawn, which is what a window manager holding the frame for the
+            // sync counter does; the GraalVM window's drag waits the same way. Asked for
+            // earlier, the frame for this size is drawn while the server already has the next
+            // one. A pump can return before the confirmation arrives (a wake ends its wait), so
+            // it is asked again, for up to a second.
+            val asked = monotonicClockNanos()
+            while (!isClosed && (measured.width != width || measured.height != height) &&
+                monotonicClockNanos() - asked < CONFIRM_TIMEOUT_NANOS
+            ) {
+                pump(CONFIRM_SLICE_MILLIS)
+            }
             pump(pauseMillis)
         }
     }
@@ -833,6 +845,8 @@ class X11Window : WindowPlatform {
         const val SOURCE_PAGER = 2L
         const val DENSITY = 1.0f
         const val WAKE_DRAIN_BYTES = 64
+        const val CONFIRM_TIMEOUT_NANOS = 1_000_000_000L
+        const val CONFIRM_SLICE_MILLIS = 50L
         const val LOW_HALF = 0xFFFFFFFFuL
         const val KEY_TEXT_BYTES = 32
         const val P_MIN_SIZE = 1L shl 4
