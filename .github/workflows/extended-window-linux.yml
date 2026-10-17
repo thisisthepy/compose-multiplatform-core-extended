@@ -68,7 +68,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config libx11-dev libxext-dev libgl1-mesa-dev \
-            libfontconfig1-dev libfreetype6-dev xvfb
+            libfontconfig1-dev libfreetype6-dev xvfb openbox xdotool x11-utils
 
       - name: This fork's Compose for Kotlin/Native Linux
         uses: ./.github/actions/fork-compose
@@ -91,4 +91,7 @@ jobs:
 
       - name: Test (x64, under a virtual display)
         working-directory: extended/window
+        # WmDragTest starts openbox for its own drag and stops it again (scripts/wm-drag.sh).
+        env:
+          WM_DRAG_SCRIPT: ${{ github.workspace }}/extended/window/scripts/wm-drag.sh
         run: xvfb-run -a ./kotlin test -p linuxX64
