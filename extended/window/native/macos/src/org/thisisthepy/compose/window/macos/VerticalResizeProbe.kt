@@ -134,7 +134,7 @@ internal object VerticalResizeProbe {
         )
         sampling = true
         platform.darwin.dispatch_async(
-            platform.darwin.dispatch_get_global_queue(platform.darwin.QOS_CLASS_USER_INTERACTIVE.toLong(), 0u),
+            platform.darwin.dispatch_get_global_queue(platform.darwin.DISPATCH_QUEUE_PRIORITY_HIGH.toLong(), 0u),
         ) {
             var index = 0
             while (sampling) sample(index++)
