@@ -106,7 +106,14 @@ class X11Window : WindowPlatform {
      * each present; without it the last size event answers, which costs nothing.
      */
     val resizeStats = ResizeStats()
-    private val strictResizeAccounting = getenv("DXC_REPORT_RESIZE") != null
+    private val resizeDetail = getenv("DXC_REPORT_RESIZE_DETAIL") != null
+    private val strictResizeAccounting = getenv("DXC_REPORT_RESIZE") != null || resizeDetail
+
+    /** DXC_REPORT_RESIZE_DETAIL: one line per size asked for, confirmed and presented. */
+    private fun detail(line: String) {
+        if (!resizeDetail) return
+        platform.posix.fputs("dxc resize detail: t=${monotonicClockNanos() / 1000}us $line\n", platform.posix.stderr)
+    }
     private var presentedSinceEvent = false
     private val frameRequests = FrameRequestCoalescer().also { it.request() }
     private var ownedClipboard: String? = null
@@ -344,6 +351,7 @@ class X11Window : WindowPlatform {
         display?.let { XFlush(it) }
         val (width, height) = if (strictResizeAccounting) serverSize() else measured.width to measured.height
         resizeStats.presentAgainst(drawnWidth, drawnHeight, width, height)
+        detail("present drawn=${drawnWidth}x$drawnHeight configured=${measured.width}x${measured.height} server=${width}x$height")
         return FramePresentRecord(drawnWidth, drawnHeight, width, height)
     }
 
@@ -376,8 +384,21 @@ class X11Window : WindowPlatform {
             val t = step.toDouble() / steps
             val width = (from.width + (toWidth - from.width) * t).toInt().coerceAtLeast(1)
             val height = (from.height + (toHeight - from.height) * t).toInt().coerceAtLeast(1)
+            detail("request ${width}x$height")
             XResizeWindow(display, window, width.convert(), height.convert())
             XFlush(display)
+            // The next size is asked for only once the server has confirmed this one and its
+            // frame has been drawn, which is what a window manager holding the frame for the
+            // sync counter does; the GraalVM window's drag waits the same way. Asked for
+            // earlier, the frame for this size is drawn while the server already has the next
+            // one. A pump can return before the confirmation arrives (a wake ends its wait), so
+            // it is asked again, for up to a second.
+            val asked = monotonicClockNanos()
+            while (!isClosed && (measured.width != width || measured.height != height) &&
+                monotonicClockNanos() - asked < CONFIRM_TIMEOUT_NANOS
+            ) {
+                pump(CONFIRM_SLICE_MILLIS)
+            }
             pump(pauseMillis)
         }
     }
@@ -719,6 +740,7 @@ class X11Window : WindowPlatform {
                 }
                 measured = WindowMeasurement(width, height, DENSITY)
                 resizeStats.step(width, height)
+                detail("configure ${width}x$height")
                 frameRequests.request()
                 resized()
             }
@@ -823,6 +845,8 @@ class X11Window : WindowPlatform {
         const val SOURCE_PAGER = 2L
         const val DENSITY = 1.0f
         const val WAKE_DRAIN_BYTES = 64
+        const val CONFIRM_TIMEOUT_NANOS = 1_000_000_000L
+        const val CONFIRM_SLICE_MILLIS = 50L
         const val LOW_HALF = 0xFFFFFFFFuL
         const val KEY_TEXT_BYTES = 32
         const val P_MIN_SIZE = 1L shl 4
