@@ -86,6 +86,27 @@ jobs:
         with:
           cache-read-only: true
 
+      # The full check compiles every target's klib, mingwX64 among them, and skiko publishes
+      # no mingwX64 artifact: extended/skiko builds its Kotlin half and the root metadata that
+      # names it, into the local repository the Compose build reads skiko from first.
+      - name: Cache skiko for mingwX64
+        if: steps.modules.outputs.tasks == 'jbApiCheck'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository/org/jetbrains/skiko/skiko
+            ~/.m2/repository/org/jetbrains/skiko/skiko-mingwx64
+          key: skiko-mingwx64-kotlin-${{ hashFiles('extended/skiko/build-skiko-mingw.sh', 'extended/skiko/*.patch', 'extended/skiko/extend-skiko-root.py') }}
+
+      - name: skiko for mingwX64 (the Kotlin half)
+        if: steps.modules.outputs.tasks == 'jbApiCheck'
+        run: |
+          if [ -f ~/.m2/repository/org/jetbrains/skiko/skiko-mingwx64/0.144.6/skiko-mingwx64-0.144.6.module ]; then
+            echo "restored from the cache"
+          else
+            ./extended/skiko/build-skiko-mingw.sh "$RUNNER_TEMP/skiko-mingw" --kotlin-only
+          fi
+
       # Desktop (jvm) targets only. No Android SDK is installed, so Android must stay off.
       - name: apiCheck against the committed dumps
         if: steps.modules.outputs.tasks != ''

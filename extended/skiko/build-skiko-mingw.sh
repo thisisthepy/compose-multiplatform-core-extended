@@ -17,7 +17,11 @@
 # Kept here as a patch rather than a fork of skiko, by decision: a mingwX64 skiko will not
 # need publishing for a long time, and a fork is a repository to keep alive.
 #
-# Usage: build-skiko-mingw.sh <work-dir> [--clean]
+# Usage: build-skiko-mingw.sh <work-dir> [--clean] [--kotlin-only]
+#
+# --kotlin-only stops after step 1: the Kotlin half and the root metadata, which is all a
+# Compose build compiling for mingwX64 resolves (the public API check, for one). It needs
+# neither Kotlin/Native's LLVM nor the MSVC runtime, and it runs on Linux.
 #
 # Output, in <work-dir>/out/windows-x64/:
 #   skiko-bridges.lib   skiko's C++ half, MSVC, static C runtime (/MT)
@@ -46,35 +50,22 @@ die() {
     exit 1
 }
 
-[[ $# -ge 1 ]] || die "no work directory given" "usage: build-skiko-mingw.sh <work-dir> [--clean]"
+usage="usage: build-skiko-mingw.sh <work-dir> [--clean] [--kotlin-only]"
+[[ $# -ge 1 ]] || die "no work directory given" "$usage"
 WORK="$1"
 shift
 clean=0
+kotlin_only=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --clean) clean=1; shift ;;
-        *) die "unknown argument '$1'" "usage: build-skiko-mingw.sh <work-dir> [--clean]" ;;
+        --kotlin-only) kotlin_only=1; shift ;;
+        *) die "unknown argument '$1'" "$usage" ;;
     esac
 done
 
 [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/java" ]] ||
     die "JAVA_HOME does not name a JDK" "skiko's Gradle build needs a JDK 17 or 21."
-
-llvm_bin=""
-for candidate in $(ls -d "$HOME"/.konan/dependencies/llvm-*-essentials*/bin 2>/dev/null | sort -V -r); do
-    if [[ -x "$candidate/clang" && -x "$candidate/llvm-ar" ]]; then llvm_bin="$candidate"; break; fi
-done
-[[ -n "$llvm_bin" ]] || die "no Kotlin/Native LLVM with clang and llvm-ar under ~/.konan/dependencies" \
-    "Build any Kotlin/Native target once and Kotlin/Native downloads it."
-
-xwin="${XWIN_DIR:-}"
-if [[ -z "$xwin" ]]; then
-    for candidate in "$HOME/Library/Caches/cargo-xwin/xwin" "$HOME/.cache/cargo-xwin/xwin"; do
-        [[ -d "$candidate/crt/include" ]] && { xwin="$candidate"; break; }
-    done
-fi
-[[ -n "$xwin" && -d "$xwin/sdk/include/ucrt" ]] || die "no MSVC runtime and Windows SDK headers found" \
-    "Run 'cargo xwin build --target x86_64-pc-windows-msvc' once, or set XWIN_DIR."
 
 [[ $clean -eq 1 ]] && rm -rf "$WORK"
 mkdir -p "$WORK"
@@ -109,6 +100,29 @@ for suffix in .module .pom .jar -sources.jar -kotlin-tooling-metadata.json; do
     mv "$root/$file.download" "$root/$file"
 done
 python3 "$HERE/extend-skiko-root.py" "$root/skiko-$PUBLISHED_AS.module" "$PUBLISHED_AS"
+
+if [[ $kotlin_only -eq 1 ]]; then
+    echo "skiko $PUBLISHED_AS for mingwX64 (the Kotlin half) published to the local Maven repository"
+    exit 0
+fi
+
+# The C++ half needs Kotlin/Native's clang and the MSVC runtime and Windows SDK headers.
+llvm_bin=""
+for candidate in $(ls -d "$HOME"/.konan/dependencies/llvm-*-essentials*/bin 2>/dev/null | sort -V -r); do
+    if [[ -x "$candidate/clang" && -x "$candidate/llvm-ar" ]]; then llvm_bin="$candidate"; break; fi
+done
+[[ -n "$llvm_bin" ]] || die "no Kotlin/Native LLVM with clang and llvm-ar under ~/.konan/dependencies" \
+    "Build any Kotlin/Native target once and Kotlin/Native downloads it."
+
+xwin="${XWIN_DIR:-}"
+if [[ -z "$xwin" ]]; then
+    for candidate in "$HOME/Library/Caches/cargo-xwin/xwin" "$HOME/.cache/cargo-xwin/xwin"; do
+        [[ -d "$candidate/crt/include" ]] && { xwin="$candidate"; break; }
+    done
+fi
+[[ -n "$xwin" && -d "$xwin/sdk/include/ucrt" ]] || die "no MSVC runtime and Windows SDK headers found" \
+    "Run 'cargo xwin build --target x86_64-pc-windows-msvc' once, or set XWIN_DIR."
+
 
 # 2. Skia for Windows, as JetBrains builds it.
 skia="$WORK/skia-$SKIA_RELEASE-windows-x64"
