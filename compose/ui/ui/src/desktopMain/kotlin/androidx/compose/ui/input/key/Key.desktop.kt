@@ -652,6 +652,8 @@ actual value class Key(val keyCode: Long) {
 }
 
     actual override fun toString(): String {
+        // The toolkit's key names are not reachable when the embedder builds without it.
+        if (!androidx.compose.ui.internal.ExtendedAwt.available) return "Key: $nativeKeyCode"
         return "Key: ${KeyEvent.getKeyText(nativeKeyCode)}"
     }
 }

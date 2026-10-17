@@ -1,0 +1,51 @@
+# The Kotlin/Native macOS window: AppKit for the window and its input, Metal for the surface.
+#
+# An operating system layer only. It has no JVM, no AWT and no hand-written interop: every
+# call goes through the platform libraries Kotlin/Native already ships. Policy, such as the
+# smallest size a window is given or what text on the clipboard means, is decided in the
+# common window module and reached from here.
+product:
+  type: lib
+  platforms: [ macosArm64 ]
+
+dependencies:
+  - ../../common
+  - $compose.runtime
+  - $compose.foundation
+  - $compose.ui
+
+test-dependencies:
+  - $kotlin.test
+
+settings:
+  publishing:
+    enabled: true
+    group: org.thisisthepy.compose.window
+    artifactId: native-macos
+    version: 0.1.0
+  compose:
+    enabled: true
+  kotlin:
+    # A klib's unique_name defaults to the Amper module name, which is the directory name
+    # (`common`, `macos`, `linux`). The Kotlin/Native linker refuses two libraries with the
+    # same unique_name, so any consumer with a module of that name could not link this one.
+    # The Maven coordinates are a globally unique name, so the klib takes them.
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.window:native-macos
+    optIns:
+      - kotlinx.cinterop.ExperimentalForeignApi
+      - kotlinx.cinterop.BetaInteropApi
+
+# Tests compile into a klib of their own that links against the main one, so it needs a
+# unique_name of its own too.
+test-settings:
+  kotlin:
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.window:native-macos-test
+
+repositories:
+  - id: mavenLocal
+    url: mavenLocal
+    publish: true

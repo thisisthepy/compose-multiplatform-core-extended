@@ -17,6 +17,7 @@
 package androidx.compose.ui.platform
 
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.internal.ExtendedAwt
 import androidx.compose.ui.text.AnnotatedString
 import java.awt.HeadlessException
 import java.awt.Toolkit
@@ -83,7 +84,7 @@ internal class AwtPlatformClipboard internal constructor() : Clipboard {
     }
 
     override suspend fun setClipEntry(clipEntry: ClipEntry?) {
-        val transferable = clipEntry?.asAwtTransferable
+        val transferable = clipEntry?.toAwtTransferable()
         systemClipboard?.setContents(
             /* contents = */ transferable ?: EmptyTransferable,
             /* owner = */ transferable as? ClipboardOwner,
@@ -151,7 +152,66 @@ private object EmptyTransferable : Transferable {
 }
 
 @Suppress("DEPRECATION")
-internal actual fun createPlatformClipboardManager(): ClipboardManager = AwtClipboardManager()
+internal actual fun createPlatformClipboardManager(): ClipboardManager =
+    if (ExtendedAwt.available) AwtClipboardManager() else NoClipboardManager()
 
-internal actual fun createPlatformClipboard(): Clipboard = AwtPlatformClipboard()
+internal actual fun createPlatformClipboard(): Clipboard =
+    if (ExtendedAwt.available) AwtPlatformClipboard() else NoPlatformClipboard()
 
+// What an embedder built without the toolkit has when it supplies no clipboard of its own:
+// nothing to paste and nowhere to copy to, and no java.awt.datatransfer class behind it.
+@Suppress("DEPRECATION")
+private class NoClipboardManager : ClipboardManager {
+    override fun getText(): AnnotatedString? = null
+
+    override fun setText(annotatedString: AnnotatedString) = Unit
+
+    override fun hasText(): Boolean = false
+
+    override fun getClip(): ClipEntry? = null
+
+    @Suppress("GetterSetterNames")
+    override fun setClip(clipEntry: ClipEntry?) = Unit
+}
+
+private class NoPlatformClipboard : Clipboard {
+    override suspend fun getClipEntry(): ClipEntry? = null
+
+    override suspend fun setClipEntry(clipEntry: ClipEntry?) = Unit
+
+    override val nativeClipboard: NativeClipboard get() = ""
+}
+
+
+// A text entry (String or AnnotatedString) is what an AWT-free producer builds. The system
+// clipboard needs a Transferable, made here, where java.awt.datatransfer is already in use.
+@OptIn(ExperimentalComposeUiApi::class)
+private fun ClipEntry.toAwtTransferable(): Transferable? =
+    when (val native = nativeClipEntry) {
+        is Transferable -> native
+        is String -> StringSelection(native)
+        is AnnotatedString -> AnnotatedStringSelection(native)
+        else -> null
+    }
+
+// Offers the same flavors as foundation's AnnotatedStringTransferable: DataFlavor equality
+// compares the MIME type and representation class, not the display name.
+private class AnnotatedStringSelection(private val data: AnnotatedString) : Transferable, ClipboardOwner {
+    override fun getTransferDataFlavors(): Array<DataFlavor?> = supportedFlavors
+
+    override fun isDataFlavorSupported(flavor: DataFlavor): Boolean = flavor in supportedFlavors
+
+    override fun getTransferData(flavor: DataFlavor): Any =
+        when (flavor) {
+            annotatedStringFlavor -> data
+            DataFlavor.stringFlavor -> data.text
+            else -> throw UnsupportedFlavorException(flavor)
+        }
+
+    override fun lostOwnership(clipboard: java.awt.datatransfer.Clipboard?, contents: Transferable?) = Unit
+
+    companion object {
+        private val annotatedStringFlavor = DataFlavor(AnnotatedString::class.java, "AnnotatedString")
+        private val supportedFlavors = arrayOf(annotatedStringFlavor, DataFlavor.stringFlavor)
+    }
+}

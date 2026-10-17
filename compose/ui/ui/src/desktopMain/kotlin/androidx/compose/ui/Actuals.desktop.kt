@@ -17,7 +17,7 @@
 package androidx.compose.ui
 
 import kotlin.coroutines.CoroutineContext
-import org.jetbrains.skiko.MainUIDispatcher
+import androidx.compose.ui.internal.ExtendedMainDispatcher
 
 internal actual val PostDelayedDispatcher: CoroutineContext
-    get() = MainUIDispatcher
+    get() = ExtendedMainDispatcher.dispatcher

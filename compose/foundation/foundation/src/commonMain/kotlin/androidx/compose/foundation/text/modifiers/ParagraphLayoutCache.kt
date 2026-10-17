@@ -332,8 +332,22 @@ internal class ParagraphLayoutCache(
         // if we were passed identical constraints just skip more work
         if (constraints == prevConstraints) return false
 
-        if (constraints.maxWidth != prevConstraints.maxWidth) return true
-        if (constraints.minWidth != prevConstraints.minWidth) return true
+        if (
+            constraints.maxWidth != prevConstraints.maxWidth ||
+                constraints.minWidth != prevConstraints.minWidth
+        ) {
+            // The paragraph is laid out at finalMaxWidth, and that width alone decides its
+            // line breaks. Text narrower than both the old and the new maximum comes out at
+            // its own width either way, so the paragraph already laid out is the one a new
+            // layout would make (a window being resized moves every maximum on every frame).
+            val intrinsic = localParagraphIntrinsics.maxIntrinsicWidth
+            if (
+                finalMaxWidth(constraints, softWrap, overflow, intrinsic) !=
+                    finalMaxWidth(prevConstraints, softWrap, overflow, intrinsic)
+            ) {
+                return true
+            }
+        }
 
         // if we get here width won't change, height may be clipped
         if (constraints.maxHeight < localParagraph.height || localParagraph.didExceedMaxLines) {

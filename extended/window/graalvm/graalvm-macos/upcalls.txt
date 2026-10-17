@@ -1,0 +1,3 @@
+# One line per entry point the AppKit window may call back into the image.
+# name  Java-constant  Kotlin-handler-slot
+dxc_appkit_draw_frame DRAW_FRAME frame

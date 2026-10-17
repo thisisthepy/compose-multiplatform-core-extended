@@ -399,8 +399,22 @@ internal class MultiParagraphLayoutCache(
         // if we were passed identical constraints just skip more work
         if (constraints == layoutInput.constraints) return false
 
-        if (constraints.maxWidth != layoutInput.constraints.maxWidth) return true
-        if (constraints.minWidth != layoutInput.constraints.minWidth) return true
+        if (
+            constraints.maxWidth != layoutInput.constraints.maxWidth ||
+                constraints.minWidth != layoutInput.constraints.minWidth
+        ) {
+            // As in ParagraphLayoutCache: the width the text is laid out at decides its line
+            // breaks, and text narrower than both maximums is laid out at its own width
+            // either way. Not with auto size, where the constraints choose the font size.
+            if (autoSize != null) return true
+            val intrinsic = multiParagraph.intrinsics.maxIntrinsicWidth
+            if (
+                finalMaxWidth(constraints, softWrap, overflow, intrinsic) !=
+                    finalMaxWidth(layoutInput.constraints, softWrap, overflow, intrinsic)
+            ) {
+                return true
+            }
+        }
 
         // if we get here width won't change, height may be clipped
         if (constraints.maxHeight < multiParagraph.height || multiParagraph.didExceedMaxLines) {

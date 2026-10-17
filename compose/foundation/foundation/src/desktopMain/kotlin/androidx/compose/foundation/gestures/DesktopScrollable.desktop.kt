@@ -133,8 +133,10 @@ private val PointerEvent.totalScrollDelta
 private val PointerEvent.totalPanGestureOffset
     get() = -this.changes.fastFold(Offset.Zero) { acc, c -> acc + c.panOffset }
 
+@OptIn(androidx.compose.ui.InternalComposeUiApi::class)
 private val PointerEvent.isPreciseWheelRotation
-    get() = (awtEventOrNull as? MouseWheelEvent)?.isPreciseWheelRotation ?: false
+    get() = androidx.compose.ui.internal.ExtendedAwt.available &&
+        ((awtEventOrNull as? MouseWheelEvent)?.isPreciseWheelRotation ?: false)
 
 private val MouseWheelEvent.isPreciseWheelRotation
     get() = when (DesktopPlatform.Current) {
