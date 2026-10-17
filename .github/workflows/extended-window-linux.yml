@@ -34,8 +34,8 @@ permissions:
   contents: read
 
 env:
-  COMPOSE_VERSION: 1.11.1-ext.1
-  MATERIAL3_VERSION: 1.11.0-alpha07-ext.1
+  COMPOSE_VERSION: 1.11.1
+  MATERIAL3_VERSION: 1.11.0-alpha07
 
 jobs:
   linux:

@@ -19,26 +19,38 @@ repositories:
 dependencies:
   - ../../common
   - $compose.runtime
-  # Root coordinates of the Compose this repository publishes to the local Maven repository
-  # under an -ext version (see the workflows that publish it). The version differs from
-  # JetBrains' own 1.11.1 on purpose: that one has no Linux variants, and with the same
-  # version the resolver takes it and refuses Linux. Gradle module metadata then picks the
-  # linuxX64 or linuxArm64 variant per target, and the common metadata compile that
-  # publishing runs sees these too.
-  - org.jetbrains.compose.animation:animation:1.11.1-ext.1
-  - org.jetbrains.compose.animation:animation-core:1.11.1-ext.1
-  - org.jetbrains.compose.foundation:foundation:1.11.1-ext.1
-  - org.jetbrains.compose.foundation:foundation-layout:1.11.1-ext.1
-  - org.jetbrains.compose.material:material-ripple:1.11.1-ext.1
-  - org.jetbrains.compose.material3:material3:1.11.0-alpha07-ext.1
-  - org.jetbrains.compose.ui:ui:1.11.1-ext.1
-  - org.jetbrains.compose.ui:ui-backhandler:1.11.1-ext.1
-  - org.jetbrains.compose.ui:ui-geometry:1.11.1-ext.1
-  - org.jetbrains.compose.ui:ui-graphics:1.11.1-ext.1
-  - org.jetbrains.compose.ui:ui-text:1.11.1-ext.1
-  - org.jetbrains.compose.ui:ui-tooling-preview:1.11.1-ext.1
-  - org.jetbrains.compose.ui:ui-unit:1.11.1-ext.1
-  - org.jetbrains.compose.ui:ui-util:1.11.1-ext.1
+
+dependencies@linuxX64:
+  - org.jetbrains.compose.animation:animation-linuxx64:1.11.1
+  - org.jetbrains.compose.animation:animation-core-linuxx64:1.11.1
+  - org.jetbrains.compose.foundation:foundation-linuxx64:1.11.1
+  - org.jetbrains.compose.foundation:foundation-layout-linuxx64:1.11.1
+  - org.jetbrains.compose.material:material-ripple-linuxx64:1.11.1
+  - org.jetbrains.compose.material3:material3-linuxx64:1.11.0-alpha07
+  - org.jetbrains.compose.ui:ui-linuxx64:1.11.1
+  - org.jetbrains.compose.ui:ui-backhandler-linuxx64:1.11.1
+  - org.jetbrains.compose.ui:ui-geometry-linuxx64:1.11.1
+  - org.jetbrains.compose.ui:ui-graphics-linuxx64:1.11.1
+  - org.jetbrains.compose.ui:ui-text-linuxx64:1.11.1
+  - org.jetbrains.compose.ui:ui-tooling-preview-linuxx64:1.11.1
+  - org.jetbrains.compose.ui:ui-unit-linuxx64:1.11.1
+  - org.jetbrains.compose.ui:ui-util-linuxx64:1.11.1
+
+dependencies@linuxArm64:
+  - org.jetbrains.compose.animation:animation-linuxarm64:1.11.1
+  - org.jetbrains.compose.animation:animation-core-linuxarm64:1.11.1
+  - org.jetbrains.compose.foundation:foundation-linuxarm64:1.11.1
+  - org.jetbrains.compose.foundation:foundation-layout-linuxarm64:1.11.1
+  - org.jetbrains.compose.material:material-ripple-linuxarm64:1.11.1
+  - org.jetbrains.compose.material3:material3-linuxarm64:1.11.0-alpha07
+  - org.jetbrains.compose.ui:ui-linuxarm64:1.11.1
+  - org.jetbrains.compose.ui:ui-backhandler-linuxarm64:1.11.1
+  - org.jetbrains.compose.ui:ui-geometry-linuxarm64:1.11.1
+  - org.jetbrains.compose.ui:ui-graphics-linuxarm64:1.11.1
+  - org.jetbrains.compose.ui:ui-text-linuxarm64:1.11.1
+  - org.jetbrains.compose.ui:ui-tooling-preview-linuxarm64:1.11.1
+  - org.jetbrains.compose.ui:ui-unit-linuxarm64:1.11.1
+  - org.jetbrains.compose.ui:ui-util-linuxarm64:1.11.1
 
 test-dependencies:
   - $kotlin.test

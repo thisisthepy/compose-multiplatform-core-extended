@@ -42,8 +42,8 @@ jobs:
       run:
         working-directory: extended/window
     env:
-      COMPOSE_VERSION: 1.11.1-ext.1
-      MATERIAL3_VERSION: 1.11.0-alpha07-ext.1
+      COMPOSE_VERSION: 1.11.1
+      MATERIAL3_VERSION: 1.11.0-alpha07
     steps:
       - uses: actions/checkout@v4
         if: ${{ !matrix.compose_linux }}
@@ -109,12 +109,18 @@ jobs:
             "-Pjetbrains.publication.version.COMPOSE_MATERIAL3=$MATERIAL3_VERSION" \
             "${tasks[@]}"
 
-      - name: Which platforms the published Compose UI covers
-        if: ${{ matrix.compose_linux }}
-        working-directory: .
+      - name: Which Amper tasks the window project has (diagnostic)
+        if: ${{ always() && matrix.compose_linux }}
+        continue-on-error: true
         run: |
-          find ~/.m2/repository/org/jetbrains/compose/ui/ui -name '*.module' | head
-          grep -h -o '"name": *"linux[A-Za-z0-9]*[A-Za-z]*"' $(find ~/.m2/repository/org/jetbrains/compose/ui/ui -name 'ui-*.module') | sort | uniq -c || true
+          ./kotlin show tasks 2>&1 | grep -i -E "publish|:linux:" | head -80 | while IFS= read -r line; do echo "::notice::$line"; done
+
+      - name: Probe, publish only the per-target native/linux klibs (diagnostic)
+        if: ${{ always() && matrix.compose_linux }}
+        continue-on-error: true
+        run: |
+          ./kotlin task :linux:publishLinuxX64ToMavenLocal :linux:publishLinuxArm64ToMavenLocal 2>&1 | tail -30 | while IFS= read -r line; do echo "::notice::$line"; done
+          find ~/.m2/repository/org/thisisthepy/compose/window -maxdepth 2 | while IFS= read -r line; do echo "::notice::$line"; done
 
       - name: Publish to the local repository
         shell: bash
