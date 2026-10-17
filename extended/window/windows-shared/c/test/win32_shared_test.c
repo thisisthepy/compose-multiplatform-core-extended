@@ -71,10 +71,23 @@ static void frame_time(void) {
     CHECK(second >= first);
 }
 
+// The X11 calls the native image carries here answer that they have nothing.
+static void x11_names(void) {
+    int32_t x = 7, y = 7, width = 7, height = 7;
+    char text[4] = "abc";
+    dxc_native_window_origin(&x, &y);
+    dxc_native_window_server_size(&width, &height);
+    CHECK(x == 0 && y == 0 && width == 0 && height == 0);
+    CHECK(dxc_native_window_focused() == 0);
+    CHECK(dxc_native_ime_reset(text, sizeof text) == 0 && text[0] == 0);
+    CHECK(dxc_native_resize_serial() == 0);
+}
+
 int main(int argc, char **argv) {
     resize_decisions();
     utf8_conversion();
     frame_time();
+    x11_names();
     // Never true. It only makes the linker resolve the window and the toasts, so a symbol
     // the header declares and the objects lack fails the link.
     if (argc > 1000) {
@@ -96,6 +109,7 @@ int main(int argc, char **argv) {
         dxc_native_context_menu(window.window, argv[0]);
         dxc_native_window_chrome(0, 0, 0, 0);
         (void)dxc_native_frame_time_nanos();
+        dxc_native_wake();
         dxc_notify_start();
     }
     if (failures == 0) printf("ok\n");

@@ -91,6 +91,21 @@ jobs:
       - name: Package the static library
         run: lib /nologo /OUT:out\dxc_win32_window.lib out\win32_window.obj out\win32_notifications.obj
 
+      # The renderer's one native image carries the X11 window's calls on every desktop and
+      # links every C function its reachable code names, so the Windows library defines them
+      # too. On Windows a missing one is a DLL that does not link.
+      - name: The X11 window's calls the image carries resolve here too
+        shell: bash
+        run: |
+          set -euo pipefail
+          symbols="$(MSYS_NO_PATHCONV=1 dumpbin /nologo /symbols out/dxc_win32_window.lib | tr -d '\r')"
+          for name in wake window_origin window_focused ime_reset resize_serial window_server_size debug_resize frame_time_nanos; do
+            grep -qE "External +\| dxc_native_$name\$" <<<"$symbols" || {
+              echo "win32_window.c defines no dxc_native_$name" >&2
+              exit 1
+            }
+          done
+
       - name: Link and run the check against the library
         run: |
           cl /nologo /std:c11 /Ic /Icinterop\include /Foout\ c\test\win32_shared_test.c /Feout\win32_shared_test.exe /link out\dxc_win32_window.lib d3d12.lib dxgi.lib dxguid.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib || exit /b 1

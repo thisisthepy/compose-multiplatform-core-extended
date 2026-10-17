@@ -123,6 +123,14 @@ void dxc_native_raster_end(void);
 // When the frame drawn now will be on the screen, in nanoseconds on the performance counter.
 int64_t dxc_native_frame_time_nanos(void);
 
+// The X11 window's calls, which the native image also carries here. Each answers nothing.
+void dxc_native_wake(void);
+void dxc_native_window_origin(int32_t *x, int32_t *y);
+int32_t dxc_native_window_focused(void);
+int32_t dxc_native_ime_reset(char *out, int32_t capacity);
+int64_t dxc_native_resize_serial(void);
+void dxc_native_window_server_size(int32_t *width, int32_t *height);
+
 // The message loop and what it heard.
 void dxc_native_pump(double seconds);
 int32_t dxc_native_window_closed(void);
