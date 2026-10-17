@@ -54,6 +54,20 @@ interface WindowPlatform {
     fun requestFrame()
 
     /**
+     * When the frame about to be drawn will be on the screen, in nanoseconds on a monotonic
+     * clock.
+     *
+     * An animation advances by the difference between two of these, so this is what makes it
+     * move at the speed of the wall clock: a display refreshing at 120 Hz draws twice as many
+     * frames as one at 60 Hz, and a frame drawn late covers more time than one drawn on
+     * schedule. A platform that knows when the display shows its next frame answers that;
+     * one that does not answers the time now. Asked once per frame, on the thread that draws.
+     *
+     * The default is the time now on the process's monotonic clock.
+     */
+    fun frameTimeNanos(): Long = monotonicNanos()
+
+    /**
      * Hands the frame just drawn to the display. The result is what the parity resize check
      * counts: the drawn size and the window size at this moment.
      */
