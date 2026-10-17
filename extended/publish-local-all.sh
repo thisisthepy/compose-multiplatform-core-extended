@@ -28,7 +28,7 @@ set -euo pipefail
 
 # The plugin commit published with this fork's commit. Its aliases name the version above.
 PLUGIN_REPOSITORY="https://github.com/thisisthepy/compose-multiplatform-extended.git"
-PLUGIN_REVISION="PLUGIN_REVISION_PLACEHOLDER"
+PLUGIN_REVISION="1e52ea1bb938f555d6941381a0aa97ab422b0477"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/.." && pwd)"
