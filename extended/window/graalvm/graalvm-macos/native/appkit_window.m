@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include "appkit_resize.h"
+#include "appkit_vresize_probe.h"
 #include "appkit_frame_time.h"
 #include <unistd.h>
 #include <mach/mach_time.h>
@@ -1068,7 +1069,9 @@ void dxc_native_set_cursor(int32_t shape) {
 // old size would be drawn into at the new one, and the scene is told through the queue so
 // that it changes its mind between frames rather than during one.
 - (void)setFrameSize:(NSSize)size {
+    NSSize old_size = self.frame.size;
     [super setFrameSize:size];
+    dxc_vprobe_set_frame(old_size, size);
     CAMetalLayer *layer = (CAMetalLayer *)self.layer;
     CGFloat scale = self.window.backingScaleFactor > 0 ? self.window.backingScaleFactor : 1;
     layer.contentsScale = scale;
@@ -1089,7 +1092,9 @@ void dxc_native_set_cursor(int32_t shape) {
     // the window takes while it is being made.
     if (dxc_draw_frame != NULL && !dxc_legacy_resize()) {
         uint64_t begun = mach_absolute_time();
+        dxc_vprobe_via = "set-frame";
         dxc_draw_frame(dxc_draw_thread);
+        dxc_vprobe_via = "loop";
         int64_t spent = (int64_t)(mach_absolute_time() - begun);
         dxc_resize_stats.callback_ticks += spent;
         if (spent > dxc_resize_stats.callback_max_ticks) {
@@ -1332,6 +1337,7 @@ int32_t dxc_native_window_open(
         [window center];
         [window makeKeyAndOrderFront:nil];
         [NSApp activateIgnoringOtherApps:YES];
+        dxc_vprobe_start(window, view, layer);
 
         // Held past this scope. The window owns the view, and the renderer owns the
         // window until it closes it.
@@ -1473,7 +1479,9 @@ int32_t dxc_native_frame_begin(void *layer_pointer, void **texture_out) {
     dxc_on_main(^{
     @autoreleasepool {
         CAMetalLayer *layer = (__bridge CAMetalLayer *)layer_pointer;
+        uint64_t asked = mach_absolute_time();
         id<CAMetalDrawable> drawable = [layer nextDrawable];
+        dxc_vprobe_drawable_wait_ms = dxc_ticks_to_millis((int64_t)(mach_absolute_time() - asked));
         if (drawable == nil) {
             status = 1;
             return;
@@ -1498,6 +1506,8 @@ void dxc_native_frame_end(void *queue_pointer) {
                            (int32_t)drawable.texture.height);
         id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)queue_pointer;
         id<MTLCommandBuffer> buffer = [queue commandBuffer];
+        dxc_vprobe_mark(buffer, drawable.texture, (long)drawable.texture.height,
+                        drawable.layer.contentsScale);
         if (drawable.layer.presentsWithTransaction) {
             // Presented by the layer from inside the window's transaction, once the
             // work is scheduled: the contract of a layer that presents with one.
