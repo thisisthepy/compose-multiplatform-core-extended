@@ -11,12 +11,16 @@ on:
     paths:
       - extended/window/**
       - .github/workflows/extended-window-macos.yml
+      - .github/actions/fork-compose/**
+      - extended/compose/**
   push:
     branches:
       - extended
     paths:
       - extended/window/**
       - .github/workflows/extended-window-macos.yml
+      - .github/actions/fork-compose/**
+      - extended/compose/**
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -50,14 +54,16 @@ jobs:
   build:
     name: Window macosArm64
     runs-on: macos-latest
-    timeout-minutes: 90
+    timeout-minutes: 300
     defaults:
       run:
         working-directory: extended/window
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: extended/window
+          sparse-checkout: |
+            extended/window
+            .github/actions
           filter: blob:none
 
       - name: Cache the Kotlin toolchain, konan and Maven dependencies
@@ -70,6 +76,12 @@ jobs:
           key: extended-window-macos-${{ runner.os }}-${{ hashFiles('extended/window/**/module.yaml', 'extended/window/libs.versions.toml', 'extended/window/kotlin') }}
           restore-keys: |
             extended-window-macos-${{ runner.os }}-
+
+      # native/macos compiles against this fork's foundation and UI, which nothing publishes.
+      - name: This fork's Compose for macosArm64
+        uses: ./.github/actions/fork-compose
+        with:
+          targets: macosArm64
 
       - name: The window code calls no private AppKit API
         run: ./scripts/check-no-private-api.sh

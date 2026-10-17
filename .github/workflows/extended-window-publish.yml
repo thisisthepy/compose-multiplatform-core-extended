@@ -8,12 +8,16 @@ on:
     paths:
       - extended/window/**
       - .github/workflows/extended-window-publish.yml
+      - .github/actions/fork-compose/**
+      - extended/compose/**
   push:
     branches:
       - extended
     paths:
       - extended/window/**
       - .github/workflows/extended-window-publish.yml
+      - .github/actions/fork-compose/**
+      - extended/compose/**
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -30,17 +34,29 @@ jobs:
         include:
           - os: macos-latest
             modules: "common scene native/macos graalvm/graalvm-macos graalvm/graalvm-linux"
+            compose: "desktop macosArm64"
+          # The scene is published from macOS only: it compiles against this fork's Compose
+          # for macosArm64 as well as the JVM, and only a Mac builds the former.
           - os: ubuntu-24.04
-            modules: "common scene graalvm/graalvm-macos graalvm/graalvm-linux"
+            modules: "common graalvm/graalvm-macos graalvm/graalvm-linux"
+            compose: ""
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 300
     defaults:
       run:
         working-directory: extended/window
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: extended/window
+          sparse-checkout: |
+            extended/window
+            .github/actions
+
+      - name: This fork's Compose
+        if: matrix.compose != ''
+        uses: ./.github/actions/fork-compose
+        with:
+          targets: ${{ matrix.compose }}
 
       - uses: actions/setup-java@v4
         with:
