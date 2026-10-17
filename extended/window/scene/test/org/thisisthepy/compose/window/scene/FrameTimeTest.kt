@@ -124,7 +124,7 @@ class FrameTimeTest {
 
     @Test
     fun pr3_at_120_hz_an_animation_advances_by_the_wall_clock() {
-        assertOneSecond(secondsAnimatedOver(List(TICKS_PER_SECOND.toInt()) { 1 }), "every frame drawn")
+        assertOneSecond(secondsAnimatedOver(List(TICKS_PER_SECOND) { 1 }), "every frame drawn")
     }
 
     @Test
@@ -132,7 +132,7 @@ class FrameTimeTest {
         // A second of a 120 Hz display with frames missed: two, three and five refreshes
         // go by without one, as a frame that took too long leaves them.
         val ticks = ArrayList<Int>()
-        var left = TICKS_PER_SECOND.toInt()
+        var left = TICKS_PER_SECOND
         val pattern = intArrayOf(1, 1, 3, 1, 2, 5, 1, 1, 2)
         var i = 0
         while (left > 0) {
@@ -145,7 +145,7 @@ class FrameTimeTest {
     }
 
     private companion object {
-        const val TICKS_PER_SECOND = 120L
+        const val TICKS_PER_SECOND = 120
         const val NANOS_PER_SECOND = 1_000_000_000L
         // Far from zero, as a monotonic clock is, so nothing can pass by assuming it starts there.
         const val START_NANOS = 5_000_000_000_000L
