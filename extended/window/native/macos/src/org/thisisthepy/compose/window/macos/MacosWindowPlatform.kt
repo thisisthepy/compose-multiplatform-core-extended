@@ -93,6 +93,9 @@ class MacosWindowPlatform(
         window?.requestFrame()
     }
 
+    /** The time now: the window draws inside AppKit's display, which runs on the refresh. */
+    override fun frameTimeNanos(): Long = uptimeNanos()
+
     /** Reads the window's size now, not when the frame was started, so a resize in between shows. */
     override fun present(drawnWidth: Int, drawnHeight: Int): FramePresentRecord {
         val now = measure()

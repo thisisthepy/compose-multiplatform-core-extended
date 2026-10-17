@@ -14,8 +14,8 @@ import androidx.compose.ui.scene.CanvasLayersComposeScene
 import androidx.compose.ui.scene.ComposeScene
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
-import kotlin.time.TimeSource
 import org.jetbrains.skia.Surface
+import org.thisisthepy.compose.window.FrameClock
 import org.thisisthepy.compose.window.FrameRequestCoalescer
 import org.thisisthepy.compose.window.FramePresentLog
 import org.thisisthepy.compose.window.ImeSession
@@ -96,8 +96,9 @@ class ComposeWindowHost(
     private val log = WindowEventLog()
     private val textInput = SceneTextInput()
     private val work = FrameDispatcher()
-    private val clock = TimeSource.Monotonic
-    private val started = clock.markNow()
+    // The platform's account of when each frame reaches the screen, so an animation moves at
+    // the speed of the wall clock whatever the display's refresh rate and however late a frame.
+    private val clock = FrameClock(platform::frameTimeNanos)
     private val heard = ArrayList<WindowEvent>()
     private val ime = ImeSession { event -> log.heard(event) }
     private var scene: ComposeScene? = null
@@ -249,7 +250,7 @@ class ComposeWindowHost(
         if (current.density.density != scale) current.density = Density(scale)
         size = fitted
         try {
-            current.render(target.surface.canvas.asComposeCanvas(), started.elapsedNow().inWholeNanoseconds)
+            current.render(target.surface.canvas.asComposeCanvas(), clock.frameNanos())
             // Submitted, not only recorded: a buffer presented before the work behind it
             // runs is a buffer with nothing in it.
             target.surface.flushAndSubmit(true)

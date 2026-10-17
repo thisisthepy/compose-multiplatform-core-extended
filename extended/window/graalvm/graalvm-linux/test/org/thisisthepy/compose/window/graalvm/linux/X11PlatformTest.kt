@@ -36,3 +36,11 @@ class X11PolicyTest {
         assertEquals(light, X11Theme.fromGtkTheme(null))
     }
 }
+
+class X11DroppedPathsTest {
+    @kotlin.test.Test
+    fun droppedPathsSplitAtNulAndKeepSpaces() {
+        assertEquals(listOf("/tmp/a b.txt", "/tmp/\u00fc"), splitDroppedPaths("/tmp/a b.txt\u0000/tmp/\u00fc"))
+        assertEquals(emptyList(), splitDroppedPaths(""))
+    }
+}
