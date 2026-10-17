@@ -42,8 +42,8 @@ jobs:
       run:
         working-directory: extended/window
     env:
-      COMPOSE_VERSION: 1.11.1
-      MATERIAL3_VERSION: 1.11.0-alpha07
+      COMPOSE_VERSION: 1.11.1-ext.1
+      MATERIAL3_VERSION: 1.11.0-alpha07-ext.1
     steps:
       - uses: actions/checkout@v4
         if: ${{ !matrix.compose_linux }}
@@ -108,6 +108,13 @@ jobs:
             "-Pjetbrains.publication.version.COMPOSE=$COMPOSE_VERSION" \
             "-Pjetbrains.publication.version.COMPOSE_MATERIAL3=$MATERIAL3_VERSION" \
             "${tasks[@]}"
+
+      - name: Which platforms the published Compose UI covers
+        if: ${{ matrix.compose_linux }}
+        working-directory: .
+        run: |
+          find ~/.m2/repository/org/jetbrains/compose/ui/ui -name '*.module' | head
+          grep -h -o '"name": *"linux[A-Za-z0-9]*[A-Za-z]*"' $(find ~/.m2/repository/org/jetbrains/compose/ui/ui -name 'ui-*.module') | sort | uniq -c || true
 
       - name: Publish to the local repository
         shell: bash
