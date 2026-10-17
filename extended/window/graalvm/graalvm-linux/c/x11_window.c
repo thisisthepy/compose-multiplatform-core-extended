@@ -1438,6 +1438,15 @@ int32_t dxc_native_window_closed(void) {
     return dxc_closed ? 1 : 0;
 }
 
+/*
+ * Answered here and says no soak is running. The resize soak (DXC_RESIZE_SOAK) is the macOS
+ * window's, but the Kotlin that asks for it names it on every desktop, and a name nothing
+ * defines is a link that fails.
+ */
+int32_t dxc_native_soak_state(void) {
+    return 0;
+}
+
 /**
  * Sets the shape of the pointer over the window.
  *

@@ -1081,6 +1081,8 @@ void dxc_native_window_chrome(
  * Returns zero on success, one or two for unavailable Metal resources, and three if the
  * process cannot be registered as a foreground application.
  */
+#include "appkit_resize_soak.h"
+
 int32_t dxc_native_window_open(
     const char *title,
     int32_t width,
@@ -1222,6 +1224,7 @@ int32_t dxc_native_window_open(
         out->device = (__bridge_retained void *)device;
         out->queue = (__bridge_retained void *)queue;
         out->layer = (__bridge_retained void *)layer;
+        dxc_soak_start(window, device);
     }
     });
     return status;
