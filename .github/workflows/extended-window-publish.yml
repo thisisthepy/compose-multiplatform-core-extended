@@ -1,5 +1,8 @@
 # The window modules published to the local Maven repository, the way compose-rust consumes
-# them. Each runner publishes the modules it can build: the macOS one adds native/macos.
+# them. Each runner publishes the modules it can build: the macOS one adds native/macos and
+# the Ubuntu one adds native/linux. Both compile against this fork's Compose, which nothing
+# publishes, so each runner publishes it to the local Maven repository first
+# (.github/actions/fork-compose).
 name: Extended window publish
 
 on:
@@ -39,7 +42,8 @@ jobs:
           # for macosArm64 as well as the JVM, and only a Mac builds the former.
           - os: ubuntu-24.04
             modules: "common graalvm/graalvm-macos graalvm/graalvm-linux"
-            compose: ""
+            compose: "linuxX64 linuxArm64"
+            compose_linux: true
     runs-on: ${{ matrix.os }}
     timeout-minutes: 300
     defaults:
@@ -52,16 +56,31 @@ jobs:
             extended/window
             .github/actions
 
-      - name: This fork's Compose
-        if: matrix.compose != ''
-        uses: ./.github/actions/fork-compose
-        with:
-          targets: ${{ matrix.compose }}
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
+
+      - name: Free disk space
+        if: ${{ matrix.compose_linux }}
+        working-directory: .
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost \
+            /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/share/powershell \
+            /usr/local/lib/node_modules /usr/local/julia* /opt/microsoft /opt/google
+          df -h /
+
+      - name: Install the X11, GL, fontconfig and FreeType development libraries
+        if: ${{ matrix.compose_linux }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libx11-dev libxext-dev libgl1-mesa-dev \
+            libfontconfig1-dev libfreetype6-dev
+
+      - name: This fork's Compose
+        uses: ./.github/actions/fork-compose
+        with:
+          targets: ${{ matrix.compose }}
 
       - name: Publish to the local repository
         shell: bash
@@ -74,8 +93,34 @@ jobs:
           ./kotlin publish mavenLocal
           cp project.yaml.all project.yaml
 
+      - name: Publish native/linux, one architecture at a time
+        if: ${{ matrix.compose_linux }}
+        shell: bash
+        run: ./scripts/publish-native-linux.sh
+
       - name: What was published
         shell: bash
         run: |
           find ~/.m2/repository/org/thisisthepy/compose/window -name '*.pom' -o -name '*.jar' -o -name '*.klib' -o -name '*.module' | sort
           test -n "$(find ~/.m2/repository/org/thisisthepy/compose/window -name '*.pom')"
+
+      - name: What a consumer resolves for native-linux
+        if: ${{ matrix.compose_linux }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=~/.m2/repository/org/thisisthepy/compose/window
+          for arch in linuxx64 linuxarm64; do
+            dir="$base/native-linux-$arch/0.1.0"
+            for file in "native-linux-$arch-0.1.0.klib" "native-linux-$arch-0.1.0.module" "native-linux-$arch-0.1.0.pom"; do
+              test -s "$dir/$file" || { echo "missing $dir/$file" >&2; exit 1; }
+            done
+            echo "ok    native-linux-$arch is published as its own coordinate"
+          done
+          root="$base/native-linux/0.1.0/native-linux-0.1.0.module"
+          test -s "$root" || { echo "missing the root module $root" >&2; exit 1; }
+          cat "$root"
+          for arch in linuxx64 linuxarm64; do
+            grep -qi "native-linux-$arch" "$root" || { echo "the root module does not list $arch" >&2; exit 1; }
+          done
+          echo "ok    the root module lists both architectures"
