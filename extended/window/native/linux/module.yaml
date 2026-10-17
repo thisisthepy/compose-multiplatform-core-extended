@@ -9,20 +9,25 @@ product:
 
 # Compose Multiplatform publishes no Kotlin/Native target for Linux, so the modules below are
 # this fork's, built from this repository and published to the local Maven repository first
-# (extended/compose/publish-local.sh linuxX64 linuxArm64). The runtime may stay JetBrains':
-# it is a stub with no classes that points at androidx.compose.runtime, which has a Linux
-# target, as the fork's runtime stub does. skiko has a published
+# (extended/compose/publish-local.sh linuxX64 linuxArm64), the runtime among them: a stub with
+# no classes that points at androidx.compose.runtime, which has a Linux target. skiko has a published
 # linuxX64 target and is resolved normally as a dependency of Compose UI.
 repositories:
   - id: mavenLocal
     url: mavenLocal
     publish: true
 
+# Compose's compiler plugin through the template rather than `compose: enabled`, which would add
+# JetBrains' runtime and components-resources and with them JetBrains' Compose next to the fork's.
+apply:
+  - ../../compose.module-template.yaml
+
 dependencies:
   - ../../common
-  - $compose.runtime
 
 dependencies@linuxX64:
+  - org.thisisthepy.compose.runtime:runtime-linuxx64:1.11.1-ext.1
+  - org.thisisthepy.compose.runtime:runtime-saveable-linuxx64:1.11.1-ext.1
   - org.thisisthepy.compose.animation:animation-linuxx64:1.11.1-ext.1
   - org.thisisthepy.compose.animation:animation-core-linuxx64:1.11.1-ext.1
   - org.thisisthepy.compose.foundation:foundation-linuxx64:1.11.1-ext.1
@@ -39,6 +44,8 @@ dependencies@linuxX64:
   - org.thisisthepy.compose.ui:ui-util-linuxx64:1.11.1-ext.1
 
 dependencies@linuxArm64:
+  - org.thisisthepy.compose.runtime:runtime-linuxarm64:1.11.1-ext.1
+  - org.thisisthepy.compose.runtime:runtime-saveable-linuxarm64:1.11.1-ext.1
   - org.thisisthepy.compose.animation:animation-linuxarm64:1.11.1-ext.1
   - org.thisisthepy.compose.animation:animation-core-linuxarm64:1.11.1-ext.1
   - org.thisisthepy.compose.foundation:foundation-linuxarm64:1.11.1-ext.1
@@ -63,7 +70,6 @@ settings:
     group: org.thisisthepy.compose.window
     artifactId: native-linux
     version: 1.11.1-ext.1
-  compose: enabled
   kotlin:
     # A klib's unique_name defaults to the Amper module name, which is the directory name
     # (`common`, `macos`, `linux`). The Kotlin/Native linker refuses two libraries with the
