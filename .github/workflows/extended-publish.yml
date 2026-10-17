@@ -1,30 +1,36 @@
-# Publishes this fork to Maven Central, through the Sonatype Central Portal.
+# Publishes this fork: every merge into extended to GitHub Packages as a dev build, and a
+# release tag to Maven Central through the Sonatype Central Portal.
 #
-# Two modes, one set of jobs:
-# - dry run (a pull request, or a manual run with no tag): builds every publication, signs it
-#   with a key made in the job and thrown away after, and checks the bundle the way Central
-#   would (extended/publish/central_bundle.py). Nothing leaves the runner except the bundle,
-#   kept as a workflow artifact for a person to look at.
-# - release (a tag v<version>, or a manual run naming one): the same, signed with the release
-#   key, and uploaded to the Central Portal. The tag must sit on a merge commit on extended's
-#   first-parent line and name the version gradle.properties gives: merging into extended is
-#   the release, and that merge is the owner's.
+# Three modes, one set of jobs:
+# - dev (a push to extended): builds every publication, renames every version to
+#   <version>-dev.<commit> (extended/publish/central_bundle.py stage --dev-suffix), checks it,
+#   resolves it from a small consumer, and uploads it to GitHub Packages,
+#   https://maven.pkg.github.com/thisisthepy/compose-multiplatform-core-extended. Not signed.
+# - dry run (a pull request, or a manual run with no tag): builds the same, and checks both
+#   the dev bundle and the Central bundle, signed with a key made in the job and thrown away
+#   after. Nothing is uploaded; the Central bundle is kept as a workflow artifact.
+# - release (a tag v<version>, or a manual run naming one): the Central bundle, signed with
+#   the release key, uploaded to the Central Portal. The tag must sit on a merge commit on
+#   extended's first-parent line and name the version gradle.properties gives: merging into
+#   extended is the release, and that merge is the owner's.
 #
 # The build is the fork's own: publish-local.sh for Compose (through .github/actions/fork-compose,
 # whose cache this shares with the window workflows), Amper for the window modules,
 # build-skiko-awt.sh for skiko-awt. The bundle tool only reads the local repositories they
 # write.
 #
-# Secrets a release reads (a dry run reads none):
+# Secrets a release reads (dev and dry runs read none; dev uploads with GITHUB_TOKEN):
 #   MAVEN_GPG_PRIVATE_KEY   the signing key, ASCII armoured (gpg --armor --export-secret-keys)
 #   MAVEN_GPG_PASSPHRASE    its passphrase
 #   CENTRAL_TOKEN_USERNAME  the Central Portal user token's username half
 #   CENTRAL_TOKEN_PASSWORD  the Central Portal user token's password half
-# The upload job runs in the environment maven-central, where required reviewers can be set.
-name: Extended Maven Central
+# The Central upload runs in the environment maven-central, where required reviewers can be set.
+name: Extended publish
 
 on:
   push:
+    branches:
+      - extended
     tags:
       - 'v*-ext.*'
   workflow_dispatch:
@@ -46,18 +52,20 @@ on:
       - extended/skiko/**
       - gradle.properties
       - .github/actions/fork-compose/**
-      - .github/workflows/extended-maven-central.yml
+      - .github/workflows/extended-publish.yml
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.tag || github.ref }}
+  # A dev upload or a release is never cut off halfway; a newer push to a pull request
+  # replaces its dry run.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 env:
-  # Every coordinate a release must carry. The bundle check also follows every dependency
-  # and variant the bundle names, so this list is the roots, not the closure.
+  # Every coordinate the bundle must carry. The check also follows every dependency and
+  # variant the bundle names, so this list is the roots, not the closure.
   REQUIRED: >-
     org.thisisthepy.compose.runtime:runtime
     org.thisisthepy.compose.ui:ui
@@ -76,12 +84,15 @@ env:
 
 jobs:
   plan:
-    name: Decide dry run or release
+    name: Decide the mode
     runs-on: ubuntu-24.04
     outputs:
+      central: ${{ steps.plan.outputs.central }}
+      dev: ${{ steps.plan.outputs.dev }}
       release: ${{ steps.plan.outputs.release }}
       ref: ${{ steps.plan.outputs.ref }}
       version: ${{ steps.plan.outputs.version }}
+      suffix: ${{ steps.plan.outputs.suffix }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -102,16 +113,26 @@ jobs:
           INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          read_version() { sed -n 's/^jetbrains\.publication\.version\.COMPOSE=//p'; }
           tag=""
           if [[ "$EVENT" == push && "$GITHUB_REF" == refs/tags/* ]]; then
             tag="${GITHUB_REF#refs/tags/}"
           elif [[ "$EVENT" == workflow_dispatch && -n "$INPUT_TAG" ]]; then
             tag="$INPUT_TAG"
           fi
+          suffix="-dev.$(git rev-parse --short=10 "$GITHUB_SHA")"
+          if [[ "$EVENT" == push && "$GITHUB_REF" == refs/heads/extended ]]; then
+            version="$(read_version < gradle.properties)"
+            echo "dev build of $GITHUB_SHA: <version>$suffix"
+            { echo "central=false"; echo "dev=true"; echo "release=false"; echo "ref=$GITHUB_SHA"
+              echo "version=$version"; echo "suffix=$suffix"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ -z "$tag" ]]; then
-            version="$(sed -n 's/^jetbrains\.publication\.version\.COMPOSE=//p' gradle.properties)"
-            echo "dry run of $GITHUB_SHA at $version"
-            { echo "release=false"; echo "ref=$GITHUB_SHA"; echo "version=$version"; } >> "$GITHUB_OUTPUT"
+            version="$(read_version < gradle.properties)"
+            echo "dry run of $GITHUB_SHA at $version, and as <version>$suffix"
+            { echo "central=true"; echo "dev=true"; echo "release=false"; echo "ref=$GITHUB_SHA"
+              echo "version=$version"; echo "suffix=$suffix"; } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -126,13 +147,14 @@ jobs:
             echo "::error::$tag is on $commit, which is not on extended's first-parent line"
             exit 1
           fi
-          version="$(git show "$commit:gradle.properties" | sed -n 's/^jetbrains\.publication\.version\.COMPOSE=//p')"
+          version="$(git show "$commit:gradle.properties" | read_version)"
           if [[ "$tag" != "v$version" ]]; then
             echo "::error::$tag does not name the version gradle.properties gives at $commit ($version)"
             exit 1
           fi
           echo "release $tag: $commit at $version"
-          { echo "release=true"; echo "ref=$commit"; echo "version=$version"; } >> "$GITHUB_OUTPUT"
+          { echo "central=true"; echo "dev=false"; echo "release=true"; echo "ref=$commit"
+            echo "version=$version"; echo "suffix="; } >> "$GITHUB_OUTPUT"
 
   build:
     name: Build the publications (${{ matrix.os }})
@@ -257,10 +279,16 @@ jobs:
           retention-days: 7
 
   bundle:
-    name: Sign and check the Central bundle
+    name: Check the bundles
     needs: [ plan, build, skiko-awt ]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
+    env:
+      DEV: ${{ needs.plan.outputs.dev }}
+      CENTRAL: ${{ needs.plan.outputs.central }}
+      RELEASE: ${{ needs.plan.outputs.release }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      SUFFIX: ${{ needs.plan.outputs.suffix }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -272,7 +300,79 @@ jobs:
           pattern: repo-*
           path: ${{ runner.temp }}/repos
 
-      - name: Stage
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.4.0'
+          cache-read-only: true
+
+      # The consumer resolves one window module per platform, and through them the fork's
+      # Compose, from the bundle alone, and fails on any fork version without the suffix it is
+      # given and on any JetBrains Compose module that carries classes.
+      - name: Write the consumer check
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/consume.sh" <<'SH'
+          set -euo pipefail
+          staging="$1" suffix="$2"
+          coordinate() {
+            local dir
+            dir="$(find "$staging/org/thisisthepy/compose/window/$1" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+            [[ -n "$dir" ]] || { echo "::error::no $1 in the bundle" >&2; exit 1; }
+            echo "org.thisisthepy.compose.window:$1:$(basename "$dir")"
+          }
+          gradle --no-daemon --no-configuration-cache -p extended/publish/consumer checkResolution \
+            "-Pbundle=$staging" "-Psuffix=$suffix" \
+            "-Pjvm=$(coordinate scene)" "-PlinuxX64=$(coordinate native-linux)"
+          SH
+
+      - name: Stage the dev build
+        if: env.DEV == 'true'
+        run: |
+          python3 -I extended/publish/central_bundle.py stage \
+            --from "$RUNNER_TEMP/repos/repo-macos" \
+            --from "$RUNNER_TEMP/repos/repo-linux" \
+            --from "$RUNNER_TEMP/repos/repo-skiko-awt" \
+            --out "$RUNNER_TEMP/dev" \
+            --project thisisthepy/compose-multiplatform-core-extended \
+            --dev-suffix="$SUFFIX"
+          python3 -I extended/publish/central_bundle.py sign "$RUNNER_TEMP/dev" --checksums-only
+
+      - name: Check the dev build
+        if: env.DEV == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=()
+          for coordinate in $REQUIRED; do
+            # skiko-awt reaches org.thisisthepy with the one-version-line change; until then a
+            # dev build goes out without it rather than not at all.
+            if [[ "$coordinate" == *:skiko-awt && ! -d "$RUNNER_TEMP/dev/org/thisisthepy/compose/skiko" ]]; then
+              echo "::warning::skiko-awt is not under org.thisisthepy yet; this dev build leaves it out"
+              continue
+            fi
+            required+=(--require "$coordinate")
+          done
+          python3 -I extended/publish/central_bundle.py validate "$RUNNER_TEMP/dev" \
+            --dev="$SUFFIX" --unsigned "${required[@]}"
+
+      - name: Resolve the dev build from a consumer
+        if: env.DEV == 'true'
+        run: bash "$RUNNER_TEMP/consume.sh" "$RUNNER_TEMP/dev" "$SUFFIX"
+
+      - uses: actions/upload-artifact@v4
+        if: env.DEV == 'true'
+        with:
+          name: dev-repository
+          path: ${{ runner.temp }}/dev
+          retention-days: 3
+
+      - name: Stage the Central bundle
+        if: env.CENTRAL == 'true'
         run: |
           python3 -I extended/publish/central_bundle.py stage \
             --from "$RUNNER_TEMP/repos/repo-macos" \
@@ -282,13 +382,13 @@ jobs:
             --project thisisthepy/compose-multiplatform-core-extended
 
       - name: A signing key for this run only
-        if: needs.plan.outputs.release != 'true'
+        if: env.CENTRAL == 'true' && env.RELEASE != 'true'
         run: |
           echo "GNUPGHOME=$RUNNER_TEMP/gnupg" >> "$GITHUB_ENV"
           extended/publish/throwaway-key.sh "$RUNNER_TEMP/gnupg"
 
       - name: The release signing key
-        if: needs.plan.outputs.release == 'true'
+        if: env.RELEASE == 'true'
         env:
           MAVEN_GPG_PRIVATE_KEY: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
         run: |
@@ -299,14 +399,14 @@ jobs:
           GNUPGHOME="$RUNNER_TEMP/gnupg" gpg --batch --import <<< "$MAVEN_GPG_PRIVATE_KEY"
 
       - name: Sign and checksum
+        if: env.CENTRAL == 'true'
         env:
           GPG_PASSPHRASE: ${{ needs.plan.outputs.release == 'true' && secrets.MAVEN_GPG_PASSPHRASE || '' }}
         run: python3 -I extended/publish/central_bundle.py sign "$RUNNER_TEMP/staging"
 
-      - name: Check the bundle as Central would
+      - name: Check the Central bundle as Central would
+        if: env.CENTRAL == 'true'
         shell: bash
-        env:
-          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
           required=()
@@ -314,14 +414,48 @@ jobs:
           python3 -I extended/publish/central_bundle.py validate "$RUNNER_TEMP/staging" \
             --version "$VERSION" --verify-signatures "${required[@]}"
 
-      - name: Zip the bundle
+      - name: Resolve the Central bundle from a consumer
+        if: env.CENTRAL == 'true'
+        run: bash "$RUNNER_TEMP/consume.sh" "$RUNNER_TEMP/staging" "$VERSION"
+
+      - name: Zip the Central bundle
+        if: env.CENTRAL == 'true'
         run: python3 -I extended/publish/central_bundle.py zip "$RUNNER_TEMP/staging" "$RUNNER_TEMP/central-bundle.zip"
 
       - uses: actions/upload-artifact@v4
+        if: env.CENTRAL == 'true'
         with:
           name: central-bundle
           path: ${{ runner.temp }}/central-bundle.zip
           retention-days: 14
+
+  github-packages:
+    name: Upload the dev build to GitHub Packages
+    needs: [ plan, bundle ]
+    if: needs.plan.outputs.dev == 'true' && needs.plan.outputs.central != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+          sparse-checkout: extended/publish
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dev-repository
+          path: ${{ runner.temp }}/dev
+
+      - name: Upload
+        env:
+          MAVEN_USERNAME: ${{ github.actor }}
+          MAVEN_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 -I extended/publish/central_bundle.py put "$RUNNER_TEMP/dev" \
+            "https://maven.pkg.github.com/${{ github.repository }}"
 
   upload:
     name: Upload to the Central Portal

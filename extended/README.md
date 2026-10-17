@@ -269,3 +269,58 @@ coordinates.
 What it costs: a third-party Compose library is built against `org.jetbrains.compose`. Next to
 this fork it brings JetBrains' Compose UI in a second time, which no resolver can merge because
 the groups differ. Anything used with this fork has to be built against it.
+
+## Dev builds on GitHub Packages
+
+Every merge into `extended` publishes everything above (Compose, the window modules and, once
+it moves under `org.thisisthepy`, skiko-awt) to GitHub Packages as
+`<version>-dev.<commit>`, where `<commit>` is the first ten characters of the merge commit:
+`1.11.1-ext.1-dev.0123456789`, for example. The `-dev.` part keeps these apart from releases,
+which never carry it. `.github/workflows/extended-publish.yml` does it, and before uploading
+it checks that no POM or Gradle module in the build names a fork version without that suffix,
+and resolves a window module and the Compose under it from a small consumer
+(`extended/publish/consumer`). The builds are not signed.
+
+The repository is `https://maven.pkg.github.com/thisisthepy/compose-multiplatform-core-extended`.
+GitHub Packages asks for credentials on every Maven download, public packages included:
+
+- In a workflow of this repository, `GITHUB_TOKEN` with `packages: read` works.
+- Anywhere else, including another repository's workflow, use a personal access token
+  (classic) with the `read:packages` scope. The Maven registry takes its permissions from the
+  repository it was published from, so it has no per-package access setting that would let
+  another repository's `GITHUB_TOKEN` in.
+
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositories {
+        maven("https://maven.pkg.github.com/thisisthepy/compose-multiplatform-core-extended") {
+            credentials {
+                username = providers.environmentVariable("GITHUB_ACTOR").orNull ?: "token"
+                password = providers.environmentVariable("GITHUB_PACKAGES_TOKEN").get()
+            }
+            content { includeGroupByRegex("org\\.thisisthepy(\\..*)?") }
+        }
+        mavenCentral()
+        google()
+    }
+}
+```
+
+```yaml
+# In the consumer's workflow
+env:
+  GITHUB_PACKAGES_TOKEN: ${{ secrets.THISISTHEPY_PACKAGES_TOKEN }}  # a PAT with read:packages
+```
+
+Ask for every fork artifact at the same `-dev.<commit>` version; two commits' builds mixed in
+one application are not a combination anyone tested. The packages are listed at
+<https://github.com/orgs/thisisthepy/packages?repo_name=compose-multiplatform-core-extended>.
+
+## Releases on Maven Central
+
+Releases go to Maven Central from the same workflow: a tag `v<version>` on the merge commit that
+makes the release, through the Sonatype Central Portal, signed. Nothing is on Central yet
+([#124](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/124)). A pull
+request that touches what is published runs the whole release as a dry run, signed with a key
+made for that run, and checks the bundle the way Central does.
