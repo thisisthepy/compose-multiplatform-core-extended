@@ -1,7 +1,7 @@
 # extended/window/graalvm/graalvm-macos: the AppKit window for the GraalVM native-image path.
 #
-# Compiles appkit_window.m into a static library, runs the pure C tests of the resize
-# counters, compiles the Kotlin wrapper and runs its tests, and fails if the module names
+# Compiles appkit_window.m into a static library, runs the pure C tests of the frame time
+# it hands each frame, compiles the Kotlin wrapper and runs its tests, and fails if the module names
 # java.awt or if the generated upcall table is stale.
 
 name: Extended window graalvm macos
@@ -20,8 +20,8 @@ on:
       - .github/workflows/extended-window-graalvm-macos.yml
 
 concurrency:
-  group: extended-window-graalvm-macos-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -47,6 +47,9 @@ jobs:
             exit 1
           fi
 
+      - name: The window code calls no private AppKit API
+        run: ./scripts/check-no-private-api.sh
+
       - name: The upcall table is generated and current
         run: graalvm/graalvm-macos/tools/gen-upcalls.sh --check
 
@@ -65,7 +68,12 @@ jobs:
           done
           lipo -create build/native/appkit_window-arm64.o build/native/appkit_window-x86_64.o -output build/native/appkit_window.o
           ar rcs build/native/libappkit_window.a build/native/appkit_window.o
-          nm build/native/libappkit_window.a | grep -E ' T _dxc_native_(window_open|poll_event|set_draw_callback)'
+          nm build/native/libappkit_window.a | grep -E ' T _dxc_native_(window_open|poll_event|set_draw_callback|frame_time_nanos)'
+
+      - name: The frame time follows the display link's schedule
+        run: |
+          cc -O2 -Wall -Werror -o build/native/appkit_frame_time_test graalvm/graalvm-macos/native/appkit_frame_time_test.c
+          build/native/appkit_frame_time_test
 
       - name: Cache the Kotlin toolchain and Maven dependencies
         uses: actions/cache@v4

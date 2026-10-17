@@ -1,0 +1,34 @@
+diff --git a/skiko/src/jvmMain/kotlin/org/jetbrains/skiko/Setup.kt b/skiko/src/jvmMain/kotlin/org/jetbrains/skiko/Setup.kt
+index 2c85607..df9056d 100644
+--- a/skiko/src/jvmMain/kotlin/org/jetbrains/skiko/Setup.kt
++++ b/skiko/src/jvmMain/kotlin/org/jetbrains/skiko/Setup.kt
+@@ -2,6 +2,20 @@ package org.jetbrains.skiko
+ 
+ expect fun setSystemLookAndFeel()
+ 
++/**
++ * Whether this process may use the Java toolkit at all, read from `compose.awt`.
++ *
++ * `false` is for an embedder that opens its own windows and builds a GraalVM native image with
++ * `-Dcompose.awt=false`, initialising this class while the image is built. The analysis walks
++ * every branch, so a run-time check cannot keep the toolkit out of the image, and a constant
++ * can: the branch below that sets a look and feel is dead, and `UIManager` with it. Anywhere
++ * else the property is unset and behaviour does not change.
++ */
++internal object AwtSwitch {
++    @JvmField
++    val available: Boolean = System.getProperty("compose.awt") != "false"
++}
++
+ internal object Setup {
+     fun init(
+         noEraseBackground: Boolean = System.getProperty("skiko.rendering.noerasebackground") != "false",
+@@ -20,7 +34,7 @@ internal object Setup {
+             System.setProperty("sun.awt.noerasebackground", "true")
+         }
+         try {
+-            if (globalLAF) {
++            if (globalLAF && AwtSwitch.available) {
+                 // Setup menu look and feel.
+                 setSystemLookAndFeel()
+             }

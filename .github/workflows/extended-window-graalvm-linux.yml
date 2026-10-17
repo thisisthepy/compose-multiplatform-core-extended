@@ -15,8 +15,8 @@ on:
       - .github/workflows/extended-window-graalvm-linux.yml
 
 concurrency:
-  group: extended-window-graalvm-linux-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -36,13 +36,19 @@ jobs:
           java-version: '21'
 
       - name: X11 and GL headers
-        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxext-dev libgl-dev
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxext-dev libgl-dev libgl1-mesa-dri libglx-mesa0 xvfb
 
       - name: Compile the C
         working-directory: extended/window/graalvm/graalvm-linux
         run: |
           mkdir -p build
           cc -c -O2 -fPIC -Wall -o build/x11_window.o c/x11_window.c
+
+      - name: Drag files onto the window (XDND client under a virtual display)
+        working-directory: extended/window/graalvm/graalvm-linux
+        run: |
+          cc -O1 -Wall -o build/xdnd_drop_test test/c/xdnd_drop_test.c -lX11 -lXext -lGL
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/xdnd_drop_test
 
       - name: The Kotlin module has no java.awt
         working-directory: extended/window/graalvm/graalvm-linux

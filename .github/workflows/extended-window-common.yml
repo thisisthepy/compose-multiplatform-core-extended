@@ -1,7 +1,8 @@
 # extended/window/common: the platform-neutral window module.
 #
 # Builds and tests it for the JVM and for the Kotlin/Native targets (macosArm64 on macOS,
-# linuxX64 and linuxArm64 on Linux), and fails if the module names a platform or toolkit.
+# linuxX64 and linuxArm64 on Linux, mingwX64 on Windows), and fails if the module names a
+# platform or toolkit.
 
 name: Extended window common
 
@@ -19,8 +20,8 @@ on:
       - .github/workflows/extended-window-common.yml
 
 concurrency:
-  group: extended-window-common-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -30,9 +31,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-24.04, macos-14 ]
+        os: [ ubuntu-24.04, macos-14, windows-2022 ]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,9 +56,33 @@ jobs:
           fi
 
       - name: Build all targets this host can build
+        if: runner.os != 'Windows'
         working-directory: extended/window
         run: ./kotlin build -m common
 
+      # From PowerShell on Windows: the toolchain's wrapper there is kotlin.bat, and run from
+      # Git Bash it would unpack with Git's tar, which reads C:\ as a remote host.
+      - name: Build all targets this host can build (Windows)
+        if: runner.os == 'Windows'
+        working-directory: extended/window
+        shell: pwsh
+        run: |
+          .\kotlin.bat build -m common
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check that every window klib has a globally unique name
+        working-directory: extended/window
+        run: ./scripts/check-klib-names.sh --built .
+
       - name: Test
+        if: runner.os != 'Windows'
         working-directory: extended/window
         run: ./kotlin test -m common
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        working-directory: extended/window
+        shell: pwsh
+        run: |
+          .\kotlin.bat test -m common
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

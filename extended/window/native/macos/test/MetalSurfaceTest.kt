@@ -89,10 +89,69 @@ class MetalSurfaceTest {
         try {
             surface.resize(widthInPoints = 520.0, heightInPoints = 360.0, scale = 2.0)
             assertEquals(2.0, surface.layer.contentsScale)
+            assertEquals(1040, surface.widthInPixels, "a window measured in points is half a window")
+            assertEquals(720, surface.heightInPixels)
             surface.layer.drawableSize.useContents {
-                assertEquals(1040.0, width, "a drawable measured in points is half a window")
-                assertEquals(720.0, height)
+                assertEquals(1280.0, width, "the drawable is the window rounded up to a step")
+                assertEquals(768.0, height)
             }
+        } finally {
+            surface.close()
+        }
+    }
+
+    /**
+     * A drag makes a new drawable only when it crosses a step, and every frame is still
+     * drawn at the window's own size.
+     *
+     * A new drawable size is a new surface that the window server keeps until the drag
+     * ends: one per event of a drag held 87 MB over 50 events.
+     */
+    @Test
+    fun nfr9_a_drag_draws_at_the_window_size_into_few_drawable_sizes() {
+        val surface = MetalSurface()
+        try {
+            val sizes = HashSet<Pair<Double, Double>>()
+            for (step in 0 until 100) {
+                surface.withoutAnimation {
+                    surface.resize(800.0 + step * 3, 600.0, 1.0)
+                    var drawn = 0 to 0
+                    surface.draw { _, w, h -> drawn = w to h }
+                    assertEquals(800 + step * 3 to 600, drawn, "a frame is drawn at the window's size")
+                    surface.layer.drawableSize.useContents { sizes.add(width to height) }
+                }
+            }
+            assertTrue(
+                sizes.size <= 3,
+                "300 pixels of drag made ${sizes.size} drawable sizes; rounded up to " +
+                    "${MetalSurface.DRAWABLE_STEP} pixels it crosses at most two steps",
+            )
+        } finally {
+            surface.close()
+        }
+    }
+
+    /**
+     * The frame sits in the top left corner of a larger drawable whichever way up the
+     * layers above it count.
+     */
+    @Test
+    fun fr19_the_frame_is_anchored_at_the_top_left_without_scaling() {
+        val surface = MetalSurface()
+        try {
+            surface.resize(300.0, 200.0, 1.0)
+            assertEquals(platform.QuartzCore.kCAGravityTopLeft, surface.layer.contentsGravity)
+            assertTrue(surface.layer.masksToBounds, "past the window's edge is not shown")
+            val parent = platform.QuartzCore.CALayer()
+            parent.geometryFlipped = true
+            parent.addSublayer(surface.layer)
+            surface.resize(300.0, 200.0, 1.0)
+            assertEquals(
+                platform.QuartzCore.kCAGravityBottomLeft,
+                surface.layer.contentsGravity,
+                "under a flipped layer the largest y is the bottom of the screen",
+            )
+            surface.layer.removeFromSuperlayer()
         } finally {
             surface.close()
         }
@@ -105,6 +164,50 @@ class MetalSurfaceTest {
             assertFalse(
                 surface.layer.framebufferOnly,
                 "a framebuffer-only texture cannot be read back, and Skia reads one back",
+            )
+        } finally {
+            surface.close()
+        }
+    }
+    /**
+     * A frame gives its drawable back when it is done, however many frames are drawn
+     * before the run loop next turns.
+     *
+     * The drawable owns a texture the size of the window. Held by a Kotlin object, it was
+     * kept until the collector freed that object and the main run loop turned to release
+     * it, and 100 sizes in a row held 528 MB of Metal memory on macOS CI. Here no run loop
+     * turns and nothing else allocates, so nothing but the frame's own pool gives them back.
+     *
+     * The bound is three drawables at the largest size drawn (Core Animation keeps up to
+     * three) and room for Skia's own resources. The leak was several times it.
+     */
+    @Test
+    fun nfr9_frames_drawn_in_one_turn_release_their_drawables() {
+        val surface = MetalSurface()
+        try {
+            // A layer has to be given a size before it hands out a drawable.
+            surface.withoutAnimation {
+                surface.resize(800.0, 600.0, 1.0)
+                surface.draw { _, _, _ -> }
+            }
+            val before = surface.allocatedBytes
+            for (step in 1..100) {
+                val grow = if (step <= 50) step else 100 - step
+                surface.withoutAnimation {
+                    surface.resize(800.0 + grow * 8, 600.0 + grow * 6, 1.0)
+                    surface.draw { canvas, _, _ -> canvas.clear(0xFF336699.toInt()) }
+                }
+            }
+            val grownMb = (surface.allocatedBytes - before) / 1048576.0
+            println("metal growth over 100 frames: $grownMb MB")
+            val largestDrawableMb = 1280.0 * 1024.0 * 4 / 1048576.0
+            val boundMb = largestDrawableMb * 3 + 16
+            assertTrue(
+                grownMb <= boundMb,
+                "Metal memory grew by $grownMb MB over 100 frames at changing sizes; " +
+                    "at most $boundMb MB is expected, three drawables at the largest size " +
+                    "and Skia's resources. " +
+                    "Something a frame was handed is being kept.",
             )
         } finally {
             surface.close()

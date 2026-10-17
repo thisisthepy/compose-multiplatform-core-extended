@@ -138,8 +138,9 @@ fun keyEventsFor(
     keysym: Long,
     text: String,
 ): List<WindowEvent> {
-    val key = x11KeyNumber(keysym)
-    val modifiers = x11Modifiers(state)
+    val cut = x11IsShiftDelete(keysym, state)
+    val key = if (cut) X11_KEY_X else x11KeyNumber(keysym)
+    val modifiers = x11Modifiers(if (cut) X11_CONTROL_MASK else state)
     if (!press) {
         return listOf(
             WindowEvent(WindowEvent.KEY_UP, 0f, 0f, 0, modifiers, key, 0, ""),
@@ -176,6 +177,7 @@ fun candidateSpot(caret: CaretRect?, density: Float): Pair<Int, Int>? {
     return (caret.left * density).toInt() to (caret.bottom * density).toInt()
 }
 
+private const val X11_KEY_X = 0x07
 private const val FIRST_PRINTABLE = 32
 private const val DELETE_CHARACTER = 0x7F
 

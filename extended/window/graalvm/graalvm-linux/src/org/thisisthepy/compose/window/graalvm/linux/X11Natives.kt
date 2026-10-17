@@ -56,6 +56,10 @@ internal object X11Natives {
     external fun pump(seconds: Double)
 
     @JvmStatic
+    @CFunction("dxc_native_take_paste")
+    external fun takePaste(out: CCharPointer?, capacity: Int): Int
+
+    @JvmStatic
     @CFunction("dxc_native_poll_event")
     external fun pollEvent(out: Pointer?): Int
 
@@ -108,4 +112,11 @@ internal object X11Layout {
     /** `struct dxc_event`: kind, x, y, buttons, modifiers, key_code, code_point, then text. */
     const val EVENT_TEXT_BYTES = 96
     const val EVENT_BYTES = 28 + EVENT_TEXT_BYTES
+
+    /** `struct dxc_element`: role, four floats, then the label, 116 bytes. */
+    const val ELEMENT_LABEL_OFFSET = 20
+    const val ELEMENT_BYTES = ELEMENT_LABEL_OFFSET + EVENT_TEXT_BYTES
+
+    /** `DXC_ELEMENT_CAPACITY` in `x11_window.c`. */
+    const val MAX_ELEMENTS = 256
 }

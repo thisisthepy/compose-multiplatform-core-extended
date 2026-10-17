@@ -1,12 +1,34 @@
 # compose-multiplatform-core-extended
 
+GraalVM native-image 와 Kotlin/Native 에서 AWT 없이 동작하는 데스크톱 창을 갖춘 Compose Multiplatform 라이브러리입니다.
+
+English: [README.md](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/README.md)
+
+## 기능
+
+상태는 2026-10-17 기준입니다. 진행 중이거나 계획인 항목은 아직 `extended` 에 없습니다.
+
+- AWT 없는 데스크톱 애플리케이션으로 가는 두 경로: GraalVM native-image 와 Kotlin/Native. 어느 경로든 애플리케이션을 실행 파일 하나로 내보내며, 옆에 Java 런타임을 두지 않고 시작할 때 풀어내는 것도 없습니다.
+- 두 경로의 AWT 없는 데스크톱 창. macOS 는 두 경로 모두 동작합니다(Kotlin/Native 창은 AppKit 과 Metal, GraalVM native-image 창). Linux(X11)도 두 경로 모두 동작합니다(GraalVM 창, 그리고 Xlib, GLX, XIM, AT-SPI 를 쓰는 Kotlin/Native 창). Windows 는 진행 중이며, 공유 Win32 창 `windows-shared` 는 아직 병합되지 않았습니다([#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32)). 병합될 때까지 compose-rust 의 Kotlin/Native 렌더러가 자기 Windows 창을 유지합니다([DarkPyonix/compose-rust#26](https://github.com/DarkPyonix/compose-rust/issues/26)).
+- 창 모듈: `extended/window` 아래에 있고 그룹은 `org.thisisthepy.compose.window` 입니다. 창, 포인터와 키와 IME 입력, 텍스트 메뉴와 편집 메뉴, 클립보드, 파일 드롭, 창 크롬이 어느 렌더러도 아닌 이곳에 있습니다. `common` 모듈에는 창 상태 기계, 최소 크기, 이벤트 정규화, 프레임 요청 병합, IME 조합 상태, 다크 모드와 DPI 가 있고, Kotlin 표준 라이브러리에만 의존합니다. 두 경로가 이를 함께 씁니다. 같은 검사를 양쪽에 실행하는 패리티 테스트는 계획입니다([#70](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/70)). [창 모듈](#창-모듈) 을 보십시오.
+- Windows 실행 파일은 두 경로 모두 MSVC 가 링크합니다. JetBrains 가 Windows 용 Skia 를 MSVC 로 빌드하므로 최종 링크는 MSVC 의 것이고, MinGW 경로는 없습니다. GraalVM 경로는 지금 이렇게 링크하고, Kotlin/Native 링크 단계는 열려 있습니다([MinGW x64 타깃](#mingw-x64-타깃) 참고).
+- 디자인 시스템과 Liquid Glass: Material 3, Cupertino, Fluent, GNOME, Breeze, Deepin 테마와 Liquid Glass 소재를 `extended/design-systems` 의 독립 라이브러리로 제공합니다. 배포된 Compose 에만 의존하고 렌더러에는 절대 의존하지 않으므로, 따로 배포할 수 있습니다.
+- JAWT 없는 skiko: native image 가 링크하는 정적 skiko 아카이브로, JDK 의 `libjawt` 에 의존하지 않습니다.
+- AWT 없는 클립보드와 포인터 아이콘: AWT 없는 창도 복사, 붙여넣기, 커서 변경을 할 수 있습니다.
+- Compose UI 모듈의 `linuxX64`, `linuxArm64`, `mingwX64` Kotlin/Native 소스 세트가 트리에 있습니다. Linux 것은 CI 에서 빌드합니다. "Extended window linux" 워크플로가 이를 먼저 배포한 다음 `native/linux` 를 빌드하고 테스트합니다. `mingwX64` 것을 빌드하는 CI 작업은 아직 없고, 이것으로 링크한 렌더러를 Windows 에서 실행하는 일은 [#3](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/3) 에서 열려 있습니다.
+- 업스트림 공개 API 가드: 워크플로가 Compose 모듈의 공개 API 를 업스트림과 비교하므로 기존 Compose 코드가 계속 컴파일됩니다. 포크 자체의 API 는 `extended/` 아래 별도 모듈에 있습니다.
+
+이를 쓰는 애플리케이션을 패키징하려면 Gradle 플러그인 포크
+[compose-multiplatform-extended](https://github.com/thisisthepy/compose-multiplatform-extended/blob/extended/extended/README_ko.md)
+를 보십시오.
+
+## 이 포크에 대하여
+
 [JetBrains/compose-multiplatform-core](https://github.com/JetBrains/compose-multiplatform-core)
 를 thisisthepy 가 포크한 저장소입니다. 작업은 `extended` 브랜치에 있으며, JetBrains
 `release/1.11` 의 `73ac849` ("Copy Jetpack Compose 1.11.2") 위에 쌓여 있습니다. 저장소 루트는
 업스트림 그대로 둡니다. 포크가 더한 것은 Compose 모듈 안의 플랫폼 소스 세트이거나 `extended/`
 아래의 스크립트입니다.
-
-English: [README.md](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/README.md)
 
 ## 더한 것
 
@@ -17,6 +39,8 @@ English: [README.md](https://github.com/thisisthepy/compose-multiplatform-core-e
 | macOS 의 네이티브 텍스트 컨텍스트 메뉴 (`NSMenu`) | 구현 | `foundation` |
 | GraalVM native image 용 정적 아카이브로 묶은 skiko JVM 네이티브 (macOS arm64, Linux x64, Windows x64) | 구현 | [`extended/skiko`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/skiko/README.md) |
 | Windows 정적 아카이브에 컴파일해 넣은 Skia 의 ICU 데이터 | 구현 | `extended/skiko/embedded_icu.cpp` |
+| 툴킷 없는 native image 에 Swing 과 `UIManager` 가 남지 않도록 AWT 스위치를 단 skiko-awt | 구현 | `extended/skiko/build-skiko-awt.sh` |
+| 창 모듈: 두 경로의 창, 입력, IME, 메뉴, 크롬 | macOS 와 Linux 구현, Windows 는 [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32) 에서 열려 있음 | [`extended/window`](#창-모듈) |
 | Windows 용 Compose 창 프로시저 (캡션, 제목 표시줄, 아이콘) | 계획 | 브랜치 [`feature/windows-window-chrome`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/feature/windows-window-chrome), [DarkPyonix/compose-rust#26](https://github.com/DarkPyonix/compose-rust/issues/26) |
 | `org.thisisthepy.compose` 좌표 | 계획 | 브랜치 [`chore/thisisthepy-coordinates`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/chore/thisisthepy-coordinates) |
 | compose-rust에 있던 그대로의 디자인 시스템 여섯 개와 Liquid Glass 재질 | 가져옴 | [`extended/design-systems`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/design-systems/README.md) |
@@ -43,6 +67,15 @@ skiko 는 ABI 가 다른 두 부분으로 나뉩니다. Kotlin 쪽은 고정한 
 [extended/skiko/README.md](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/skiko/README.md)
 에 있습니다.
 
+Windows 실행 파일의 최종 링크는 어느 경로로 빌드했든 MSVC 의 것입니다. Windows 의 GraalVM native
+image 는 지금 MSVC 가 링크합니다. Kotlin/Native `mingwX64` 실행 파일도 같은 방식으로 링크합니다.
+Kotlin/Native 의 MinGW 오브젝트를 MSVC 링커가 받아들이도록 고쳐 쓰고, MSVC 링커가 이를 Skia 와
+skiko 의 MSVC 쪽과 함께 링크합니다. MinGW 경로는 없습니다. MinGW 만으로 링크하려면 MinGW 용으로
+빌드한 Skia 가 있어야 하는데, JetBrains 는 이를 만들지 않기 때문입니다. **상태: 열림.** Kotlin/Native
+용 Gradle 플러그인의 MSVC 링크 단계는
+[compose-multiplatform-extended#31](https://github.com/thisisthepy/compose-multiplatform-extended/pull/31)
+에 있습니다.
+
 이것으로 링크한 렌더러를 Windows 에서 직접 실행하는 확인은
 [#3](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/3) 에 남아 있습니다.
 지금까지는 Wine 에서만 실행했습니다.
@@ -64,6 +97,28 @@ Windows 에서 Skia 는 실행 파일 옆의 `icudtl.dat` 를 찾고, 없으면 
 [thisisthepy/compose-multiplatform-extended](https://github.com/thisisthepy/compose-multiplatform-extended/blob/extended/extended/README_ko.md)
 의 `packageNativeImage` 입니다.
 
+### 창 모듈
+
+데스크톱 창 코드는 `extended/design-systems` 처럼 독립 Amper 프로젝트인 `extended/window` 에
+있습니다. 창, 포인터와 키 입력, IME, 텍스트 컨텍스트 메뉴와 편집 메뉴, 클립보드, 파일 드롭, 창 크롬,
+접근성이 모두 여기에 있습니다. 여기 있는 어떤 것도 렌더러나 그 와이어 프로토콜, 노드 테이블에 의존할
+수 없습니다(`extended/window/project.yaml` 에 그렇게 적혀 있습니다). 그래서 어떤 Compose
+애플리케이션이든 이것으로 창을 열 수 있습니다.
+
+| 모듈 | 아티팩트 | 플랫폼 | 내용 |
+|---|---|---|---|
+| `common` | `org.thisisthepy.compose.window:common` | JVM, `macosArm64`, `linuxX64`, `linuxArm64`, `mingwX64` | `WindowPlatform`, 이벤트와 상태와 정책 타입, 모든 플랫폼 계층이 함께 쓰는 규칙. 툴킷도 Compose 도 없습니다 |
+| `scene` | `org.thisisthepy.compose.window:scene` | JVM, `macosArm64` | `WindowPlatform` 으로 연 창에 Compose 장면을 올립니다. 프레임 루프, 그리고 Compose 의 플랫폼 텍스트 입력을 거치는 포인터, 키, IME 텍스트 |
+| `native/macos` | `org.thisisthepy.compose.window:native-macos` | `macosArm64` | Kotlin/Native 창: AppKit, Metal, 네이티브 텍스트 메뉴와 편집 메뉴, 창 크롬 |
+| `native/linux` | `org.thisisthepy.compose.window:native-linux` | `linuxX64`, `linuxArm64` | Kotlin/Native 창: Xlib, GLX, XIM, D-Bus 위의 AT-SPI |
+| `graalvm/graalvm-macos` | `org.thisisthepy.compose.window:graalvm-macos` | JVM (native image) | native image 용 AppKit 창: `appkit_window.m` 과 그 Kotlin 쪽 |
+| `graalvm/graalvm-linux` | `org.thisisthepy.compose.window:graalvm-linux` | JVM (native image) | native image 용 X11 창: `x11_window.c` 와 그 Kotlin 쪽 |
+
+버전은 모두 `0.1.0` 입니다. "Extended window publish" 워크플로가 compose-rust 가 쓰는 방식대로 이를
+로컬 Maven 저장소에 배포합니다. `native/linux` 는 [#111](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/111) 에서 여기에 더해집니다.
+아직 공개 저장소에 올린 것은 없습니다. Windows 창 `windows-shared` 는 [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32) 에서
+열려 있습니다.
+
 ### Windows 창 크롬 (계획)
 
 `feature/windows-window-chrome` 브랜치는 Windows 용 Compose 창 프로시저를 정적 skiko 아카이브에
@@ -75,7 +130,9 @@ Windows 에서 Skia 는 실행 파일 옆의 `icudtl.dat` 를 찾고, 없으면 
 
 compose-rust가 `design-systems/` 디렉터리에 두던 디자인 시스템은 바뀐 것 없이
 [`extended/design-systems`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/design-systems/README.md) 에 있습니다. 자기 래퍼와 자기 워크플로를 가진 독립 Amper 프로젝트이고,
-이 저장소의 모듈이 아니라 배포된 Compose를 대상으로 빌드합니다. 여기서부터 라이브러리가 되며,
+이 저장소의 모듈이 아니라 배포된 Compose를 대상으로 빌드합니다. Liquid Glass 재질도 `liquid-glass`
+모듈로 여기에 있습니다. 어느 것도 렌더러에 의존하지 않고, 그렇게 만들 것을 더해서도 안 됩니다. 그래야
+디자인 시스템을 따로 배포할 수 있기 때문입니다. 여기서부터 라이브러리가 되며,
 [DarkPyonix/compose-rust#39](https://github.com/DarkPyonix/compose-rust/issues/39) 에서 추적합니다.
 
 - `org.thisisthepy.compose.designsystem`: 공통 계약 (`DesignSystem` 인터페이스, 역할 enum, 토큰).
@@ -162,9 +219,18 @@ extended/skiko/build-skiko-static-jvm.sh <work-dir>
 | Compose 모듈 | `org.jetbrains.compose.<group>:<artifact>:1.11.1`. 예: `org.jetbrains.compose.ui:ui:1.11.1` 과 그 타깃 `ui-linuxx64`, `ui-mingwx64`, `ui-macosarm64` |
 | Material 3 (위 속성을 줄 때) | `org.jetbrains.compose.material3:material3:1.11.0-alpha07` |
 | `mingwX64` 용 skiko | `org.jetbrains.skiko:skiko-mingwx64:0.144.6`. skiko 루트 메타데이터에 이 타깃을 더합니다 |
+| AWT 스위치를 단 skiko-awt | `org.jetbrains.skiko:skiko-awt:0.144.6`. `extended/skiko/build-skiko-awt.sh` 가 만듭니다 |
 
-`jetbrains.publication.version.COMPOSE=1.11.1` 은 `gradle.properties` 에 있습니다. 아직 공개 저장소에
-올린 것은 없습니다. 사용하는 쪽은 `mavenLocal()` 을 맨 앞에 둡니다.
+`jetbrains.publication.version.COMPOSE=1.11.1` 은 `gradle.properties` 에 있고, 빌드에서 다른 값을
+줄 수 있습니다. compose-rust 가 그렇게 합니다.
+[`build-compose.sh`](https://github.com/DarkPyonix/compose-rust/blob/develop/renderer/scripts/build-compose.sh)
+는 데스크톱의 `foundation`, `ui`, `ui-text` 와 macOS 의 `ui`, `foundation` 을 `1.11.1001` 로 배포하고,
+`publish-skiko-awt.sh` 는 skiko-awt 를 `0.144.6.1` 로 배포합니다. JetBrains 도 이 모듈들을 `1.11.1` 로
+배포하는데, 업스트림의 `1.11.1` 을 이미 가진 리졸버는 그것을 가져가고 로컬 저장소를 보지 않습니다.
+그래서 포크의 버전이 그보다 높게 정렬되어야 합니다. Linux 모듈은 `1.11.1` 그대로입니다. JetBrains 가
+그 좌표로 배포하는 것이 없기 때문입니다.
+
+아직 공개 저장소에 올린 것은 없습니다. 사용하는 쪽은 `mavenLocal()` 을 맨 앞에 둡니다.
 
 ```kotlin
 // settings.gradle.kts

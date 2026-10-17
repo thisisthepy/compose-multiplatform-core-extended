@@ -3,11 +3,40 @@
 #
 # It names no platform and no toolkit: no AppKit, no Win32, no Xlib, no java.awt and no
 # Compose, so one source tree compiles for the JVM the GraalVM path uses and for the
-# Kotlin/Native targets. The OS layers under native/ and graalvm/ implement
-# WindowPlatform and leave every decision to this module.
+# Kotlin/Native targets, mingwX64 among them for the Kotlin/Native Windows renderer, whose
+# window is still the renderer's own until it moves here. The OS layers under native/ and
+# graalvm/ implement WindowPlatform and leave every decision to this module.
 product:
   type: kmp/lib
-  platforms: [ jvm, macosArm64, linuxX64, linuxArm64 ]
+  platforms: [ jvm, macosArm64, linuxX64, linuxArm64, mingwX64 ]
 
 test-dependencies:
   - $kotlin.test
+
+settings:
+  publishing:
+    enabled: true
+    group: org.thisisthepy.compose.window
+    artifactId: common
+    version: 0.1.0
+  kotlin:
+    # A klib's unique_name defaults to the Amper module name, which is the directory name
+    # (`common`, `macos`, `linux`). The Kotlin/Native linker refuses two libraries with the
+    # same unique_name, so any consumer with a module of that name could not link this one.
+    # The Maven coordinates are a globally unique name, so the klib takes them.
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.window:common
+
+# Tests compile into a klib of their own that links against the main one, so it needs a
+# unique_name of its own too.
+test-settings:
+  kotlin:
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.window:common-test
+
+repositories:
+  - id: mavenLocal
+    url: mavenLocal
+    publish: true
