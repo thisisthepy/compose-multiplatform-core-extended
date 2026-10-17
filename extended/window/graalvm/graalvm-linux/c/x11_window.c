@@ -1509,8 +1509,25 @@ void dxc_native_debug_resize(void *window_pointer, void *view_pointer, int32_t f
         if (width < 1) width = 1;
         if (height < 1) height = 1;
         dxc_detail("request", width, height);
+        int64_t before = dxc_resize_serial;
         XResizeWindow(dxc_display, dxc_window, (unsigned)width, (unsigned)height);
         XFlush(dxc_display);
+        // The next size is asked for only once the server has confirmed this one and its frame
+        // has been drawn, which is what a window manager holding the frame for the sync
+        // counter does. Asked for earlier, the frame for this size is drawn while the server
+        // already has the next one: a frame presented at a size the window no longer has. A
+        // pump can return before the confirmation arrives (a wake from another thread ends
+        // its wait), so it is asked again, for up to a second.
+        struct timespec start;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        while (dxc_resize_serial == before && !dxc_closed &&
+               (dxc_width != width || dxc_height != height)) {
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            double waited = (double)(now.tv_sec - start.tv_sec) + (now.tv_nsec - start.tv_nsec) / 1e9;
+            if (waited > 1.0) break;
+            dxc_native_pump(0.05);
+        }
         dxc_native_pump(pause_micros / 1.0e6);
     }
 }

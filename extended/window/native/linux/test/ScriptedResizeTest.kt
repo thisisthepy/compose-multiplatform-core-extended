@@ -10,6 +10,8 @@ import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowListener
 import platform.posix.getenv
+import platform.posix.setenv
+import platform.posix.unsetenv
 
 /**
  * The scripted drag the parity check measures with, and the count it is measured by: each
@@ -45,6 +47,32 @@ class ScriptedResizeTest {
             assertEquals(0L, stats.stretched, stats.report())
             assertEquals(0L, stats.stale, stats.report())
             assertEquals(360 to 420, window.measure().let { it.width to it.height })
+        } finally {
+            window.close()
+        }
+    }
+
+    /**
+     * A drag with no pause between sizes, judged against what the server says at each present:
+     * the next size is asked for only once this one is confirmed and drawn, so no frame is
+     * presented at a size the server has already left.
+     */
+    @Test
+    fun parity_a_drag_presents_no_frame_at_a_size_the_server_has_left() {
+        if (noDisplay) return
+        // Read when the window is made: each present asks the server for the window's size.
+        setenv("DXC_REPORT_RESIZE", "1", 1)
+        val window = try {
+            openWindow { target, event -> target.present(event.x.toInt(), event.y.toInt()) }
+        } finally {
+            unsetenv("DXC_REPORT_RESIZE")
+        }
+        try {
+            window.scriptedResize(300, 360, 30, 0)
+            val stats = window.resizeStats
+            assertTrue(stats.presented >= 1, "the drag presented nothing: ${stats.report()}")
+            assertEquals(0L, stats.stale, stats.report())
+            assertEquals(300 to 360, window.measure().let { it.width to it.height })
         } finally {
             window.close()
         }
