@@ -56,6 +56,12 @@ jobs:
           cc -O1 -Wall -pthread -o build/wake_test test/c/wake_test.c -lX11 -lXext -lGL
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/wake_test
 
+      - name: Wake latency, 200 posts from another thread (under a virtual display)
+        working-directory: extended/window/graalvm/graalvm-linux
+        run: |
+          cc -O1 -Wall -pthread -o build/wake_latency_test test/c/wake_latency_test.c -lX11 -lXext -lGL
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/wake_latency_test | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Scripted drag and the resize count (under a virtual display)
         working-directory: extended/window/graalvm/graalvm-linux
         run: |
