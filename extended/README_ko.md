@@ -119,6 +119,33 @@ Windows 에서 Skia 는 실행 파일 옆의 `icudtl.dat` 를 찾고, 없으면 
 아직 공개 저장소에 올린 것은 없습니다. Windows 창 `windows-shared` 는 [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32) 에서
 열려 있습니다.
 
+### Gradle 에서 쓰는 macOS 용 Kotlin/Native
+
+창 모듈은 Amper 로 빌드되고, Gradle 빌드는 Maven 좌표로 이를 씁니다.
+[`extended/window/samples/gradle-macos`](window/samples/gradle-macos) 는 `macosArm64` 실행
+파일을 가진 Kotlin Multiplatform 프로젝트로, 포크의 AppKit 및 Metal 창에 Material 3 화면을 띄웁니다.
+"Extended window Gradle example (macOS)" 워크플로가 `common` 과 `native-macos` 를 로컬 Maven
+저장소에 게시하고, 예제를 Gradle 로 링크한 다음, 콘텐츠의 프레임이 창에 닿을 때까지 실행합니다.
+
+- **호스팅.** Kotlin/Native macOS 에서는 `native-macos` 가 Compose scene 을 직접 호스팅합니다.
+  `MacosWindow(...).setContent { }` 를 쓰거나, `WindowPlatform` 뒤에서 `MacosWindowPlatform(content)`
+  를 씁니다. 이 창은 입력을 그 scene 으로 바로 보내고, 그래서 입력기의 조합이 제자리에 남습니다.
+  `scene` 은 `WindowSurface` 를 넘겨주고 입력을 `WindowEvent` 로 알리는 창을 위한 호스트이며, 이것이
+  GraalVM 경로입니다. `scene` 도 `macosArm64` 용으로 빌드되지만, 아직 어떤 Kotlin/Native 창도 surface 를
+  주지 않습니다. `native-macos` 가 입력을 이벤트로 알리지 않기 때문입니다
+  ([#63](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/63) 이 하나의 이벤트
+  경로로 옮깁니다). 따라서 Kotlin/Native macOS 애플리케이션은 `scene` 이 아니라 `native-macos` 에
+  의존합니다.
+- **Material 3.** `macosArm64` 용 `material3` 는 JetBrains 에서 옵니다. Maven Central 의
+  `org.jetbrains.compose.material3:material3:1.11.0-alpha07` 이고, 그 `material3-macosarm64` 변형은
+  JetBrains 가 직접 빌드한 것입니다. 포크는 macOS 용으로 이를 빌드하지 않습니다. Compose 모듈 가운데
+  macOS 에서 JetBrains 빌드와 다른 것은 `foundation` 과 `ui` 뿐입니다. Material 3 는 `ui` 와
+  `foundation` `1.11.0-beta03` 을 요구하고, Gradle 은 빌드가 요구하는 가장 높은 버전을 고르므로 여기서는
+  `1.11.1` 과 링크됩니다. 포크의 패치된 모듈이 그보다 높은 버전으로 게시되어 있으면 그것과 링크됩니다
+  (compose-rust 는 `1.11.1001` 로 게시합니다).
+- **Kotlin.** 빌드의 Kotlin 은 창 klib 을 컴파일한 버전 이상이어야 하며, 지금은 `2.4.10` 입니다
+  (`.module` 파일의 `kotlin-stdlib` 버전). 더 새로운 컴파일러로 만든 klib 은 링크되지 않습니다.
+
 ### Windows 창 크롬 (계획)
 
 `feature/windows-window-chrome` 브랜치는 Windows 용 Compose 창 프로시저를 정적 skiko 아카이브에
