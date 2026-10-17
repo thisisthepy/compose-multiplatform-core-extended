@@ -51,6 +51,9 @@ static atomic_int dxc_vprobe_last_height;
 static uint32_t dxc_vprobe_window_number;
 static double dxc_vprobe_scale = 1;
 static uint64_t dxc_vprobe_started;
+// Which window the images are being taken of: the application's, or the plain AppKit one the
+// probe opens afterwards for comparison.
+static const char *volatile dxc_vprobe_target = "sample";
 // What the frame being drawn came from, and how long its drawable took to get, for the lines
 // the probe prints about each frame.
 static const char *dxc_vprobe_via = "loop";
@@ -217,11 +220,11 @@ static void dxc_vprobe_sample(dxc_vprobe_capture_fn capture, int index) {
     long drawn = top >= 0 ? dxc_vprobe_read_bits(rgba, width, height, top, 1, scale) : -1;
     free(rgba);
     fprintf(stderr,
-            "compose-rust: vresize sample i=%d t_ms=%.2f image=%zux%zu scale=%.2f found=%d "
+            "compose-rust: vresize %s i=%d t_ms=%.2f image=%zux%zu scale=%.2f found=%d "
             "marker_top_pt=%.2f marker_h_pt=%.2f bottom_gap_pt=%.2f shown_frame=%ld "
             "shown_height_px=%ld image_height_px=%zu last_drawn_frame=%d last_drawn_height_px=%d "
             "control_top_pt=%.2f\n",
-            index, at, width, height, scale, top >= 0 ? 1 : 0, top >= 0 ? top / scale : -1.0,
+            dxc_vprobe_target, index, at, width, height, scale, top >= 0 ? 1 : 0, top >= 0 ? top / scale : -1.0,
             top >= 0 ? (bottom - top + 1) / scale : -1.0,
             cyan_bottom >= 0 ? ((long)height - 1 - cyan_bottom) / scale : -1.0, frame, drawn,
             height, atomic_load(&dxc_vprobe_frame_count), atomic_load(&dxc_vprobe_last_height),
@@ -244,7 +247,7 @@ static void dxc_vprobe_geometry(NSWindow *window, NSView *view, CAMetalLayer *la
     CGRect layer_bounds = layer.bounds;
     CGPoint anchor = layer.anchorPoint;
     CGPoint position = layer.position;
-    CGSize drawable = layer.drawableSize;
+    CGSize drawable = [layer isKindOfClass:[CAMetalLayer class]] ? layer.drawableSize : CGSizeZero;
     int flips = 0;
     for (CALayer *above = layer; above != nil; above = above.superlayer) {
         if (above.geometryFlipped) flips++;
@@ -277,10 +280,92 @@ static void dxc_vprobe_post(NSWindow *window, NSEventType type, NSPoint screen) 
     if (event != nil) [NSApp postEvent:event atStart:NO];
 }
 
+// A window with nothing in it but the control, drawn by AppKit alone, and flipped like the
+// application's view so the control keeps its distance from the top.
+@interface DxcProbeFlippedView : NSView
+@end
+@implementation DxcProbeFlippedView
+- (BOOL)isFlipped { return YES; }
+@end
+
+static void dxc_vprobe_add_control(NSView *view) {
+    NSView *control = [[NSView alloc] initWithFrame:NSMakeRect(DXC_VPROBE_CONTROL_X, DXC_VPROBE_MARK_TOP,
+                                                               DXC_VPROBE_MARK_SIZE, DXC_VPROBE_MARK_SIZE)];
+    control.wantsLayer = YES;
+    control.layer.backgroundColor = CGColorCreateSRGB(1, 1, 0, 1);
+    // The view is flipped, so a subview that is not told to move keeps its distance from
+    // the top.
+    [view addSubview:control];
+}
+
 /**
- * Starts the drag three seconds after [window] is shown. Runs on the main thread, from timers
- * in the common modes, so it keeps posting inside the tracking loop AppKit runs for a live
- * resize as a hand's events would arrive.
+ * Drags [window]'s bottom edge down and back, then its top edge up and back, with mouse
+ * events, while another thread takes the window's image. Runs on the main thread, from a
+ * timer in the common modes, so it keeps posting inside the tracking loop AppKit runs for a
+ * live resize as a hand's events would arrive. Calls [done] when it is over.
+ */
+static void dxc_vprobe_drag(NSWindow *window, NSView *view, CAMetalLayer *layer, const char *target,
+                            dxc_vprobe_capture_fn capture, void (^done)(void)) {
+    dxc_vprobe_window_number = (uint32_t)window.windowNumber;
+    dxc_vprobe_target = target;
+    dxc_vprobe_scale = window.backingScaleFactor > 0 ? window.backingScaleFactor : 1;
+    NSRect visible = window.screen.visibleFrame;
+    NSRect start = window.frame;
+    enum { EVENTS = 40 };
+    // As far as the screen allows, up to 160 points, with ten to spare.
+    double down = fmin(160, NSMinY(start) - NSMinY(visible) - 10);
+    double up = fmin(160, NSMaxY(visible) - NSMaxY(start) - 10);
+    fprintf(stderr,
+            "compose-rust: vresize begin target=%s window_frame=%.1f,%.1f,%.1fx%.1f visible=%.1f,%.1f,%.1fx%.1f "
+            "scale=%.2f bottom_travel_pt=%.1f top_travel_pt=%.1f\n",
+            target, start.origin.x, start.origin.y, start.size.width, start.size.height,
+            visible.origin.x, visible.origin.y, visible.size.width, visible.size.height,
+            dxc_vprobe_scale, down, up);
+
+    atomic_store(&dxc_vprobe_sampling, 1);
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
+        int index = 0;
+        while (atomic_load(&dxc_vprobe_sampling)) dxc_vprobe_sample(capture, index++);
+    });
+
+    __block int tick = 0;
+    double x = NSMidX(start) - 40;
+    NSTimer *timer = [NSTimer timerWithTimeInterval:1.0 / 60 repeats:YES block:^(NSTimer *t) {
+        // Bottom edge: press 2 points inside it, drag down and back. Then the top edge, up
+        // and back. Twenty quiet ticks before, between and after.
+        int phase_length = 1 + 2 * EVENTS + 1 + 20;
+        int at = tick++ - 20;
+        if (at < 0) return;
+        int edge = at / phase_length;
+        int i = at % phase_length;
+        if (edge >= 2) {
+            [t invalidate];
+            atomic_store(&dxc_vprobe_sampling, 0);
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC),
+                           dispatch_get_main_queue(), done);
+            return;
+        }
+        const char *name = edge == 0 ? "bottom" : "top";
+        double travel = edge == 0 ? -down : up;
+        double y0 = edge == 0 ? NSMinY(start) + 2 : NSMaxY(start) - 2;
+        if (i == 0) {
+            dxc_vprobe_post(window, NSEventTypeLeftMouseDown, NSMakePoint(x, y0));
+        } else if (i <= 2 * EVENTS) {
+            int k = i <= EVENTS ? i : 2 * EVENTS - i;
+            dxc_vprobe_post(window, NSEventTypeLeftMouseDragged,
+                            NSMakePoint(x, y0 + travel * k / EVENTS));
+        } else if (i == 2 * EVENTS + 1) {
+            dxc_vprobe_post(window, NSEventTypeLeftMouseUp, NSMakePoint(x, y0));
+        }
+        if (i <= 2 * EVENTS + 1) dxc_vprobe_geometry(window, view, layer, name, i);
+    }];
+    [NSRunLoop.currentRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
+}
+
+/**
+ * Starts the drag three seconds after [window] is shown, then does the same to a plain AppKit
+ * window of the same size and place, with only the control in it, for comparison: what the
+ * window server does to a window nothing but AppKit draws ("vresize plain-sample" lines).
  */
 static void dxc_vprobe_start(NSWindow *window, NSView *view, CAMetalLayer *layer) {
     if (!dxc_vprobe_enabled()) return;
@@ -293,70 +378,28 @@ static void dxc_vprobe_start(NSWindow *window, NSView *view, CAMetalLayer *layer
             fprintf(stderr, "compose-rust: vresize done\n");
             return;
         }
-        dxc_vprobe_window_number = (uint32_t)window.windowNumber;
-        NSView *control = [[NSView alloc] initWithFrame:NSMakeRect(DXC_VPROBE_CONTROL_X, DXC_VPROBE_MARK_TOP,
-                                                                   DXC_VPROBE_MARK_SIZE, DXC_VPROBE_MARK_SIZE)];
-        control.wantsLayer = YES;
-        control.layer.backgroundColor = CGColorCreateSRGB(1, 1, 0, 1);
-        // The view is flipped, so a subview that is not told to move keeps its distance
-        // from the top.
-        [view addSubview:control];
-        dxc_vprobe_scale = window.backingScaleFactor > 0 ? window.backingScaleFactor : 1;
-        NSRect visible = window.screen.visibleFrame;
-        NSRect start = window.frame;
-        enum { EVENTS = 40 };
-        // As far as the screen allows, up to 160 points, with ten to spare.
-        double down = fmin(160, NSMinY(start) - NSMinY(visible) - 10);
-        double up = fmin(160, NSMaxY(visible) - NSMaxY(start) - 10);
-        fprintf(stderr,
-                "compose-rust: vresize begin window_frame=%.1f,%.1f,%.1fx%.1f visible=%.1f,%.1f,%.1fx%.1f "
-                "scale=%.2f bottom_travel_pt=%.1f top_travel_pt=%.1f\n",
-                start.origin.x, start.origin.y, start.size.width, start.size.height,
-                visible.origin.x, visible.origin.y, visible.size.width, visible.size.height,
-                dxc_vprobe_scale, down, up);
-
-        atomic_store(&dxc_vprobe_sampling, 1);
-        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
-            int index = 0;
-            while (atomic_load(&dxc_vprobe_sampling)) dxc_vprobe_sample(capture, index++);
-        });
-
-        __block int tick = 0;
-        double x = NSMidX(start) - 40;
-        NSTimer *timer = [NSTimer timerWithTimeInterval:1.0 / 60 repeats:YES block:^(NSTimer *t) {
-            // Bottom edge: press 2 points inside it, drag down and back. Then the top edge,
-            // up and back. Twenty quiet ticks before, between and after.
-            int phase_length = 1 + 2 * EVENTS + 1 + 20;
-            int at = tick++ - 20;
-            if (at < 0) return;
-            int edge = at / phase_length;
-            int i = at % phase_length;
-            NSRect frame = window.frame;
-            if (edge >= 2) {
-                [t invalidate];
-                atomic_store(&dxc_vprobe_sampling, 0);
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC),
-                               dispatch_get_main_queue(), ^{
+        dxc_vprobe_add_control(view);
+        NSRect frame = window.frame;
+        NSWindowStyleMask mask = window.styleMask;
+        dxc_vprobe_drag(window, view, layer, "sample", capture, ^{
+            NSWindow *plain = [[NSWindow alloc] initWithContentRect:NSZeroRect
+                                                          styleMask:mask
+                                                            backing:NSBackingStoreBuffered
+                                                              defer:NO];
+            plain.releasedWhenClosed = NO;
+            DxcProbeFlippedView *content = [[DxcProbeFlippedView alloc] initWithFrame:NSZeroRect];
+            content.wantsLayer = YES;
+            plain.contentView = content;
+            [plain setFrame:frame display:YES];
+            dxc_vprobe_add_control(content);
+            [plain makeKeyAndOrderFront:nil];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                dxc_vprobe_drag(plain, content, (CAMetalLayer *)content.layer, "plain-sample", capture, ^{
+                    [plain orderOut:nil];
                     fprintf(stderr, "compose-rust: vresize done\n");
                 });
-                return;
-            }
-            const char *name = edge == 0 ? "bottom" : "top";
-            double travel = edge == 0 ? -down : up;
-            double y0 = edge == 0 ? NSMinY(start) + 2 : NSMaxY(start) - 2;
-            if (i == 0) {
-                dxc_vprobe_post(window, NSEventTypeLeftMouseDown, NSMakePoint(x, y0));
-            } else if (i <= 2 * EVENTS) {
-                int k = i <= EVENTS ? i : 2 * EVENTS - i;
-                dxc_vprobe_post(window, NSEventTypeLeftMouseDragged,
-                                NSMakePoint(x, y0 + travel * k / EVENTS));
-            } else if (i == 2 * EVENTS + 1) {
-                dxc_vprobe_post(window, NSEventTypeLeftMouseUp, NSMakePoint(x, y0));
-            }
-            if (i <= 2 * EVENTS + 1) dxc_vprobe_geometry(window, view, layer, name, i);
-            (void)frame;
-        }];
-        [NSRunLoop.currentRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
+            });
+        });
     });
 }
 
