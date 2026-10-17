@@ -524,9 +524,9 @@ class MacosWindow(
         // Redrawn when it is resized rather than stretched, which is what a layer does with
         // its old contents by default and is exactly the trailing edge this window is for.
         override fun setFrameSize(newSize: CValue<CGSize>) {
-            val oldSize = frame.useContents { size.width to size.height }
+            val oldSize = frame.useContents { this.size.width to this.size.height }
             super.setFrameSize(newSize)
-            VerticalResizeProbe.setFrame(oldSize, newSize.useContents { width to height })
+            VerticalResizeProbe.setFrame(oldSize, newSize.useContents { this.width to this.height })
             // A window that went full screen has no buttons to avoid, and one that came
             // back has them again, and both arrive as a change of size.
             measureCaption()
