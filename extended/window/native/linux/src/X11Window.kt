@@ -92,6 +92,7 @@ class X11Window : WindowPlatform {
     private val drained = mutableListOf<WindowEvent>()
     private val ime = ImeSession { event -> log.heard(event) }
     private var xim: XimContext? = null
+    private var xdnd: XdndTarget? = null
     private var lastSpot: Pair<Int, Int>? = null
     private var cursorShape = -1
     private val cursors = LongArray(CURSOR_SHAPES)
@@ -100,6 +101,9 @@ class X11Window : WindowPlatform {
         present = { surface?.present() },
         tell = { value -> setCounter(value) },
     )
+
+    /** The X id of the window, for a test that has to address it as another client. */
+    internal val windowId: ULong get() = window
 
     /** Whether this window has the keyboard, as the server last said. */
     var isFocused: Boolean = true
@@ -186,6 +190,7 @@ class X11Window : WindowPlatform {
         xim = XimContext.open(display, window, ime)?.also { input ->
             XSelectInput(display, window, EVENT_MASK or input.filterMask)
         }
+        xdnd = XdndTarget(display, window) { log.heard(it) }.also { it.attach() }
         minWidth = config.minWidth
         minHeight = config.minHeight
         resizable = config.resizable
@@ -593,6 +598,7 @@ class X11Window : WindowPlatform {
             }
 
             ClientMessage -> {
+                if (xdnd?.handleClientMessage(event) == true) return
                 if (event.xclient.message_type == protocolsAtom) {
                     when (event.xclient.data.l[0].toULong()) {
                         syncRequest -> {
@@ -611,6 +617,7 @@ class X11Window : WindowPlatform {
             FocusIn -> if (event.xfocus.mode == NotifyNormal || event.xfocus.mode == NotifyWhileGrabbed) isFocused = true
             FocusOut -> if (event.xfocus.mode == NotifyNormal || event.xfocus.mode == NotifyWhileGrabbed) isFocused = false
 
+            SelectionNotify -> xdnd?.handleSelectionNotify(event)
             SelectionRequest -> answerSelection(event)
             SelectionClear -> ownedClipboard = null
         }

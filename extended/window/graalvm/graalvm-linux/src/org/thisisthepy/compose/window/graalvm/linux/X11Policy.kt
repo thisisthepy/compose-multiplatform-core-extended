@@ -20,3 +20,7 @@ internal object X11Theme {
         return if (gtk.endsWith(":dark") || gtk.endsWith("-dark")) SystemTheme.Dark else SystemTheme.Light
     }
 }
+
+/** Splits what `readDroppedPaths` returns into the paths: NUL is the one byte no path holds. */
+fun splitDroppedPaths(joined: String): List<String> =
+    if (joined.isEmpty()) emptyList() else joined.split('\u0000').filter { it.isNotEmpty() }
