@@ -64,13 +64,17 @@ runs:
       run: |
         set -euo pipefail
         echo "ANDROIDX_JDK21=$JAVA_HOME" >> "$GITHUB_ENV"
-        mkdir -p ~/.gradle
-        cat >> ~/.gradle/gradle.properties <<PROPERTIES
+        # What the Linux job always built with. A macOS runner has half the memory and keeps
+        # the build's own settings, as the foundation macOS job does.
+        if [[ "$RUNNER_OS" == Linux ]]; then
+          mkdir -p ~/.gradle
+          cat >> ~/.gradle/gradle.properties <<PROPERTIES
         org.gradle.caching=false
         org.gradle.workers.max=4
         org.gradle.jvmargs=-Xmx11g -XX:MaxMetaspaceSize=2g -XX:+UseParallelGC -Dlint.nullness.ignore-deprecated=true -Dfile.encoding=UTF-8
         kotlin.compiler.execution.strategy=in-process
         PROPERTIES
+        fi
 
     - name: Publish this fork's Compose
       if: steps.restore.outputs.cache-hit != 'true'
