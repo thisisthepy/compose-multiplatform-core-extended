@@ -75,6 +75,35 @@ tasks.register("checkResolution") {
             }
             println("$name: ${components.size} components")
         }
+        // One Compose runtime, and no class twice. Both runtime coordinates a consumer meets
+        // (JetBrains' org.jetbrains.compose.runtime and the fork's org.thisisthepy.compose.runtime)
+        // are stubs that point at androidx.compose.runtime; the classes must come from exactly one
+        // jar, androidx.compose.runtime:runtime-desktop, and no androidx.compose class from two.
+        if ("jvm" in targets) {
+            val artifacts = configurations.getByName("jvmRuntimeClasspath").incoming.artifacts.artifacts
+            val owners = mutableMapOf<String, MutableSet<String>>()
+            for (artifact in artifacts) {
+                val file = artifact.file
+                if (!file.name.endsWith(".jar")) continue
+                java.util.zip.ZipFile(file).use { zip ->
+                    for (entry in zip.entries()) {
+                        val name = entry.name
+                        if (name.startsWith("androidx/compose/") && name.endsWith(".class") && !name.startsWith("META-INF")) {
+                            owners.getOrPut(name) { mutableSetOf() } += artifact.id.componentIdentifier.displayName
+                        }
+                    }
+                }
+            }
+            owners.filterValues { it.size > 1 }.entries.take(20).forEach { (name, from) ->
+                problems += "jvmRuntimeClasspath: $name comes from ${from.joinToString()}"
+            }
+            val runtime = owners["androidx/compose/runtime/Composer.class"].orEmpty()
+            if (runtime.size != 1 || runtime.none { it.startsWith("androidx.compose.runtime:runtime") }) {
+                problems += "jvmRuntimeClasspath: the Compose runtime (androidx/compose/runtime/Composer.class) comes from ${runtime.ifEmpty { setOf("nothing") }.joinToString()}, not from androidx.compose.runtime:runtime alone"
+            } else {
+                println("jvmRuntimeClasspath: one Compose runtime, from ${runtime.single()}")
+            }
+        }
         if (problems.isNotEmpty()) {
             problems.distinct().forEach { System.err.println(it) }
             throw GradleException("${problems.distinct().size} problem(s) resolving this fork's artifacts (above)")
