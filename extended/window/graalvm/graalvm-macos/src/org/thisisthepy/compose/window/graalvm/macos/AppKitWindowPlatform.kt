@@ -85,6 +85,9 @@ class AppKitWindowPlatform : WindowPlatform {
         frameRequested.set(true)
     }
 
+    /** The display link's next presentation, from the C side. */
+    override fun frameTimeNanos(): Long = org.thisisthepy.compose.window.graalvm.macos.frameTimeNanos()
+
     /** True once if a frame was asked for since the last call. */
     fun takeFrameRequest(): Boolean = frameRequested.getAndSet(false)
 

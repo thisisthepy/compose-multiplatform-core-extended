@@ -39,7 +39,10 @@ import org.thisisthepy.compose.window.WindowListener
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.WindowPlatform
 import org.thisisthepy.compose.window.WindowVisibility
+import platform.posix.CLOCK_MONOTONIC
 import platform.posix.POLLIN
+import platform.posix.clock_gettime
+import platform.posix.timespec
 import platform.posix.getenv
 import platform.posix.poll
 import platform.posix.pollfd
@@ -232,6 +235,17 @@ class X11Window : WindowPlatform {
     override fun requestFrame() {
         frameRequests.request()
     }
+
+    /**
+     * `CLOCK_MONOTONIC` when the frame is started, in nanoseconds.
+     *
+     * Xlib says nothing about when the server will show a frame: a swap is queued and the
+     * compositor, if there is one, presents it on its own schedule. The time a frame is
+     * started is the closest answer this window has, and it moves at the speed of the wall
+     * clock whatever the refresh rate. It is the clock Rust's `Instant` reads on Linux and
+     * the one the GraalVM X11 window answers on.
+     */
+    override fun frameTimeNanos(): Long = monotonicClockNanos()
 
     /** Whether a frame was asked for since the last call. Reading it clears it. */
     fun takeFrameRequest(): Boolean {
@@ -733,4 +747,11 @@ class X11Window : WindowPlatform {
                 counter
             }
     }
+}
+
+/** `CLOCK_MONOTONIC` now, in nanoseconds. */
+internal fun monotonicClockNanos(): Long = memScoped {
+    val now = alloc<timespec>()
+    clock_gettime(CLOCK_MONOTONIC, now.ptr)
+    now.tv_sec * 1_000_000_000L + now.tv_nsec
 }
