@@ -106,7 +106,14 @@ class X11Window : WindowPlatform {
      * each present; without it the last size event answers, which costs nothing.
      */
     val resizeStats = ResizeStats()
-    private val strictResizeAccounting = getenv("DXC_REPORT_RESIZE") != null
+    private val resizeDetail = getenv("DXC_REPORT_RESIZE_DETAIL") != null
+    private val strictResizeAccounting = getenv("DXC_REPORT_RESIZE") != null || resizeDetail
+
+    /** DXC_REPORT_RESIZE_DETAIL: one line per size asked for, confirmed and presented. */
+    private fun detail(line: String) {
+        if (!resizeDetail) return
+        platform.posix.fputs("dxc resize detail: t=${monotonicClockNanos() / 1000}us $line\n", platform.posix.stderr)
+    }
     private var presentedSinceEvent = false
     private val frameRequests = FrameRequestCoalescer().also { it.request() }
     private var ownedClipboard: String? = null
@@ -344,6 +351,7 @@ class X11Window : WindowPlatform {
         display?.let { XFlush(it) }
         val (width, height) = if (strictResizeAccounting) serverSize() else measured.width to measured.height
         resizeStats.presentAgainst(drawnWidth, drawnHeight, width, height)
+        detail("present drawn=${drawnWidth}x$drawnHeight configured=${measured.width}x${measured.height} server=${width}x$height")
         return FramePresentRecord(drawnWidth, drawnHeight, width, height)
     }
 
@@ -376,6 +384,7 @@ class X11Window : WindowPlatform {
             val t = step.toDouble() / steps
             val width = (from.width + (toWidth - from.width) * t).toInt().coerceAtLeast(1)
             val height = (from.height + (toHeight - from.height) * t).toInt().coerceAtLeast(1)
+            detail("request ${width}x$height")
             XResizeWindow(display, window, width.convert(), height.convert())
             XFlush(display)
             pump(pauseMillis)
@@ -719,6 +728,7 @@ class X11Window : WindowPlatform {
                 }
                 measured = WindowMeasurement(width, height, DENSITY)
                 resizeStats.step(width, height)
+                detail("configure ${width}x$height")
                 frameRequests.request()
                 resized()
             }

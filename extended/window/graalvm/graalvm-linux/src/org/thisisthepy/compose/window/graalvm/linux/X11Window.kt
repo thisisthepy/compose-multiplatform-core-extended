@@ -56,7 +56,10 @@ class X11Window : WindowPlatform {
      * each present; without it the last size event answers, which costs nothing.
      */
     val resizeStats = ResizeStats()
-    private val strictResizeAccounting = System.getenv("DXC_REPORT_RESIZE") != null
+    private val strictResizeAccounting = System.getenv("DXC_REPORT_RESIZE") != null || resizeDetailWanted()
+    private val resizeDetail = resizeDetailWanted()
+
+    private fun resizeDetailWanted() = System.getenv("DXC_REPORT_RESIZE_DETAIL") != null
     private var countedSerial = 0L
 
     /** Whether a frame was asked for since the last [present]; [requestFrame] coalesces. */
@@ -225,6 +228,12 @@ class X11Window : WindowPlatform {
         countSizes(window)
         val (width, height) = if (strictResizeAccounting) serverSize() else window.width to window.height
         resizeStats.presentAgainst(drawnWidth, drawnHeight, width, height)
+        if (resizeDetail) {
+            System.err.println(
+                "dxc resize detail: t=${System.nanoTime() / 1000}us present drawn=${drawnWidth}x$drawnHeight " +
+                    "configured=${window.width}x${window.height} server=${width}x$height",
+            )
+        }
         return FramePresentRecord(drawnWidth, drawnHeight, width, height)
     }
 
