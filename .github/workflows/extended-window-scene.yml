@@ -122,5 +122,13 @@ jobs:
         with:
           targets: desktop
 
+      # The toolchain resolves every platform a module declares, even when asked to build one,
+      # and the fork's macosArm64 Compose is built only on a Mac. On this runner the scene is
+      # the JVM module it is tested as; the checkout is this job's own.
+      - name: The scene as a JVM module on this runner
+        run: |
+          sed -i 's/^  platforms: \[ jvm, macosArm64 \]$/  platforms: [ jvm ]/' scene/module.yaml
+          grep -qx '  platforms: \[ jvm \]' scene/module.yaml
+
       - name: Test (jvm)
         run: ./kotlin test -p jvm -m scene
