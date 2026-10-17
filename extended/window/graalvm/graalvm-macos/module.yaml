@@ -11,6 +11,10 @@ dependencies:
   # time, so they are not bundled into the jar.
   - ../../common
   - org.graalvm.sdk:nativeimage:25.0.1: compile-only
+  # The scene's WindowSurface, which MetalWindowSurface/GlWindowSurface implement, and Skia
+  # through it. Compiled against only: an application that hosts a scene depends on the scene
+  # module itself, and one that only opens a window never loads the surface.
+  - ../../scene: compile-only
 
 test-dependencies:
   - $kotlin.test
