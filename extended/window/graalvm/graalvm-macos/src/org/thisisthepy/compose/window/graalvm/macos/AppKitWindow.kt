@@ -116,6 +116,9 @@ private external fun droppedPaths(out: Pointer?, capacity: Int): Int
 
 @CFunction("dxc_native_window_closed")
 private external fun windowClosed(): Int
+
+@CFunction("dxc_native_soak_state")
+private external fun soakState(): Int
 /**
  * The four pointers a window is, once AppKit has made one.
  *
@@ -381,6 +384,14 @@ fun frameTimeNanos(): Long = nativeFrameTimeNanos()
 
 /** True once the reader has closed the window. */
 fun isWindowClosed(): Boolean = windowClosed() != 0
+
+/**
+ * Where the resize soak asked for with DXC_RESIZE_SOAK is (see `native/appkit_resize_soak.h`):
+ * 0 when none is running, 1 while its rounds run, 2 once they have ended and a collection is
+ * wanted before its last reading. The heap is only visible from this side, so the renderer
+ * prints it while this is not 0.
+ */
+fun resizeSoakState(): Int = soakState()
 
 /**
  * Gives the application the menu bar every application on this platform has.
