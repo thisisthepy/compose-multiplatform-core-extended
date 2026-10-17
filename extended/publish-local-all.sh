@@ -13,12 +13,17 @@
 #   org.thisisthepy.compose.window:<module>           extended/window, the modules this host builds
 #   org.thisisthepy.compose:compose-gradle-plugin     the plugin, at PLUGIN_REVISION
 #
-# The targets default to what this host builds: desktop and macosArm64 on a Mac, desktop and both
-# Linux architectures on Linux x86-64. The window modules follow the host the same way: native/macos
-# and the scene on a Mac, native/linux on Linux x86-64 (Kotlin/Native has no arm64 Linux host).
+# The targets default to what this host builds: desktop and macosArm64 on a Mac; desktop, both
+# Linux architectures and, when the MSVC runtime and Windows SDK headers are there (XWIN_DIR or
+# cargo-xwin's cache), mingwX64 on Linux x86-64. Compose's Gradle build does not run on Windows,
+# and Kotlin/Native compiles mingwX64 from Linux, so Windows' Compose and its skiko come from the
+# Linux host. The window modules follow the host: native/macos and the scene on a Mac,
+# native/linux on Linux x86-64 (Kotlin/Native has no arm64 Linux host), and on Windows (Git
+# Bash) only common and windows-shared, which needs MSVC for its C half and nothing of Compose.
 #
 # Needs what each step needs: a JDK 21 in JAVA_HOME (the Compose build and the plugin), git,
-# python3, and on Linux the X11, GL, fontconfig and FreeType development headers.
+# python3, on Linux the X11, GL, fontconfig and FreeType development headers, and for mingwX64
+# the MSVC runtime and Windows SDK as cargo-xwin lays them out.
 set -euo pipefail
 
 # The plugin commit published with this fork's commit. Its aliases name the version above.
@@ -58,26 +63,41 @@ os="$(uname -s)"
 arch="$(uname -m)"
 window_modules=(common graalvm/graalvm-macos graalvm/graalvm-linux)
 native_linux=0
+windows_host=0
+xwin="${XWIN_DIR:-$HOME/.cache/cargo-xwin/xwin}"
 case "$os" in
     Darwin)
         [[ -n "$targets" ]] || targets="desktop macosArm64"
         window_modules+=(native/macos scene) ;;
     Linux)
         if [[ "$arch" == x86_64 ]]; then
-            [[ -n "$targets" ]] || targets="desktop linuxX64 linuxArm64"
+            if [[ -z "$targets" ]]; then
+                targets="desktop linuxX64 linuxArm64"
+                [[ -d "$xwin/sdk/include/ucrt" ]] && targets="$targets mingwX64"
+            fi
             native_linux=1
         else
             [[ -n "$targets" ]] || targets="desktop"
         fi ;;
-    *) die "this script publishes from macOS or Linux; this is $os" ;;
+    MINGW*|MSYS*|CYGWIN*)
+        windows_host=1
+        window_modules=(common windows-shared) ;;
+    *) die "this script publishes from macOS, Linux or Windows (Git Bash); this is $os" ;;
 esac
 mkdir -p "$work"
 
-echo "==> 1. Compose for $targets, as $version"
-# shellcheck disable=SC2086
-"$here/compose/publish-local.sh" $targets
+if [[ $windows_host -eq 0 ]]; then
+    if [[ " $targets " == *" mingwX64 "* ]]; then
+        # skiko publishes no mingwX64 artifact; Compose for mingwX64 resolves this one.
+        echo "==> 1a. skiko for mingwX64 (both halves)"
+        XWIN_DIR="$xwin" "$here/skiko/build-skiko-mingw.sh" "$work/skiko-mingw"
+    fi
+    echo "==> 1. Compose for $targets, as $version"
+    # shellcheck disable=SC2086
+    "$here/compose/publish-local.sh" $targets
+fi
 
-if [[ " $targets " == *" desktop "* ]]; then
+if [[ $windows_host -eq 0 && " $targets " == *" desktop "* ]]; then
     echo "==> 2. skiko-awt with the AWT switch"
     "$here/skiko/build-skiko-awt.sh" "$work/skiko-awt"
 fi
@@ -91,10 +111,15 @@ echo "==> 3. the window modules: ${window_modules[*]}"
         echo "modules:"
         for module in "${window_modules[@]}"; do echo "  - $module"; done
     } > project.yaml
-    ./kotlin publish mavenLocal
+    if [[ $windows_host -eq 1 ]]; then cmd //c kotlin.bat publish mavenLocal; else ./kotlin publish mavenLocal; fi
 )
 if [[ $native_linux -eq 1 ]]; then
     "$here/window/scripts/publish-native-linux.sh"
+fi
+
+if [[ $windows_host -eq 1 ]]; then
+    echo "published the Windows window modules as $version; Compose, skiko and the plugin come from a Linux or macOS host"
+    exit 0
 fi
 
 echo "==> 4. the Gradle plugin at $PLUGIN_REVISION"
