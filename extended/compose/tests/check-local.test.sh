@@ -45,7 +45,7 @@ echo "publish-local.sh --list"
 
 tasks="$("$compose/publish-local.sh" --list macosArm64)"
 grep -qx ':compose:ui:ui:publishMacosArm64PublicationToMavenLocal' <<< "$tasks" || fail "macosArm64 does not publish ui for its target"
-grep -qx ':compose:ui:ui:publishKotlinMultiplatformDecoratedPublicationToMavenLocal' <<< "$tasks" || fail "the root of ui is not published"
+grep -qx '?:compose:ui:ui:publishKotlinMultiplatformDecoratedPublicationToMavenLocal' <<< "$tasks" || fail "the root of ui is not asked for"
 grep -qx ':compose:runtime:runtime:publishMacosArm64PublicationToMavenLocal' <<< "$tasks" || fail "the runtime stub the modules name is not published"
 desktop="$("$compose/publish-local.sh" --list desktop)"
 grep -qx ':compose:desktop:desktop:publishJvmmacos-arm64PublicationToMavenLocal' <<< "$desktop" || fail "the desktop module's macOS jar is not published"

@@ -1,0 +1,30 @@
+// Used by publish-local.sh: one task, extendedPublishLocal, that runs the publishing tasks
+// named in -Pextended.publish.tasks (comma separated paths). A path starting with `?` is run
+// when the project has that task and skipped when it does not: a module's root is published by
+// a redirecting publication on some modules and by the plain one on others, and asking Gradle
+// directly for a task a project lacks fails the whole build. Every other path must exist.
+//
+// The build configures on demand, so a project nothing has asked for yet has no tasks; each
+// one named is configured here first (evaluationDependsOn) before its task is looked up.
+gradle.rootProject { root ->
+    root.afterEvaluate {
+        def requested = (root.findProperty("extended.publish.tasks") ?: "").toString().split(",").findAll { it }
+        def aggregate = root.tasks.register("extendedPublishLocal")
+        requested.each { entry ->
+            def optional = entry.startsWith("?")
+            def path = optional ? entry.substring(1) : entry
+            def projectPath = path.substring(0, path.lastIndexOf(":"))
+            def taskName = path.substring(path.lastIndexOf(":") + 1)
+            if (root.findProject(projectPath) == null) {
+                throw new GradleException("publish-local: no project $projectPath in this build")
+            }
+            root.evaluationDependsOn(projectPath)
+            def task = root.project(projectPath).tasks.findByName(taskName)
+            if (task != null) {
+                aggregate.configure { it.dependsOn(task) }
+            } else if (!optional) {
+                throw new GradleException("publish-local: $projectPath has no task $taskName")
+            }
+        }
+    }
+}

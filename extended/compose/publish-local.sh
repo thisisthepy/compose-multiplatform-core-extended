@@ -5,7 +5,8 @@
 # Usage: extended/compose/publish-local.sh [--list] <target>... [-- <gradle argument>...]
 #
 #   targets  macosArm64, linuxX64, linuxArm64, mingwX64, desktop
-#   --list   prints the Gradle tasks it would run, one per line, and runs nothing
+#   --list   prints the Gradle tasks it would run, one per line, and runs nothing; a task
+#            starting with `?` is run only where the project has it
 #
 # Runs from anywhere; the Gradle build is the checkout this script is in. Every module is
 # published at the version gradle.properties gives its line (1.11.1-ext.1 for Compose), so a
@@ -86,12 +87,13 @@ add_task() {
 }
 # Two publications per module, not one. The target's own carries the klib or jar; the root
 # says which targets exist, and without it a consumer is told the module does not support
-# the platform. The build replaces the plain root with a redirecting one (Decorated) and
-# skips the plain one, so both are asked for.
+# the platform. On a module the build redirects, a redirecting root (Decorated) replaces the
+# plain one, which is then skipped; other modules have no Decorated publication at all. Both
+# are asked for, as optional tasks (a leading `?`, see publish-local.init.gradle).
 add_module() {
     add_task ":$1:publish$2PublicationToMavenLocal"
-    add_task ":$1:publishKotlinMultiplatformPublicationToMavenLocal"
-    add_task ":$1:publishKotlinMultiplatformDecoratedPublicationToMavenLocal"
+    add_task "?:$1:publishKotlinMultiplatformPublicationToMavenLocal"
+    add_task "?:$1:publishKotlinMultiplatformDecoratedPublicationToMavenLocal"
 }
 windows=0
 for target in "${targets[@]}"; do
@@ -105,7 +107,7 @@ for target in "${targets[@]}"; do
     for module in "${common_modules[@]}"; do add_module "$module" "$publication"; done
     if [[ "$target" == desktop ]]; then
         for module in "${desktop_modules[@]}"; do add_module "$module" "$publication"; done
-        add_task ":compose:desktop:desktop:publishKotlinMultiplatformPublicationToMavenLocal"
+        add_task "?:compose:desktop:desktop:publishKotlinMultiplatformPublicationToMavenLocal"
         add_task ":compose:desktop:desktop:publishJvmPublicationToMavenLocal"
         for system in "${desktop_systems[@]}"; do
             add_task ":compose:desktop:desktop:publishJvm${system}PublicationToMavenLocal"
@@ -128,8 +130,10 @@ platforms="-JS,-WASM"
 echo "==> publishing ${#tasks[@]} task(s) for ${targets[*]} ($platforms)"
 cd "$root"
 ./gradlew --no-daemon --no-configuration-cache \
+    --init-script "$here/publish-local.init.gradle" \
     "-Pandroidx.enabled.kmp.target.platforms=$platforms" \
+    "-Pextended.publish.tasks=$(IFS=,; echo "${tasks[*]}")" \
     ${gradle_args[@]+"${gradle_args[@]}"} \
-    "${tasks[@]}"
+    extendedPublishLocal
 
 echo "==> published to $HOME/.m2/repository/org/thisisthepy/compose"
