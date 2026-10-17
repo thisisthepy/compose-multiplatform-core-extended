@@ -1,35 +1,51 @@
-# Builds and tests extended/window/windows-shared with MSVC: the C window both the
-# GraalVM image and the Kotlin/Native (MinGW) renderer link. Compiling with cl is the
-# point, because the application is an MSVC executable and cl is the compiler that has
-# to accept this file.
-name: extended window windows-shared
+# Builds and tests extended/window/windows-shared: the one C Win32 window that both the
+# GraalVM native image and Kotlin/Native applications link, and the Kotlin/Native layer over it.
+#
+# The C is compiled with MSVC (cl), because every Windows application that links it is an
+# MSVC executable and cl is the compiler that has to accept this file.
+#
+# mingwX64 below is only the name of Kotlin/Native's Windows target. The job compiles the
+# klib and runs its tests, which touch no window and link none of the C. It is not a way to
+# produce an application: the final link of any Windows executable is MSVC's alone, and that
+# path belongs to the Compose Gradle plugin, not to a MinGW link here. Nothing in this
+# workflow links the window's object with MinGW or ships a MinGW-linked binary.
+name: Extended window windows-shared
 
 on:
   workflow_dispatch:
   pull_request:
     paths:
-      - 'extended/window/**'
-      - '.github/workflows/extended-window-windows-shared.yml'
+      - extended/window/common/**
+      - extended/window/windows-shared/**
+      - extended/window/project.yaml
+      - extended/window/scripts/**
+      - .github/workflows/extended-window-windows-shared.yml
   push:
-    branches: [ extended ]
+    branches:
+      - extended
     paths:
-      - 'extended/window/**'
-      - '.github/workflows/extended-window-windows-shared.yml'
+      - extended/window/common/**
+      - extended/window/windows-shared/**
+      - extended/window/project.yaml
+      - extended/window/scripts/**
+      - .github/workflows/extended-window-windows-shared.yml
 
 concurrency:
-  group: extended-window-windows-shared-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   msvc:
-    runs-on: windows-latest
+    name: windows-shared C (MSVC compile and test)
+    runs-on: windows-2022
     timeout-minutes: 20
     defaults:
       run:
         shell: cmd
+        working-directory: extended/window/windows-shared
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,29 +55,45 @@ jobs:
         with:
           arch: x64
 
-      - name: Swapchain creation stays in one function
+      - name: The header declares every function the C exports, and nothing else
         shell: bash
         run: |
-          count=$(grep -c 'CreateSwapChainForHwnd(' extended/window/windows-shared/c/win32_window.c)
-          test "$count" = 1 || { echo "expected one CreateSwapChainForHwnd call, found $count"; exit 1; }
+          set -euo pipefail
+          exported() {
+            grep -hoE '^(int32_t|void) (dxc_native|dxc_notify)_[a-z0-9_]+\(' c/win32_window.c c/win32_notifications.c |
+              sed -E 's/^[a-z0-9_]+ //; s/\($//' | sort -u
+          }
+          declared() {
+            grep -oE '\b(dxc_native|dxc_notify)_[a-z0-9_]+\(' cinterop/include/win32_window.h |
+              sed -E 's/\($//' | sort -u
+          }
+          diff <(exported) <(declared) || {
+            echo "cinterop/include/win32_window.h and the C files disagree (< only in C, > only in the header)" >&2
+            exit 1
+          }
+
+      - name: The resize path keeps its proof lines and its one swapchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'resize-proof step %dx%d presents=%d child_visible=%d blit=%d validated=%d' c/win32_window.c
+          grep -q 'compose-rust: metrics memory %s working_set_mb=' c/win32_window.c
+          grep -q 'IDXGIOutputDuplication_AcquireNextFrame' c/win32_window.c
+          count=$(grep -c 'CreateSwapChainForHwnd(' c/win32_window.c)
+          test "$count" = 1 || { echo "expected one CreateSwapChainForHwnd call, found $count" >&2; exit 1; }
 
       - name: Compile the window and the toasts
-        working-directory: extended/window/windows-shared
         run: |
           mkdir out
-          cl /nologo /c /O2 /std:c11 /W3 /Foout\win32_window.obj c\win32_window.c
-          cl /nologo /c /O2 /std:c11 /W3 /Foout\win32_notifications.obj c\win32_notifications.c
-          cl /nologo /c /O2 /std:c11 /W3 /Foout\win32_platform.obj c\win32_platform.c
-          cl /nologo /c /O2 /std:c++17 /GR- /EHs-c- /W3 /Foout\win32_dcomp.obj c\win32_dcomp.cpp
+          cl /nologo /c /O2 /std:c11 /W3 /Foout\win32_window.obj c\win32_window.c || exit /b 1
+          cl /nologo /c /O2 /std:c11 /W3 /Foout\win32_notifications.obj c\win32_notifications.c || exit /b 1
 
       - name: Package the static library
-        working-directory: extended/window/windows-shared
-        run: lib /nologo /OUT:out\dxc_win32_window.lib out\win32_window.obj out\win32_notifications.obj out\win32_platform.obj out\win32_dcomp.obj
+        run: lib /nologo /OUT:out\dxc_win32_window.lib out\win32_window.obj out\win32_notifications.obj
 
       - name: Link and run the check against the library
-        working-directory: extended/window/windows-shared
         run: |
-          cl /nologo /std:c11 /Ic /Foout\ test\win32_shared_test.c /Feout\win32_shared_test.exe /link out\dxc_win32_window.lib d3d12.lib dxgi.lib dxguid.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib dcomp.lib
+          cl /nologo /std:c11 /Ic /Icinterop\include /Foout\ c\test\win32_shared_test.c /Feout\win32_shared_test.exe /link out\dxc_win32_window.lib d3d12.lib dxgi.lib dxguid.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib || exit /b 1
           out\win32_shared_test.exe
 
       - uses: actions/upload-artifact@v4
@@ -69,33 +101,67 @@ jobs:
           name: windows-shared-msvc
           path: |
             extended/window/windows-shared/out/dxc_win32_window.lib
-            extended/window/windows-shared/c/win32_window.h
+            extended/window/windows-shared/cinterop/include/win32_window.h
 
   kotlin:
-    name: windows-shared Kotlin (compile and test)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    name: windows-shared Kotlin/Native (mingwX64 klib build and test)
+    runs-on: windows-2022
+    timeout-minutes: 60
     defaults:
       run:
+        shell: bash
         working-directory: extended/window
     steps:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: extended/window
-          filter: blob:none
 
-      - name: The module names no java.awt and uses no reflection
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: The Kotlin names no toolkit and no Compose, and uses no reflection
         run: |
-          if grep -rEn 'java\.awt|javax\.swing|sun\.awt' windows-shared/src windows-shared/module.yaml; then
-            echo "windows-shared must not reference java.awt" >&2
+          if grep -rEn 'java\.awt|javax\.swing|androidx\.compose|kotlin\.reflect' windows-shared/src windows-shared/test; then
+            echo "windows-shared must name no toolkit and no Compose, and use no reflection" >&2
             exit 1
           fi
-          if grep -rEn 'java\.lang\.reflect|Class\.forName|::class\.java|getDeclared|\.javaClass' windows-shared/src; then
-            echo "upcalls go through the CEntryPointLiteral table, not reflection" >&2
+
+      - name: The klib calls the C through cinterop, not by symbol name
+        run: |
+          if grep -rn '@SymbolName' windows-shared/src; then
+            echo "call the window through the cinterop bindings of cinterop/win32_window.def" >&2
             exit 1
           fi
 
-      - name: Compile and test
+      # From PowerShell: the toolchain's wrapper on Windows is kotlin.bat, and run from Git
+      # Bash it would unpack with Git's tar, which reads C:\ as a remote host.
+      - name: Build
+        shell: pwsh
         run: |
-          ./kotlin build -p jvm -m windows-shared
-          ./kotlin test -p jvm -m windows-shared
+          .\kotlin.bat build -m windows-shared
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check that every window klib has a globally unique name
+        run: ./scripts/check-klib-names.sh --built .
+
+      - name: Test
+        shell: pwsh
+        run: |
+          .\kotlin.bat test -m windows-shared
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # The way a consumer takes it: org.thisisthepy.compose.window:windows-shared from the
+      # local Maven repository, beside common. Only the two modules this runner builds.
+      - name: Publish to the local repository
+        shell: pwsh
+        run: |
+          Copy-Item project.yaml project.yaml.all
+          Set-Content project.yaml "modules:`n  - common`n  - windows-shared`n"
+          .\kotlin.bat publish mavenLocal
+          $status = $LASTEXITCODE
+          Copy-Item project.yaml.all project.yaml -Force
+          if ($status -ne 0) { exit $status }
+          Get-ChildItem -Recurse "$HOME\.m2\repository\org\thisisthepy\compose\window" -Filter *.klib |
+            ForEach-Object { $_.FullName }

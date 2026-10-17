@@ -1,12 +1,16 @@
 #ifndef DXC_WIN32_WINDOW_H
 #define DXC_WIN32_WINDOW_H
 
-// The surface of `win32_window.c` and `win32_notifications.c`: what a consumer can call
+// The surface of `c/win32_window.c` and `c/win32_notifications.c`: what a consumer can call
 // and the records it reads back. One header for both consumers. The GraalVM path reaches
-// these by symbol name from its Kotlin `@CFunction` wrapper; the Kotlin/Native path
-// (MinGW) runs cinterop over this file (`../cinterop/win32_window.def`) and links the
-// same object the MSVC compiler made. Nothing here includes `windows.h`, so cinterop and
-// any C compiler can read it.
+// these by symbol name from its Kotlin `@CFunction` wrapper; the Kotlin/Native path runs
+// cinterop over this file (`../win32_window.def`) and is linked, by MSVC, against the object
+// MSVC compiled from the C. Nothing here includes `windows.h`, so cinterop and any C compiler
+// can read it.
+//
+// The C file declares its records itself and does not include this header, so the two are
+// kept in step by c/test/win32_shared_test.c, which links against the object and checks the
+// record sizes the Kotlin reader assumes.
 
 #include <stdint.h>
 
@@ -90,38 +94,59 @@ struct dxc_native_window {
 
 typedef void (*dxc_draw_frame_fn)(void *isolate_thread);
 
+// Opening the window, and what it is made of.
+void dxc_native_window_configure(int32_t resizable, int32_t min_width, int32_t min_height,
+                                 int32_t system_chrome, int32_t backdrop);
 int32_t dxc_native_window_open(const char *title, int32_t width, int32_t height,
                                struct dxc_native_window *out);
 void dxc_native_window_size(void *window_pointer, int32_t *width, int32_t *height, float *scale);
+void dxc_native_window_chrome(int32_t full_size_content, int32_t transparent_title_bar,
+                              int32_t title_hidden, int32_t unified_toolbar);
+void dxc_native_window_caption(void *view_pointer, float *height, float *buttons_width);
+void dxc_native_window_title_bar(void *view_pointer, float *out);
+void dxc_native_window_action(int32_t action);
+void dxc_native_window_begin_drag(int32_t edge);
+void dxc_native_set_icon(const uint8_t *rgba, int32_t width, int32_t height);
+void dxc_native_install_menu(const char *application_name);
+
+// Frames. The GPU frame is a swapchain buffer; while the window changes size the frame is
+// drawn on the CPU into the pixels raster_begin hands out and copied into the window before
+// the resize returns (frame_mode says which one is wanted now).
 int32_t dxc_native_frame_begin(void *swapchain_pointer, void **texture_out);
 void dxc_native_frame_end(void *queue_pointer);
 void dxc_native_set_draw_callback(dxc_draw_frame_fn callback, void *isolate_thread);
 void dxc_native_set_frame_callback(void *callback, void *isolate_thread);
-void dxc_native_set_cursor(int32_t shape);
-void dxc_native_set_accessibility(const struct dxc_element *elements, int32_t count,
-                                  void *window_pointer);
+void dxc_native_set_raster_resize(int32_t enabled);
+int32_t dxc_native_frame_mode(void);
+int32_t dxc_native_raster_begin(void **pixels, int32_t *row_bytes, int32_t *width, int32_t *height);
+void dxc_native_raster_end(void);
+
+// The message loop and what it heard.
 void dxc_native_pump(double seconds);
 int32_t dxc_native_window_closed(void);
-void dxc_native_install_menu(const char *application_name);
-void dxc_native_window_caption(void *view_pointer, float *height, float *buttons_width);
-void dxc_native_window_action(int32_t action);
-void dxc_native_window_begin_drag(int32_t edge);
-void dxc_native_set_icon(const uint8_t *rgba, int32_t width, int32_t height);
+int32_t dxc_native_poll_event(struct dxc_event *out);
+
+// Input, text and the system's own services.
+void dxc_native_set_cursor(int32_t shape);
+void dxc_native_set_ime_spot(float x, float y);
+void dxc_native_set_accessibility(const struct dxc_element *elements, int32_t count,
+                                  void *window_pointer);
 int32_t dxc_native_clipboard_read(char *out, int32_t capacity);
 void dxc_native_clipboard_write(const char *text);
+int32_t dxc_native_take_paste(char *out, int32_t capacity);
 int32_t dxc_native_dropped_paths(char *out, int32_t capacity);
+int32_t dxc_native_context_menu(void *window_pointer, const char *items);
+
+// Measurement and checks, all switched on by environment variables of the application.
+void dxc_native_report_metrics(const char *label);
+void dxc_native_debug_resize(void *window_pointer, void *view_pointer, int32_t from_width,
+                             int32_t from_height, int32_t to_width, int32_t to_height,
+                             int32_t steps, int32_t pause_micros);
+void dxc_native_debug_hit_test(void *window_pointer);
 void dxc_native_debug_key(void *window_pointer, int32_t key_code, const char *characters);
-int32_t dxc_native_poll_event(struct dxc_event *out);
-void dxc_native_set_ime_spot(float x, float y);
 
-void dxc_native_window_configure(int32_t resizable, int32_t min_width, int32_t min_height,
-                                  int32_t system_chrome, int32_t backdrop);
-/* win32_platform.c */
-void dxc_native_set_title(void *window_pointer, const char *title);
-int32_t dxc_native_system_dark(void);
-void dxc_native_set_visibility(void *window_pointer, int32_t code);
-int32_t dxc_native_show_context_menu(void *window_pointer, const char *packed);
-
+// The toasts, win32_notifications.c. The application defines
+// compose_rust_renderer_request_frame(void), which the toasts call when an answer arrives.
 int32_t dxc_notify_start(void);
 void dxc_notify_request_permission(void);
 void dxc_notify_refresh_permission(void);

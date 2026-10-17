@@ -1,12 +1,22 @@
-// Checks the parts of the shared Win32 window that are arithmetic, and that the objects
-// the window is made of resolve every symbol the header declares. Compiled and run by
-// the extended-window-windows-shared workflow with MSVC.
+// Checks the parts of the shared Win32 window that are arithmetic, that the objects the
+// window is made of resolve every symbol the header declares, and that the records have
+// the sizes the Kotlin/Native reader (src/.../Win32Records.kt) assumes. Compiled and run by the
+// extended-window-windows-shared workflow with MSVC.
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "win32_resize.h"
 #include "win32_ime_text.h"
 #include "win32_window.h"
+
+// The records the Kotlin side reads and writes by offset. A field added on one side only is
+// a reader that silently reads the wrong bytes, so the sizes are fixed here.
+_Static_assert(sizeof(struct dxc_event) == 124, "struct dxc_event is 124 bytes");
+_Static_assert(offsetof(struct dxc_event, text) == 28, "dxc_event text starts at 28");
+_Static_assert(sizeof(struct dxc_element) == 116, "struct dxc_element is 116 bytes");
+_Static_assert(offsetof(struct dxc_element, label) == 20, "dxc_element label starts at 20");
+_Static_assert(sizeof(struct dxc_native_window) == 5 * sizeof(void *), "five pointers");
 
 static int failures;
 
@@ -63,11 +73,19 @@ int main(int argc, char **argv) {
         dxc_native_frame_begin(window.swapchain, NULL);
         dxc_native_poll_event(NULL);
         dxc_native_clipboard_write(argv[0]);
+        dxc_native_set_raster_resize(1);
+        void *pixels = NULL;
+        int32_t row_bytes = 0, width = 0, height = 0;
+        if (dxc_native_frame_mode() != 0 &&
+            dxc_native_raster_begin(&pixels, &row_bytes, &width, &height) == 0) {
+            dxc_native_raster_end();
+        }
+        dxc_native_debug_resize(window.window, NULL, 1, 1, 2, 2, 1, 0);
+        dxc_native_debug_hit_test(window.window);
+        dxc_native_report_metrics(argv[0]);
+        dxc_native_context_menu(window.window, argv[0]);
+        dxc_native_window_chrome(0, 0, 0, 0);
         dxc_notify_start();
-        dxc_native_set_title(window.window, argv[0]);
-        dxc_native_system_dark();
-        dxc_native_set_visibility(window.window, 1);
-        dxc_native_show_context_menu(window.window, argv[0]);
     }
     if (failures == 0) printf("ok\n");
     return failures == 0 ? 0 : 1;
