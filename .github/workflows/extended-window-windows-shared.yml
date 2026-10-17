@@ -60,7 +60,7 @@ jobs:
         run: |
           set -euo pipefail
           exported() {
-            grep -hoE '^(int32_t|void) (dxc_native|dxc_notify)_[a-z0-9_]+\(' c/win32_window.c c/win32_notifications.c |
+            grep -hoE '^(int32_t|int64_t|void) (dxc_native|dxc_notify)_[a-z0-9_]+\(' c/win32_window.c c/win32_notifications.c |
               sed -E 's/^[a-z0-9_]+ //; s/\($//' | sort -u
           }
           declared() {

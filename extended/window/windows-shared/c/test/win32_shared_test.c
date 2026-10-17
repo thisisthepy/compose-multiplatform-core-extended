@@ -62,9 +62,19 @@ static void utf8_conversion(void) {
     CHECK(strcmp(out, "hi") == 0);
 }
 
+// The frame time is the performance counter in nanoseconds: it never goes backwards and it
+// moves at the counter's rate.
+static void frame_time(void) {
+    int64_t first = dxc_native_frame_time_nanos();
+    int64_t second = dxc_native_frame_time_nanos();
+    CHECK(first > 0);
+    CHECK(second >= first);
+}
+
 int main(int argc, char **argv) {
     resize_decisions();
     utf8_conversion();
+    frame_time();
     // Never true. It only makes the linker resolve the window and the toasts, so a symbol
     // the header declares and the objects lack fails the link.
     if (argc > 1000) {
@@ -85,6 +95,7 @@ int main(int argc, char **argv) {
         dxc_native_report_metrics(argv[0]);
         dxc_native_context_menu(window.window, argv[0]);
         dxc_native_window_chrome(0, 0, 0, 0);
+        (void)dxc_native_frame_time_nanos();
         dxc_notify_start();
     }
     if (failures == 0) printf("ok\n");

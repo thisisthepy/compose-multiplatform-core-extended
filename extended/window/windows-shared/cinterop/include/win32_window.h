@@ -120,6 +120,8 @@ void dxc_native_set_raster_resize(int32_t enabled);
 int32_t dxc_native_frame_mode(void);
 int32_t dxc_native_raster_begin(void **pixels, int32_t *row_bytes, int32_t *width, int32_t *height);
 void dxc_native_raster_end(void);
+// When the frame drawn now will be on the screen, in nanoseconds on the performance counter.
+int64_t dxc_native_frame_time_nanos(void);
 
 // The message loop and what it heard.
 void dxc_native_pump(double seconds);
