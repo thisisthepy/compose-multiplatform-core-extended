@@ -39,6 +39,10 @@ import platform.QuartzCore.CAMetalLayer
  * rectangle, the view's bounds, and the layer's bounds, anchor point, gravity, flip and
  * drawable size, so a moved frame can be matched with the geometry around it.
  *
+ * Beside the marks, a yellow square of the platform's own: a plain AppKit view 80 points in
+ * and 64 down, kept at the top of the window by AppKit. Where it stands in each image says
+ * what the window server does to content nobody but AppKit draws, for comparison.
+ *
  * The same marks, at the same places, as the native image's window lays over its frames
  * (appkit_vresize_probe.h), so one reader checks both.
  */
@@ -54,6 +58,7 @@ internal object VerticalResizeProbe {
     private const val BIT_H = 6.0
     private const val BITS = 16
     private const val EVENTS = 40
+    private const val CONTROL_X = 80.0
 
     @kotlin.concurrent.Volatile private var frames = 0
     @kotlin.concurrent.Volatile private var lastHeight = 0
@@ -128,6 +133,12 @@ internal object VerticalResizeProbe {
 
     private fun begin(window: NSWindow, view: NSView, layer: CAMetalLayer) {
         windowNumber = window.windowNumber.toUInt()
+        val control = NSView(platform.Foundation.NSMakeRect(CONTROL_X, MARK_TOP, MARK_SIZE, MARK_SIZE))
+        control.wantsLayer = true
+        control.layer?.backgroundColor = platform.CoreGraphics.CGColorCreateSRGB(1.0, 1.0, 0.0, 1.0)
+        // The view is flipped, so a subview that is not told to move keeps its distance
+        // from the top.
+        view.addSubview(control)
         scale = window.backingScaleFactor
         val visible = window.screen?.visibleFrame
         val startX = window.frame.useContents { origin.x }
@@ -309,6 +320,16 @@ internal object VerticalResizeProbe {
                 }
             }
         }
+        var controlTop = -1
+        val controlColumn = kotlin.math.round((CONTROL_X + MARK_SIZE / 2) * scale).toInt()
+        if (controlColumn < width) {
+            for (y in 0 until height) {
+                if (isColour(pixels, (y * width + controlColumn) * 4, 255, 255, 0)) {
+                    controlTop = y
+                    break
+                }
+            }
+        }
         val frame = if (top >= 0) readBits(pixels, width, height, top, 0) else -1
         val drawn = if (top >= 0) readBits(pixels, width, height, top, 1) else -1
         printError(
@@ -318,7 +339,8 @@ internal object VerticalResizeProbe {
                 "marker_h_pt=${if (top >= 0) format((bottom - top + 1) / scale) else "-1.00"} " +
                 "bottom_gap_pt=${if (cyanBottom >= 0) format((height - 1 - cyanBottom) / scale) else "-1.00"} " +
                 "shown_frame=$frame shown_height_px=$drawn image_height_px=$height " +
-                "last_drawn_frame=$frames last_drawn_height_px=$lastHeight",
+                "last_drawn_frame=$frames last_drawn_height_px=$lastHeight " +
+                "control_top_pt=${if (controlTop >= 0) format(controlTop / scale) else "-1.00"}",
         )
     }
 

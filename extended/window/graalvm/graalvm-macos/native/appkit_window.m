@@ -954,15 +954,6 @@ void dxc_native_set_cursor(int32_t shape) {
     NSSize old_size = self.frame.size;
     [super setFrameSize:size];
     dxc_vprobe_set_frame(old_size, size);
-    // The window's new frame and the frame drawn for it reach the screen together. Without
-    // this the window server takes them as they arrive: the layer's new size first and the
-    // window's frame a few milliseconds later, and in between the content stood a step's
-    // height off where it belongs (compose-rust's vertical drag check, which takes the
-    // window's own image throughout a drag). Held until the window next flushes, which is
-    // the commit that carries this size and the frame drawn for it below.
-    if (!dxc_legacy_resize() && !NSEqualSizes(old_size, size)) {
-        [self.window disableScreenUpdatesUntilFlush];
-    }
     CAMetalLayer *layer = (CAMetalLayer *)self.layer;
     CGFloat scale = self.window.backingScaleFactor > 0 ? self.window.backingScaleFactor : 1;
     layer.contentsScale = scale;

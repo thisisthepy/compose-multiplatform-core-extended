@@ -528,14 +528,6 @@ class MacosWindow(
             super.setFrameSize(newSize)
             val size = newSize.useContents { this.width to this.height }
             VerticalResizeProbe.setFrame(oldSize, size)
-            // The window's new frame and the frame drawn for it reach the screen together.
-            // Without this the window server takes them as they arrive: the layer's new size
-            // first and the window's frame a few milliseconds later, and in between the
-            // content stood a step's height off where it belongs (compose-rust's vertical
-            // drag check, which takes the window's own image throughout a drag). Held until
-            // the window next flushes, which is the commit that carries this size and the
-            // frame drawn for it below.
-            if (oldSize != size) window?.disableScreenUpdatesUntilFlush()
             // A window that went full screen has no buttons to avoid, and one that came
             // back has them again, and both arrive as a change of size.
             measureCaption()

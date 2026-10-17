@@ -101,12 +101,22 @@ class MetalSurface {
      * would be drawn into at the new one.
      *
      * The drawable is the window's size rounded up to [DRAWABLE_STEP] pixels, and every
-     * frame is drawn at the window's own size in its top left corner, shown pixel for pixel
-     * with nothing scaled. A drawable of a new size is a new surface, and Core Animation
+     * frame is drawn at the window's own size in its bottom left corner, shown pixel for
+     * pixel with nothing scaled. A drawable of a new size is a new surface, and Core Animation
      * hands each one to the window server, which gives it back only once the run loop turns
      * after the drag: one per event of a drag, 87 MB of them over a 50 event drag and 290
      * MB over 100 scripted sizes. Rounded up, a drag makes a new one only when it crosses a
      * step.
+     *
+     * The bottom left, because that is the corner the window server holds a window's layers
+     * at. During a drag of an edge it takes a step in pieces: the layer's new size reaches
+     * the screen a few milliseconds before the window's new frame and the frame drawn for
+     * it, which arrive together. A frame kept at the layer's top rode up and down with the
+     * layer's top in between, by the step's height (compose-rust's vertical drag check: 8
+     * pt over a drag of 4 pt steps, in 10 to 34 of about 2000 images of the window). Kept
+     * at the bottom, it stays at the window's bottom, which is where the window still is.
+     * The native image's window has its exactly sized drawable at the same corner, and in
+     * the same check showed no such image.
      */
     fun resize(widthInPoints: Double, heightInPoints: Double, scale: Double) {
         layer.contentsScale = scale
@@ -119,7 +129,9 @@ class MetalSurface {
                 layer.drawableSize = CGSizeMake(width, height)
             }
         }
-        val gravity = if (screenTopIsMaxY(layer)) kCAGravityTopLeft else kCAGravityBottomLeft
+        // Gravity is named for a y that grows upward, so the bottom of the screen is
+        // "bottom" unless the layers above turn it over.
+        val gravity = if (screenTopIsMaxY(layer)) kCAGravityBottomLeft else kCAGravityTopLeft
         if (layer.contentsGravity != gravity) layer.contentsGravity = gravity
     }
 
@@ -183,8 +195,13 @@ class MetalSurface {
         }
         try {
             startFrame(surface.canvas)
+            // At the bottom of the drawable, which the gravity puts at the bottom of the
+            // window; see [resize].
+            surface.canvas.save()
+            surface.canvas.translate(0f, (drawableHeight - height).toFloat())
             paint(surface.canvas, width, height)
             overlay?.invoke(surface.canvas, width, height)
+            surface.canvas.restore()
             surface.flushAndSubmit()
             // Presenting is done by hand because the layer presents with the transaction:
             // the work has to be known to be scheduled before the drawable is handed over,

@@ -15,6 +15,10 @@
 // rectangle, the view's bounds, and the layer's bounds, anchor point, gravity, flip and
 // drawable size, so a moved frame can be matched with the geometry around it.
 //
+// Beside the marks, a yellow square of the platform's own: a plain AppKit view 80 points in
+// and 64 down, kept at the top of the window by AppKit. Where it stands in each image says
+// what the window server does to content nobody but AppKit draws, for comparison.
+//
 // Nothing here runs unless asked for, and nothing it prints is read by the window itself.
 #ifndef DXC_APPKIT_VRESIZE_PROBE_H
 #define DXC_APPKIT_VRESIZE_PROBE_H
@@ -37,6 +41,7 @@
 #define DXC_VPROBE_BIT_W 4
 #define DXC_VPROBE_BIT_H 6
 #define DXC_VPROBE_BITS 16
+#define DXC_VPROBE_CONTROL_X 80
 
 typedef CGImageRef (*dxc_vprobe_capture_fn)(CGRect, uint32_t, uint32_t, uint32_t);
 
@@ -197,17 +202,30 @@ static void dxc_vprobe_sample(dxc_vprobe_capture_fn capture, int index) {
             }
         }
     }
+    long control_top = -1;
+    long control_column = lround((DXC_VPROBE_CONTROL_X + DXC_VPROBE_MARK_SIZE / 2.0) * scale);
+    if (control_column < (long)width) {
+        for (long y = 0; y < (long)height; y++) {
+            const uint8_t *p = rgba + ((size_t)y * width + (size_t)control_column) * 4;
+            if (dxc_vprobe_is(p, 255, 255, 0)) {
+                control_top = y;
+                break;
+            }
+        }
+    }
     long frame = top >= 0 ? dxc_vprobe_read_bits(rgba, width, height, top, 0, scale) : -1;
     long drawn = top >= 0 ? dxc_vprobe_read_bits(rgba, width, height, top, 1, scale) : -1;
     free(rgba);
     fprintf(stderr,
             "compose-rust: vresize sample i=%d t_ms=%.2f image=%zux%zu scale=%.2f found=%d "
             "marker_top_pt=%.2f marker_h_pt=%.2f bottom_gap_pt=%.2f shown_frame=%ld "
-            "shown_height_px=%ld image_height_px=%zu last_drawn_frame=%d last_drawn_height_px=%d\n",
+            "shown_height_px=%ld image_height_px=%zu last_drawn_frame=%d last_drawn_height_px=%d "
+            "control_top_pt=%.2f\n",
             index, at, width, height, scale, top >= 0 ? 1 : 0, top >= 0 ? top / scale : -1.0,
             top >= 0 ? (bottom - top + 1) / scale : -1.0,
             cyan_bottom >= 0 ? ((long)height - 1 - cyan_bottom) / scale : -1.0, frame, drawn,
-            height, atomic_load(&dxc_vprobe_frame_count), atomic_load(&dxc_vprobe_last_height));
+            height, atomic_load(&dxc_vprobe_frame_count), atomic_load(&dxc_vprobe_last_height),
+            control_top >= 0 ? control_top / scale : -1.0);
 }
 
 /** The view was given a size; said only while the drag is being watched. */
@@ -276,6 +294,13 @@ static void dxc_vprobe_start(NSWindow *window, NSView *view, CAMetalLayer *layer
             return;
         }
         dxc_vprobe_window_number = (uint32_t)window.windowNumber;
+        NSView *control = [[NSView alloc] initWithFrame:NSMakeRect(DXC_VPROBE_CONTROL_X, DXC_VPROBE_MARK_TOP,
+                                                                   DXC_VPROBE_MARK_SIZE, DXC_VPROBE_MARK_SIZE)];
+        control.wantsLayer = YES;
+        control.layer.backgroundColor = CGColorCreateSRGB(1, 1, 0, 1);
+        // The view is flipped, so a subview that is not told to move keeps its distance
+        // from the top.
+        [view addSubview:control];
         dxc_vprobe_scale = window.backingScaleFactor > 0 ? window.backingScaleFactor : 1;
         NSRect visible = window.screen.visibleFrame;
         NSRect start = window.frame;
