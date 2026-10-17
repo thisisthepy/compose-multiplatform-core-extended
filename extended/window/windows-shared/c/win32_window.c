@@ -1412,6 +1412,20 @@ void dxc_native_window_configure(
     dxc_options.backdrop = backdrop;
 }
 
+// When the frame drawn now will be on the screen, in nanoseconds. The macOS window answers
+// from its display link and the native image's shared Kotlin declares it, so this window
+// answers too, with the performance counter now.
+int64_t dxc_native_frame_time_nanos(void) {
+    static LARGE_INTEGER frequency;
+    LARGE_INTEGER now;
+    if (frequency.QuadPart == 0) {
+        QueryPerformanceFrequency(&frequency);
+    }
+    QueryPerformanceCounter(&now);
+    return (int64_t)(now.QuadPart / frequency.QuadPart) * 1000000000LL +
+           (int64_t)(now.QuadPart % frequency.QuadPart) * 1000000000LL / frequency.QuadPart;
+}
+
 /** The window style the options come to. */
 static DWORD dxc_window_style(void) {
     DWORD style = WS_OVERLAPPEDWINDOW;
