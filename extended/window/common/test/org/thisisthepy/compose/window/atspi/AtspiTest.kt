@@ -1,4 +1,4 @@
-package org.thisisthepy.compose.window.linux
+package org.thisisthepy.compose.window.atspi
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

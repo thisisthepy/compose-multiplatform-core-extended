@@ -1,4 +1,4 @@
-package org.thisisthepy.compose.window.linux
+package org.thisisthepy.compose.window.atspi
 
 // What the window tells a reader who cannot see it, in the words AT-SPI uses.
 //

@@ -11,8 +11,8 @@ import org.graalvm.word.Pointer
 /**
  * The functions `c/x11_window.c` exports, declared once for the native-image build.
  *
- * Every call here is a downcall into C on the thread that owns the window. Nothing in this
- * file reaches back out: what C needs to call on this side is in [X11Upcalls].
+ * Every call here is a downcall into C on the thread that owns the window, except [wake],
+ * which any thread may make. Nothing in this file reaches back out: what C needs to call on this side is in [X11Upcalls].
  */
 internal object X11Natives {
     @JvmStatic
@@ -55,6 +55,19 @@ internal object X11Natives {
     @CFunction("dxc_native_pump")
     external fun pump(seconds: Double)
 
+    /** Ends a wait in [pump] early. The one call here that any thread may make. */
+    @JvmStatic
+    @CFunction("dxc_native_wake")
+    external fun wake()
+
+    @JvmStatic
+    @CFunction("dxc_native_window_origin")
+    external fun windowOrigin(x: CIntPointer?, y: CIntPointer?)
+
+    @JvmStatic
+    @CFunction("dxc_native_window_focused")
+    external fun windowFocused(): Int
+
     @JvmStatic
     @CFunction("dxc_native_take_paste")
     external fun takePaste(out: CCharPointer?, capacity: Int): Int
@@ -82,6 +95,25 @@ internal object X11Natives {
     @JvmStatic
     @CFunction("dxc_native_set_ime_spot")
     external fun setImeSpot(x: Float, y: Float)
+
+    @JvmStatic
+    @CFunction("dxc_native_ime_reset")
+    external fun imeReset(out: CCharPointer?, capacity: Int): Int
+
+    @JvmStatic
+    @CFunction("dxc_native_resize_serial")
+    external fun resizeSerial(): Long
+
+    @JvmStatic
+    @CFunction("dxc_native_window_server_size")
+    external fun windowServerSize(width: CIntPointer?, height: CIntPointer?)
+
+    @JvmStatic
+    @CFunction("dxc_native_debug_resize")
+    external fun debugResize(
+        window: Pointer?, view: Pointer?, fromWidth: Int, fromHeight: Int, toWidth: Int,
+        toHeight: Int, steps: Int, pauseMicros: Int,
+    )
 
     @JvmStatic
     @CFunction("dxc_native_clipboard_read")

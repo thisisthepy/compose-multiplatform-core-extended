@@ -46,9 +46,9 @@ mine = re.search(r"^dependencies@%s:\n((?:  - .*\n)+)" % arch, text, re.M)
 if mine is None:
     sys.exit("native/linux/module.yaml has no dependencies@%s list" % arch)
 text = re.sub(r"^dependencies@linux(?:X64|Arm64):\n(?:  - .*\n)+\n?", "", text, flags=re.M)
-anchor = "  - $compose.runtime\n"
+anchor = "  - ../../common\n"
 if anchor not in text:
-    sys.exit("native/linux/module.yaml has no $compose.runtime line to add the list after")
+    sys.exit("native/linux/module.yaml has no ../../common line to add the list after")
 text = text.replace(anchor, anchor + mine.group(1), 1)
 open(path, "w").write(text)
 PY

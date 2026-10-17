@@ -12,6 +12,10 @@ import kotlinx.cinterop.ptr
 import kotlinx.cinterop.set
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
+import org.thisisthepy.compose.window.atspi.BusAddress
+import org.thisisthepy.compose.window.atspi.BusConnection
+import org.thisisthepy.compose.window.atspi.authenticateToBus
+import org.thisisthepy.compose.window.atspi.dbusMessageLength
 import platform.posix.AF_UNIX
 import platform.posix.POLLIN
 import platform.posix.SOCK_STREAM

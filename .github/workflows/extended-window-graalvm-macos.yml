@@ -70,6 +70,18 @@ jobs:
           ar rcs build/native/libappkit_window.a build/native/appkit_window.o
           nm build/native/libappkit_window.a | grep -E ' T _dxc_native_(window_open|poll_event|set_draw_callback|frame_time_nanos)'
 
+      - name: The X11 window's calls the image carries resolve here too
+        # The renderer's native image carries graalvm-linux on macOS as well, and links every C
+        # function its reachable code names. These are the X11 calls it reaches; macOS binds
+        # lazily, so one missing here is a crash at its first call rather than a link error.
+        run: |
+          for name in wake window_origin window_focused ime_reset resize_serial window_server_size debug_resize; do
+            nm build/native/libappkit_window.a | grep -q " T _dxc_native_$name\$" || {
+              echo "appkit_window.m defines no dxc_native_$name" >&2
+              exit 1
+            }
+          done
+
       - name: The frame time follows the display link's schedule
         run: |
           cc -O2 -Wall -Werror -o build/native/appkit_frame_time_test graalvm/graalvm-macos/native/appkit_frame_time_test.c

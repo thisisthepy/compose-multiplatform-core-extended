@@ -1,0 +1,11 @@
+# Kotlin/Native (mingwX64) cinterop over the shared Win32 window.
+#
+# This reads the header only, which the toolchain finds in include/ beside this file. The
+# object that answers the calls is the one MSVC compiles from c/win32_window.c and
+# c/win32_notifications.c. Nothing is compiled here and nothing here is linked: mingwX64 is
+# only the name of Kotlin/Native's Windows target, and the application that links this klib
+# is an MSVC executable, linked by MSVC.
+package = org.thisisthepy.compose.window.windows.c
+
+headers = win32_window.h
+headerFilter = win32_window.h

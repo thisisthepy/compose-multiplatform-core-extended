@@ -75,15 +75,22 @@ jobs:
           # each module. Not jbApiCheck, which also checks every target's klib dump and so
           # compiles mingwX64 klibs this repository cannot resolve yet (#120).
           if [ "$all" = 1 ]; then
-            tasks=""
-            for dump in $(git ls-files -- ':(glob)**/api/desktop/*.api' ':!extended'); do
-              d="${dump%/api/desktop/*}"
-              # A compatibility stub is the project of its parent's name (settings.gradle), and
-              # carries no API of its own.
-              case "$d" in *-compatibility-stub) continue ;; esac
-              t=":$(echo "$d" | tr / :):desktopApiCheck"
-              case " $tasks " in *" $t "*) ;; *) tasks="$tasks $t" ;; esac
-            done
+            # The modules this fork publishes (JetBrainsPublication), each that has a desktop
+            # dump and is its own project rather than a compatibility stub's name.
+            tasks="$(python3 - <<'PY'
+          import os, re
+          source = open("buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build/JetBrainsPublication.kt").read()
+          tasks = []
+          for path in re.findall(r'ComposeComponent\(\s*(?:path\s*=\s*)?"(:[^"]+)"', source):
+              directory = path[1:].replace(":", "/")
+              if os.path.isdir(directory + "-compatibility-stub"):
+                  continue
+              dumps = os.path.join(directory, "api", "desktop")
+              if os.path.isdir(dumps) and any(name.endswith(".api") for name in os.listdir(dumps)):
+                  tasks.append(path + ":desktopApiCheck")
+          print(" ".join(tasks))
+          PY
+          )"
           fi
           echo "tasks=$tasks" >> "$GITHUB_OUTPUT"
           echo "gradle tasks: ${tasks:-none}"

@@ -83,6 +83,16 @@ jobs:
       - name: Test (macosArm64)
         run: ./kotlin test -p macosArm64 -m scene
 
+      - name: What the test link was given (on failure)
+        if: failure()
+        run: |
+          ./kotlin show dependencies --module scene --platform macosArm64 || ./kotlin show dependencies --module scene || true
+          find ~/Library/Caches/JetBrains/Kotlin/.m2.cache/org/jetbrains/compose -name '*.klib' | sort
+          find ~/.m2/repository -path '*animation-core*' \( -name '*.klib' -o -name '*.module' \) | sort
+          find build -type f \( -name '*.args' -o -name '*argfile*' -o -name '*.rsp' \) 2>/dev/null | head -20 |
+            while read -r f; do echo "== $f"; grep -n 'animation' "$f" | head -20; done
+          find ~/.cache/JetBrains ~/Library/Caches/JetBrains -name '*.klib' -path '*animation*' 2>/dev/null | head -20
+
       - name: The Linux GraalVM layer compiles with the GL frame entry
         run: ./kotlin build -p jvm -m graalvm-linux
 
@@ -121,6 +131,14 @@ jobs:
         uses: ./.github/actions/fork-compose
         with:
           targets: desktop
+
+      # The toolchain resolves every platform a module declares, even when asked to build one,
+      # and the fork's macosArm64 Compose is built only on a Mac. On this runner the scene is
+      # the JVM module it is tested as; the checkout is this job's own.
+      - name: The scene as a JVM module on this runner
+        run: |
+          sed -i 's/^  platforms: \[ jvm, macosArm64 \]$/  platforms: [ jvm ]/' scene/module.yaml
+          grep -qx '  platforms: \[ jvm \]' scene/module.yaml
 
       - name: Test (jvm)
         run: ./kotlin test -p jvm -m scene

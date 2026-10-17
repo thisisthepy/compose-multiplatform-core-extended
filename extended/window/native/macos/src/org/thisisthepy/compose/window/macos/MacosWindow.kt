@@ -52,6 +52,12 @@ import platform.AppKit.NSToolbar
 import platform.AppKit.NSWindowZoomButton
 import platform.AppKit.NSViewLayerContentsRedrawDuringViewResize
 import platform.CoreGraphics.CGSize
+import org.thisisthepy.compose.window.ResizeStats
+import org.thisisthepy.compose.window.WindowEvent
+import platform.Foundation.NSDate
+import platform.Foundation.NSRunLoop
+import platform.Foundation.dateWithTimeIntervalSinceNow
+import platform.Foundation.runUntilDate
 import platform.Foundation.NSProcessInfo
 import platform.QuartzCore.CALayer
 import platform.QuartzCore.CALayerDelegateProtocol
@@ -182,7 +188,33 @@ class MacosWindow(
 
     // What the window says about itself, kept in step with the scene by the listener the
     // context carries. Pushed on change rather than asked for.
-    private val semantics = NativeSemantics { elements -> describeToReader(elements) }
+    private val semantics = NativeSemantics { elements ->
+        onElements?.invoke(elements)
+        describeToReader(elements)
+    }
+
+    /**
+     * Told what the window says about itself each time that changes, for a measuring run that
+     * looks for a control to press. Nothing in the window depends on it. Set it with
+     * [listenForReader], because the tree is only described while something is reading it.
+     */
+    var onElements: ((List<AccessibleElement>) -> Unit)? = null
+
+    /** Describes the tree from now on as though a reader were listening, which a measuring run needs. */
+    fun listenForReader() {
+        readerIsListening = true
+        view.needsDisplay = true
+    }
+
+    /**
+     * What a resize showed: every size the content took and every frame presented, judged
+     * against the view's size at that moment. [ResizeStats.report] is the `dxc resize:` line
+     * the parity script reads, the line the AppKit window of the native image prints.
+     */
+    val resizeStats = ResizeStats()
+
+    /** Told how long each frame the scene painted took, in nanoseconds, for a measuring run. */
+    var onFrameRendered: ((nanos: Long) -> Unit)? = null
 
     /** Where committed and composing text goes. */
     private val textInput = NativeTextInput()
@@ -244,7 +276,16 @@ class MacosWindow(
         val size = IntSize(widthInPixels, heightInPixels)
         measured = size
         scene.size = size
+        val begun = kotlin.time.TimeSource.Monotonic.markNow()
         scene.render(canvas.asComposeCanvas(), frameClock.frameNanos())
+        onFrameRendered?.invoke(begun.elapsedNow().inWholeNanoseconds)
+        // Against the size the view has now, asked of it rather than remembered.
+        val scale = window.backingScaleFactor
+        view.frame.useContents {
+            resizeStats.presentAgainst(
+                widthInPixels, heightInPixels, (this.size.width * scale).toInt(), (this.size.height * scale).toInt(),
+            )
+        }
         // After the drawing, because that is when what is in the window has been placed
         // and can say where it is. Asked before, every control answers with an empty
         // rectangle and a reader finds the screen stacked in one corner.
@@ -512,7 +553,11 @@ class MacosWindow(
          * through the view's own drawing, and AppKit has already made the view the layer's
          * delegate by the time anything needs displaying.
          */
-        override fun displayLayer(layer: CALayer) = updateLayer()
+        override fun displayLayer(layer: CALayer) {
+            VerticalResizeProbe.via = "display"
+            updateLayer()
+            VerticalResizeProbe.via = "loop"
+        }
 
         override fun updateLayer() {
             val scale = window?.backingScaleFactor ?: 1.0
@@ -529,7 +574,12 @@ class MacosWindow(
         // Redrawn when it is resized rather than stretched, which is what a layer does with
         // its old contents by default and is exactly the trailing edge this window is for.
         override fun setFrameSize(newSize: CValue<CGSize>) {
+            val oldSize = frame.useContents { this.size.width to this.size.height }
             super.setFrameSize(newSize)
+            val size = newSize.useContents { this.width to this.height }
+            VerticalResizeProbe.setFrame(oldSize, size)
+            val scale = window?.backingScaleFactor ?: 1.0
+            resizeStats.step((size.first * scale).toInt(), (size.second * scale).toInt())
             // A window that went full screen has no buttons to avoid, and one that came
             // back has them again, and both arrive as a change of size.
             measureCaption()
@@ -537,7 +587,11 @@ class MacosWindow(
             // cycle, and because this layer presents with the transaction the window's own
             // frame then waits for it: the edge still never comes away from the drawing,
             // but it advances in jumps of a hundred pixels instead of following the hand.
-            if (window != null) updateLayer()
+            if (window != null) {
+                VerticalResizeProbe.via = "set-frame"
+                updateLayer()
+                VerticalResizeProbe.via = "loop"
+            }
         }
         override fun acceptsFirstResponder() = true
 
@@ -725,6 +779,12 @@ class MacosWindow(
                 platform.darwin.dispatch_time(platform.darwin.DISPATCH_TIME_NOW, 3_000_000_000L),
                 platform.darwin.dispatch_get_main_queue(),
             ) { runMetrics() }
+        }
+        if (VerticalResizeProbe.enabled) {
+            metal.overlay = { canvas, width, height ->
+                VerticalResizeProbe.mark(canvas, width, height, window.backingScaleFactor, metal.drawableWaitMillis)
+            }
+            VerticalResizeProbe.start(window, view, metal.layer)
         }
     }
 
@@ -1004,6 +1064,62 @@ class MacosWindow(
             count.ptr,
         )
         info.phys_footprint.toLong() to info.resident_size.toLong()
+    }
+
+    /**
+     * Hands the window input that no hand gave, for a measuring run: a press or release of the
+     * primary button at a place in the scene's pixels, or text an input method committed.
+     *
+     * The press goes through the window's own event queue as an AppKit event, so it takes the
+     * path a real click takes. Committed text goes where the input method's text goes. Any
+     * other kind is ignored.
+     */
+    fun inject(event: WindowEvent) {
+        when (event.kind) {
+            WindowEvent.POINTER_DOWN, WindowEvent.POINTER_UP -> {
+                val scale = window.backingScaleFactor
+                val height = view.bounds.useContents { size.height }
+                val posted = NSEvent.mouseEventWithType(
+                    type = if (event.kind == WindowEvent.POINTER_DOWN) {
+                        platform.AppKit.NSEventTypeLeftMouseDown
+                    } else {
+                        platform.AppKit.NSEventTypeLeftMouseUp
+                    },
+                    // The scene counts pixels down from the top left; the window counts points
+                    // up from the bottom left.
+                    location = platform.Foundation.NSMakePoint(event.x / scale, height - event.y / scale),
+                    modifierFlags = 0u,
+                    timestamp = NSProcessInfo.processInfo.systemUptime,
+                    windowNumber = window.windowNumber,
+                    context = null,
+                    eventNumber = 0,
+                    clickCount = 1,
+                    pressure = if (event.kind == WindowEvent.POINTER_DOWN) 1f else 0f,
+                ) ?: return
+                NSApplication.sharedApplication().postEvent(posted, atStart = false)
+            }
+            WindowEvent.TEXT_COMMIT -> if (event.text.isNotEmpty()) textInput.commit(event.text)
+        }
+        view.needsDisplay = true
+    }
+
+    /**
+     * Takes the window through the sizes a drag would, from its content size now to [toWidth]
+     * by [toHeight] points in [steps], each one set and its drawing committed before the next,
+     * pausing [pauseSeconds] on the main run loop between them. The count starts again.
+     */
+    fun scriptedResize(toWidth: Double, toHeight: Double, steps: Int, pauseSeconds: Double) {
+        if (steps <= 0) return
+        resizeStats.reset()
+        val from = view.frame.useContents { size.width to size.height }
+        for (step in 1..steps) {
+            val t = step.toDouble() / steps
+            window.setContentSize(
+                NSMakeSize(from.first + (toWidth - from.first) * t, from.second + (toHeight - from.second) * t),
+            )
+            platform.QuartzCore.CATransaction.flush()
+            NSRunLoop.currentRunLoop.runUntilDate(NSDate.dateWithTimeIntervalSinceNow(pauseSeconds))
+        }
     }
 
     /**

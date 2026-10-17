@@ -50,6 +50,33 @@ jobs:
           cc -O1 -Wall -o build/xdnd_drop_test test/c/xdnd_drop_test.c -lX11 -lXext -lGL
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/xdnd_drop_test
 
+      - name: Wake the window's wait from another thread (under a virtual display)
+        working-directory: extended/window/graalvm/graalvm-linux
+        run: |
+          cc -O1 -Wall -pthread -o build/wake_test test/c/wake_test.c -lX11 -lXext -lGL
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/wake_test
+
+      - name: Wake latency, 200 posts from another thread (under a virtual display)
+        working-directory: extended/window/graalvm/graalvm-linux
+        run: |
+          cc -O1 -Wall -pthread -o build/wake_latency_test test/c/wake_latency_test.c -lX11 -lXext -lGL
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/wake_latency_test | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Scripted drag and the resize count (under a virtual display)
+        working-directory: extended/window/graalvm/graalvm-linux
+        run: |
+          cc -O1 -Wall -o build/resize_test test/c/resize_test.c -lX11 -lXext -lGL
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/resize_test
+
+      - name: The semantics reader is the Kotlin/Native window's, unchanged
+        working-directory: extended/window
+        run: |
+          cmp native/linux/src/AtspiSemantics.kt \
+            graalvm/graalvm-linux/src/org/thisisthepy/compose/window/atspi/AtspiSemantics.kt || {
+            echo "graalvm-linux's AtspiSemantics.kt differs from native/linux's; change both together" >&2
+            exit 1
+          }
+
       - name: The Kotlin module has no java.awt
         working-directory: extended/window/graalvm/graalvm-linux
         run: |

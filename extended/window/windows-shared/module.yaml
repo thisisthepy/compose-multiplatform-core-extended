@@ -1,0 +1,44 @@
+# The shared Win32 window: one C implementation (c/), compiled by MSVC and linked by both the
+# GraalVM native image and Kotlin/Native applications, and the Kotlin/Native layer over it
+# (src/), which reads it through cinterop (cinterop/win32_window.def).
+#
+# The Kotlin here names no Compose type. It opens the window, hands out the frame to draw
+# into, reads the window's events into common's WindowEvent and writes the accessibility tree
+# for UI Automation; what draws into the frame is the application's. The GraalVM path calls
+# the same C by symbol name from its own @CFunction wrapper and does not use this klib.
+product:
+  type: lib
+  platforms: [ mingwX64 ]
+
+repositories:
+  - id: mavenLocal
+    url: mavenLocal
+    publish: true
+
+dependencies:
+  - ../common
+
+test-dependencies:
+  - $kotlin.test
+
+settings:
+  publishing:
+    enabled: true
+    group: org.thisisthepy.compose.window
+    artifactId: windows-shared
+    version: 0.1.0
+  kotlin:
+    # A klib's unique_name defaults to the Amper module name. The Kotlin/Native linker
+    # refuses two libraries with the same unique_name, so the klib takes its Maven
+    # coordinates, as every window module does.
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.window:windows-shared
+    optIns:
+      - kotlinx.cinterop.ExperimentalForeignApi
+
+test-settings:
+  kotlin:
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.window:windows-shared-test
