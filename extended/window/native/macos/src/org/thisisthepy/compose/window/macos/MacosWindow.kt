@@ -218,7 +218,7 @@ class MacosWindow(
         // Marked rather than drawn. What asks for a frame here is the composition, which
         // can do so in the middle of one, and AppKit draws a view that needs it before the
         // next refresh anyway. Drawing from here as well would draw twice.
-        invalidate = { view.needsDisplay = true },
+        invalidate = { wantFrame() },
     )
 
     /**
@@ -243,7 +243,27 @@ class MacosWindow(
     }
 
     /** Asks for a frame, which is drawn where AppKit next draws the view. */
-    fun requestFrame() {
+    fun requestFrame() = wantFrame()
+
+    /**
+     * The size, in points, the frame on the layer was drawn for, and whether anything has
+     * asked for a new one since.
+     *
+     * A drag of an edge has AppKit size the view, and then display it, for every step; the
+     * view draws when it is sized, so displaying it again draws the same size twice. Twice
+     * is not only waste. A frame presented with the transaction holds its drawable until the
+     * window server has shown it, and two of them a step use up the layer's three before the
+     * screen gives any back. Asking for a fourth then waits, and the transaction that was
+     * carrying the new size goes out without the window's new frame and without the picture
+     * drawn for it: measured, the content rode up by the step's height on the screen
+     * (compose-rust's vertical drag check, 8 pt across a drag of 4 pt steps). So a size is
+     * drawn once, and a display during a drag draws only when something asked for a frame.
+     */
+    private var drawnFor: Pair<Double, Double>? = null
+    private var frameWanted = true
+
+    private fun wantFrame() {
+        frameWanted = true
         view.needsDisplay = true
     }
 
@@ -324,13 +344,13 @@ class MacosWindow(
         override fun becomeKeyWindow() {
             super.becomeKeyWindow()
             isTheKeyWindow = true
-            view.needsDisplay = true
+            wantFrame()
         }
 
         override fun resignKeyWindow() {
             super.resignKeyWindow()
             isTheKeyWindow = false
-            view.needsDisplay = true
+            wantFrame()
         }
     }
 
@@ -504,6 +524,10 @@ class MacosWindow(
          * delegate by the time anything needs displaying.
          */
         override fun displayLayer(layer: CALayer) {
+            // The drag already drew this size when it set it; see [drawnFor].
+            if (inLiveResize && !frameWanted && drawnFor == bounds.useContents { this.size.width to this.size.height }) {
+                return
+            }
             VerticalResizeProbe.via = "display"
             updateLayer()
             VerticalResizeProbe.via = "loop"
@@ -518,7 +542,11 @@ class MacosWindow(
                 ResizeMetrics.frameEnd((size.width * scale).toInt(), (size.height * scale).toInt())
             }
             // [measured] is what [paintFrame] was handed, which is the size this frame has.
-            if (drew) onFrameDrawn?.invoke(measured.width, measured.height)
+            if (drew) {
+                drawnFor = bounds.useContents { this.size.width to this.size.height }
+                frameWanted = false
+                onFrameDrawn?.invoke(measured.width, measured.height)
+            }
         }
 
         // Redrawn when it is resized rather than stretched, which is what a layer does with
@@ -534,7 +562,9 @@ class MacosWindow(
             // cycle, and because this layer presents with the transaction the window's own
             // frame then waits for it: the edge still never comes away from the drawing,
             // but it advances in jumps of a hundred pixels instead of following the hand.
-            if (window != null) {
+            // Once per size: AppKit sizes the view again at the size it already has.
+            val size = newSize.useContents { this.width to this.height }
+            if (window != null && (frameWanted || drawnFor != size)) {
                 VerticalResizeProbe.via = "set-frame"
                 updateLayer()
                 VerticalResizeProbe.via = "loop"
@@ -849,7 +879,7 @@ class MacosWindow(
                         // Drawn now, with the pattern over it, and looked at once the
                         // window server has had a few refreshes to show it.
                         metal.overlay = ::drawCheckPattern
-                        view.needsDisplay = true
+                        wantFrame()
                         view.displayIfNeeded()
                         platform.QuartzCore.CATransaction.flush()
                         paused = pause

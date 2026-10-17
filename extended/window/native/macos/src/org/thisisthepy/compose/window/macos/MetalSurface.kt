@@ -185,7 +185,11 @@ class MetalSurface {
             startFrame(surface.canvas)
             paint(surface.canvas, width, height)
             overlay?.invoke(surface.canvas, width, height)
-            surface.flushAndSubmit()
+            // Finished on the GPU, not only sent to it, before it is handed over. The window
+            // server takes the layer's new geometry in the commit this frame presents with,
+            // and a drawable still being drawn is shown only once it is done: in between, the
+            // new geometry stood on screen over the previous picture.
+            surface.flushAndSubmit(true)
             // Presenting is done by hand because the layer presents with the transaction:
             // the work has to be known to be scheduled before the drawable is handed over,
             // and then the handing over belongs to whoever is committing the layer tree.
