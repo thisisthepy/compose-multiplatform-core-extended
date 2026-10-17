@@ -7,11 +7,13 @@ on:
   pull_request:
     paths:
       - extended/window/**
+      - .github/actions/fork-compose/**
       - .github/workflows/extended-window-graalvm-linux.yml
   push:
     branches: [ extended ]
     paths:
       - extended/window/**
+      - .github/actions/fork-compose/**
       - .github/workflows/extended-window-graalvm-linux.yml
 
 concurrency:
@@ -28,7 +30,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: extended/window
+          sparse-checkout: |
+            extended/window
+            extended/compose
+            .github/actions
+          filter: blob:none
 
       - uses: actions/setup-java@v4
         with:
@@ -84,6 +90,23 @@ jobs:
             echo "java.awt is not allowed in this module" >&2
             exit 1
           fi
+
+      # MetalWindowSurface and GlWindowSurface compile against the scene module, which compiles
+      # against this fork's foundation and UI. Nothing public has those, so they are published
+      # here first, for the JVM only.
+      - name: This fork's Compose for the JVM
+        uses: ./.github/actions/fork-compose
+        with:
+          targets: desktop
+
+      # The toolchain resolves every platform a module declares, and the scene declares
+      # macosArm64 too. These modules are JVM ones, so the scene is built as one here.
+      - name: The scene as a JVM module on this runner
+        working-directory: extended/window
+        shell: bash
+        run: |
+          perl -0pi -e 's/^  platforms: \[ jvm, macosArm64 \]$/  platforms: [ jvm ]/m' scene/module.yaml
+          grep -q '^  platforms: \[ jvm \]$' scene/module.yaml
 
       - name: Compile and test the Kotlin
         working-directory: extended/window
