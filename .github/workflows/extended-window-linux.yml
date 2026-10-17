@@ -1,8 +1,9 @@
 # The window modules under extended/window: build and test them.
 #
 # `native/linux` compiles against Compose for Kotlin/Native Linux, which JetBrains does not
-# publish, so the job builds those Compose modules from this checkout, publishes them to the
-# local Maven repository, and then builds and tests the window project against them. The
+# publish, so the job publishes this fork's Compose modules to the local Maven repository
+# (.github/actions/fork-compose, cached until the Compose sources change), and then builds
+# and tests the window project against them. The
 # inherited upstream workflows do not build extended/window and are not the gate for it.
 
 name: Extended window linux
@@ -16,6 +17,8 @@ on:
       - extended/window/project.yaml
       - extended/window/scripts/**
       - .github/workflows/extended-window-linux.yml
+      - .github/actions/fork-compose/**
+      - extended/compose/**
   push:
     branches:
       - extended
@@ -25,6 +28,8 @@ on:
       - extended/window/project.yaml
       - extended/window/scripts/**
       - .github/workflows/extended-window-linux.yml
+      - .github/actions/fork-compose/**
+      - extended/compose/**
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -32,10 +37,6 @@ concurrency:
 
 permissions:
   contents: read
-
-env:
-  COMPOSE_VERSION: 1.11.1
-  MATERIAL3_VERSION: 1.11.0-alpha07
 
 jobs:
   linux:
@@ -53,20 +54,6 @@ jobs:
           sudo docker image prune --all --force >/dev/null || true
           df -h /
 
-      - uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'corretto'
-
-      - name: Point the Compose build at the JDK
-        run: echo "ANDROIDX_JDK21=$JAVA_HOME" >> "$GITHUB_ENV"
-
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          cache-read-only: false
-          gradle-home-cache-excludes: |
-            caches/build-cache-1
-
       - name: Cache Kotlin/Native and the Kotlin toolchain
         uses: actions/cache@v4
         with:
@@ -83,33 +70,10 @@ jobs:
           sudo apt-get install -y pkg-config libx11-dev libxext-dev libgl1-mesa-dev \
             libfontconfig1-dev libfreetype6-dev xvfb
 
-      - name: Configure Gradle for this runner
-        run: |
-          mkdir -p ~/.gradle
-          cat > ~/.gradle/gradle.properties <<EOF
-          org.gradle.caching=false
-          org.gradle.workers.max=4
-          org.gradle.jvmargs=-Xmx11g -XX:MaxMetaspaceSize=2g -XX:+UseParallelGC -Dlint.nullness.ignore-deprecated=true -Dfile.encoding=UTF-8
-          kotlin.compiler.execution.strategy=in-process
-          EOF
-
-      - name: Publish Compose for Kotlin/Native Linux from this checkout
-        run: |
-          set -euo pipefail
-          tasks=()
-          for module in animation:animation animation:animation-core foundation:foundation \
-              foundation:foundation-layout material:material-ripple material3:material3 \
-              ui:ui ui:ui-backhandler ui:ui-geometry ui:ui-graphics ui:ui-text \
-              ui:ui-tooling-preview ui:ui-unit ui:ui-util; do
-            for publication in LinuxX64 LinuxArm64 KotlinMultiplatform; do
-              tasks+=(":compose:$module:publish${publication}PublicationToMavenLocal")
-            done
-          done
-          ./gradlew --no-daemon --no-configuration-cache \
-            -Pandroidx.enabled.kmp.target.platforms=-WINDOWS,-JS,-WASM \
-            "-Pjetbrains.publication.version.COMPOSE=$COMPOSE_VERSION" \
-            "-Pjetbrains.publication.version.COMPOSE_MATERIAL3=$MATERIAL3_VERSION" \
-            "${tasks[@]}"
+      - name: This fork's Compose for Kotlin/Native Linux
+        uses: ./.github/actions/fork-compose
+        with:
+          targets: linuxX64 linuxArm64
 
       - name: Build x64
         working-directory: extended/window

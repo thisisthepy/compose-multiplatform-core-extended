@@ -32,7 +32,6 @@ androidXMultiplatform {
         namespace = "androidx.compose.material.navigation"
     }
     desktop()
-    linux()
     mingwX64()
     mac()
     ios()

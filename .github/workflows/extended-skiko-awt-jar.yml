@@ -40,7 +40,27 @@ jobs:
       - name: Setup.init reaches the look and feel only through the switch
         run: |
           set -euo pipefail
-          jar="$HOME/.m2/repository/org/jetbrains/skiko/skiko-awt/0.144.6/skiko-awt-0.144.6.jar"
+          jar="$HOME/.m2/repository/org/jetbrains/skiko/skiko-awt/0.144.6.1/skiko-awt-0.144.6.1.jar"
           init="$(javap -c -p -classpath "$jar" org.jetbrains.skiko.Setup)"
           grep -q 'AwtSwitch' <<< "$init" || { echo "Setup.init does not read AwtSwitch" >&2; exit 1; }
           javap -c -p -classpath "$jar" org.jetbrains.skiko.AwtSwitch | grep -q 'compose.awt'
+
+      - name: Published as 0.144.6.1, with the runtime jars at 0.144.6 and nothing at 0.144.6
+        run: |
+          set -euo pipefail
+          base="$HOME/.m2/repository/org/jetbrains/skiko/skiko-awt"
+          if [ -e "$base/0.144.6" ]; then
+            echo "the patched skiko-awt was left at JetBrains' coordinates, 0.144.6" >&2
+            exit 1
+          fi
+          grep -q '<version>0.144.6.1</version>' "$base/0.144.6.1/skiko-awt-0.144.6.1.pom"
+          python3 -I - "$base/0.144.6.1/skiko-awt-0.144.6.1.module" <<'PY'
+          import json, sys
+          metadata = json.load(open(sys.argv[1]))
+          assert metadata["component"]["version"] == "0.144.6.1", metadata["component"]
+          runtime = [d for v in metadata.get("variants", []) for d in v.get("dependencies", [])
+                     if d["module"].startswith("skiko-awt-runtime")]
+          for dependency in runtime:
+              assert dependency["version"]["requires"] == "0.144.6", dependency
+          print("ok:", len(runtime), "runtime dependencies at 0.144.6")
+          PY

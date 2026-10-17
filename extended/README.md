@@ -41,7 +41,7 @@ adds is either a platform source set inside a Compose module or a script under `
 | skiko-awt with an AWT switch, so a toolkit-free native image keeps no Swing or `UIManager` | implemented | `extended/skiko/build-skiko-awt.sh` |
 | The window modules: window, input, IME, menus and chrome for both paths | implemented for macOS and Linux; Windows open in [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32) | [`extended/window`](#window-modules) |
 | Compose's window procedure for Windows (caption, title bar, icon) | planned | branch [`feature/windows-window-chrome`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/feature/windows-window-chrome), [DarkPyonix/compose-rust#26](https://github.com/DarkPyonix/compose-rust/issues/26) |
-| `org.thisisthepy.compose` coordinates | planned | branch [`chore/thisisthepy-coordinates`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/chore/thisisthepy-coordinates) |
+| `org.thisisthepy.compose` coordinates, versioned `<upstream version>-ext.<N>` | implemented | [`extended/COORDINATES.md`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/COORDINATES.md), [Maven coordinates](#maven-coordinates) |
 | Six design systems and the Liquid Glass material, as compose-rust had them | imported | [`extended/design-systems`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/design-systems/README.md) |
 | Design systems as `org.thisisthepy.compose.*` libraries | planned | [DarkPyonix/compose-rust#39](https://github.com/DarkPyonix/compose-rust/issues/39) |
 
@@ -150,32 +150,29 @@ The commands below run from the repository root of a checkout of `extended`, wit
 `JAVA_HOME` unless a section says otherwise. Every build publishes to the local Maven
 repository (`~/.m2/repository`).
 
-### Compose modules for Linux or macOS
-
-Each module needs two publications: the target's own, which carries the klib, and the root
-one, which says which targets exist. Without the root, a consumer is told the module does not
-support the platform.
+### Compose modules for Linux, macOS or the desktop JVM
 
 ```sh
-./gradlew --no-daemon --no-configuration-cache \
-    -Pjetbrains.publication.version.COMPOSE=1.11.1 \
-    -Pjetbrains.publication.version.COMPOSE_MATERIAL3=1.11.0-alpha07 \
-    :compose:ui:ui:publishLinuxX64PublicationToMavenLocal \
-    :compose:ui:ui:publishKotlinMultiplatformPublicationToMavenLocal
+extended/compose/publish-local.sh linuxX64          # or macosArm64, linuxArm64, mingwX64, desktop
+python3 extended/compose/check-local.py             # what it left in ~/.m2 is complete
 ```
 
-Repeat the two tasks for every module the application draws with. For `linuxX64` that is
-`compose:animation:animation`, `animation-core`, `compose:foundation:foundation`,
-`foundation-layout`, `compose:material:material-ripple`, `compose:material3:material3`,
-`compose:ui:ui`, `ui-backhandler`, `ui-geometry`, `ui-graphics`, `ui-text`,
-`ui-tooling-preview`, `ui-unit` and `ui-util`. For `macosArm64`, use
-`publishMacosArm64PublicationToMavenLocal`; only `compose:foundation:foundation` and
-`compose:ui:ui` differ from JetBrains' build there. Material 2's navigation, the adaptive family
-and the navigation suite cannot be built for Linux, because each depends on a published
-artifact with no Linux variant.
+It publishes every module an application draws with (foundation, Material 3 and what they
+reach) for the targets named, at the versions in `gradle.properties`, and `--list` prints the
+Gradle tasks without running them. Each module gets two publications: the target's own, which
+carries the klib or jar, and the root one, which says which targets exist. Without the root, a
+consumer is told the module does not support the platform. Material 2's navigation, the
+adaptive family and the navigation suite are not on the list, because each depends on a
+published artifact with no Linux variant.
 
+The runtime, `runtime-saveable` and the internal annotation and collection libraries are on
+the list although they carry no classes. They are compatibility stubs that point at the
+androidx artifacts, as JetBrains' are, and the modules above name them at this fork's version.
+
+The CI jobs that build the window modules run this through `.github/actions/fork-compose`,
+which caches the result until the Compose sources change.
 [compose-rust's `build-compose.sh`](https://github.com/DarkPyonix/compose-rust/blob/develop/renderer/scripts/build-compose.sh)
-runs exactly this against a pinned commit of the fork.
+runs it against a pinned commit of the fork.
 
 ### mingwX64
 
@@ -214,25 +211,31 @@ It builds for the host it runs on: macOS arm64, Linux x64 or Windows x64. The ou
 
 ## Maven coordinates
 
-Today the fork publishes under JetBrains' own groups and the version it stands in for, so a
-build that reads the local repository first takes the patched modules and resolves the rest
-from JetBrains:
+Everything this fork builds is published under `org.thisisthepy.compose`, never under a
+JetBrains group, because an artifact under `org.jetbrains.compose` that JetBrains did not build
+cannot be told from the real one, and whichever has the higher version silently replaces the
+other. Artifact names, packages, classes and signatures are JetBrains'; only the group and the
+version differ. [`COORDINATES.md`](COORDINATES.md) lists every coordinate.
 
 | What | Coordinate |
 |---|---|
-| Compose modules | `org.jetbrains.compose.<group>:<artifact>:1.11.1`, for example `org.jetbrains.compose.ui:ui:1.11.1` and its `ui-linuxx64`, `ui-mingwx64`, `ui-macosarm64` targets |
-| Material 3 (with the property above) | `org.jetbrains.compose.material3:material3:1.11.0-alpha07` |
+| Compose modules | `org.thisisthepy.compose.<group>:<artifact>:1.11.1-ext.1`, for example `org.thisisthepy.compose.ui:ui:1.11.1-ext.1` and its `ui-desktop`, `ui-linuxx64`, `ui-mingwx64`, `ui-macosarm64` targets |
+| Material 3 | `org.thisisthepy.compose.material3:material3:1.11.0-alpha07-ext.1` |
+| Libraries JetBrains publishes as `org.jetbrains.androidx.*` | `org.thisisthepy.compose.androidx.<library>`, for example `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:2.11.0-beta01-ext.1` |
+| Runtime, `runtime-saveable`, annotation and collection | `org.thisisthepy.compose.runtime:runtime:1.11.1-ext.1` and the others: stubs with no classes that point at `androidx.compose.runtime`, as JetBrains' do |
+| The window modules | `org.thisisthepy.compose.window:<module>:0.1.0` |
 | skiko for `mingwX64` | `org.jetbrains.skiko:skiko-mingwx64:0.144.6`, with skiko's root metadata extended to name it |
-| skiko-awt with the AWT switch | `org.jetbrains.skiko:skiko-awt:0.144.6`, from `extended/skiko/build-skiko-awt.sh` |
+| skiko-awt with the AWT switch | `org.jetbrains.skiko:skiko-awt:0.144.6.1`, from `extended/skiko/build-skiko-awt.sh` |
 
-`jetbrains.publication.version.COMPOSE=1.11.1` is set in `gradle.properties`, and a build can
-pass another. compose-rust does:
-[`build-compose.sh`](https://github.com/DarkPyonix/compose-rust/blob/develop/renderer/scripts/build-compose.sh)
-publishes the desktop `foundation`, `ui` and `ui-text`, and the macOS `ui` and `foundation`, as
-`1.11.1001`, and its `publish-skiko-awt.sh` publishes skiko-awt as `0.144.6.1`. JetBrains
-publishes those modules at `1.11.1` too, and a resolver that already holds upstream's `1.11.1`
-takes it and never looks in the local repository, so the fork's version has to sort above it.
-The Linux modules stay at `1.11.1`, because JetBrains publishes nothing at those coordinates.
+Versions are `<upstream version>-ext.<N>`: the version JetBrains published the same sources as,
+and the count of this fork's releases of it. A local build that is not a release passes
+`-Pextended.publication.dev=true` and publishes `-ext.<N>-dev`. A version without the suffix
+is refused.
+
+skiko keeps JetBrains' group, because every Compose module asks for it there. The patched
+skiko-awt therefore gets a version of its own, `0.144.6.1`, which sorts above JetBrains'
+`0.144.6` in Gradle and in Maven, so a consumer that names it gets it even when Compose brings
+in `0.144.6`; its natives are JetBrains' runtime jars at `0.144.6`.
 
 Nothing is on a public repository yet. A consumer puts `mavenLocal()` first:
 
@@ -252,18 +255,17 @@ dependencyResolutionManagement {
 kotlin {
     linuxX64()
     sourceSets.commonMain.dependencies {
-        implementation("org.jetbrains.compose.foundation:foundation:1.11.1")
-        implementation("org.jetbrains.compose.material3:material3:1.11.0-alpha07")
+        implementation("org.thisisthepy.compose.foundation:foundation:1.11.1-ext.1")
+        implementation("org.thisisthepy.compose.material3:material3:1.11.0-alpha07-ext.1")
     }
 }
 ```
 
-**Status: planned.** The branch
-[`chore/thisisthepy-coordinates`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/chore/thisisthepy-coordinates)
-moves everything to `org.thisisthepy.compose`, because an artifact under `org.jetbrains.compose`
-that JetBrains did not build cannot be told from the real one. Groups become
-`org.thisisthepy.compose.<group>` (`org.thisisthepy.compose.androidx.<library>` for the
-`org.jetbrains.androidx` ones), and versions become `<upstream version>-ext.<N>`, for example
-`org.thisisthepy.compose.ui:ui:1.11.1-ext.1`. skiko keeps `org.jetbrains.skiko`. That branch's
-[`extended/COORDINATES.md`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/chore/thisisthepy-coordinates/extended/COORDINATES.md)
-lists every coordinate.
+The Gradle plugin of
+[compose-multiplatform-extended](https://github.com/thisisthepy/compose-multiplatform-extended/blob/extended/extended/README.md)
+resolves its aliases (`compose.foundation`, `compose.desktop.currentOs` and the rest) to these
+coordinates.
+
+What it costs: a third-party Compose library is built against `org.jetbrains.compose`. Next to
+this fork it brings JetBrains' Compose UI in a second time, which no resolver can merge because
+the groups differ. Anything used with this fork has to be built against it.

@@ -38,7 +38,6 @@ androidXMultiplatform {
         compileSdk = 35
     }
     desktop()
-    linux()
     mingwX64()
     mac()
     ios()
@@ -51,7 +50,7 @@ androidXMultiplatform {
         commonMain {
             dependencies {
                 api(project(":compose:material3:material3"))
-                api("org.jetbrains.compose.material3.adaptive:adaptive:1.2.0")
+                api(project(":compose:material3:adaptive:adaptive"))
                 implementation("org.jetbrains.androidx.window:window-core:1.4.0")
             }
         }

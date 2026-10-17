@@ -10,23 +10,36 @@ product:
   type: lib
   platforms: [ jvm, macosArm64 ]
 
+# Compose's compiler plugin through the template rather than `compose: enabled`, which would add
+# JetBrains' runtime and components-resources and with them JetBrains' Compose next to the fork's.
+apply:
+  - ../compose.module-template.yaml
+
 dependencies:
   - ../common
-  - $compose.runtime
-  - $compose.foundation
-  - $compose.ui
+  - org.thisisthepy.compose.runtime:runtime:1.11.1-ext.1
+  # This fork's Compose, not JetBrains': a consumer that links this module also links the
+  # fork's foundation and UI, and two copies of the same classes under different groups are
+  # not something a resolver can merge. Published to the local Maven repository first by
+  # extended/compose/publish-local.sh. The runtime is the fork's too, a stub with no classes
+  # that points at androidx.compose.runtime.
+  - org.thisisthepy.compose.foundation:foundation:1.11.1-ext.1
+  - org.thisisthepy.compose.ui:ui:1.11.1-ext.1
 
 test-dependencies:
   - $kotlin.test
 
-# The JVM tests make a real scene, which loads skia's native library. The library ships in
-# the desktop runtime for the machine running the tests; the module itself never uses it.
+# The JVM tests make a real scene, which loads skia's native library. It ships in skiko's
+# runtime jar for each system, and skiko loads the one for the machine running the tests; the
+# module itself never uses it. Named directly rather than through compose.desktop.currentOs,
+# which is JetBrains' desktop module and would bring JetBrains' Compose UI next to the fork's.
 test-dependencies@jvm:
-  - $compose.desktop.currentOs
+  - org.jetbrains.skiko:skiko-awt-runtime-macos-arm64:0.144.6
+  - org.jetbrains.skiko:skiko-awt-runtime-macos-x64:0.144.6
+  - org.jetbrains.skiko:skiko-awt-runtime-linux-x64:0.144.6
+  - org.jetbrains.skiko:skiko-awt-runtime-windows-x64:0.144.6
 
 settings:
-  compose:
-    enabled: true
   publishing:
     enabled: true
     group: org.thisisthepy.compose.window

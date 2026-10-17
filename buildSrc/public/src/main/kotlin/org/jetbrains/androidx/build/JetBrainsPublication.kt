@@ -27,8 +27,31 @@ import org.gradle.api.Project
 object JetBrainsPublication {
     private const val COMPATIBILITY_STUB_PROJECT_SUFFIX = "-compatibility-stub"
     private const val ANDROIDX_GROUP_PREFIX = "androidx."
+
+    /**
+     * Every group this fork publishes starts with this. Nothing it builds goes out under a
+     * JetBrains group: an artifact under `org.jetbrains.compose` that JetBrains did not build
+     * is one a consumer cannot tell apart from the real thing, and one that silently replaces
+     * it whenever both are in a dependency graph.
+     */
+    const val FORK_GROUP_PREFIX = "org.thisisthepy.compose."
+
+    /**
+     * Where the libraries JetBrains publishes as `org.jetbrains.androidx.<library>` go:
+     * `org.thisisthepy.compose.androidx.<library>`. The `androidx` part is kept so that the
+     * mapping stays mechanical in both directions, and so that `window`, `navigation` or
+     * `savedstate` can never collide with a Compose group of the same name.
+     */
+    private const val FORK_ANDROIDX_GROUP_PREFIX = FORK_GROUP_PREFIX + "androidx."
+    private const val FORK_ANNOTATION_GROUP = FORK_GROUP_PREFIX + "annotation-internal"
+    private const val FORK_COLLECTION_GROUP = FORK_GROUP_PREFIX + "collection-internal"
+
+    // The groups JetBrains publishes the same projects under. Still recognised, because
+    // published JetBrains artifacts keep turning up as external dependencies.
     private const val JETBRAINS_COMPOSE_GROUP_PREFIX = "org.jetbrains.compose."
     private const val JETBRAINS_FORK_GROUP_PREFIX = "org.jetbrains.androidx."
+    private const val JETBRAINS_ANNOTATION_GROUP = JETBRAINS_COMPOSE_GROUP_PREFIX + "annotation-internal"
+    private const val JETBRAINS_COLLECTION_GROUP = JETBRAINS_COMPOSE_GROUP_PREFIX + "collection-internal"
 
     val libraryToComponents = mapOf(
         "COMPOSE" to listOf(
@@ -149,17 +172,15 @@ object JetBrainsPublication {
     }
 
     fun mavenGroupFor(projectPath: String): String = when {
-        projectPath == ":annotation:annotation" ->
-            "org.jetbrains.compose.annotation-internal"
-        projectPath == ":collection:collection" ->
-            "org.jetbrains.compose.collection-internal"
+        projectPath == ":annotation:annotation" -> FORK_ANNOTATION_GROUP
+        projectPath == ":collection:collection" -> FORK_COLLECTION_GROUP
         projectPath.startsWith(":compose:") ->
-            JETBRAINS_COMPOSE_GROUP_PREFIX + projectPath
+            FORK_GROUP_PREFIX + projectPath
                 .removePrefix(":compose:")
                 .substringBeforeLast(":")
                 .replace(":", ".")
         projectPath.startsWith(":") ->
-            JETBRAINS_FORK_GROUP_PREFIX + projectPath
+            FORK_ANDROIDX_GROUP_PREFIX + projectPath
                 .removePrefix(":")
                 .substringBeforeLast(":")
                 .replace(":", ".")
@@ -169,10 +190,15 @@ object JetBrainsPublication {
     fun projectPathForCoordinates(group: String, name: String): String? = when {
         isAndroidXGroup(group) ->
             ":${group.removePrefix(ANDROIDX_GROUP_PREFIX).replace(".", ":")}:$name"
-        group == "org.jetbrains.compose.annotation-internal" ->
+        group == FORK_ANNOTATION_GROUP || group == JETBRAINS_ANNOTATION_GROUP ->
             ":annotation:annotation"
-        group == "org.jetbrains.compose.collection-internal" ->
+        group == FORK_COLLECTION_GROUP || group == JETBRAINS_COLLECTION_GROUP ->
             ":collection:collection"
+        // Before the Compose prefix, which it starts with.
+        group.startsWith(FORK_ANDROIDX_GROUP_PREFIX) ->
+            ":${group.removePrefix(FORK_ANDROIDX_GROUP_PREFIX).replace(".", ":")}:$name"
+        group.startsWith(FORK_GROUP_PREFIX) ->
+            ":compose:${group.removePrefix(FORK_GROUP_PREFIX).replace(".", ":")}:$name"
         group.startsWith(JETBRAINS_COMPOSE_GROUP_PREFIX) ->
             ":compose:${group.removePrefix(JETBRAINS_COMPOSE_GROUP_PREFIX).replace(".", ":")}:$name"
         group.startsWith(JETBRAINS_FORK_GROUP_PREFIX) ->
@@ -182,8 +208,15 @@ object JetBrainsPublication {
 
     fun isAndroidXGroup(group: String): Boolean = group.startsWith(ANDROIDX_GROUP_PREFIX)
 
+    /**
+     * Whether [group] is one of the multiplatform groups that stand in for an `androidx.*`
+     * one: this fork's own, or the JetBrains groups the same projects are published under
+     * upstream. Both are preferred over the `androidx.*` artifact they redirect to.
+     */
     fun isJetBrainsForkGroup(group: String): Boolean =
-        group.startsWith(JETBRAINS_FORK_GROUP_PREFIX) || group.startsWith(JETBRAINS_COMPOSE_GROUP_PREFIX)
+        group.startsWith(FORK_GROUP_PREFIX) ||
+            group.startsWith(JETBRAINS_FORK_GROUP_PREFIX) ||
+            group.startsWith(JETBRAINS_COMPOSE_GROUP_PREFIX)
 
     fun isCompatibilityStubProject(project: Project): Boolean =
         project.projectDir.name.endsWith(COMPATIBILITY_STUB_PROJECT_SUFFIX)

@@ -51,7 +51,7 @@ private class JetBrainsCapabilityRule : ComponentMetadataRule {
 
 /**
  * Gradle component metadata rule that adds capabilities to artifacts with
- * org.jetbrains.androidx.* or org.jetbrains.compose.* groups.
+ * org.thisisthepy.compose.*, org.jetbrains.androidx.* or org.jetbrains.compose.* groups.
  *
  * This enables Gradle's capability-based conflict resolution to identify these artifacts
  * as providing the same functionality as their original androidx.* counterparts,
@@ -154,7 +154,8 @@ private fun CapabilityResolutionDetails.selectPreferredAndroidXCandidate() {
         return
     }
     
-    // Prefer org.jetbrains.* over androidx.*
+    // Prefer this fork's groups and JetBrains' (org.thisisthepy.compose.*, org.jetbrains.*)
+    // over androidx.*
     val jetBrainsCandidate = candidates.firstOrNull { candidate ->
         val candidateId = candidate.id
         if (candidateId is ModuleComponentIdentifier) {

@@ -11,12 +11,16 @@ on:
     paths:
       - extended/window/**
       - .github/workflows/extended-window-macos.yml
+      - .github/actions/fork-compose/**
+      - extended/compose/**
   push:
     branches:
       - extended
     paths:
       - extended/window/**
       - .github/workflows/extended-window-macos.yml
+      - .github/actions/fork-compose/**
+      - extended/compose/**
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -50,14 +54,16 @@ jobs:
   build:
     name: Window macosArm64
     runs-on: macos-latest
-    timeout-minutes: 90
+    timeout-minutes: 300
     defaults:
       run:
         working-directory: extended/window
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: extended/window
+          sparse-checkout: |
+            extended/window
+            .github/actions
           filter: blob:none
 
       - name: Cache the Kotlin toolchain, konan and Maven dependencies
@@ -71,6 +77,12 @@ jobs:
           restore-keys: |
             extended-window-macos-${{ runner.os }}-
 
+      # native/macos compiles against this fork's foundation and UI, which nothing publishes.
+      - name: This fork's Compose for macosArm64
+        uses: ./.github/actions/fork-compose
+        with:
+          targets: macosArm64
+
       - name: The window code calls no private AppKit API
         run: ./scripts/check-no-private-api.sh
 
@@ -82,3 +94,13 @@ jobs:
 
       - name: Test
         run: ./kotlin test -p macosArm64 -m macos
+
+      - name: What the test link was given (on failure)
+        if: failure()
+        run: |
+          ./kotlin show dependencies --module macos --platform macosArm64 || ./kotlin show dependencies --module macos || true
+          find ~/Library/Caches/JetBrains/Kotlin/.m2.cache/org/jetbrains/compose -name '*.klib' | sort
+          find ~/.m2/repository -path '*animation-core*' \( -name '*.klib' -o -name '*.module' \) | sort
+          find build -type f \( -name '*.args' -o -name '*argfile*' -o -name '*.rsp' \) 2>/dev/null | head -20 |
+            while read -r f; do echo "== $f"; grep -n 'animation' "$f" | head -20; done
+          find ~/.cache/JetBrains ~/Library/Caches/JetBrains -name '*.klib' -path '*animation*' 2>/dev/null | head -20

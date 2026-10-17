@@ -29,19 +29,29 @@ data class Version(
     val preRelease: String? = null,
     val preReleaseIteration: Int? = null,
     val buildMetadata: String? = null, // Used in JetBrains fork
+    /**
+     * Which release of the thisisthepy fork this is, as `ext.<N>` or `ext.<N>-dev`, or null
+     * for anything else. The fork publishes as `<upstream version>-ext.<N>`; read as plain
+     * semantic versioning that suffix is a pre-release, and a stable upstream version would
+     * stop counting as stable. It is kept apart here so that everything else about the
+     * version means what it means upstream.
+     */
+    val forkRelease: String? = null,
 ) : Comparable<Version>, java.io.Serializable {
 
     constructor(
         versionString: String
     ) : this(
-        major = Integer.parseInt(checkedMatcher(versionString).group(1)),
-        minor = Integer.parseInt(checkedMatcher(versionString).group(2)),
-        patch = Integer.parseInt(checkedMatcher(versionString).group(3)),
-        preRelease = checkedMatcher(versionString).group(4)?.ifEmpty { null },
+        major = Integer.parseInt(checkedMatcher(upstreamPart(versionString)).group(1)),
+        minor = Integer.parseInt(checkedMatcher(upstreamPart(versionString)).group(2)),
+        patch = Integer.parseInt(checkedMatcher(upstreamPart(versionString)).group(3)),
+        preRelease = checkedMatcher(upstreamPart(versionString)).group(4)?.ifEmpty { null },
         preReleaseIteration =
             when (
                 val preRelease =
-                    checkedMatcher(versionString).group(4)?.lowercase(Locale.getDefault())
+                    checkedMatcher(upstreamPart(versionString))
+                        .group(4)
+                        ?.lowercase(Locale.getDefault())
             ) {
                 ALPHA -> preRelease.substring(ALPHA.length).toIntOrNull()
                 BETA -> preRelease.substring(BETA.length).toIntOrNull()
@@ -49,7 +59,8 @@ data class Version(
                 RC -> preRelease.substring(RC.length).toIntOrNull()
                 else -> null
             },
-        buildMetadata = checkedMatcher(versionString).group(5)?.ifEmpty { null },
+        buildMetadata = checkedMatcher(upstreamPart(versionString)).group(5)?.ifEmpty { null },
+        forkRelease = forkReleaseOf(versionString),
     )
 
     fun isSnapshot(): Boolean = "SNAPSHOT" == preRelease
@@ -81,12 +92,23 @@ data class Version(
             { it.preRelease == null }, // False (no extra) sorts above true (has extra)
             { it.preRelease }, // gradle uses lexicographic ordering
             // Comparing shouldn'r involve [buildMetadata]
+            { it.forkReleaseNumber },
+            { !it.isForkDevelopmentBuild() }, // ext.1-dev comes before ext.1
         )
+
+    private val forkReleaseNumber: Int
+        get() = forkRelease?.removePrefix(FORK_RELEASE_PREFIX)?.substringBefore("-")?.toInt() ?: 0
+
+    /** Whether this is a local development build of a fork release, `ext.<N>-dev`. */
+    fun isForkDevelopmentBuild(): Boolean = forkRelease?.endsWith(FORK_DEV_SUFFIX) == true
 
     override fun toString(): String = buildString {
         append("$major.$minor.$patch")
         if (preRelease != null) {
             append("-$preRelease")
+        }
+        if (forkRelease != null) {
+            append("-$forkRelease")
         }
         if (buildMetadata != null) {
             append("+$buildMetadata")
@@ -100,6 +122,26 @@ data class Version(
         private const val BETA = "beta"
         private const val DEV = "dev"
         private const val RC = "rc"
+
+        private const val FORK_RELEASE_PREFIX = "ext."
+        private const val FORK_DEV_SUFFIX = "-dev"
+
+        // `<upstream version>-ext.<N>`, optionally `-dev`, optionally followed by build metadata.
+        private val FORK_RELEASE_REGEX =
+            Pattern.compile(
+                "^(.+?)-(ext\\.(?:0|[1-9]\\d*)(?:-dev)?)((?:\\+[0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*)?)\$"
+            )
+
+        /** [versionString] without the fork's `-ext.<N>` suffix, which is what upstream would publish. */
+        fun upstreamPart(versionString: String): String {
+            val matcher = FORK_RELEASE_REGEX.matcher(versionString)
+            return if (matcher.matches()) matcher.group(1) + matcher.group(3) else versionString
+        }
+
+        private fun forkReleaseOf(versionString: String): String? {
+            val matcher = FORK_RELEASE_REGEX.matcher(versionString)
+            return if (matcher.matches()) matcher.group(2) else null
+        }
 
         private val VERSION_FILE_REGEX = Pattern.compile("^(res-)?(.*).txt$")
         private val SEMVER_VERSION_REGEX =
@@ -125,7 +167,7 @@ data class Version(
 
         /** @return Version or null, if the given string doesn't match */
         fun parseOrNull(versionString: String): Version? {
-            val matcher = SEMVER_VERSION_REGEX.matcher(versionString)
+            val matcher = SEMVER_VERSION_REGEX.matcher(upstreamPart(versionString))
             return if (matcher.matches()) Version(versionString) else null
         }
 

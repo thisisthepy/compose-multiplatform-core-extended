@@ -42,7 +42,7 @@ English: [README.md](https://github.com/thisisthepy/compose-multiplatform-core-e
 | 툴킷 없는 native image 에 Swing 과 `UIManager` 가 남지 않도록 AWT 스위치를 단 skiko-awt | 구현 | `extended/skiko/build-skiko-awt.sh` |
 | 창 모듈: 두 경로의 창, 입력, IME, 메뉴, 크롬 | macOS 와 Linux 구현, Windows 는 [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32) 에서 열려 있음 | [`extended/window`](#창-모듈) |
 | Windows 용 Compose 창 프로시저 (캡션, 제목 표시줄, 아이콘) | 계획 | 브랜치 [`feature/windows-window-chrome`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/feature/windows-window-chrome), [DarkPyonix/compose-rust#26](https://github.com/DarkPyonix/compose-rust/issues/26) |
-| `org.thisisthepy.compose` 좌표 | 계획 | 브랜치 [`chore/thisisthepy-coordinates`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/chore/thisisthepy-coordinates) |
+| `org.thisisthepy.compose` 좌표, 버전은 `<upstream version>-ext.<N>` | 구현됨 | [`extended/COORDINATES.md`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/COORDINATES.md), [Maven 좌표](#maven-좌표) |
 | compose-rust에 있던 그대로의 디자인 시스템 여섯 개와 Liquid Glass 재질 | 가져옴 | [`extended/design-systems`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/design-systems/README.md) |
 | `org.thisisthepy.compose.*` 라이브러리로 나오는 디자인 시스템 | 계획 | [DarkPyonix/compose-rust#39](https://github.com/DarkPyonix/compose-rust/issues/39) |
 
@@ -150,30 +150,28 @@ compose-rust가 `design-systems/` 디렉터리에 두던 디자인 시스템은 
 아래 명령은 `extended` 체크아웃의 저장소 루트에서 실행합니다. 따로 적지 않으면 `JAVA_HOME` 에 JDK 17
 이 있어야 합니다. 모든 빌드는 로컬 Maven 저장소 (`~/.m2/repository`) 에 배포합니다.
 
-### Linux 또는 macOS 용 Compose 모듈
-
-모듈마다 배포가 두 개 필요합니다. 하나는 klib 을 담은 타깃 자체의 배포이고, 하나는 어떤 타깃이 있는지
-알려 주는 루트 배포입니다. 루트가 없으면 사용하는 쪽은 모듈이 그 플랫폼을 지원하지 않는다는 답을 받습니다.
+### Linux, macOS 또는 데스크톱 JVM 용 Compose 모듈
 
 ```sh
-./gradlew --no-daemon --no-configuration-cache \
-    -Pjetbrains.publication.version.COMPOSE=1.11.1 \
-    -Pjetbrains.publication.version.COMPOSE_MATERIAL3=1.11.0-alpha07 \
-    :compose:ui:ui:publishLinuxX64PublicationToMavenLocal \
-    :compose:ui:ui:publishKotlinMultiplatformPublicationToMavenLocal
+extended/compose/publish-local.sh linuxX64          # 또는 macosArm64, linuxArm64, mingwX64, desktop
+python3 extended/compose/check-local.py             # ~/.m2 에 남은 것이 빠짐없는지
 ```
 
-애플리케이션이 그리는 데 쓰는 모듈마다 두 태스크를 반복합니다. `linuxX64` 에서는
-`compose:animation:animation`, `animation-core`, `compose:foundation:foundation`,
-`foundation-layout`, `compose:material:material-ripple`, `compose:material3:material3`,
-`compose:ui:ui`, `ui-backhandler`, `ui-geometry`, `ui-graphics`, `ui-text`,
-`ui-tooling-preview`, `ui-unit`, `ui-util` 입니다. `macosArm64` 에서는
-`publishMacosArm64PublicationToMavenLocal` 을 씁니다. 거기서는 `compose:foundation:foundation` 과
-`compose:ui:ui` 만 JetBrains 빌드와 다릅니다. Material 2 의 navigation, adaptive 계열, navigation
-suite 는 Linux 용으로 빌드할 수 없습니다. 각각 Linux 변형이 없는 배포 아티팩트에 의존하기 때문입니다.
+애플리케이션이 그리는 데 쓰는 모듈 전부(foundation, Material 3, 그리고 그 둘이 닿는 것)를 지정한
+타깃으로, `gradle.properties` 의 버전으로 배포합니다. `--list` 는 실행하지 않고 Gradle 태스크만
+출력합니다. 모듈마다 배포가 두 개입니다. 하나는 klib 이나 jar 를 담은 타깃 자체의 배포이고, 하나는
+어떤 타깃이 있는지 알려 주는 루트 배포입니다. 루트가 없으면 사용하는 쪽은 모듈이 그 플랫폼을 지원하지
+않는다는 답을 받습니다. Material 2 의 navigation, adaptive 계열, navigation suite 는 목록에 없습니다.
+각각 Linux 변형이 없는 배포 아티팩트에 의존하기 때문입니다.
 
+runtime, `runtime-saveable`, 내부용 annotation 과 collection 라이브러리도 목록에 있습니다. 클래스는
+없습니다. JetBrains 의 것과 같이 androidx 아티팩트를 가리키는 호환 스텁이고, 위 모듈들이 이 포크의
+버전으로 그것들을 찾기 때문입니다.
+
+창 모듈을 빌드하는 CI 작업은 `.github/actions/fork-compose` 로 이것을 실행하고, Compose 소스가 바뀔
+때까지 결과를 캐시합니다.
 [compose-rust 의 `build-compose.sh`](https://github.com/DarkPyonix/compose-rust/blob/develop/renderer/scripts/build-compose.sh)
-가 포크의 고정 커밋에 대해 바로 이 과정을 실행합니다.
+가 포크의 고정 커밋에 대해 이것을 실행합니다.
 
 ### mingwX64
 
@@ -211,24 +209,30 @@ extended/skiko/build-skiko-static-jvm.sh <work-dir>
 
 ## Maven 좌표
 
-지금 포크는 JetBrains 자신의 그룹과, 대신하는 버전 그대로 배포합니다. 그래서 로컬 저장소를 먼저 읽는
-빌드는 패치한 모듈을 가져가고, 나머지는 JetBrains 에서 받습니다.
+이 포크가 빌드하는 것은 모두 `org.thisisthepy.compose` 아래로 배포하고, JetBrains 그룹으로는 내지
+않습니다. JetBrains 가 빌드하지 않은 `org.jetbrains.compose` 아티팩트는 진짜와 구별할 수 없고, 둘 중
+버전이 높은 쪽이 말없이 다른 쪽을 대신하기 때문입니다. 아티팩트 이름, 패키지, 클래스, 시그니처는
+JetBrains 의 것 그대로이고 그룹과 버전만 다릅니다. 모든 좌표는 [`COORDINATES.md`](COORDINATES.md)
+에 있습니다.
 
 | 대상 | 좌표 |
 |---|---|
-| Compose 모듈 | `org.jetbrains.compose.<group>:<artifact>:1.11.1`. 예: `org.jetbrains.compose.ui:ui:1.11.1` 과 그 타깃 `ui-linuxx64`, `ui-mingwx64`, `ui-macosarm64` |
-| Material 3 (위 속성을 줄 때) | `org.jetbrains.compose.material3:material3:1.11.0-alpha07` |
+| Compose 모듈 | `org.thisisthepy.compose.<group>:<artifact>:1.11.1-ext.1`. 예: `org.thisisthepy.compose.ui:ui:1.11.1-ext.1` 과 그 타깃 `ui-desktop`, `ui-linuxx64`, `ui-mingwx64`, `ui-macosarm64` |
+| Material 3 | `org.thisisthepy.compose.material3:material3:1.11.0-alpha07-ext.1` |
+| JetBrains 가 `org.jetbrains.androidx.*` 로 내는 라이브러리 | `org.thisisthepy.compose.androidx.<library>`. 예: `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:2.11.0-beta01-ext.1` |
+| runtime, `runtime-saveable`, annotation, collection | `org.thisisthepy.compose.runtime:runtime:1.11.1-ext.1` 등. JetBrains 의 것과 같이 클래스 없이 `androidx.compose.runtime` 을 가리키는 스텁입니다 |
+| 창 모듈 | `org.thisisthepy.compose.window:<module>:0.1.0` |
 | `mingwX64` 용 skiko | `org.jetbrains.skiko:skiko-mingwx64:0.144.6`. skiko 루트 메타데이터에 이 타깃을 더합니다 |
-| AWT 스위치를 단 skiko-awt | `org.jetbrains.skiko:skiko-awt:0.144.6`. `extended/skiko/build-skiko-awt.sh` 가 만듭니다 |
+| AWT 스위치를 단 skiko-awt | `org.jetbrains.skiko:skiko-awt:0.144.6.1`. `extended/skiko/build-skiko-awt.sh` 가 만듭니다 |
 
-`jetbrains.publication.version.COMPOSE=1.11.1` 은 `gradle.properties` 에 있고, 빌드에서 다른 값을
-줄 수 있습니다. compose-rust 가 그렇게 합니다.
-[`build-compose.sh`](https://github.com/DarkPyonix/compose-rust/blob/develop/renderer/scripts/build-compose.sh)
-는 데스크톱의 `foundation`, `ui`, `ui-text` 와 macOS 의 `ui`, `foundation` 을 `1.11.1001` 로 배포하고,
-`publish-skiko-awt.sh` 는 skiko-awt 를 `0.144.6.1` 로 배포합니다. JetBrains 도 이 모듈들을 `1.11.1` 로
-배포하는데, 업스트림의 `1.11.1` 을 이미 가진 리졸버는 그것을 가져가고 로컬 저장소를 보지 않습니다.
-그래서 포크의 버전이 그보다 높게 정렬되어야 합니다. Linux 모듈은 `1.11.1` 그대로입니다. JetBrains 가
-그 좌표로 배포하는 것이 없기 때문입니다.
+버전은 `<upstream version>-ext.<N>` 입니다. 앞은 JetBrains 가 같은 소스를 낸 버전이고, `N` 은 그
+버전에 대한 이 포크의 릴리스 횟수입니다. 릴리스가 아닌 로컬 빌드는 `-Pextended.publication.dev=true`
+를 주고 `-ext.<N>-dev` 로 배포합니다. 접미사가 없는 버전은 거부합니다.
+
+skiko 는 JetBrains 그룹을 유지합니다. 모든 Compose 모듈이 skiko 를 그 그룹으로 찾기 때문입니다.
+그래서 패치한 skiko-awt 는 자기 버전 `0.144.6.1` 을 받습니다. 이 버전은 Gradle 에서도 Maven 에서도
+JetBrains 의 `0.144.6` 보다 높게 정렬되므로, 이것을 지정한 쪽은 Compose 가 `0.144.6` 을 끌어와도 이것을
+받습니다. 네이티브는 JetBrains 의 `0.144.6` 런타임 jar 입니다.
 
 아직 공개 저장소에 올린 것은 없습니다. 사용하는 쪽은 `mavenLocal()` 을 맨 앞에 둡니다.
 
@@ -248,19 +252,15 @@ dependencyResolutionManagement {
 kotlin {
     linuxX64()
     sourceSets.commonMain.dependencies {
-        implementation("org.jetbrains.compose.foundation:foundation:1.11.1")
-        implementation("org.jetbrains.compose.material3:material3:1.11.0-alpha07")
+        implementation("org.thisisthepy.compose.foundation:foundation:1.11.1-ext.1")
+        implementation("org.thisisthepy.compose.material3:material3:1.11.0-alpha07-ext.1")
     }
 }
 ```
 
-**상태: 계획.**
-[`chore/thisisthepy-coordinates`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/chore/thisisthepy-coordinates)
-브랜치가 모든 것을 `org.thisisthepy.compose` 로 옮깁니다. JetBrains 가 빌드하지 않은
-`org.jetbrains.compose` 아티팩트는 진짜와 구별할 수 없기 때문입니다. 그룹은
-`org.thisisthepy.compose.<group>` (`org.jetbrains.androidx` 계열은
-`org.thisisthepy.compose.androidx.<library>`) 이 되고, 버전은 `<upstream version>-ext.<N>` 이 됩니다.
-예를 들어 `org.thisisthepy.compose.ui:ui:1.11.1-ext.1` 입니다. skiko 는 `org.jetbrains.skiko` 를
-유지합니다. 모든 좌표는 그 브랜치의
-[`extended/COORDINATES.md`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/chore/thisisthepy-coordinates/extended/COORDINATES.md)
-에 있습니다.
+[compose-multiplatform-extended](https://github.com/thisisthepy/compose-multiplatform-extended/blob/extended/extended/README_ko.md)
+의 Gradle 플러그인은 별칭(`compose.foundation`, `compose.desktop.currentOs` 등)을 이 좌표로 풉니다.
+
+치르는 값: 서드파티 Compose 라이브러리는 `org.jetbrains.compose` 에 맞춰 빌드되어 있습니다. 이 포크와
+함께 쓰면 JetBrains 의 Compose UI 가 한 벌 더 들어오고, 그룹이 달라 어떤 리졸버도 둘을 합치지
+못합니다. 이 포크와 함께 쓰는 것은 이 포크에 맞춰 빌드해야 합니다.

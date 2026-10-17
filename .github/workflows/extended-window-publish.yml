@@ -1,8 +1,8 @@
 # The window modules published to the local Maven repository, the way compose-rust consumes
 # them. Each runner publishes the modules it can build: the macOS one adds native/macos and
-# the Ubuntu one adds native/linux. native/linux compiles against Compose for Kotlin/Native
-# Linux, which JetBrains does not publish, so that runner builds those Compose modules from
-# this checkout and publishes them to the local Maven repository first.
+# the Ubuntu one adds native/linux. Both compile against this fork's Compose, which nothing
+# publishes, so each runner publishes it to the local Maven repository first
+# (.github/actions/fork-compose).
 name: Extended window publish
 
 on:
@@ -11,12 +11,16 @@ on:
     paths:
       - extended/window/**
       - .github/workflows/extended-window-publish.yml
+      - .github/actions/fork-compose/**
+      - extended/compose/**
   push:
     branches:
       - extended
     paths:
       - extended/window/**
       - .github/workflows/extended-window-publish.yml
+      - .github/actions/fork-compose/**
+      - extended/compose/**
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -33,25 +37,24 @@ jobs:
         include:
           - os: macos-latest
             modules: "common scene native/macos graalvm/graalvm-macos graalvm/graalvm-linux"
+            compose: "desktop macosArm64"
+          # The scene is published from macOS only: it compiles against this fork's Compose
+          # for macosArm64 as well as the JVM, and only a Mac builds the former.
           - os: ubuntu-24.04
-            modules: "common scene graalvm/graalvm-macos graalvm/graalvm-linux"
+            modules: "common graalvm/graalvm-macos graalvm/graalvm-linux"
+            compose: "linuxX64 linuxArm64"
             compose_linux: true
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 300
     defaults:
       run:
         working-directory: extended/window
-    env:
-      COMPOSE_VERSION: 1.11.1
-      MATERIAL3_VERSION: 1.11.0-alpha07
     steps:
       - uses: actions/checkout@v4
-        if: ${{ !matrix.compose_linux }}
         with:
-          sparse-checkout: extended/window
-
-      - uses: actions/checkout@v4
-        if: ${{ matrix.compose_linux }}
+          sparse-checkout: |
+            extended/window
+            .github/actions
 
       - uses: actions/setup-java@v4
         with:
@@ -74,40 +77,10 @@ jobs:
           sudo apt-get install -y pkg-config libx11-dev libxext-dev libgl1-mesa-dev \
             libfontconfig1-dev libfreetype6-dev
 
-      - uses: gradle/actions/setup-gradle@v4
-        if: ${{ matrix.compose_linux }}
+      - name: This fork's Compose
+        uses: ./.github/actions/fork-compose
         with:
-          gradle-home-cache-excludes: |
-            caches/build-cache-1
-
-      - name: Publish Compose for Kotlin/Native Linux from this checkout
-        if: ${{ matrix.compose_linux }}
-        working-directory: .
-        env:
-          ANDROIDX_JDK21: ${{ env.JAVA_HOME }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.gradle
-          cat > ~/.gradle/gradle.properties <<EOF
-          org.gradle.caching=false
-          org.gradle.workers.max=4
-          org.gradle.jvmargs=-Xmx11g -XX:MaxMetaspaceSize=2g -XX:+UseParallelGC -Dlint.nullness.ignore-deprecated=true -Dfile.encoding=UTF-8
-          kotlin.compiler.execution.strategy=in-process
-          EOF
-          tasks=()
-          for module in animation:animation animation:animation-core foundation:foundation \
-              foundation:foundation-layout material:material-ripple material3:material3 \
-              ui:ui ui:ui-backhandler ui:ui-geometry ui:ui-graphics ui:ui-text \
-              ui:ui-tooling-preview ui:ui-unit ui:ui-util; do
-            for publication in LinuxX64 LinuxArm64 KotlinMultiplatform; do
-              tasks+=(":compose:$module:publish${publication}PublicationToMavenLocal")
-            done
-          done
-          ./gradlew --no-daemon --no-configuration-cache \
-            -Pandroidx.enabled.kmp.target.platforms=-WINDOWS,-JS,-WASM \
-            "-Pjetbrains.publication.version.COMPOSE=$COMPOSE_VERSION" \
-            "-Pjetbrains.publication.version.COMPOSE_MATERIAL3=$MATERIAL3_VERSION" \
-            "${tasks[@]}"
+          targets: ${{ matrix.compose }}
 
       - name: Publish to the local repository
         shell: bash
