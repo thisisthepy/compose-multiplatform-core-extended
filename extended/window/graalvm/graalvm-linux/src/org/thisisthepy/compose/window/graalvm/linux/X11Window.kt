@@ -155,6 +155,17 @@ class X11Window : WindowPlatform {
     }
 
     /**
+     * The monotonic clock when the frame is started.
+     *
+     * Xlib says nothing about when the server will show a frame: a swap is queued and the
+     * compositor, if there is one, presents it on its own schedule. The time a frame is
+     * started is the closest answer this window has, and it moves at the speed of the wall
+     * clock whatever the refresh rate. `System.nanoTime` reads `CLOCK_MONOTONIC` on Linux,
+     * the clock Rust's `Instant` reads there too.
+     */
+    override fun frameTimeNanos(): Long = System.nanoTime()
+
+    /**
      * Swaps the frame just drawn onto the screen and reports it. The window size is read
      * after the swap, so a frame drawn for an older size shows up as a mismatch.
      */

@@ -58,6 +58,9 @@ private external fun setCursorShape(shape: Int)
 @CFunction("dxc_native_pump")
 private external fun pumpEvents(seconds: Double)
 
+@CFunction("dxc_native_frame_time_nanos")
+private external fun nativeFrameTimeNanos(): Long
+
 @CFunction("dxc_native_set_draw_callback")
 private external fun setAppKitDrawCallback(callback: CFunctionPointer?, isolateThread: IsolateThread?)
 
@@ -365,6 +368,16 @@ fun setApplicationIcon(rgba: ByteArray, width: Int, height: Int) {
  * loop that never gave it a turn would be a window that heard nothing.
  */
 fun pumpWindowEvents(seconds: Double) = pumpEvents(seconds)
+
+/**
+ * When the frame drawn now will be on the screen, in nanoseconds of host time: the display
+ * link's next presentation, or the time now while the link has nothing to say.
+ *
+ * Asked once a frame, on the thread that draws, and handed to the scene through a
+ * [org.thisisthepy.compose.window.FrameClock]. Host time is the clock Rust's `Instant`
+ * reads on macOS.
+ */
+fun frameTimeNanos(): Long = nativeFrameTimeNanos()
 
 /** True once the reader has closed the window. */
 fun isWindowClosed(): Boolean = windowClosed() != 0
