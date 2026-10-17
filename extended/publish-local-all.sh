@@ -13,17 +13,23 @@
 #   org.thisisthepy.compose.window:<module>           extended/window, the modules this host builds
 #   org.thisisthepy.compose:compose-gradle-plugin     the plugin, at PLUGIN_REVISION
 #
-# The targets default to what this host builds: desktop and macosArm64 on a Mac; desktop, both
-# Linux architectures and, when the MSVC runtime and Windows SDK headers are there (XWIN_DIR or
-# cargo-xwin's cache), mingwX64 on Linux x86-64. Compose's Gradle build does not run on Windows,
-# and Kotlin/Native compiles mingwX64 from Linux, so Windows' Compose and its skiko come from the
-# Linux host. The window modules follow the host: native/macos and the scene on a Mac,
-# native/linux on Linux x86-64 (Kotlin/Native has no arm64 Linux host), and on Windows (Git
-# Bash) only common and windows-shared, which needs MSVC for its C half and nothing of Compose.
+# Which host publishes what. A Kotlin Multiplatform library's root (its .module and the
+# metadata of its shared source sets) has to be written by one build that has every target, or a
+# consumer's shared source set misses the targets another host built. Kotlin/Native compiles
+# every desktop target from macOS, so a Mac publishes everything with a root: Compose for the
+# desktop JVM, macosArm64, linuxX64, linuxArm64 and mingwX64 (skiko for mingwX64 first, which
+# needs the MSVC runtime and Windows SDK headers as xwin lays them out, XWIN_DIR), skiko-awt,
+# the window modules but two, and the plugin. The two that need their own system:
+#
+#   native/linux     its cinterop reads the system's X11, GL and XIM headers; on Linux x86-64
+#                    (Kotlin/Native has no arm64 Linux host), against the Compose a Mac published
+#   windows-shared   its C half is compiled and tested with MSVC; on Windows (Git Bash)
+#
+# --targets overrides the Compose targets on any host, for a local build of fewer of them.
 #
 # Needs what each step needs: a JDK 21 in JAVA_HOME (the Compose build and the plugin), git,
-# python3, on Linux the X11, GL, fontconfig and FreeType development headers, and for mingwX64
-# the MSVC runtime and Windows SDK as cargo-xwin lays them out.
+# python3, xwin's layout for mingwX64, on Linux the X11, GL, fontconfig and FreeType development
+# headers, and on Windows MSVC.
 set -euo pipefail
 
 # The plugin commit published with this fork's commit. Its aliases name the version above.
@@ -61,32 +67,39 @@ done < <(grep '^jetbrains.publication.version\.' "$root/gradle.properties")
 
 os="$(uname -s)"
 arch="$(uname -m)"
-window_modules=(common graalvm/graalvm-macos graalvm/graalvm-linux)
+window_modules=()
 native_linux=0
 windows_host=0
-xwin="${XWIN_DIR:-$HOME/.cache/cargo-xwin/xwin}"
+full_host=0
 case "$os" in
     Darwin)
-        [[ -n "$targets" ]] || targets="desktop macosArm64"
-        window_modules+=(native/macos scene) ;;
+        full_host=1
+        xwin="${XWIN_DIR:-$HOME/Library/Caches/cargo-xwin/xwin}"
+        if [[ -z "$targets" ]]; then
+            [[ -d "$xwin/sdk/include/ucrt" ]] || die "no MSVC runtime and Windows SDK headers under $xwin" \
+                "skiko for mingwX64 is compiled against them. Run 'xwin --accept-license splat --output $xwin'" \
+                "(or set XWIN_DIR), or pass --targets without mingwX64 for a local build of fewer targets."
+            targets="desktop macosArm64 linuxX64 linuxArm64 mingwX64"
+        fi
+        window_modules=(common graalvm/graalvm-macos graalvm/graalvm-linux native/macos scene) ;;
     Linux)
-        if [[ "$arch" == x86_64 ]]; then
-            if [[ -z "$targets" ]]; then
-                targets="desktop linuxX64 linuxArm64"
-                [[ -d "$xwin/sdk/include/ucrt" ]] && targets="$targets mingwX64"
-            fi
-            native_linux=1
-        else
-            [[ -n "$targets" ]] || targets="desktop"
+        xwin="${XWIN_DIR:-$HOME/.cache/cargo-xwin/xwin}"
+        [[ "$arch" == x86_64 ]] || die "native/linux is built on Linux x86-64; Kotlin/Native has no arm64 Linux host"
+        native_linux=1
+        if [[ -z "$targets" ]]; then
+            [[ -d "$HOME/.m2/repository/org/thisisthepy/compose/ui/ui-linuxx64/$version" ]] || die \
+                "no Compose for linuxX64 at $version in the local repository" \
+                "A Mac publishes it with every other root; take its repository, or pass" \
+                "--targets \"linuxX64 linuxArm64\" to build Compose for Linux here."
         fi ;;
     MINGW*|MSYS*|CYGWIN*)
         windows_host=1
-        window_modules=(common windows-shared) ;;
+        window_modules=(windows-shared) ;;
     *) die "this script publishes from macOS, Linux or Windows (Git Bash); this is $os" ;;
 esac
 mkdir -p "$work"
 
-if [[ $windows_host -eq 0 ]]; then
+if [[ $windows_host -eq 0 && -n "$targets" ]]; then
     others=()
     for target in $targets; do [[ "$target" == mingwX64 ]] || others+=("$target"); done
     if [[ ${#others[@]} -gt 0 ]]; then
@@ -102,11 +115,12 @@ if [[ $windows_host -eq 0 ]]; then
     fi
 fi
 
-if [[ $windows_host -eq 0 && " $targets " == *" desktop "* ]]; then
+if [[ $full_host -eq 1 && " $targets " == *" desktop "* ]]; then
     echo "==> 2. skiko-awt with the AWT switch"
     "$here/skiko/build-skiko-awt.sh" "$work/skiko-awt"
 fi
 
+if [[ ${#window_modules[@]} -gt 0 ]]; then
 echo "==> 3. the window modules: ${window_modules[*]}"
 (
     cd "$here/window"
@@ -118,12 +132,13 @@ echo "==> 3. the window modules: ${window_modules[*]}"
     } > project.yaml
     if [[ $windows_host -eq 1 ]]; then cmd //c kotlin.bat publish mavenLocal; else ./kotlin publish mavenLocal; fi
 )
+fi
 if [[ $native_linux -eq 1 ]]; then
     "$here/window/scripts/publish-native-linux.sh"
 fi
 
-if [[ $windows_host -eq 1 ]]; then
-    echo "published the Windows window modules as $version; Compose, skiko and the plugin come from a Linux or macOS host"
+if [[ $full_host -eq 0 ]]; then
+    echo "published this host's part as $version; Compose's roots, skiko-awt, the other window modules and the plugin come from a Mac"
     exit 0
 fi
 

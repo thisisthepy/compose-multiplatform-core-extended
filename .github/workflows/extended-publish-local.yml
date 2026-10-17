@@ -1,8 +1,11 @@
-# Everything this fork ships, published to the local Maven repository the way
-# extended/publish-local-all.sh does it on each host, and kept as an artifact per host: the
-# macOS one (desktop, macosArm64, the scene and native/macos), the Linux one (desktop, both
-# Linux architectures, mingwX64 and native/linux) and the Windows one (windows-shared). One
-# version line, gradle.properties'. Heavy, so it runs on demand and when the script changes.
+# Everything this fork ships, published to the local Maven repository with
+# extended/publish-local-all.sh and kept as one repository. A Mac publishes everything that has
+# a root (Compose for the desktop JVM, macosArm64, linuxX64, linuxArm64 and mingwX64, skiko-awt,
+# the window modules but two, the plugin), so every Kotlin Multiplatform root and its shared
+# metadata come from one build that had every target. Linux adds native/linux, which reads the
+# system's X11 headers, and Windows adds windows-shared, whose C half is MSVC's; neither touches
+# a root the Mac wrote. Then a Gradle consumer resolves all of it for every target and fails if
+# JetBrains' Compose comes with it. Heavy, so it runs on demand and when these files change.
 name: Extended publish local
 
 on:
@@ -10,6 +13,7 @@ on:
   pull_request:
     paths:
       - extended/publish-local-all.sh
+      - extended/compose/**
       - .github/workflows/extended-publish-local.yml
 
 concurrency:
@@ -19,17 +23,13 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  XWIN_VERSION: 0.6.5
+
 jobs:
-  publish:
-    name: Publish everything (${{ matrix.name }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { name: macOS, os: macos-latest }
-          - { name: Linux and mingwX64, os: ubuntu-24.04 }
-          - { name: Windows, os: windows-2022 }
-    runs-on: ${{ matrix.os }}
+  mac:
+    name: Publish everything with a root (macOS)
+    runs-on: macos-latest
     timeout-minutes: 360
     defaults:
       run:
@@ -37,49 +37,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Free disk space
-        if: runner.os == 'Linux'
-        run: |
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost \
-            /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/share/powershell \
-            /usr/local/lib/node_modules /usr/local/julia* /opt/microsoft /opt/google
-          df -h /
-
       - uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'corretto'
 
       - uses: gradle/actions/setup-gradle@v4
-        if: runner.os != 'Windows'
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
 
-      - name: Linux packages, and the MSVC runtime and SDK headers for mingwX64
-        if: runner.os == 'Linux'
+      - name: The MSVC runtime and Windows SDK headers, for skiko's mingwX64 half
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libx11-dev libxext-dev libgl1-mesa-dev \
-            libfontconfig1-dev libfreetype6-dev curl unzip
-          # skiko's C++ half for mingwX64 is compiled in MSVC mode against these.
-          version=0.6.5
-          curl -fsSL "https://github.com/Jake-Shadle/xwin/releases/download/$version/xwin-$version-x86_64-unknown-linux-musl.tar.gz" |
+          case "$(uname -m)" in arm64) triple=aarch64-apple-darwin ;; *) triple=x86_64-apple-darwin ;; esac
+          curl -fsSL "https://github.com/Jake-Shadle/xwin/releases/download/$XWIN_VERSION/xwin-$XWIN_VERSION-$triple.tar.gz" |
             tar xz -C "$RUNNER_TEMP"
-          "$RUNNER_TEMP/xwin-$version-x86_64-unknown-linux-musl/xwin" --accept-license \
-            splat --output "$HOME/.cache/cargo-xwin/xwin"
-          mkdir -p ~/.gradle
-          cat >> ~/.gradle/gradle.properties <<PROPERTIES
-          org.gradle.caching=false
-          org.gradle.workers.max=4
-          org.gradle.jvmargs=-Xmx11g -XX:MaxMetaspaceSize=2g -XX:+UseParallelGC -Dlint.nullness.ignore-deprecated=true -Dfile.encoding=UTF-8
-          kotlin.compiler.execution.strategy=in-process
-          PROPERTIES
-
-      - uses: ilammy/msvc-dev-cmd@v1
-        if: runner.os == 'Windows'
-        with:
-          arch: x64
+          "$RUNNER_TEMP/xwin-$XWIN_VERSION-$triple/xwin" --accept-license \
+            splat --output "$HOME/Library/Caches/cargo-xwin/xwin"
 
       - name: Publish
         env:
@@ -87,10 +61,138 @@ jobs:
         run: |
           set -euo pipefail
           ./extended/publish-local-all.sh "$RUNNER_TEMP/publish"
-          find ~/.m2/repository/org/thisisthepy -name '*.pom' | sort
+          find ~/.m2/repository/org/thisisthepy -name '*.module' | sed 's#.*/repository/##' | sort
 
       - uses: actions/upload-artifact@v4
         with:
-          name: org-thisisthepy-${{ runner.os }}
+          name: org-thisisthepy-mac
+          path: ~/.m2/repository/org/thisisthepy
+          retention-days: 14
+
+  linux:
+    name: Add native/linux (Linux)
+    needs: mac
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            extended
+            gradle.properties
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'corretto'
+
+      - name: Linux packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libx11-dev libxext-dev libgl1-mesa-dev \
+            libfontconfig1-dev libfreetype6-dev
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: org-thisisthepy-mac
+          path: ~/.m2/repository/org/thisisthepy
+
+      - name: Publish
+        run: |
+          set -euo pipefail
+          ./extended/publish-local-all.sh "$RUNNER_TEMP/publish"
+          find ~/.m2/repository/org/thisisthepy/compose/window -path '*native-linux*' -name '*.module' | sort
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: org-thisisthepy-linux
+          path: ~/.m2/repository/org/thisisthepy/compose/window/native-linux*
+          retention-days: 14
+
+  windows:
+    name: Add windows-shared (Windows)
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            extended
+            gradle.properties
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Publish
+        run: |
+          set -euo pipefail
+          ./extended/publish-local-all.sh "$RUNNER_TEMP/publish"
+          find ~/.m2/repository/org/thisisthepy/compose/window -path '*windows-shared*' -name '*.module' | sort
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: org-thisisthepy-windows
+          path: ~/.m2/repository/org/thisisthepy/compose/window/windows-shared*
+          retention-days: 14
+
+  consumer:
+    name: A consumer resolves no JetBrains Compose (macOS)
+    needs: [mac, linux, windows]
+    runs-on: macos-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            extended/compose
+            gradle.properties
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'corretto'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.4.0'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: org-thisisthepy-mac
+          path: ~/.m2/repository/org/thisisthepy
+      - uses: actions/download-artifact@v4
+        with:
+          name: org-thisisthepy-linux
+          path: ~/.m2/repository/org/thisisthepy/compose/window
+      - uses: actions/download-artifact@v4
+        with:
+          name: org-thisisthepy-windows
+          path: ~/.m2/repository/org/thisisthepy/compose/window
+
+      - name: Every target resolves, with no JetBrains Compose that carries classes
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^jetbrains.publication.version.COMPOSE=//p' gradle.properties)"
+          gradle -p extended/compose/consumer-check checkResolution --no-daemon "-PforkVersion=$version"
+
+      - name: The repository, as one artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: org-thisisthepy
           path: ~/.m2/repository/org/thisisthepy
           retention-days: 14
