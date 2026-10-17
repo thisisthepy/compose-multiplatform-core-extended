@@ -1,6 +1,6 @@
 @file:OptIn(androidx.compose.ui.InternalComposeUiApi::class)
 
-package org.thisisthepy.compose.window.linux
+package org.thisisthepy.compose.window.atspi
 
 import androidx.compose.ui.platform.PlatformContext
 import androidx.compose.ui.semantics.Role
@@ -18,6 +18,12 @@ import androidx.compose.ui.semantics.getOrNull
  * empty rectangle, and a reader given those finds the whole window stacked in one corner), and
  * keeps the live nodes so that an action asked for over the bus is performed on the control it
  * was asked of.
+ *
+ * Both X11 windows read semantics with this file. It is the only part of the accessibility
+ * code that needs Compose, and the shared module has none, so native/linux and graalvm-linux
+ * each hold it, byte for byte the same; the graalvm-linux workflow fails when they differ. A
+ * copy rather than a symbolic link, because the GraalVM module is built on Windows too, where
+ * a checkout turns a link into a file holding its target's path.
  *
  * Everything runs on the thread that draws. The bus is read on that thread too, so an action
  * arrives between frames and nothing here is shared.

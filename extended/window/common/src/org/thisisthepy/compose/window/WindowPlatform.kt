@@ -47,6 +47,15 @@ interface WindowPlatform {
     /** Reads whatever the operating system has, waiting at most [timeoutMillis]. */
     fun pump(timeoutMillis: Long)
 
+    /**
+     * Ends a wait in [pump] early. Any thread may call it, at any time.
+     *
+     * Work for the window's thread that arrives from another one would otherwise wait for
+     * the rest of the frame's wait before the loop noticed it. The default does nothing,
+     * for a platform whose [pump] does not wait or is woken by its own event loop.
+     */
+    fun wake() {}
+
     /** The drawable's size and scale right now. */
     fun measure(): WindowMeasurement
 

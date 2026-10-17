@@ -1,4 +1,4 @@
-package org.thisisthepy.compose.window.linux
+package org.thisisthepy.compose.window.atspi
 
 /**
  * This window's presence on the accessibility bus.
