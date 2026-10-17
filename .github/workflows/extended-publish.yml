@@ -457,6 +457,25 @@ jobs:
           python3 -I extended/publish/central_bundle.py put "$RUNNER_TEMP/dev" \
             "https://maven.pkg.github.com/${{ github.repository }}"
 
+      # The plugin's aliases name a Compose version, so each core dev build gets a plugin dev
+      # build that names it. Starting a workflow in another repository needs a token that can:
+      # PLUGIN_DISPATCH_TOKEN, a fine-grained token with Actions read and write on
+      # thisisthepy/compose-multiplatform-extended. Without it the plugin's next dev build
+      # picks this one up by itself, on its next merge.
+      - name: Build the plugin against this dev build
+        env:
+          GH_TOKEN: ${{ secrets.PLUGIN_DISPATCH_TOKEN }}
+          CORE_SHA: ${{ needs.plan.outputs.ref }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::notice::PLUGIN_DISPATCH_TOKEN is not set; the plugin is not rebuilt against $CORE_SHA now"
+            exit 0
+          fi
+          gh workflow run extended-publish.yml -R thisisthepy/compose-multiplatform-extended --ref extended \
+            -f mode=dev -f core_commit="$CORE_SHA"
+          echo "started the plugin's dev build against $CORE_SHA"
+
   upload:
     name: Upload to the Central Portal
     needs: [ plan, bundle ]
