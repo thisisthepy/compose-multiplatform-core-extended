@@ -89,14 +89,16 @@ jobs:
   linux:
     name: scene (jvm, Linux)
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 240
     defaults:
       run:
         working-directory: extended/window
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: extended/window
+          sparse-checkout: |
+            extended/window
+            .github/actions
           filter: blob:none
 
       - uses: actions/setup-java@v4
@@ -113,6 +115,12 @@ jobs:
           key: extended-window-scene-${{ runner.os }}-${{ hashFiles('extended/window/**/module.yaml', 'extended/window/libs.versions.toml', 'extended/window/kotlin') }}
           restore-keys: |
             extended-window-scene-${{ runner.os }}-
+
+      # The scene compiles against this fork's foundation and UI, which nothing publishes.
+      - name: This fork's Compose for the JVM
+        uses: ./.github/actions/fork-compose
+        with:
+          targets: desktop
 
       - name: Test (jvm)
         run: ./kotlin test -p jvm -m scene

@@ -71,7 +71,17 @@ jobs:
             t=":$(echo "$d" | tr / :):desktopApiCheck"
             case " $tasks " in *" $t "*) ;; *) tasks="$tasks $t" ;; esac
           done
-          if [ "$all" = 1 ]; then tasks="jbApiCheck"; fi
+          # A build-wide change checks every module's desktop API, the same check as above for
+          # each module. Not jbApiCheck, which also checks every target's klib dump and so
+          # compiles mingwX64 klibs this repository cannot resolve yet (#120).
+          if [ "$all" = 1 ]; then
+            tasks=""
+            for dump in $(git ls-files -- ':(glob)**/api/desktop/*.api' ':!extended'); do
+              d="${dump%/api/desktop/*}"
+              t=":$(echo "$d" | tr / :):desktopApiCheck"
+              case " $tasks " in *" $t "*) ;; *) tasks="$tasks $t" ;; esac
+            done
+          fi
           echo "tasks=$tasks" >> "$GITHUB_OUTPUT"
           echo "gradle tasks: ${tasks:-none}"
 
@@ -89,7 +99,4 @@ jobs:
       # Desktop (jvm) targets only. No Android SDK is installed, so Android must stay off.
       - name: apiCheck against the committed dumps
         if: steps.modules.outputs.tasks != ''
-        # Windows is off: the full check would compile every module's mingwX64 klib, and
-        # material-navigation (among others) asks for a JetBrains artifact with no mingwX64
-        # variant. Restoring the Windows dump is thisisthepy/compose-multiplatform-core-extended#120.
-        run: ./gradlew ${{ steps.modules.outputs.tasks }} -Pcompose.platforms=jvm -Pandroidx.enabled.kmp.target.platforms=-WINDOWS --no-daemon --stacktrace
+        run: ./gradlew ${{ steps.modules.outputs.tasks }} -Pcompose.platforms=jvm --no-daemon --stacktrace
