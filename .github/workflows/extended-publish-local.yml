@@ -10,6 +10,13 @@ name: Extended publish local
 
 on:
   workflow_dispatch:
+    inputs:
+      mac_run:
+        description: >-
+          Take the Mac's repository from this earlier run of this workflow and run only the Windows
+          program against it (empty: publish everything)
+        required: false
+        default: ''
   pull_request:
     paths:
       - extended/publish-local-all.sh
@@ -23,6 +30,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   XWIN_VERSION: 0.6.5
@@ -30,6 +38,7 @@ env:
 jobs:
   mac:
     name: Publish everything with a root (macOS)
+    if: ${{ !inputs.mac_run }}
     runs-on: macos-latest
     timeout-minutes: 360
     defaults:
@@ -115,6 +124,7 @@ jobs:
 
   windows:
     name: Add windows-shared (Windows)
+    if: ${{ !inputs.mac_run }}
     runs-on: windows-2022
     timeout-minutes: 90
     defaults:
@@ -201,6 +211,7 @@ jobs:
   windows-program:
     name: A Windows program links from the repository alone (Windows)
     needs: mac
+    if: ${{ !cancelled() && (needs.mac.result == 'success' || inputs.mac_run) }}
     runs-on: windows-2022
     timeout-minutes: 90
     defaults:
@@ -225,6 +236,8 @@ jobs:
         with:
           name: org-thisisthepy-mac
           path: ~/.m2/repository/org/thisisthepy
+          run-id: ${{ inputs.mac_run || github.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Take every ICU data file off the runner
         # The program has to shape Korean with the ICU data linked into it. A hosted runner ships
