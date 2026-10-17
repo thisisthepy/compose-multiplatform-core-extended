@@ -1,0 +1,40 @@
+# The scripts that publish this fork's Compose locally and check what they published, tested
+# against made-up repositories. Nothing is built here: the window workflows run the real thing
+# through .github/actions/fork-compose.
+name: Extended coordinates
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - extended/compose/**
+      - .github/actions/fork-compose/**
+      - .github/workflows/extended-coordinates.yml
+  push:
+    branches:
+      - extended
+    paths:
+      - extended/compose/**
+      - .github/actions/fork-compose/**
+      - .github/workflows/extended-coordinates.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    name: Publish and check scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extended/compose
+          filter: blob:none
+
+      - name: check-local.py and publish-local.sh --list
+        run: extended/compose/tests/check-local.test.sh

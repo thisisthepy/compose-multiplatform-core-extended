@@ -1,0 +1,91 @@
+name: This fork's Compose in the local Maven repository
+description: >-
+  Publishes the Compose modules an application draws with, for the targets given, to
+  ~/.m2/repository under org.thisisthepy.compose (extended/compose/publish-local.sh), or
+  restores them from the cache when nothing that builds them has changed. The window modules
+  and anything else built against this fork's Compose name those coordinates, and nothing on
+  a public repository has them.
+
+inputs:
+  targets:
+    description: Space separated targets for publish-local.sh (macosArm64, linuxX64, linuxArm64, desktop).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The key is everything a Compose build reads: the whole tree except extended/ and .github/,
+    # which hold the fork's own modules and CI, plus the publishing script. Trees, not files, so
+    # a sparse checkout without blobs can work it out.
+    - name: Work out what the Compose build reads
+      id: key
+      shell: bash
+      run: |
+        set -euo pipefail
+        sources="$(git ls-tree HEAD | awk -F'\t' '$2 != "extended" && $2 != ".github" { print }' | git hash-object --stdin)"
+        script="$(git rev-parse HEAD:extended/compose)"
+        targets="$(echo '${{ inputs.targets }}' | tr ' ' '\n' | sort | paste -sd- -)"
+        echo "key=fork-compose-${{ runner.os }}-${{ runner.arch }}-$targets-$sources-$script" >> "$GITHUB_OUTPUT"
+
+    - name: Restore this fork's Compose
+      id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.m2/repository/org/thisisthepy/compose
+        key: ${{ steps.key.outputs.key }}
+
+    # The Compose build reads the whole tree; a restored cache needs only the checker.
+    - name: Check out what the next steps read
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ "$(git config --get core.sparseCheckout || true)" == "true" ]]; then
+          if [[ '${{ steps.restore.outputs.cache-hit }}' == 'true' ]]; then
+            git sparse-checkout add extended/compose
+          else
+            git sparse-checkout disable
+          fi
+        fi
+
+    - uses: actions/setup-java@v4
+      if: steps.restore.outputs.cache-hit != 'true'
+      with:
+        java-version: '21'
+        distribution: 'corretto'
+
+    - uses: gradle/actions/setup-gradle@v4
+      if: steps.restore.outputs.cache-hit != 'true'
+      with:
+        cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+    - name: Configure Gradle for this runner
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "ANDROIDX_JDK21=$JAVA_HOME" >> "$GITHUB_ENV"
+        mkdir -p ~/.gradle
+        cat >> ~/.gradle/gradle.properties <<PROPERTIES
+        org.gradle.caching=false
+        org.gradle.workers.max=4
+        org.gradle.jvmargs=-Xmx11g -XX:MaxMetaspaceSize=2g -XX:+UseParallelGC -Dlint.nullness.ignore-deprecated=true -Dfile.encoding=UTF-8
+        kotlin.compiler.execution.strategy=in-process
+        PROPERTIES
+
+    - name: Publish this fork's Compose
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        ANDROIDX_JDK21="$JAVA_HOME" ./extended/compose/publish-local.sh ${{ inputs.targets }}
+
+    - name: Check what is in the local repository
+      shell: bash
+      run: python3 -I extended/compose/check-local.py
+
+    - name: Save this fork's Compose
+      if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.m2/repository/org/thisisthepy/compose
+        key: ${{ steps.key.outputs.key }}
