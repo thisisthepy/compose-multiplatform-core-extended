@@ -1,5 +1,6 @@
 @file:OptIn(
     kotlin.native.runtime.NativeRuntimeApi::class,
+    kotlin.ExperimentalStdlibApi::class,
     kotlinx.cinterop.ExperimentalForeignApi::class,
 )
 
