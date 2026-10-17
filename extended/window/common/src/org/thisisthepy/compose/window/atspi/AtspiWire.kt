@@ -1,4 +1,4 @@
-package org.thisisthepy.compose.window.linux
+package org.thisisthepy.compose.window.atspi
 
 // The messages an accessibility client sends this process, and the ones this process answers
 // with.

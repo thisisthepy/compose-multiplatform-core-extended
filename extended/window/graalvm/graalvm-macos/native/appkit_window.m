@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include "appkit_resize.h"
+#include "appkit_vresize_probe.h"
 #include "appkit_frame_time.h"
 #include <unistd.h>
 #include <mach/mach_time.h>
@@ -1068,7 +1069,9 @@ void dxc_native_set_cursor(int32_t shape) {
 // old size would be drawn into at the new one, and the scene is told through the queue so
 // that it changes its mind between frames rather than during one.
 - (void)setFrameSize:(NSSize)size {
+    NSSize old_size = self.frame.size;
     [super setFrameSize:size];
+    dxc_vprobe_set_frame(old_size, size);
     CAMetalLayer *layer = (CAMetalLayer *)self.layer;
     CGFloat scale = self.window.backingScaleFactor > 0 ? self.window.backingScaleFactor : 1;
     layer.contentsScale = scale;
@@ -1089,7 +1092,9 @@ void dxc_native_set_cursor(int32_t shape) {
     // the window takes while it is being made.
     if (dxc_draw_frame != NULL && !dxc_legacy_resize()) {
         uint64_t begun = mach_absolute_time();
+        dxc_vprobe_via = "set-frame";
         dxc_draw_frame(dxc_draw_thread);
+        dxc_vprobe_via = "loop";
         int64_t spent = (int64_t)(mach_absolute_time() - begun);
         dxc_resize_stats.callback_ticks += spent;
         if (spent > dxc_resize_stats.callback_max_ticks) {
@@ -1332,6 +1337,7 @@ int32_t dxc_native_window_open(
         [window center];
         [window makeKeyAndOrderFront:nil];
         [NSApp activateIgnoringOtherApps:YES];
+        dxc_vprobe_start(window, view, layer);
 
         // Held past this scope. The window owns the view, and the renderer owns the
         // window until it closes it.
@@ -1473,7 +1479,9 @@ int32_t dxc_native_frame_begin(void *layer_pointer, void **texture_out) {
     dxc_on_main(^{
     @autoreleasepool {
         CAMetalLayer *layer = (__bridge CAMetalLayer *)layer_pointer;
+        uint64_t asked = mach_absolute_time();
         id<CAMetalDrawable> drawable = [layer nextDrawable];
+        dxc_vprobe_drawable_wait_ms = dxc_ticks_to_millis((int64_t)(mach_absolute_time() - asked));
         if (drawable == nil) {
             status = 1;
             return;
@@ -1498,6 +1506,8 @@ void dxc_native_frame_end(void *queue_pointer) {
                            (int32_t)drawable.texture.height);
         id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)queue_pointer;
         id<MTLCommandBuffer> buffer = [queue commandBuffer];
+        dxc_vprobe_mark(buffer, drawable.texture, (long)drawable.texture.height,
+                        drawable.layer.contentsScale);
         if (drawable.layer.presentsWithTransaction) {
             // Presented by the layer from inside the window's transaction, once the
             // work is scheduled: the contract of a layer that presents with one.
@@ -1691,4 +1701,37 @@ int32_t dxc_native_context_menu(void *view_pointer, const char *items) {
         [menu popUpMenuPositioningItem:nil atLocation:local inView:view];
     });
     return dxc_menu_chosen;
+}
+
+/*
+ * Calls of the X11 window (graalvm-linux) that the renderer's one native image also carries on
+ * macOS, because its code can reach them. A native image links every C function its reachable
+ * code names, and macOS binds them lazily, so a name left undefined here kills the process the
+ * first time anything near it runs. None of them is used on this desktop: the AppKit window
+ * is woken by its run loop, joins no AT-SPI bus, composes text through NSTextInputClient and
+ * counts its resize with appkit_resize.h. Each answers that it has nothing.
+ */
+void dxc_native_wake(void) {}
+
+void dxc_native_window_origin(int32_t *x, int32_t *y) {
+    *x = 0;
+    *y = 0;
+}
+
+int32_t dxc_native_window_focused(void) {
+    return 0;
+}
+
+int32_t dxc_native_ime_reset(char *out, int32_t capacity) {
+    if (out != NULL && capacity > 0) out[0] = 0;
+    return 0;
+}
+
+int64_t dxc_native_resize_serial(void) {
+    return 0;
+}
+
+void dxc_native_window_server_size(int32_t *width, int32_t *height) {
+    *width = 0;
+    *height = 0;
 }
