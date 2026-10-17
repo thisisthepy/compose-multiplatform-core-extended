@@ -17,6 +17,12 @@ on:
           program against it (empty: publish everything)
         required: false
         default: ''
+      plugin_ref:
+        description: >-
+          With mac_run: publish org.thisisthepy.kotlin.native.desktop from this ref of
+          thisisthepy/compose-multiplatform-extended over the one in that repository
+        required: false
+        default: ''
   pull_request:
     paths:
       - extended/publish-local-all.sh
@@ -239,6 +245,20 @@ jobs:
           run-id: ${{ inputs.mac_run || github.run_id }}
           github-token: ${{ github.token }}
 
+      - name: The native desktop plugin from another ref
+        if: ${{ inputs.mac_run && inputs.plugin_ref }}
+        env:
+          PLUGIN_REF: ${{ inputs.plugin_ref }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^jetbrains.publication.version.COMPOSE=//p' gradle.properties)"
+          plugin="$RUNNER_TEMP/plugin"
+          git init -q "$plugin"
+          git -C "$plugin" fetch -q --depth 1 https://github.com/thisisthepy/compose-multiplatform-extended.git "$PLUGIN_REF"
+          git -C "$plugin" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          (cd "$plugin/gradle-plugins" && ./gradlew --no-daemon --console=plain \
+            :kotlin-native-desktop:publishToMavenLocal "-Pdeploy.version=$version")
+
       - name: Take every ICU data file off the runner
         # The program has to shape Korean with the ICU data linked into it. A hosted runner ships
         # browsers that carry icudtl.dat, so they are removed and the next step confirms none is
@@ -279,3 +299,13 @@ jobs:
           cp "$out/mingw-program.exe" "$run/"
           (cd "$run" && ./mingw-program.exe) | tee run.log
           grep -q 'mingw program ok' run.log
+
+      # What the MSVC link was given, after the MinGW rewrite, for reading off the runner.
+      - name: Keep the link's inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mingw-program-link-inputs
+          path: extended/compose/consumer-check/mingw-program/build/msvc
+          retention-days: 7
+          if-no-files-found: ignore
