@@ -119,6 +119,11 @@ static int dxc_pumping;
 // with the keyboard on every desktop this runs on, and the first FocusOut corrects it.
 static int dxc_focused = 1;
 
+// How many sizes the window has taken since it opened. The resize report counts a size left
+// without a frame of its own as a stretch, and this is how the Kotlin side hears of a size
+// whose frame it never drew.
+static int64_t dxc_resize_serial;
+
 // An eventfd that another thread writes to end the frame's wait in dxc_native_pump early.
 // Made the first time anyone asks for it, from whichever thread that is, and kept for the
 // life of the process; -1 until then, or where the kernel would not make one.
@@ -981,6 +986,9 @@ static void dxc_pump_events(void) {
                 }
                 dxc_width = event.xconfigure.width;
                 dxc_height = event.xconfigure.height;
+                // Counted before the frame is asked for, so that the frame drawn for this size
+                // is counted against it (dxc_native_resize_serial).
+                dxc_resize_serial++;
                 // The frame is drawn here, inside the handling of the size change, rather
                 // than written down for the next turn of the loop.
                 //
@@ -1062,17 +1070,10 @@ int32_t dxc_native_context_menu(void *view, const char *items) {
 }
 
 /*
- * Measuring aids of the AppKit window, named because the Kotlin that drives every desktop
- * names them and answered here by doing nothing: a drag cannot be scripted from inside
- * this window, and nothing asks for it to be.
+ * Measuring aids of the AppKit window that this window answers by doing nothing: a key
+ * cannot be posted from inside it, and nothing asks for one to be. The resize that can be
+ * scripted is dxc_native_debug_resize, below the pump it drives.
  */
-void dxc_native_debug_resize(void *window_pointer, void *view_pointer, int32_t from_width,
-                             int32_t from_height, int32_t to_width, int32_t to_height,
-                             int32_t steps, int32_t pause_micros) {
-    (void)window_pointer; (void)view_pointer; (void)from_width; (void)from_height;
-    (void)to_width; (void)to_height; (void)steps; (void)pause_micros;
-}
-
 void dxc_native_debug_key(void *window_pointer, int32_t key_code, const char *characters) {
     (void)window_pointer; (void)key_code; (void)characters;
 }
@@ -1472,6 +1473,51 @@ void dxc_native_window_origin(int32_t *x, int32_t *y) {
 /** Whether the window has the keyboard, as the focus events last said. */
 int32_t dxc_native_window_focused(void) {
     return dxc_focused;
+}
+
+/*
+ * Takes the window through the sizes a drag would, one after another, for measuring: a drag
+ * cannot be scripted without a hand, and what a drag does to the picture is the thing worth
+ * timing. Each size is asked of the server and the events it causes are read before the
+ * next, so the frame that belongs to a size is drawn inside the handling of it, as it is for
+ * a real drag. Used only when asked for (DXC_SYNTH in the renderer).
+ */
+void dxc_native_debug_resize(void *window_pointer, void *view_pointer, int32_t from_width,
+                             int32_t from_height, int32_t to_width, int32_t to_height,
+                             int32_t steps, int32_t pause_micros) {
+    (void)window_pointer; (void)view_pointer;
+    if (dxc_display == NULL || dxc_window == None || steps <= 0) return;
+    for (int32_t step = 1; step <= steps; step++) {
+        double t = (double)step / steps;
+        int32_t width = from_width + (int32_t)((to_width - from_width) * t);
+        int32_t height = from_height + (int32_t)((to_height - from_height) * t);
+        if (width < 1) width = 1;
+        if (height < 1) height = 1;
+        XResizeWindow(dxc_display, dxc_window, (unsigned)width, (unsigned)height);
+        XFlush(dxc_display);
+        dxc_native_pump(pause_micros / 1.0e6);
+    }
+}
+
+/** How many sizes the window has taken since it opened. */
+int64_t dxc_native_resize_serial(void) {
+    return dxc_resize_serial;
+}
+
+/**
+ * The window's size now, asked of the server rather than remembered, for the resize report:
+ * what is being counted is a frame at a size the window no longer has, which the last size
+ * event may not have said yet. Costs a round trip, so it is asked only when the report is on.
+ */
+void dxc_native_window_server_size(int32_t *width, int32_t *height) {
+    *width = dxc_width;
+    *height = dxc_height;
+    if (dxc_display == NULL || dxc_window == None || dxc_closed) return;
+    XWindowAttributes attributes;
+    if (XGetWindowAttributes(dxc_display, dxc_window, &attributes)) {
+        *width = attributes.width;
+        *height = attributes.height;
+    }
 }
 
 /** True once the reader has closed the window. */

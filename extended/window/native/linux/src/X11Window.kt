@@ -30,6 +30,7 @@ import org.jetbrains.skia.Canvas
 import org.thisisthepy.compose.window.ContextMenuItem
 import org.thisisthepy.compose.window.sizeHintsFor
 import org.thisisthepy.compose.window.FramePresentRecord
+import org.thisisthepy.compose.window.ResizeStats
 import org.thisisthepy.compose.window.ResizeSync
 import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.WindowConfig
@@ -97,6 +98,15 @@ class X11Window : WindowPlatform {
     private var openedHeight = 0
 
     private var measured = WindowMeasurement(0, 0, DENSITY)
+
+    /**
+     * What a resize showed: every size the window took and every frame presented, judged
+     * against the window's size at that moment. Printed by the host as [ResizeStats.report]
+     * when `DXC_REPORT_RESIZE` is set, which is also when the size is asked of the server at
+     * each present; without it the last size event answers, which costs nothing.
+     */
+    val resizeStats = ResizeStats()
+    private val strictResizeAccounting = getenv("DXC_REPORT_RESIZE") != null
     private var presentedSinceEvent = false
     private val frameRequests = FrameRequestCoalescer().also { it.request() }
     private var ownedClipboard: String? = null
@@ -332,7 +342,44 @@ class X11Window : WindowPlatform {
         sync.frameDrawn()
         presentedSinceEvent = true
         display?.let { XFlush(it) }
-        return FramePresentRecord(drawnWidth, drawnHeight, measured.width, measured.height)
+        val (width, height) = if (strictResizeAccounting) serverSize() else measured.width to measured.height
+        resizeStats.presentAgainst(drawnWidth, drawnHeight, width, height)
+        return FramePresentRecord(drawnWidth, drawnHeight, width, height)
+    }
+
+    /** The window's size now, asked of the server rather than remembered. Costs a round trip. */
+    private fun serverSize(): Pair<Int, Int> {
+        val display = display ?: return measured.width to measured.height
+        return memScoped {
+            val attributes = alloc<XWindowAttributes>()
+            if (XGetWindowAttributes(display, window, attributes.ptr) == 0) {
+                measured.width to measured.height
+            } else {
+                attributes.width to attributes.height
+            }
+        }
+    }
+
+    /**
+     * Takes the window through the sizes a drag would, from its size now to [toWidth] by
+     * [toHeight] in [steps], pausing [pauseMillis] on each, for measuring. Each size is asked
+     * of the server and its events read before the next, so the frame that belongs to a size
+     * is drawn inside the handling of it, as it is for a hand on an edge. The count starts
+     * again.
+     */
+    fun scriptedResize(toWidth: Int, toHeight: Int, steps: Int, pauseMillis: Long) {
+        val display = display ?: return
+        if (steps <= 0) return
+        resizeStats.reset()
+        val from = measured
+        for (step in 1..steps) {
+            val t = step.toDouble() / steps
+            val width = (from.width + (toWidth - from.width) * t).toInt().coerceAtLeast(1)
+            val height = (from.height + (toHeight - from.height) * t).toInt().coerceAtLeast(1)
+            XResizeWindow(display, window, width.convert(), height.convert())
+            XFlush(display)
+            pump(pauseMillis)
+        }
     }
 
     /** Pays the window manager for a size change that produced no frame. */
@@ -671,6 +718,7 @@ class X11Window : WindowPlatform {
                     return
                 }
                 measured = WindowMeasurement(width, height, DENSITY)
+                resizeStats.step(width, height)
                 frameRequests.request()
                 resized()
             }

@@ -56,6 +56,12 @@ jobs:
           cc -O1 -Wall -pthread -o build/wake_test test/c/wake_test.c -lX11 -lXext -lGL
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/wake_test
 
+      - name: Scripted drag and the resize count (under a virtual display)
+        working-directory: extended/window/graalvm/graalvm-linux
+        run: |
+          cc -O1 -Wall -o build/resize_test test/c/resize_test.c -lX11 -lXext -lGL
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/resize_test
+
       - name: The Kotlin module has no java.awt
         working-directory: extended/window/graalvm/graalvm-linux
         run: |

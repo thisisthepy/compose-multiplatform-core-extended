@@ -10,6 +10,7 @@ import org.graalvm.word.WordFactory
 import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.ContextMenuItem
 import org.thisisthepy.compose.window.FramePresentRecord
+import org.thisisthepy.compose.window.ResizeStats
 import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
@@ -47,6 +48,16 @@ class X11Window : WindowPlatform {
     // preedit callbacks as they came, turned into events by the same code the Kotlin/Native X11
     // window uses. A click while composing ends the composition with what the method kept.
     private val x11Events = X11Events(::resetInputMethod)
+
+    /**
+     * What a resize showed: every size the window took and every frame presented, judged
+     * against the window's size at that moment. Printed by the host as [ResizeStats.report]
+     * when `DXC_REPORT_RESIZE` is set, which is also when the size is asked of the server at
+     * each present; without it the last size event answers, which costs nothing.
+     */
+    val resizeStats = ResizeStats()
+    private val strictResizeAccounting = System.getenv("DXC_REPORT_RESIZE") != null
+    private var countedSerial = 0L
 
     /** Whether a frame was asked for since the last [present]; [requestFrame] coalesces. */
     val frameRequested: Boolean get() = frameWanted
@@ -211,7 +222,53 @@ class X11Window : WindowPlatform {
         frameWanted = false
         X11Natives.frameEnd(WordFactory.pointer<Pointer>(queuePointer))
         val window = measure()
-        return FramePresentRecord(drawnWidth, drawnHeight, window.width, window.height)
+        countSizes(window)
+        val (width, height) = if (strictResizeAccounting) serverSize() else window.width to window.height
+        resizeStats.presentAgainst(drawnWidth, drawnHeight, width, height)
+        return FramePresentRecord(drawnWidth, drawnHeight, width, height)
+    }
+
+    /**
+     * Takes the window through the sizes a drag would, from its size now to [toWidth] by
+     * [toHeight] in [steps], pausing [pauseMicros] on each, for measuring. The frame for each
+     * size is drawn inside its handling, through the frame painter. The count starts again.
+     */
+    fun scriptedResize(toWidth: Int, toHeight: Int, steps: Int, pauseMicros: Int) {
+        if (windowPointer == 0L) return
+        val from = measure()
+        resizeStats.reset()
+        countedSerial = X11Natives.resizeSerial()
+        X11Natives.debugResize(
+            WordFactory.pointer<Pointer>(windowPointer), WordFactory.nullPointer<Pointer>(),
+            from.width, from.height, toWidth, toHeight, steps, pauseMicros,
+        )
+        countSizes(measure())
+    }
+
+    /** The resize report line, with any size the window took since the last frame counted. */
+    fun resizeReport(): String {
+        countSizes(measure())
+        return resizeStats.report()
+    }
+
+    // Every size C saw since the last count is a step, the latest at the size the window has.
+    // Several between two frames means all but the last were left without one.
+    private fun countSizes(window: WindowMeasurement) {
+        val serial = X11Natives.resizeSerial()
+        while (countedSerial < serial) {
+            resizeStats.step(window.width, window.height)
+            countedSerial++
+        }
+    }
+
+    private fun serverSize(): Pair<Int, Int> {
+        if (sizeBuffer == 0L) return 0 to 0
+        val size = WordFactory.pointer<Pointer>(sizeBuffer)
+        X11Natives.windowServerSize(
+            WordFactory.pointer<CIntPointer>(sizeBuffer),
+            WordFactory.pointer<CIntPointer>(sizeBuffer + 4),
+        )
+        return size.readInt(0) to size.readInt(4)
     }
 
     /** Read the way the Kotlin/Native X11 window reads it: from `GTK_THEME`. */
