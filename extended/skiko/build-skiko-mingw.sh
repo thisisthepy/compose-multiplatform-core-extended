@@ -167,7 +167,9 @@ flags+=("/I$src/nativeJsMain/cpp" "/I$src/commonMain/cpp/common/include" "/I$src
 compile() {
     local file="$1" name
     name="$(echo "${file#"$src"/}" | tr '/' '_')"
-    "$llvm_bin/clang" "${flags[@]}" "$file" "/Fo$obj/${name%.*}.obj" ||
+    # The source after `--`: in MSVC mode an argument starting with a slash is an option, and on
+    # macOS every absolute path does ("/Users/..." reads as /U, which undefines a macro).
+    "$llvm_bin/clang" "${flags[@]}" "/Fo$obj/${name%.*}.obj" -- "$file" ||
         die "skiko's $file did not compile in MSVC mode"
 }
 count=0

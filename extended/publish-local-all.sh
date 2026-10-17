@@ -17,8 +17,8 @@
 # metadata of its shared source sets) has to be written by one build that has every target, or a
 # consumer's shared source set misses the targets another host built. Kotlin/Native compiles
 # every desktop target from macOS, so a Mac publishes everything with a root: Compose for the
-# desktop JVM, macosArm64, linuxX64, linuxArm64 and mingwX64 (skiko for mingwX64 first, which
-# needs the MSVC runtime and Windows SDK headers as xwin lays them out, XWIN_DIR), skiko-awt,
+# desktop JVM, macosArm64, linuxX64, linuxArm64 and mingwX64 (the Kotlin half of skiko for
+# mingwX64 first, which skiko does not publish), skiko-awt,
 # the window modules but two, and the plugin. The two that need their own system:
 #
 #   native/linux     its cinterop reads the system's X11, GL and XIM headers; on Linux x86-64
@@ -28,8 +28,7 @@
 # --targets overrides the Compose targets on any host, for a local build of fewer of them.
 #
 # Needs what each step needs: a JDK 21 in JAVA_HOME (the Compose build and the plugin), git,
-# python3, xwin's layout for mingwX64, on Linux the X11, GL, fontconfig and FreeType development
-# headers, and on Windows MSVC.
+# python3, on Linux the X11, GL, fontconfig and FreeType development headers, and on Windows MSVC.
 set -euo pipefail
 
 # The plugin commit published with this fork's commit. Its aliases name the version above.
@@ -94,16 +93,9 @@ full_host=0
 case "$os" in
     Darwin)
         full_host=1
-        xwin="${XWIN_DIR:-$HOME/Library/Caches/cargo-xwin/xwin}"
-        if [[ -z "$targets" ]]; then
-            [[ -d "$xwin/sdk/include/ucrt" ]] || die "no MSVC runtime and Windows SDK headers under $xwin" \
-                "skiko for mingwX64 is compiled against them. Run 'xwin --accept-license splat --output $xwin'" \
-                "(or set XWIN_DIR), or pass --targets without mingwX64 for a local build of fewer targets."
-            targets="desktop macosArm64 linuxX64 linuxArm64 mingwX64"
-        fi
+        [[ -n "$targets" ]] || targets="desktop macosArm64 linuxX64 linuxArm64 mingwX64"
         window_modules=(common graalvm/graalvm-macos graalvm/graalvm-linux native/macos scene) ;;
     Linux)
-        xwin="${XWIN_DIR:-$HOME/.cache/cargo-xwin/xwin}"
         [[ "$arch" == x86_64 ]] || die "native/linux is built on Linux x86-64; Kotlin/Native has no arm64 Linux host"
         native_linux=1
         if [[ -z "$targets" ]]; then
@@ -127,10 +119,11 @@ if [[ $windows_host -eq 0 && -n "$targets" ]]; then
         "$here/compose/publish-local.sh" "${others[@]}"
     fi
     if [[ " $targets " == *" mingwX64 "* ]]; then
-        # skiko publishes no mingwX64 artifact; Compose for mingwX64 resolves this one. Its
-        # C++ half is compiled with Kotlin/Native's clang, which the builds above fetched.
-        echo "==> 1b. skiko for mingwX64 (both halves), then Compose for mingwX64"
-        XWIN_DIR="$xwin" "$here/skiko/build-skiko-mingw.sh" "$work/skiko-mingw"
+        # skiko publishes no mingwX64 artifact; Compose for mingwX64 resolves this one. Only its
+        # Kotlin half is published: the C++ half is a static library a Windows executable links,
+        # not a Maven artifact, and build-skiko-mingw.sh builds it where an executable is linked.
+        echo "==> 1b. skiko for mingwX64 (the Kotlin half), then Compose for mingwX64"
+        "$here/skiko/build-skiko-mingw.sh" "$work/skiko-mingw" --kotlin-only
         "$here/compose/publish-local.sh" mingwX64
     fi
 fi
