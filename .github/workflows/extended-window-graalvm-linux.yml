@@ -99,7 +99,7 @@ jobs:
         working-directory: extended/window
         run: |
           mkdir -p build
-          cc -O1 -Wall -o build/atspi-readback scripts/atspi-readback.c $(pkg-config --cflags --libs atspi-2)
+          cc -O1 -Wall -o build/atspi-readback scripts/atspi-readback.c $(pkg-config --cflags --libs atspi-2 gobject-2.0)
 
       - name: The Kotlin module has no java.awt
         working-directory: extended/window/graalvm/graalvm-linux

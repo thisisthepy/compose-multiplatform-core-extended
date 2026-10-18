@@ -16,7 +16,7 @@
  * publish its tree after it joins. Prints every object it found; exits 0 when every
  * requirement holds and 1 otherwise.
  *
- * Build: cc -o atspi-readback atspi-readback.c $(pkg-config --cflags --libs atspi-2)
+ * Build: cc -o atspi-readback atspi-readback.c $(pkg-config --cflags --libs atspi-2 gobject-2.0)
  */
 #include <atspi/atspi.h>
 #include <stdio.h>

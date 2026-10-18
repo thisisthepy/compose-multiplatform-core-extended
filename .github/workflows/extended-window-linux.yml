@@ -94,7 +94,7 @@ jobs:
         working-directory: extended/window
         run: |
           mkdir -p build
-          cc -O1 -Wall -o build/atspi-readback scripts/atspi-readback.c $(pkg-config --cflags --libs atspi-2)
+          cc -O1 -Wall -o build/atspi-readback scripts/atspi-readback.c $(pkg-config --cflags --libs atspi-2 gobject-2.0)
 
       # WmDragTest and ChromeTest start openbox for their own drags and stop it again
       # (scripts/wm-drag.sh, scripts/wm-chrome.sh). The session bus is the tests' own, so

@@ -856,7 +856,7 @@ class AtspiTest {
         harness.ask(node(11), AtspiServer.EDITABLE_TEXT, "InsertText", "isi") { u32(1); string("x"); u32(1) }
         harness.ask(node(11), AtspiServer.EDITABLE_TEXT, "DeleteText", "ii") { u32(0); u32(1) }
         assertEquals(
-            listOf(
+            listOf<Triple<Int, Int, String?>>(
                 Triple(11, AccessibleAction.SET_VALUE, "abc"),
                 Triple(11, AccessibleAction.SET_VALUE, "한x글"),
                 Triple(11, AccessibleAction.SET_VALUE, "글"),
@@ -885,7 +885,7 @@ class AtspiTest {
             variant("d") { double(55.0) }
         }
         assertEquals(DBusMessage.METHOD_RETURN, set.type)
-        assertEquals(listOf(Triple(14, AccessibleAction.SET_VALUE, "55.0")), harness.performed)
+        assertEquals(listOf<Triple<Int, Int, String?>>(Triple(14, AccessibleAction.SET_VALUE, "55.0")), harness.performed)
         val increment = harness.ask(node(14), AtspiServer.ACTION, "DoAction", "i") { u32(0) }.body.u32()
         assertEquals(1L, increment)
         assertEquals(Triple(14, AccessibleAction.INCREMENT, null), harness.performed.last())
