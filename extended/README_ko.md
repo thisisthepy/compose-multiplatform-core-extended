@@ -108,7 +108,7 @@ Windows 에서 Skia 는 실행 파일 옆의 `icudtl.dat` 를 찾고, 없으면 
 | 모듈 | 아티팩트 | 플랫폼 | 내용 |
 |---|---|---|---|
 | `common` | `org.thisisthepy.compose.window:common` | JVM, `macosArm64`, `linuxX64`, `linuxArm64`, `mingwX64` | `WindowPlatform`, 이벤트와 상태와 정책 타입, 모든 플랫폼 계층이 함께 쓰는 규칙. 툴킷도 Compose 도 없습니다 |
-| `scene` | `org.thisisthepy.compose.window:scene` | JVM, `macosArm64` | `WindowPlatform` 으로 연 창에 Compose 장면을 올립니다. 프레임 루프, 그리고 Compose 의 플랫폼 텍스트 입력을 거치는 포인터, 키, IME 텍스트 |
+| `scene` | `org.thisisthepy.compose.window:scene` | JVM, `macosArm64`, `linuxX64`, `linuxArm64` | `WindowPlatform` 으로 연 창에 Compose 장면을 올립니다. 프레임 루프, Compose 의 플랫폼 텍스트 입력을 거치는 포인터, 키, IME 텍스트, 캡션(`LocalWindowCaption`, 플랫폼이 창 버튼을 그리지 않을 때 그리는 버튼, 그 버튼과 가장자리로 하는 이동과 크기 조절), 그리고 읽는 프로그램이 들을 때 플랫폼의 접근성 다리로 넘기는 semantics 와 그 프로그램이 요청한 동작의 실행 |
 | `native/macos` | `org.thisisthepy.compose.window:native-macos` | `macosArm64` | Kotlin/Native 창: AppKit, Metal, 네이티브 텍스트 메뉴와 편집 메뉴, 창 크롬 |
 | `native/linux` | `org.thisisthepy.compose.window:native-linux` | `linuxX64`, `linuxArm64` | Kotlin/Native 창: Xlib, GLX, XIM, D-Bus 위의 AT-SPI |
 | `graalvm/graalvm-macos` | `org.thisisthepy.compose.window:graalvm-macos` | JVM (native image) | native image 용 AppKit 창: `appkit_window.m` 과 그 Kotlin 쪽, 그리고 `scene`이 그리는 Metal 표면 `appKitWindowSurface` |

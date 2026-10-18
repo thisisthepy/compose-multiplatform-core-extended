@@ -105,7 +105,7 @@ says so), so any Compose application can open a window through it.
 | Module | Artifact | Platforms | What it is |
 |---|---|---|---|
 | `common` | `org.thisisthepy.compose.window:common` | JVM, `macosArm64`, `linuxX64`, `linuxArm64`, `mingwX64` | `WindowPlatform`, the event, state and policy types, and the rules every platform layer shares. No toolkit and no Compose |
-| `scene` | `org.thisisthepy.compose.window:scene` | JVM, `macosArm64` | Hosts a Compose scene in a window opened through `WindowPlatform`: the frame loop, and pointer, key and IME text routed through Compose's platform text input |
+| `scene` | `org.thisisthepy.compose.window:scene` | JVM, `macosArm64`, `linuxX64`, `linuxArm64` | Hosts a Compose scene in a window opened through `WindowPlatform`: the frame loop; pointer, key and IME text routed through Compose's platform text input; the caption (`LocalWindowCaption`, the window buttons it draws where the platform has none, moving and resizing from them); and the semantics handed to the platform's accessibility bridge while a reader listens, with a reader's actions run back on the controls |
 | `native/macos` | `org.thisisthepy.compose.window:native-macos` | `macosArm64` | The Kotlin/Native window: AppKit, Metal, the native text and edit menus, the window chrome |
 | `native/linux` | `org.thisisthepy.compose.window:native-linux` | `linuxX64`, `linuxArm64` | The Kotlin/Native window: Xlib, GLX, XIM, and AT-SPI over D-Bus |
 | `graalvm/graalvm-macos` | `org.thisisthepy.compose.window:graalvm-macos` | JVM (native image) | The AppKit window for a native image: `appkit_window.m` and its Kotlin side, and `appKitWindowSurface`, the Metal surface a `scene` draws into |
