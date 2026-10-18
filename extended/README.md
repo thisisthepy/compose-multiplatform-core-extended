@@ -131,6 +131,11 @@ come up alike.
 | `titleBar = TitleBarStyle.Simple` | A 32 point caption. On Linux the two styles differ only in height. |
 | `decorated = false` | No frame of the manager's under either chrome. |
 
+This is a change from before: a Linux window used to keep the manager's frame unless it was
+asked for none. It is now undecorated by default, with `decorated = true` too, and the scene draws
+the caption. Pass `chrome = WindowChrome.System` for the manager's frame. See
+[CHANGELOG.md](CHANGELOG.md).
+
 Moving and resizing stay the window manager's, so its snapping and keyboard moves still apply.
 The scene calls `startMove()` on a press in an empty part of its caption and `startResize(edge)`
 on a press at an edge; the window hands the drag to the manager with `_NET_WM_MOVERESIZE` once

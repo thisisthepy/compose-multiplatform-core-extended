@@ -133,6 +133,10 @@ Windows 에서 Skia 는 실행 파일 옆의 `icudtl.dat` 를 찾고, 없으면 
 | `titleBar = TitleBarStyle.Simple` | 32 포인트 캡션입니다. Linux 에서 두 스타일은 높이만 다릅니다. |
 | `decorated = false` | 어느 크롬에서도 창 관리자의 프레임이 없습니다. |
 
+이전과 달라진 점입니다. Linux 창은 장식을 두지 말라고 하지 않는 한 창 관리자의 프레임을 가졌습니다.
+이제는 `decorated = true` 여도 기본으로 장식이 없고, 캡션은 장면이 그립니다. 창 관리자의 프레임을
+쓰려면 `chrome = WindowChrome.System` 을 넘깁니다. [CHANGELOG_ko.md](CHANGELOG_ko.md) 를 보십시오.
+
 창을 옮기고 크기를 바꾸는 일은 계속 창 관리자가 맡으므로, 관리자의 스냅과 키보드 이동도 그대로
 적용됩니다. 장면은 캡션의 빈 곳을 누르면 `startMove()` 를, 가장자리를 누르면 `startResize(edge)`
 를 부릅니다. 창은 버튼을 누른 채 포인터가 4 픽셀 움직이면 `_NET_WM_MOVERESIZE` 로 끌기를 관리자에게
