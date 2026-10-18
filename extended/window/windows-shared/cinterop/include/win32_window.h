@@ -104,6 +104,12 @@ void dxc_native_window_chrome(int32_t full_size_content, int32_t transparent_tit
                               int32_t title_hidden, int32_t unified_toolbar);
 void dxc_native_window_caption(void *view_pointer, float *height, float *buttons_width);
 void dxc_native_window_title_bar(void *view_pointer, float *out);
+// macOS only, defined here because the native image's shared Kotlin declares them: the
+// accessibility bridge's calls. No reader listens through them on this platform.
+int32_t dxc_native_accessibility_active(void);
+int32_t dxc_native_take_accessibility_argument(char *out, int32_t capacity);
+int32_t dxc_native_accessibility_snapshot(char *out, int32_t capacity);
+int32_t dxc_native_ax_api_probe(int32_t *trusted, int32_t *windows);
 void dxc_native_window_action(int32_t action);
 void dxc_native_window_begin_drag(int32_t edge);
 void dxc_native_set_icon(const uint8_t *rgba, int32_t width, int32_t height);
