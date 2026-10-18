@@ -384,6 +384,25 @@ class X11Window : WindowPlatform {
     fun draw(width: Int, height: Int, paint: (Canvas) -> Unit): Boolean =
         surface?.draw(width, height, paint) ?: false
 
+    /**
+     * What draws and presents the frame for a new size from inside the handling of it, in place
+     * of the RESIZE event the listener would otherwise be given. A scene host sets it through
+     * its surface, because its listener only collects events for its next turn, and a frame
+     * drawn then leaves the strip the manager has already given the window unpainted.
+     */
+    var resizePainter: (() -> Boolean)? = null
+
+    /**
+     * Makes the window's GL context current on this thread, for a frame drawn by something
+     * other than [draw]. False where the window is closed or the server refused.
+     */
+    fun makeCurrent(): Boolean {
+        val display = display ?: return false
+        val context = context ?: return false
+        if (isClosed) return false
+        return glXMakeCurrent(display, window, context) != 0
+    }
+
     override fun present(drawnWidth: Int, drawnHeight: Int): FramePresentRecord {
         sync.frameDrawn()
         presentedSinceEvent = true
@@ -833,10 +852,15 @@ class X11Window : WindowPlatform {
     ) = WindowEvent(kind, x, y, buttons, modifiers, 0, 0, "")
 
     private fun resized() {
-        // The listener draws and presents inside this call. A listener that draws nothing
-        // still owes the manager its counter, which is paid here.
+        // The painter, or else the listener, draws and presents inside this call. One that
+        // draws nothing still owes the manager its counter, which is paid here.
         presentedSinceEvent = false
-        listener?.onEvent(event(WindowEvent.RESIZE, measured.width.toFloat(), measured.height.toFloat()))
+        val painter = resizePainter
+        if (painter != null) {
+            painter()
+        } else {
+            listener?.onEvent(event(WindowEvent.RESIZE, measured.width.toFloat(), measured.height.toFloat()))
+        }
         if (!presentedSinceEvent) sync.noFrame()
     }
 
