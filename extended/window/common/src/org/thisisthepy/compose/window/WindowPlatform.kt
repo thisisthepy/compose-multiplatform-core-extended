@@ -128,6 +128,16 @@ interface WindowPlatform {
     fun setAccessibility(elements: List<AccessibleElement>) {}
 
     /**
+     * Whether a reader is listening: a screen reader or another accessibility client has asked
+     * this window something, or the system says one is running. Describing the scene costs about
+     * a third of a frame, so the scene describes and pushes only while this is true, and a live
+     * resize with nobody listening pays nothing. Read by the scene before each frame; when it
+     * turns true the scene describes on the next one. The default is false, for a platform with
+     * no accessibility bridge.
+     */
+    val accessibilityActive: Boolean get() = false
+
+    /**
      * Starts moving the window under the pointer, from a press in an empty part of a caption
      * the scene draws. Returns false where the platform moves the window itself or cannot.
      */

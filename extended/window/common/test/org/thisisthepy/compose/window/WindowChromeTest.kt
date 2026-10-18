@@ -33,6 +33,7 @@ class WindowChromeTest {
             override fun close() {}
         }
         assertEquals(WindowCaption.None, platform.caption())
+        assertFalse(platform.accessibilityActive)
         assertFalse(platform.startMove())
         assertFalse(platform.startResize(WindowEdge.BottomRight))
         platform.setAccessibility(listOf(AccessibleElement(ElementRole.BUTTON, 0f, 0f, 10f, 10f, "OK")))
