@@ -21,6 +21,15 @@ interface WindowListener {
 
     /** The window manager asked the window to close. Return true to let it close. */
     fun onCloseRequested(): Boolean = true
+
+    /**
+     * A reader asked a control to do something: [id] is the [AccessibleElement.id] it was given,
+     * [action] one [AccessibleAction] value, [argument] the new value for
+     * [AccessibleAction.SET_VALUE] and null otherwise. Arrives on the thread that pumps, from
+     * [WindowPlatform.pump]. Returns whether the scene did it, which the platform reports back
+     * to the system where it asks.
+     */
+    fun onAccessibilityAction(id: Int, action: Int, argument: String? = null): Boolean = false
 }
 
 /**
