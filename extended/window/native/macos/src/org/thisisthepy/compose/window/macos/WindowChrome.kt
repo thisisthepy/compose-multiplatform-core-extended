@@ -1,6 +1,10 @@
 package org.thisisthepy.compose.window.macos
 
 import androidx.compose.ui.unit.dp
+import org.thisisthepy.compose.window.MacosTitleBar
+import org.thisisthepy.compose.window.TitleBarStyle
+import org.thisisthepy.compose.window.WindowChrome
+import org.thisisthepy.compose.window.macosCaption
 
 /**
  * How a macOS window is built: its style mask bit, its title bar and its toolbar.
@@ -44,7 +48,27 @@ data class MacosWindowChrome(
             titleHidden = false,
             unifiedToolbar = false,
         )
+
+        /** The title bar [chrome] and [titleBar] ask for, by the rule both macOS windows share. */
+        fun of(chrome: WindowChrome, titleBar: TitleBarStyle): MacosWindowChrome =
+            of(MacosTitleBar.of(chrome, titleBar))
+
+        /** The same title bar, in the form this window builds from. */
+        fun of(bar: MacosTitleBar): MacosWindowChrome = MacosWindowChrome(
+            fullSizeContentView = bar.fullSizeContentView,
+            titlebarAppearsTransparent = bar.titlebarAppearsTransparent,
+            titleHidden = bar.titleHidden,
+            unifiedToolbar = bar.unifiedToolbar,
+        )
     }
+
+    /** This title bar in the common module's form, which the caption rule reads. */
+    fun toTitleBar(): MacosTitleBar = MacosTitleBar(
+        fullSizeContentView = fullSizeContentView,
+        titlebarAppearsTransparent = titlebarAppearsTransparent,
+        titleHidden = titleHidden,
+        unifiedToolbar = unifiedToolbar,
+    )
 }
 
 /**
@@ -78,16 +102,29 @@ fun macosWindowCaption(
     zoomMaxX: Double?,
     cornerRadius: Double? = null,
 ): WindowCaption? {
-    if (!chrome.fullSizeContentView) return WindowCaption.None
-    val height = windowHeight - contentLayoutHeight
-    if (height < 0.0) return null
-    val width = if (closeMinX == null || zoomMaxX == null) 0.0 else zoomMaxX + closeMinX
-    if (width < 0.0) return null
+    val caption = macosCaption(chrome.toTitleBar(), windowHeight, contentLayoutHeight, closeMinX, zoomMaxX, cornerRadius)
+        ?: return null
+    if (caption == org.thisisthepy.compose.window.WindowCaption.None) return WindowCaption.None
     return WindowCaption(
-        height = height.toFloat().dp,
-        buttonsWidth = width.toFloat().dp,
-        // The platform's own, and this platform puts them at the leading edge.
-        buttonsAtStart = true,
-        cornerRadius = (cornerRadius?.takeIf { it > 0.0 } ?: 0.0).toFloat().dp,
+        height = caption.height.dp,
+        buttonsWidth = caption.buttonsWidth.dp,
+        buttonsAtStart = caption.buttonsAtStart,
+        insetTop = caption.insetTop.dp,
+        cornerRadius = caption.cornerRadius.dp,
     )
 }
+
+/** The caption in the common module's form, in points, which `WindowPlatform.caption` answers with. */
+fun WindowCaption.toCommon(): org.thisisthepy.compose.window.WindowCaption =
+    if (this == WindowCaption.None) {
+        org.thisisthepy.compose.window.WindowCaption.None
+    } else {
+        org.thisisthepy.compose.window.WindowCaption(
+            height = height.value,
+            buttonsWidth = buttonsWidth.value,
+            buttonsAtStart = buttonsAtStart,
+            insetTop = insetTop.value,
+            cornerRadius = cornerRadius.value,
+            buttonsDrawnByScene = false,
+        )
+    }

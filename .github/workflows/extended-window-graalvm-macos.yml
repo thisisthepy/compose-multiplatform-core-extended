@@ -92,6 +92,16 @@ jobs:
           cc -O2 -Wall -Werror -o build/native/appkit_frame_time_test graalvm/graalvm-macos/native/appkit_frame_time_test.c
           build/native/appkit_frame_time_test
 
+      - name: The window's title bar styles and accessibility tree on a real window
+        # Opens a Normal, a Simple and a System window and checks the system buttons, the
+        # content under the bar, the hidden title and the bar heights, then pushes records as
+        # the Kotlin side writes them and asks the view as a reader does.
+        run: |
+          cc -O0 -fobjc-arc -o build/native/appkit_window_test graalvm/graalvm-macos/native/appkit_window_test.m \
+            -framework AppKit -framework Metal -framework QuartzCore -framework CoreVideo \
+            -framework Carbon -framework ApplicationServices
+          build/native/appkit_window_test
+
       - name: Cache the Kotlin toolchain and Maven dependencies
         uses: actions/cache@v4
         with:

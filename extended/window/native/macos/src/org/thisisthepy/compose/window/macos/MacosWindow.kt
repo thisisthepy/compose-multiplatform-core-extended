@@ -37,7 +37,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.enableSavedStateHandles
 import kotlinx.coroutines.Dispatchers
 import org.jetbrains.skia.Canvas
+import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.FrameClock
+import platform.AppKit.NSWorkspace
+import platform.AppKit.voiceOverEnabled
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.macosCornerRadius
 import androidx.compose.ui.input.pointer.PointerIcon
@@ -106,13 +109,6 @@ import platform.AppKit.NSWindowStyleMaskResizable
 import platform.AppKit.NSWindowStyleMaskFullSizeContentView
 import platform.AppKit.NSWindowStyleMaskTitled
 import platform.AppKit.NSWindowTitleHidden
-import platform.AppKit.NSAccessibilityButtonRole
-import platform.AppKit.NSAccessibilityCheckBoxRole
-import platform.AppKit.NSAccessibilityElement
-import platform.AppKit.NSAccessibilityGroupRole
-import platform.AppKit.NSAccessibilityImageRole
-import platform.AppKit.NSAccessibilityStaticTextRole
-import platform.AppKit.NSAccessibilityTextFieldRole
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSMakeRect
 import platform.Foundation.valueForKey
@@ -188,10 +184,43 @@ class MacosWindow(
 
     // What the window says about itself, kept in step with the scene by the listener the
     // context carries. Pushed on change rather than asked for.
-    private val semantics = NativeSemantics { elements ->
+    private val semantics = NativeSemantics(density = { window.backingScaleFactor.toFloat() }) { elements ->
         onElements?.invoke(elements)
-        describeToReader(elements)
+        if (describesItself) reader.update(elements)
     }
+
+    /**
+     * Whether the reader is given this window's own scene, as it describes itself. False once
+     * [describeFrom] has been called: the tree then comes from whoever called it.
+     */
+    private var describesItself = true
+
+    /**
+     * Gives the reader [elements] instead of what this window's scene says about itself, from
+     * now on. For a host that describes the tree its own way; its requests go to
+     * [onAccessibilityAction], which such a host sets too.
+     */
+    fun describeFrom(elements: List<AccessibleElement>) {
+        describesItself = false
+        reader.update(elements)
+    }
+
+    /**
+     * What a reader asked a control to do. The default does it in this window's own scene;
+     * a host that keeps its own tree sets its own. Called on the main thread, which is this
+     * window's, and answered there.
+     */
+    var onAccessibilityAction: (id: Int, action: Int, argument: String?) -> Boolean = { id, action, argument ->
+        semantics.perform(id, action, argument).also { if (it) requestFrame() }
+    }
+
+    /** The elements a reader is given, kept across pushes. */
+    internal val reader: AppKitAccessibilityTree by lazy {
+        AppKitAccessibilityTree(view) { id, action, argument -> onAccessibilityAction(id, action, argument) }
+    }
+
+    /** Whether anything has asked this window what is in it, or the system says VoiceOver is running. */
+    val accessibilityActive: Boolean get() = readerIsListening || NSWorkspace.sharedWorkspace.voiceOverEnabled
 
     /**
      * Told what the window says about itself each time that changes, for a measuring run that
@@ -289,7 +318,7 @@ class MacosWindow(
         // After the drawing, because that is when what is in the window has been placed
         // and can say where it is. Asked before, every control answers with an empty
         // rectangle and a reader finds the screen stacked in one corner.
-        if (readerIsListening) semantics.pushIfChanged(afterDrawing = true)
+        if (accessibilityActive) semantics.pushIfChanged(afterDrawing = true)
     }
 
     /** Asks for a frame, which is drawn where AppKit next draws the view. */
@@ -606,8 +635,13 @@ class MacosWindow(
         // window's edge is where that showed: every control moves on every frame, so the
         // comparison that usually makes it free always failed.
         override fun accessibilityChildren(): List<*>? {
-            readerIsListening = true
-            semantics.pushIfChanged(afterDrawing = true)
+            if (!readerIsListening) {
+                readerIsListening = true
+                // A host that describes the tree itself does so after a frame, so it is
+                // given one as soon as someone is listening.
+                needsDisplay = true
+            }
+            if (describesItself) semantics.pushIfChanged(afterDrawing = true)
             return super.accessibilityChildren()
         }
 
@@ -1123,42 +1157,6 @@ class MacosWindow(
         }
     }
 
-    /**
-     * Hands the reader what the scene last said, as elements it can ask about.
-     *
-     * Replaced whole rather than edited. The tree arrives whole, a reader asks for it on
-     * its own thread at moments nobody chose, and one list swapped for another is a thing
-     * that has either happened or not.
-     *
-     * The frames are the scene's, which count down from the top left of the window; the
-     * reader's count up from the bottom left of the screen, so each one is turned twice.
-     */
-    private fun describeToReader(elements: List<AccessibleElement>) {
-        val scale = window.backingScaleFactor
-        val built = elements.map { element ->
-            val made = NSAccessibilityElement.accessibilityElementWithRole(
-                role = element.role.readerRole,
-                frame = CGRectMake(0.0, 0.0, 0.0, 0.0),
-                label = element.label,
-                parent = view,
-            )
-            val inView = CGRectMake(
-                x = element.x.toDouble() / scale,
-                y = element.y.toDouble() / scale,
-                width = element.width.toDouble() / scale,
-                height = element.height.toDouble() / scale,
-            )
-            // The view counts down from its top left like the scene does, so the rectangle
-            // is already in its coordinates and only the conversion to the screen remains.
-            (made as NSAccessibilityElement).setAccessibilityFrame(
-                view.window?.convertRectToScreen(view.convertRect(inView, toView = null))
-                    ?: inView,
-            )
-            made
-        }
-        view.setAccessibilityChildren(built)
-    }
-
     /** What the scene has been told is held, checked against the system before each event. */
     private val held = HeldButtons<PointerButton>()
 
@@ -1237,17 +1235,6 @@ class MacosWindow(
     private fun NSEvent.compose(type: KeyEventType): KeyEvent =
         macKeyEvent(keyCode.toInt(), modifierFlags.toLong(), type, codePoint = 0)
 }
-
-/** What a reader calls the kind of control this is. */
-private val Int.readerRole: String
-    get() = when (this) {
-        ElementRole.BUTTON -> NSAccessibilityButtonRole
-        ElementRole.TEXT -> NSAccessibilityStaticTextRole
-        ElementRole.FIELD -> NSAccessibilityTextFieldRole
-        ElementRole.CHECKBOX -> NSAccessibilityCheckBoxRole
-        ElementRole.IMAGE -> NSAccessibilityImageRole
-        else -> NSAccessibilityGroupRole
-    } ?: NSAccessibilityGroupRole ?: "AXGroup"
 
 /** Holds the closure a menu item runs, because a menu item calls a selector on a target. */
 class MenuShortcut(private val run: () -> Unit) : platform.darwin.NSObject() {

@@ -13,6 +13,7 @@ import org.graalvm.nativeimage.IsolateThread
 import org.graalvm.nativeimage.c.function.CFunctionPointer
 import org.graalvm.word.Pointer
 import org.graalvm.word.WordFactory
+import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.macosCornerRadius
 import org.thisisthepy.compose.window.WindowMeasurement
@@ -51,6 +52,12 @@ private external fun pollEvent(out: Pointer?): Int
 
 @CFunction("dxc_native_set_accessibility")
 private external fun setAccessibility(elements: Pointer?, count: Int, view: Pointer?)
+
+@CFunction("dxc_native_accessibility_active")
+private external fun accessibilityActiveNative(): Int
+
+@CFunction("dxc_native_take_accessibility_argument")
+private external fun takeAccessibilityArgument(out: Pointer?, capacity: Int): Int
 
 @CFunction("dxc_native_set_cursor")
 private external fun setCursorShape(shape: Int)
@@ -238,24 +245,46 @@ fun NativeWindow.describeTo(elements: List<AccessibleElement>) = describeWindow(
  * layout, written once, so a field that moves cannot move in one place only.
  */
 fun describeWindow(view: Long, elements: List<AccessibleElement>) {
-    val capped = if (elements.size > MAX_ELEMENTS) elements.take(MAX_ELEMENTS) else elements
-    val records = StackValue.get<Pointer>(MAX_ELEMENTS * ELEMENT_BYTES)
-    for ((index, element) in capped.withIndex()) {
-        val at = index * ELEMENT_BYTES
-        records.writeInt(at, element.role)
-        records.writeFloat(at + 4, element.x)
-        records.writeFloat(at + 8, element.y)
-        records.writeFloat(at + 12, element.width)
-        records.writeFloat(at + 16, element.height)
-        val bytes = element.label.toByteArray(Charsets.UTF_8)
-        var length = 0
-        while (length < bytes.size && length < TEXT_BYTES - 1) {
-            records.writeByte(at + ELEMENT_LABEL_OFFSET + length, bytes[length])
-            length++
-        }
-        records.writeByte(at + ELEMENT_LABEL_OFFSET + length, ZERO)
+    val bytes = encodeAccessibilityRecords(elements)
+    val count = bytes.size / AX_RECORD_BYTES
+    if (count == 0) {
+        setAccessibility(WordFactory.nullPointer(), 0, WordFactory.pointer(view))
+        return
     }
-    setAccessibility(records, capped.size, WordFactory.pointer(view))
+    // On the heap rather than the stack: a full tree is close to a megabyte.
+    val records = UnmanagedMemory.malloc<Pointer>(bytes.size)
+    try {
+        CTypeConversion.asByteBuffer(records, bytes.size).put(bytes)
+        setAccessibility(records, count, WordFactory.pointer(view))
+    } finally {
+        UnmanagedMemory.free(records)
+    }
+}
+
+/** Whether a reader is listening to the window: one has asked it something, or VoiceOver is on. */
+fun isAccessibilityActive(): Boolean = accessibilityActiveNative() != 0
+
+/**
+ * The new value a reader set with the oldest set-value request still to be read, or null
+ * where there is none. One is kept for each such request the event queue carries.
+ */
+fun takeAccessibilityArgument(): String? {
+    var capacity = 1024
+    while (true) {
+        val buffer = UnmanagedMemory.malloc<Pointer>(capacity)
+        try {
+            val length = takeAccessibilityArgument(buffer, capacity)
+            if (length < 0) return null
+            if (length <= capacity) {
+                val bytes = ByteArray(length)
+                CTypeConversion.asByteBuffer(buffer, length).get(bytes)
+                return String(bytes, Charsets.UTF_8)
+            }
+            capacity = length
+        } finally {
+            UnmanagedMemory.free(buffer)
+        }
+    }
 }
 
 /**
@@ -459,9 +488,6 @@ object PointerShape {
  * Enough for a screen and not for a document. A list of ten thousand rows is windowed
  * before it reaches the scene, so what is here is what is on screen.
  */
-private const val MAX_ELEMENTS = 256
-private const val ELEMENT_LABEL_OFFSET = 20
-private const val ELEMENT_BYTES = 116
 
 private const val ZERO: Byte = 0
 private const val TEXT_OFFSET = 28

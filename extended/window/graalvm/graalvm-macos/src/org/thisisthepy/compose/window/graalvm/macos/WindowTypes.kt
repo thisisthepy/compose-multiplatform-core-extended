@@ -4,29 +4,6 @@ package org.thisisthepy.compose.window.graalvm.macos
 data class CaptionMetrics(val height: Float, val buttonsWidth: Float)
 
 /**
- * One thing the window says it has, for a reader who cannot see it.
- *
- * [role] is one of [ElementRole]; the geometry is in points.
- */
-data class AccessibleElement(
-    val role: Int,
-    val x: Float,
-    val y: Float,
-    val width: Float,
-    val height: Float,
-    val label: String,
-)
-
-object ElementRole {
-    const val GROUP = 0
-    const val BUTTON = 1
-    const val TEXT = 2
-    const val FIELD = 3
-    const val CHECKBOX = 4
-    const val IMAGE = 5
-}
-
-/**
  * What a macOS title bar's size is worked out from, in points: the window's frame height,
  * the height of the part below the bar, where the close button starts and where the zoom
  * button ends (null where the window has no buttons), and the radius the system draws on

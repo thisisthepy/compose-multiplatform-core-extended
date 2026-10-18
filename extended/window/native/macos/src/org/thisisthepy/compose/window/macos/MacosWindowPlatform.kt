@@ -4,6 +4,7 @@ package org.thisisthepy.compose.window.macos
 
 import androidx.compose.runtime.Composable
 import kotlinx.cinterop.useContents
+import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.ContextMenuItem
 import org.thisisthepy.compose.window.FramePresentLog
 import org.thisisthepy.compose.window.FramePresentRecord
@@ -69,6 +70,9 @@ class MacosWindowPlatform(
             width = config.width,
             height = config.height,
             minimumSize = minimum,
+            // The rule both macOS windows share, so this one has the GraalVM one's corners,
+            // buttons and content top for the same configuration.
+            chrome = MacosWindowChrome.of(config.chrome, config.titleBar),
         )
         created.setContent(content)
         window = created
@@ -160,6 +164,34 @@ class MacosWindowPlatform(
         menu.popUpMenuPositioningItem(null, atLocation = view.convertPoint(at, fromView = null), inView = view)
         listener?.onContextMenuChosen(chosen)
     }
+
+    /**
+     * The strip the system's buttons sit in and the radius of the window's corners, as the
+     * window last measured them. The buttons are the system's, so the scene draws none.
+     */
+    override fun caption(): org.thisisthepy.compose.window.WindowCaption =
+        window?.caption?.value?.toCommon() ?: org.thisisthepy.compose.window.WindowCaption.None
+
+    /**
+     * Gives the reader [elements] in place of what the window's own scene says, and hands
+     * what the reader asks of them to [WindowListener.onAccessibilityAction].
+     */
+    override fun setAccessibility(elements: List<AccessibleElement>) {
+        val current = window ?: return
+        val sink = listener
+        current.onAccessibilityAction = { id, action, argument ->
+            sink?.onAccessibilityAction(id, action, argument) ?: false
+        }
+        current.describeFrom(elements)
+    }
+
+    override val accessibilityActive: Boolean get() = window?.accessibilityActive == true
+
+    /** The AppKit window, once [open] has made it. */
+    val nativeWindow: platform.AppKit.NSWindow? get() = window?.window
+
+    /** The elements the reader is given now, for a test that asks as a reader would. */
+    val accessibilityTree: AppKitAccessibilityTree? get() = window?.reader
 
     override fun close() {
         window?.window?.close()
