@@ -55,7 +55,7 @@ jobs:
       - name: The macOS window's calls the image carries resolve here too
         working-directory: extended/window/graalvm/graalvm-linux
         run: |
-          for name in window_title_bar window_chrome set_accessibility accessibility_active take_accessibility_argument; do
+          for name in window_title_bar window_chrome set_accessibility accessibility_active take_accessibility_argument accessibility_snapshot; do
             nm build/x11_window.o | grep -q " T dxc_native_$name\$" || {
               echo "x11_window.c defines no dxc_native_$name" >&2
               exit 1

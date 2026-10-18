@@ -72,7 +72,7 @@ class MacosWindowPlatform(
             minimumSize = minimum,
             // The rule both macOS windows share, so this one has the GraalVM one's corners,
             // buttons and content top for the same configuration.
-            chrome = MacosWindowChrome.of(config.chrome, config.titleBar),
+            chrome = MacosWindowChrome.of(config.chrome, config.titleBar).also { macosTitleBar = it.toTitleBar() },
         )
         created.setContent(content)
         window = created
@@ -186,6 +186,20 @@ class MacosWindowPlatform(
     }
 
     override val accessibilityActive: Boolean get() = window?.accessibilityActive == true
+
+    /** The title bar this window was built with, for `macosChromeFindings`. */
+    var macosTitleBar: org.thisisthepy.compose.window.MacosTitleBar = org.thisisthepy.compose.window.MacosTitleBar.Normal
+        private set
+
+    /** What a reader is told about this application's windows, walked in process. */
+    fun accessibilitySnapshot(): org.thisisthepy.compose.window.MacosAxSnapshot =
+        org.thisisthepy.compose.window.macos.accessibilitySnapshot()
+
+    /**
+     * How the window checked each frame it presented against its size: the `dxc resize:` line
+     * and the count of frames drawn at another size.
+     */
+    val resizeStats: org.thisisthepy.compose.window.ResizeStats? get() = window?.resizeStats
 
     /** The AppKit window, once [open] has made it. */
     val nativeWindow: platform.AppKit.NSWindow? get() = window?.window

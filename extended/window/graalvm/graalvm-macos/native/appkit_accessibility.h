@@ -374,4 +374,61 @@ void dxc_native_set_accessibility(const struct dxc_ax_element *elements, int32_t
     });
 }
 
+// One element and everything under it, as a line each in the format the common module reads
+// (formatMacosAxNode): depth, role, subrole, title, label, value and the frame, tab separated.
+static NSString *dxc_ax_field(id value) {
+    NSString *text = @"";
+    if ([value isKindOfClass:[NSString class]]) text = value;
+    else if ([value isKindOfClass:[NSNumber class]]) text = [value stringValue];
+    else if ([value isKindOfClass:[NSAttributedString class]]) text = [value string];
+    text = [text stringByReplacingOccurrencesOfString:@"\t" withString:@" "];
+    text = [text stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+    return [text stringByReplacingOccurrencesOfString:@"\r" withString:@" "];
+}
+
+static void dxc_ax_walk(id element, int depth, NSMutableString *out, int *budget) {
+    if (element == nil || *budget <= 0 || depth > 24) return;
+    if (![element conformsToProtocol:@protocol(NSAccessibility)]) return;
+    (*budget)--;
+    id<NSAccessibility> node = element;
+    NSRect frame = [element respondsToSelector:@selector(accessibilityFrame)] ? node.accessibilityFrame : NSZeroRect;
+    [out appendFormat:@"%d\t%@\t%@\t%@\t%@\t%@\t%g\t%g\t%g\t%g\n", depth,
+        dxc_ax_field(node.accessibilityRole), dxc_ax_field(node.accessibilitySubrole),
+        dxc_ax_field(node.accessibilityTitle), dxc_ax_field(node.accessibilityLabel),
+        dxc_ax_field(node.accessibilityValue),
+        frame.origin.x, frame.origin.y, frame.size.width, frame.size.height];
+    for (id child in node.accessibilityChildren ?: @[]) dxc_ax_walk(child, depth + 1, out, budget);
+}
+
+/**
+ * Writes down every accessibility element of this application's visible windows, walking them
+ * in process through the same objects AppKit's accessibility server answers clients from, as
+ * UTF-8 into [out]: a `#macos` line with the major release, then one line per element. Returns
+ * the length, or the size it needs when it does not fit in [capacity], in which case nothing is
+ * written. For checks on a machine where no outside client is trusted for accessibility.
+ */
+int32_t dxc_native_accessibility_snapshot(char *out, int32_t capacity) {
+    __block int32_t result = 0;
+    dxc_on_main(^{
+    @autoreleasepool {
+        NSMutableString *text = [NSMutableString string];
+        [text appendFormat:@"#macos\t%ld\n", (long)NSProcessInfo.processInfo.operatingSystemVersion.majorVersion];
+        int budget = 4000;
+        for (NSWindow *window in NSApp.windows) {
+            if (!window.visible) continue;
+            dxc_ax_walk(window, 0, text, &budget);
+        }
+        const char *utf8 = text.UTF8String ?: "";
+        size_t length = strlen(utf8);
+        if (length > (size_t)capacity) {
+            result = (int32_t)length;
+            return;
+        }
+        memcpy(out, utf8, length);
+        result = (int32_t)length;
+    }
+    });
+    return result;
+}
+
 #endif

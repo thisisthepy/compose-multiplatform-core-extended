@@ -59,6 +59,9 @@ private external fun accessibilityActiveNative(): Int
 @CFunction("dxc_native_take_accessibility_argument")
 private external fun takeAccessibilityArgument(out: Pointer?, capacity: Int): Int
 
+@CFunction("dxc_native_accessibility_snapshot")
+private external fun accessibilitySnapshotNative(out: Pointer?, capacity: Int): Int
+
 @CFunction("dxc_native_set_cursor")
 private external fun setCursorShape(shape: Int)
 
@@ -263,6 +266,30 @@ fun describeWindow(view: Long, elements: List<AccessibleElement>) {
 
 /** Whether a reader is listening to the window: one has asked it something, or VoiceOver is on. */
 fun isAccessibilityActive(): Boolean = accessibilityActiveNative() != 0
+
+/**
+ * Every accessibility element of the application's visible windows, as the snapshot text the
+ * common module reads (`parseMacosAxSnapshot`), walked in process through what AppKit's
+ * accessibility server answers clients from. For a check on a machine where no outside client
+ * is trusted for accessibility.
+ */
+fun accessibilitySnapshotText(): String {
+    var capacity = 64 * 1024
+    while (true) {
+        val buffer = UnmanagedMemory.malloc<Pointer>(capacity)
+        try {
+            val length = accessibilitySnapshotNative(buffer, capacity)
+            if (length <= capacity) {
+                val bytes = ByteArray(length.coerceAtLeast(0))
+                if (length > 0) CTypeConversion.asByteBuffer(buffer, length).get(bytes)
+                return String(bytes, Charsets.UTF_8)
+            }
+            capacity = length
+        } finally {
+            UnmanagedMemory.free(buffer)
+        }
+    }
+}
 
 /**
  * The new value a reader set with the oldest set-value request still to be read, or null

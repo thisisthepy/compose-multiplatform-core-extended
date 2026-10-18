@@ -16,6 +16,10 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import kotlinx.cinterop.useContents
 import org.thisisthepy.compose.window.MacosAx
+import org.thisisthepy.compose.window.closeButtonInset
+import org.thisisthepy.compose.window.formatMacosAxNode
+import org.thisisthepy.compose.window.macosChromeFindings
+import org.thisisthepy.compose.window.window
 import org.thisisthepy.compose.window.TitleBarStyle
 import org.thisisthepy.compose.window.WindowCaption
 import org.thisisthepy.compose.window.WindowChrome
@@ -122,6 +126,34 @@ class MacosWindowPlatformChromeTest {
             assertTrue(window.styleMask and NSWindowStyleMaskFullSizeContentView == 0uL)
             assertEquals(WindowCaption.None, platform.caption())
         }
+
+    @Test
+    fun fr19_4_fr19_7_what_a_reader_is_told_about_each_title_bar_matches_its_caption() {
+        val insets = HashMap<TitleBarStyle, Double?>()
+        for (style in TitleBarStyle.entries) {
+            val title = "snapshot $style"
+            opened(WindowConfig(title, 480, 320, titleBar = style)) { platform, _ ->
+                val snapshot = platform.accessibilitySnapshot()
+                val findings = macosChromeFindings(snapshot, title, platform.macosTitleBar, platform.caption())
+                assertEquals(
+                    emptyList(), findings,
+                    "$style:\n" + snapshot.window(title).joinToString("\n") { formatMacosAxNode(it) },
+                )
+                insets[style] = snapshot.closeButtonInset(title)
+            }
+        }
+        if (macosMajor >= 26) {
+            assertTrue(
+                (insets[TitleBarStyle.Normal] ?: 0.0) > (insets[TitleBarStyle.Simple] ?: 0.0),
+                "macOS $macosMajor sets Normal's buttons further in: $insets",
+            )
+        }
+        val title = "snapshot system"
+        opened(WindowConfig(title, 480, 320, chrome = WindowChrome.System)) { platform, _ ->
+            val snapshot = platform.accessibilitySnapshot()
+            assertEquals(emptyList(), macosChromeFindings(snapshot, title, platform.macosTitleBar, platform.caption()))
+        }
+    }
 
     @Test
     fun nfr8_a_reader_asking_the_running_window_finds_the_field_the_button_and_their_labels() {

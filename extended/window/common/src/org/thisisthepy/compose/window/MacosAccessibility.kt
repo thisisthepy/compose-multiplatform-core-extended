@@ -33,6 +33,7 @@ sealed interface MacosAxValue {
 
 /** AppKit's public role, subrole and action names this window uses. */
 object MacosAx {
+    const val WINDOW = "AXWindow"
     const val GROUP = "AXGroup"
     const val BUTTON = "AXButton"
     const val STATIC_TEXT = "AXStaticText"
@@ -50,6 +51,12 @@ object MacosAx {
     const val SWITCH_SUBROLE = "AXSwitch"
     const val TAB_BUTTON_SUBROLE = "AXTabButton"
     const val SECURE_TEXT_FIELD_SUBROLE = "AXSecureTextField"
+
+    /** The subroles of a window's own three buttons; the green one reads as full screen where it does that. */
+    const val CLOSE_BUTTON_SUBROLE = "AXCloseButton"
+    const val MINIMIZE_BUTTON_SUBROLE = "AXMinimizeButton"
+    const val ZOOM_BUTTON_SUBROLE = "AXZoomButton"
+    const val FULL_SCREEN_BUTTON_SUBROLE = "AXFullScreenButton"
 
     const val PRESS = "AXPress"
     const val INCREMENT = "AXIncrement"

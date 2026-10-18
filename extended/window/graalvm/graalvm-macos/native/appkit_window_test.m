@@ -218,6 +218,18 @@ int main(void) {
                   "macOS %ld sets the Normal buttons further in: %.2f against %.2f",
                   (long)major, bars[0].close_min_x, bars[1].close_min_x);
         }
+        // What a reader is told, walked in process: the three buttons of every window, and the
+        // Kotlin side's checks (macosChromeFindings) read this same text.
+        static char snapshot[1 << 20];
+        int32_t length = dxc_native_accessibility_snapshot(snapshot, sizeof snapshot - 1);
+        CHECK(length > 0 && length < (int32_t)sizeof snapshot, "the snapshot is %d bytes", length);
+        if (length > 0 && length < (int32_t)sizeof snapshot) {
+            snapshot[length] = 0;
+            printf("%s", snapshot);
+            CHECK(strstr(snapshot, "#macos\t") == snapshot, "the snapshot starts with the release");
+            CHECK(strstr(snapshot, "AXCloseButton") != NULL, "a close button is in the snapshot");
+            CHECK(strstr(snapshot, "AXMinimizeButton") != NULL, "a minimise button is in the snapshot");
+        }
         check_accessibility(windows[0], opened[0].view);
         for (int index = 0; index < 3; index++) [windows[index] orderOut:nil];
     }

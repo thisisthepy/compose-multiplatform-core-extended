@@ -3,7 +3,11 @@ package org.thisisthepy.compose.window.graalvm.macos
 import org.thisisthepy.compose.window.AccessibleAction
 import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.MacosAxSnapshot
 import org.thisisthepy.compose.window.MacosTitleBar
+import org.thisisthepy.compose.window.macosAccessibleContentFindings
+import org.thisisthepy.compose.window.macosChromeFindings
+import org.thisisthepy.compose.window.parseMacosAxSnapshot
 import org.thisisthepy.compose.window.WindowCaption
 import org.thisisthepy.compose.window.WindowChrome
 import org.thisisthepy.compose.window.macosCaption
@@ -183,6 +187,16 @@ class AppKitWindowPlatform : WindowPlatform {
     }
 
     override val accessibilityActive: Boolean get() = window != null && isAccessibilityActive()
+
+    /**
+     * What a reader is told about this application's windows, walked in process, for a check
+     * on a machine where no outside accessibility client is trusted. See [macosChromeFindings]
+     * and [macosAccessibleContentFindings].
+     */
+    fun accessibilitySnapshot(): MacosAxSnapshot = parseMacosAxSnapshot(accessibilitySnapshotText())
+
+    /** The title bar this window was built with, for [macosChromeFindings]. */
+    val macosTitleBar: MacosTitleBar get() = titleBar
 
     override fun close() {
         window = null

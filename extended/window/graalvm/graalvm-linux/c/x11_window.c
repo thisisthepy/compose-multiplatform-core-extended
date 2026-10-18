@@ -1157,6 +1157,12 @@ int32_t dxc_native_take_accessibility_argument(char *out, int32_t capacity) {
     return -1;
 }
 
+int32_t dxc_native_accessibility_snapshot(char *out, int32_t capacity) {
+    (void)out;
+    (void)capacity;
+    return 0;
+}
+
 /**
  * Gives the window the picture it named, from its pixels: eight bits each of red, green,
  * blue and alpha, the colour already multiplied by the alpha, row after row.
