@@ -301,7 +301,7 @@ class X11Window : WindowPlatform {
      * Hands the window what it would tell a reader who cannot see it, as the records
      * `x11_window.c` holds for an AT-SPI bridge to read. Capped at [X11Layout.MAX_ELEMENTS].
      */
-    fun setAccessibility(elements: List<AccessibleElement>) {
+    override fun setAccessibility(elements: List<AccessibleElement>) {
         val capped = if (elements.size > X11Layout.MAX_ELEMENTS) elements.take(X11Layout.MAX_ELEMENTS) else elements
         val records = UnmanagedMemory.calloc<Pointer>(X11Layout.MAX_ELEMENTS * X11Layout.ELEMENT_BYTES)
         try {
