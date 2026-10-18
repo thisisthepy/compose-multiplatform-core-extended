@@ -180,6 +180,9 @@ class MacosWindowPlatformChromeTest {
             assertEquals("Ada", field.accessibilityValue())
             val button = assertNotNull(elements.firstOrNull { it.accessibilityRole() == MacosAx.BUTTON }, "a button in $elements")
             assertEquals("Send", button.accessibilityLabel())
+            // An outside client is refused on a machine that has not trusted this process; what
+            // the system said is printed, and the in-process answers above are what is checked.
+            println(axApiProbe().describe())
             assertTrue(button.accessibilityPerformPress(), "the press reached the scene")
             assertEquals(1, pressed)
         }

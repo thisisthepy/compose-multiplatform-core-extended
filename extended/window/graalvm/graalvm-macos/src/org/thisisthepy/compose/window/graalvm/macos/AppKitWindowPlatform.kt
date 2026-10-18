@@ -195,6 +195,9 @@ class AppKitWindowPlatform : WindowPlatform {
      */
     fun accessibilitySnapshot(): MacosAxSnapshot = parseMacosAxSnapshot(accessibilitySnapshotText())
 
+    /** What the system's accessibility API answers an outside client about this application. */
+    fun accessibilityApiProbe(): org.thisisthepy.compose.window.MacosAxApiAnswer = axApiProbe()
+
     /** The title bar this window was built with, for [macosChromeFindings]. */
     val macosTitleBar: MacosTitleBar get() = titleBar
 

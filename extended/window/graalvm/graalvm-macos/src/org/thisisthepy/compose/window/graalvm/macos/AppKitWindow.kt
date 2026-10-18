@@ -59,6 +59,9 @@ private external fun accessibilityActiveNative(): Int
 @CFunction("dxc_native_take_accessibility_argument")
 private external fun takeAccessibilityArgument(out: Pointer?, capacity: Int): Int
 
+@CFunction("dxc_native_ax_api_probe")
+private external fun axApiProbeNative(trusted: CIntPointer?, windows: CIntPointer?): Int
+
 @CFunction("dxc_native_accessibility_snapshot")
 private external fun accessibilitySnapshotNative(out: Pointer?, capacity: Int): Int
 
@@ -289,6 +292,17 @@ fun accessibilitySnapshotText(): String {
             UnmanagedMemory.free(buffer)
         }
     }
+}
+
+/**
+ * Asks the system's accessibility API for this application's windows, as an outside client
+ * does, and says what it answered: on a machine that has not trusted the process, an error.
+ */
+fun axApiProbe(): org.thisisthepy.compose.window.MacosAxApiAnswer {
+    val trusted = StackValue.get<CIntPointer>(4)
+    val windows = StackValue.get<CIntPointer>(4)
+    val error = axApiProbeNative(trusted, windows)
+    return org.thisisthepy.compose.window.MacosAxApiAnswer(error, trusted.read(), windows.read())
 }
 
 /**

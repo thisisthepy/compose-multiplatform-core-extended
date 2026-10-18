@@ -165,3 +165,26 @@ fun macosAccessibleContentFindings(
         if (match) null else "no $role labelled '$label' among ${elements.size} elements"
     }
 }
+
+/**
+ * What the system's accessibility API answered when the application asked it for its own
+ * windows, as an outside client would: the AXError ([error], 0 for success; -1 when the API
+ * could not be reached, -2 when no answer came in time), whether the system trusts the process
+ * for accessibility ([trusted]: 1, 0, or -1 for unknown) and how many windows it was told of
+ * ([windows], or -1).
+ */
+data class MacosAxApiAnswer(val error: Int, val trusted: Int, val windows: Int) {
+    /** One line for a log, naming the error where it is one a reader of the log would look up. */
+    fun describe(): String {
+        val name = when (error) {
+            0 -> "success"
+            -25211 -> "kAXErrorAPIDisabled: this process is not trusted for accessibility"
+            -25204 -> "kAXErrorCannotComplete"
+            -25200 -> "kAXErrorFailure"
+            -1 -> "the accessibility API could not be reached"
+            -2 -> "no answer in time"
+            else -> "AXError $error"
+        }
+        return "AX API: trusted=$trusted, AXWindows error=$error ($name), windows=$windows"
+    }
+}

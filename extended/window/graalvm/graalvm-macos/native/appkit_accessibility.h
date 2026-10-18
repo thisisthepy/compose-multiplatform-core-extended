@@ -21,6 +21,8 @@
 #import <AppKit/AppKit.h>
 #import <objc/runtime.h>
 #include <stddef.h>
+#include <dlfcn.h>
+#include <unistd.h>
 #include <stdint.h>
 
 #define DXC_AX_NAME_BYTES 32
@@ -429,6 +431,62 @@ int32_t dxc_native_accessibility_snapshot(char *out, int32_t capacity) {
     }
     });
     return result;
+}
+
+/**
+ * Asks this application for its windows through the system's accessibility API, the way an
+ * outside client such as VoiceOver does, and answers with the AXError it got (0 for success).
+ * [trusted] is set to whether the system trusts this process for accessibility, and [windows]
+ * to the number of windows it was told of, or -1.
+ *
+ * The API is looked up at run time rather than linked, so an application that never asks
+ * links nothing more for it. Asked from a worker thread while this one keeps AppKit's run loop
+ * turning, because the answer comes from this thread. A machine that has not trusted the
+ * process (a CI runner) answers with an error; this says which, so a check can report it
+ * rather than guess.
+ */
+int32_t dxc_native_ax_api_probe(int32_t *trusted, int32_t *windows) {
+    *trusted = -1;
+    *windows = -1;
+    void *services = dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", RTLD_LAZY);
+    if (services == NULL) return -1;
+    typedef Boolean (*is_trusted_t)(void);
+    typedef CFTypeRef (*create_app_t)(pid_t);
+    typedef int32_t (*copy_attribute_t)(CFTypeRef, CFStringRef, CFTypeRef *);
+    typedef int32_t (*set_timeout_t)(CFTypeRef, float);
+    is_trusted_t is_trusted = (is_trusted_t)dlsym(services, "AXIsProcessTrusted");
+    create_app_t create_app = (create_app_t)dlsym(services, "AXUIElementCreateApplication");
+    copy_attribute_t copy_attribute = (copy_attribute_t)dlsym(services, "AXUIElementCopyAttributeValue");
+    set_timeout_t set_timeout = (set_timeout_t)dlsym(services, "AXUIElementSetMessagingTimeout");
+    if (is_trusted == NULL || create_app == NULL || copy_attribute == NULL) return -1;
+    *trusted = is_trusted() ? 1 : 0;
+    __block int32_t error = -1;
+    __block CFIndex count = -1;
+    __block atomic_int done = 0;
+    pid_t pid = getpid();
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        CFTypeRef app = create_app(pid);
+        if (app != NULL) {
+            if (set_timeout != NULL) set_timeout(app, 3.0f);
+            CFTypeRef list = NULL;
+            error = copy_attribute(app, CFSTR("AXWindows"), &list);
+            if (error == 0 && list != NULL && CFGetTypeID(list) == CFArrayGetTypeID()) {
+                count = CFArrayGetCount((CFArrayRef)list);
+            }
+            if (list != NULL) CFRelease(list);
+            CFRelease(app);
+        }
+        atomic_store(&done, 1);
+    });
+    for (int turns = 0; turns < 120 && !atomic_load(&done); turns++) {
+        if ([NSThread isMainThread]) {
+            [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+        } else {
+            usleep(50000);
+        }
+    }
+    *windows = (int32_t)count;
+    return atomic_load(&done) ? error : -2;
 }
 
 #endif

@@ -21,7 +21,6 @@
 
 #include "appkit_window.m"
 
-#import <ApplicationServices/ApplicationServices.h>
 
 static int failures;
 
@@ -176,26 +175,11 @@ static void check_accessibility(NSWindow *window, void *view_pointer) {
     CHECK(again == button, "the button kept its object");
     CHECK([again.accessibilityLabel isEqualToString:@"Sent"], "and took its new label");
 
-    // The system's AX API, asked from another thread as a client would.
-    __block AXError error = kAXErrorSuccess;
-    __block CFIndex count = -1;
-    __block BOOL done = NO;
-    pid_t pid = getpid();
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        AXUIElementRef app = AXUIElementCreateApplication(pid);
-        AXUIElementSetMessagingTimeout(app, 3.0);
-        CFTypeRef windows = NULL;
-        error = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute, &windows);
-        if (error == kAXErrorSuccess && windows != NULL) {
-            count = CFArrayGetCount(windows);
-            CFRelease(windows);
-        }
-        CFRelease(app);
-        done = YES;
-    });
-    for (int turns = 0; turns < 100 && !done; turns++) spin(0.05);
-    printf("AX API from this process: trusted=%d, AXWindows error=%d, windows=%ld\n",
-           AXIsProcessTrusted(), (int)error, (long)count);
+    // The system's AX API, as a client outside the process asks. A runner that has not trusted
+    // this process answers with an error, printed with its number.
+    int32_t trusted = -1, count = -1;
+    int32_t error = dxc_native_ax_api_probe(&trusted, &count);
+    printf("AX API from this process: trusted=%d, AXWindows error=%d, windows=%d\n", trusted, error, count);
 }
 
 int main(void) {
