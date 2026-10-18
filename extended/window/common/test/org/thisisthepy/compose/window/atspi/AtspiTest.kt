@@ -1,6 +1,10 @@
 package org.thisisthepy.compose.window.atspi
 
 import kotlin.test.Test
+import org.thisisthepy.compose.window.AccessibleAction
+import org.thisisthepy.compose.window.AccessibleElement
+import org.thisisthepy.compose.window.AccessibleState
+import org.thisisthepy.compose.window.ElementRole
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
@@ -175,9 +179,13 @@ private fun clientCall(
 private class Harness(
     sessionAnswers: Boolean = true,
     registryAnswers: Boolean = true,
+    /** What the session bus says of `org.a11y.Status.IsEnabled`, or null for no answer. */
+    statusEnabled: Boolean? = null,
 ) {
-    val clicked = mutableListOf<Int>()
-    val focusRequests = mutableListOf<Int>()
+    /** Every action a reader asked for: the control, the action and its argument. */
+    val performed = mutableListOf<Triple<Int, Int, String?>>()
+    val clicked: List<Int> get() = performed.filter { it.second == AccessibleAction.PRESS }.map { it.first }
+    val focusRequests: List<Int> get() = performed.filter { it.second == AccessibleAction.FOCUS }.map { it.first }
     var origin = 100 to 50
 
     val a11y = FakeBus { call ->
@@ -199,6 +207,14 @@ private class Harness(
             call.member == "Hello" -> returnTo(call, "s") { string(":1.7") }
             call.member == "GetAddress" && sessionAnswers ->
                 returnTo(call, "s") { string("unix:path=/run/user/1000/at-spi/bus_0,guid=abc") }
+            call.member == "Get" && statusEnabled != null -> {
+                val reader = call.body()
+                reader.string()
+                val name = reader.string()
+                returnTo(call, "v") {
+                    variant("b") { boolean(statusEnabled && name == "IsEnabled") }
+                }
+            }
             else -> failTo(call)
         }
     }
@@ -207,13 +223,8 @@ private class Harness(
     var openedAddress: BusAddress? = null
 
     private val actions = object : AtspiActions {
-        override fun click(id: Int): Boolean {
-            clicked += id
-            return true
-        }
-
-        override fun focus(id: Int): Boolean {
-            focusRequests += id
+        override fun perform(id: Int, action: Int, argument: String?): Boolean {
+            performed += Triple(id, action, argument)
             return true
         }
 
@@ -257,22 +268,42 @@ private class Harness(
     }
 }
 
-/** A form: a window holding a heading, a text field with something in it, a checkbox and a button. */
-private fun form(focused: Int? = null, checked: Boolean = false): AtspiTree {
-    val button = describeFacts(NodeFacts(composeRole = "Button", label = "Save", clickable = true, canTakeFocus = true))!!
-    val entry = describeFacts(NodeFacts(label = "Name", editableText = "한글", focused = focused == 11))!!
-    val box = describeFacts(
-        NodeFacts(composeRole = "Checkbox", label = "Remember", toggle = if (checked) "On" else "Off", clickable = true),
-    )!!
-    val heading = describeFacts(NodeFacts(label = "Profile", heading = true))!!
-    val nodes = listOf(
-        AtspiNode(10, AtspiTree.FRAME, emptyList(), heading.role, heading.name, heading.states, heading.actions, 10, 5, 100, 20, null),
-        AtspiNode(11, AtspiTree.FRAME, emptyList(), entry.role, entry.name, entry.states, entry.actions, 10, 30, 200, 24, "한글", 2),
-        AtspiNode(12, AtspiTree.FRAME, emptyList(), box.role, box.name, box.states, box.actions, 10, 60, 120, 24, null),
-        AtspiNode(13, AtspiTree.FRAME, emptyList(), button.role, button.name, button.states, button.actions, 10, 90, 80, 32, null),
+/** The records of a form: a heading, a text field with something in it, a checkbox and a button. */
+private fun formElements(focused: Int? = null, checked: Boolean = false): List<AccessibleElement> {
+    val enabled = AccessibleState.ENABLED or AccessibleState.FOCUSABLE
+    fun focus(id: Int) = if (focused == id) AccessibleState.FOCUSED else 0
+    return listOf(
+        AccessibleElement(ElementRole.HEADING, 10f, 5f, 100f, 20f, "Profile", id = 10),
+        AccessibleElement(
+            ElementRole.FIELD, 10f, 30f, 200f, 24f, "Name", id = 11, value = "한글",
+            states = enabled or AccessibleState.EDITABLE or focus(11),
+            actions = AccessibleAction.FOCUS or AccessibleAction.SET_VALUE,
+        ),
+        AccessibleElement(
+            ElementRole.CHECKBOX, 10f, 60f, 120f, 24f, "Remember", id = 12,
+            states = enabled or AccessibleState.CHECKABLE or (if (checked) AccessibleState.CHECKED else 0),
+            actions = AccessibleAction.PRESS,
+        ),
+        AccessibleElement(
+            ElementRole.BUTTON, 10f, 90f, 80f, 32f, "Save", id = 13, hint = "Saves the profile",
+            states = enabled, actions = AccessibleAction.PRESS or AccessibleAction.FOCUS,
+        ),
     )
-    return AtspiTree("Profile", nodes.associateBy { it.id }, nodes.map { it.id }, focused, 400, 300)
 }
+
+/** The form as a reader gets it. */
+private fun form(focused: Int? = null, checked: Boolean = false): AtspiTree =
+    atspiTreeOf("Profile", formElements(focused, checked), 1f, 400, 300)
+
+private fun element(
+    role: Int,
+    label: String = "x",
+    states: Int = AccessibleState.ENABLED,
+    actions: Int = 0,
+    value: String? = null,
+) = AccessibleElement(role, 0f, 0f, 10f, 10f, label, id = 1, value = value, states = states, actions = actions)
+
+private fun Description.has(state: Int) = states and AtspiState.bit(state) != 0L
 
 class AtspiTest {
 
@@ -291,77 +322,188 @@ class AtspiTest {
     }
 
     @Test
-    fun nfr8_linux_a_button_is_a_push_button_named_by_its_text_that_can_be_clicked() {
-        val described = describeFacts(NodeFacts(composeRole = "Button", label = "Save", clickable = true))!!
-        assertEquals(AtspiRole.PUSH_BUTTON, described.role)
-        assertEquals("Save", described.name)
-        assertEquals(listOf(ACTION_CLICK), described.actions)
-        assertTrue(described.states and AtspiState.bit(AtspiState.FOCUSABLE) != 0L)
-        assertTrue(described.states and AtspiState.bit(AtspiState.ENABLED) != 0L)
+    fun nfr8_linux_the_new_roles_and_states_are_the_registrys_own_numbers() {
+        assertEquals(88, AtspiRole.LINK)
+        assertEquals(41, AtspiState.CHECKABLE)
+        assertEquals(43, AtspiState.READ_ONLY)
+        assertEquals(32, AtspiState.INDETERMINATE)
     }
 
     @Test
-    fun nfr8_linux_a_clickable_with_no_role_is_still_a_button() {
-        assertEquals(AtspiRole.PUSH_BUTTON, describeFacts(NodeFacts(label = "Go", clickable = true))!!.role)
+    fun nfr8_linux_a_button_is_a_push_button_named_by_its_text_that_can_be_clicked() {
+        val described = describeElement(
+            element(ElementRole.BUTTON, "Save", AccessibleState.ENABLED or AccessibleState.FOCUSABLE, AccessibleAction.PRESS),
+        )
+        assertEquals(AtspiRole.PUSH_BUTTON, described.role)
+        assertEquals("Save", described.name)
+        assertEquals(listOf(ACTION_CLICK), described.actions)
+        assertTrue(described.has(AtspiState.FOCUSABLE))
+        assertTrue(described.has(AtspiState.ENABLED))
+        assertTrue(described.has(AtspiState.SENSITIVE))
     }
 
     @Test
     fun nfr8_linux_a_disabled_button_is_not_sensitive_and_offers_no_action() {
-        val described = describeFacts(
-            NodeFacts(composeRole = "Button", label = "Save", clickable = true, disabled = true),
-        )!!
-        assertEquals(0L, described.states and AtspiState.bit(AtspiState.ENABLED))
-        assertEquals(0L, described.states and AtspiState.bit(AtspiState.SENSITIVE))
+        val described = describeElement(element(ElementRole.BUTTON, "Save", states = 0, actions = AccessibleAction.PRESS))
+        assertFalse(described.has(AtspiState.ENABLED))
+        assertFalse(described.has(AtspiState.SENSITIVE))
         assertTrue(described.actions.isEmpty())
     }
 
     @Test
-    fun nfr8_linux_text_is_a_label_and_a_heading_is_a_heading() {
-        assertEquals(AtspiRole.LABEL, describeFacts(NodeFacts(label = "Hello"))!!.role)
-        assertEquals(AtspiRole.HEADING, describeFacts(NodeFacts(label = "Hello", heading = true))!!.role)
+    fun nfr8_linux_every_role_the_scene_names_has_its_atspi_role() {
+        val expected = mapOf(
+            ElementRole.BUTTON to AtspiRole.PUSH_BUTTON,
+            ElementRole.TEXT to AtspiRole.LABEL,
+            ElementRole.FIELD to AtspiRole.ENTRY,
+            ElementRole.CHECKBOX to AtspiRole.CHECK_BOX,
+            ElementRole.IMAGE to AtspiRole.IMAGE,
+            ElementRole.SWITCH to AtspiRole.TOGGLE_BUTTON,
+            ElementRole.RADIO_BUTTON to AtspiRole.RADIO_BUTTON,
+            ElementRole.TAB to AtspiRole.PAGE_TAB,
+            ElementRole.SLIDER to AtspiRole.SLIDER,
+            ElementRole.PROGRESS to AtspiRole.PROGRESS_BAR,
+            ElementRole.HEADING to AtspiRole.HEADING,
+            ElementRole.COMBO_BOX to AtspiRole.COMBO_BOX,
+            ElementRole.LINK to AtspiRole.LINK,
+            ElementRole.GROUP to AtspiRole.PANEL,
+        )
+        for ((role, atspi) in expected) assertEquals(atspi, describeElement(element(role)).role, "role $role")
+        assertEquals(AtspiRole.FILLER, describeElement(element(ElementRole.GROUP, label = "")).role)
     }
 
     @Test
     fun nfr8_linux_a_field_is_an_editable_entry_and_a_password_field_says_so() {
-        val field = describeFacts(NodeFacts(label = "Name", editableText = "abc", focused = true))!!
+        val field = describeElement(
+            element(ElementRole.FIELD, "Name", AccessibleState.ENABLED or AccessibleState.EDITABLE or AccessibleState.FOCUSED),
+        )
         assertEquals(AtspiRole.ENTRY, field.role)
-        assertTrue(field.states and AtspiState.bit(AtspiState.EDITABLE) != 0L)
-        assertTrue(field.states and AtspiState.bit(AtspiState.SINGLE_LINE) != 0L)
-        assertTrue(field.states and AtspiState.bit(AtspiState.FOCUSED) != 0L)
-        assertEquals(AtspiRole.PASSWORD_TEXT, describeFacts(NodeFacts(editableText = "", password = true))!!.role)
-        val many = describeFacts(NodeFacts(editableText = "", multiline = true))!!
-        assertTrue(many.states and AtspiState.bit(AtspiState.MULTI_LINE) != 0L)
+        assertTrue(field.has(AtspiState.EDITABLE))
+        assertTrue(field.has(AtspiState.SINGLE_LINE))
+        assertTrue(field.has(AtspiState.FOCUSED))
+        val password = describeElement(element(ElementRole.FIELD, states = AccessibleState.ENABLED or AccessibleState.PASSWORD))
+        assertEquals(AtspiRole.PASSWORD_TEXT, password.role)
+        val many = describeElement(element(ElementRole.FIELD, states = AccessibleState.ENABLED or AccessibleState.MULTI_LINE))
+        assertTrue(many.has(AtspiState.MULTI_LINE))
+        val readOnly = describeElement(element(ElementRole.FIELD, states = AccessibleState.ENABLED or AccessibleState.READ_ONLY))
+        assertTrue(readOnly.has(AtspiState.READ_ONLY))
+        assertFalse(readOnly.has(AtspiState.EDITABLE), "a read-only field cannot be edited")
     }
 
     @Test
     fun nfr8_linux_a_checkbox_reports_whether_it_is_checked() {
-        val on = describeFacts(NodeFacts(composeRole = "Checkbox", label = "x", toggle = "On", clickable = true))!!
-        val off = describeFacts(NodeFacts(composeRole = "Checkbox", label = "x", toggle = "Off", clickable = true))!!
+        val checkable = AccessibleState.ENABLED or AccessibleState.CHECKABLE
+        val on = describeElement(element(ElementRole.CHECKBOX, states = checkable or AccessibleState.CHECKED))
+        val off = describeElement(element(ElementRole.CHECKBOX, states = checkable))
+        val partial = describeElement(element(ElementRole.CHECKBOX, states = checkable or AccessibleState.MIXED))
         assertEquals(AtspiRole.CHECK_BOX, on.role)
-        assertTrue(on.states and AtspiState.bit(AtspiState.CHECKED) != 0L)
-        assertEquals(0L, off.states and AtspiState.bit(AtspiState.CHECKED))
-        val partial = describeFacts(NodeFacts(composeRole = "Checkbox", label = "x", toggle = "Indeterminate"))!!
-        assertTrue(partial.states and AtspiState.bit(AtspiState.INDETERMINATE) != 0L)
+        assertTrue(on.has(AtspiState.CHECKABLE))
+        assertTrue(on.has(AtspiState.CHECKED))
+        assertTrue(off.has(AtspiState.CHECKABLE))
+        assertFalse(off.has(AtspiState.CHECKED))
+        assertTrue(partial.has(AtspiState.INDETERMINATE))
+        val notCheckable = describeElement(element(ElementRole.BUTTON, states = AccessibleState.ENABLED or AccessibleState.CHECKED))
+        assertFalse(notCheckable.has(AtspiState.CHECKED), "checked says nothing without checkable")
     }
 
     @Test
-    fun nfr8_linux_a_switch_is_a_toggle_button_and_a_tab_is_a_page_tab() {
-        assertEquals(AtspiRole.TOGGLE_BUTTON, describeFacts(NodeFacts(composeRole = "Switch", label = "w", toggle = "On"))!!.role)
-        assertEquals(AtspiRole.PAGE_TAB, describeFacts(NodeFacts(composeRole = "Tab", label = "t", selected = true))!!.role)
-        val tab = describeFacts(NodeFacts(composeRole = "Tab", label = "t", selected = true))!!
-        assertTrue(tab.states and AtspiState.bit(AtspiState.SELECTED) != 0L)
+    fun nfr8_linux_a_tab_is_selectable_and_says_whether_it_is_selected() {
+        val tab = describeElement(element(ElementRole.TAB, states = AccessibleState.ENABLED or AccessibleState.SELECTED))
+        assertTrue(tab.has(AtspiState.SELECTABLE))
+        assertTrue(tab.has(AtspiState.SELECTED))
+        assertFalse(describeElement(element(ElementRole.TAB)).has(AtspiState.SELECTED))
     }
 
     @Test
-    fun nfr8_linux_a_range_is_a_progress_bar_until_it_can_be_moved() {
-        assertEquals(AtspiRole.PROGRESS_BAR, describeFacts(NodeFacts(label = "p", ranged = true))!!.role)
-        assertEquals(AtspiRole.SLIDER, describeFacts(NodeFacts(label = "v", ranged = true, adjustable = true))!!.role)
+    fun nfr8_linux_each_action_the_scene_offers_has_its_atspi_name() {
+        val all = AccessibleAction.PRESS or AccessibleAction.INCREMENT or AccessibleAction.DECREMENT or
+            AccessibleAction.SCROLL_FORWARD or AccessibleAction.SCROLL_BACKWARD or AccessibleAction.SHOW_MENU or
+            AccessibleAction.FOCUS or AccessibleAction.SET_VALUE
+        val names = describeElement(element(ElementRole.SLIDER, actions = all)).actions
+        assertEquals(listOf("click", "increment", "decrement", "scroll-forward", "scroll-backward", "show-menu"), names)
+        for (name in names) assertTrue(accessibleActionNamed(name) != null, name)
+        assertEquals(AccessibleAction.INCREMENT, accessibleActionNamed("increment"))
+        assertNull(accessibleActionNamed("explode"))
     }
 
     @Test
-    fun nfr8_linux_layout_with_nothing_to_say_is_left_out() {
-        assertNull(describeFacts(NodeFacts()))
-        assertNull(describeFacts(NodeFacts(focused = true, canTakeFocus = false)))
+    fun nfr8_linux_records_nest_by_their_parent_ids() {
+        val tree = atspiTreeOf(
+            "w",
+            listOf(
+                AccessibleElement(ElementRole.GROUP, 0f, 0f, 100f, 100f, "card", id = 1),
+                AccessibleElement(ElementRole.BUTTON, 10f, 10f, 20f, 20f, "ok", id = 2, parentId = 1),
+                AccessibleElement(ElementRole.TEXT, 10f, 40f, 20f, 20f, "hi", id = 3, parentId = 1),
+                AccessibleElement(ElementRole.TEXT, 0f, 200f, 20f, 20f, "after", id = 4),
+            ),
+            1f, 300, 300,
+        )
+        assertEquals(listOf(1, 4), tree.roots)
+        assertEquals(listOf(2, 3), tree.nodes.getValue(1).children)
+        assertEquals(1, tree.nodes.getValue(2).parent)
+        assertEquals(AtspiTree.FRAME, tree.nodes.getValue(4).parent)
+    }
+
+    @Test
+    fun nfr8_linux_a_record_whose_parent_is_missing_or_a_loop_is_put_in_the_window() {
+        val tree = atspiTreeOf(
+            "w",
+            listOf(
+                AccessibleElement(ElementRole.TEXT, 0f, 0f, 1f, 1f, "orphan", id = 1, parentId = 99),
+                AccessibleElement(ElementRole.TEXT, 0f, 0f, 1f, 1f, "a", id = 2, parentId = 3),
+                AccessibleElement(ElementRole.TEXT, 0f, 0f, 1f, 1f, "b", id = 3, parentId = 2),
+                AccessibleElement(ElementRole.TEXT, 0f, 0f, 1f, 1f, "self", id = 4, parentId = 4),
+            ),
+            1f, 10, 10,
+        )
+        assertEquals(setOf(1, 2, 3, 4), tree.roots.toSet(), "nothing is dropped and nothing loops")
+        for (node in tree.nodes.values) assertEquals(AtspiTree.FRAME, node.parent)
+    }
+
+    @Test
+    fun nfr8_linux_records_with_no_id_are_numbered_apart_from_the_scenes() {
+        val tree = atspiTreeOf(
+            "w",
+            listOf(
+                AccessibleElement(ElementRole.TEXT, 0f, 0f, 1f, 1f, "a"),
+                AccessibleElement(ElementRole.TEXT, 0f, 0f, 1f, 1f, "b"),
+            ),
+            1f, 10, 10,
+        )
+        assertEquals(listOf(UNNAMED_BASE, UNNAMED_BASE + 1), tree.roots)
+    }
+
+    @Test
+    fun nfr8_linux_points_become_pixels_at_the_windows_scale() {
+        val tree = atspiTreeOf("w", listOf(AccessibleElement(ElementRole.BUTTON, 10f, 20f, 30f, 40f, "b", id = 5)), 2f, 800, 600)
+        val node = tree.nodes.getValue(5)
+        assertEquals(listOf(20, 40, 60, 80), listOf(node.x, node.y, node.width, node.height))
+        assertEquals(800, tree.width)
+    }
+
+    @Test
+    fun nfr8_linux_the_focused_record_is_the_trees_focus() {
+        assertEquals(11, form(focused = 11).focused)
+        assertNull(form().focused)
+    }
+
+    @Test
+    fun nfr8_linux_a_field_holds_its_value_and_a_range_its_numbers() {
+        val tree = atspiTreeOf(
+            "w",
+            listOf(
+                AccessibleElement(
+                    ElementRole.SLIDER, 0f, 0f, 10f, 10f, "Volume", id = 1, value = "40 percent",
+                    actions = AccessibleAction.SET_VALUE, rangeMin = 0f, rangeMax = 100f, rangeValue = 40f,
+                ),
+            ),
+            1f, 10, 10,
+        )
+        val slider = tree.nodes.getValue(1)
+        assertNull(slider.text, "a slider is not a field")
+        assertEquals(AtspiRange(0.0, 100.0, 40.0, "40 percent"), slider.range)
+        assertTrue(slider.settable)
+        assertEquals("한글", form().nodes.getValue(11).text)
     }
 
     @Test
@@ -400,8 +542,7 @@ class AtspiTest {
         assertFalse(harness.bridge.connected)
         assertNull(harness.openedAddress)
         val noSession = AtspiBridge({ null }, { null }, 1000, "x", object : AtspiActions {
-            override fun click(id: Int) = false
-            override fun focus(id: Int) = false
+            override fun perform(id: Int, action: Int, argument: String?) = false
             override fun windowOrigin() = 0 to 0
         })
         assertFalse(noSession.start())
@@ -674,5 +815,124 @@ class AtspiTest {
         harness.bridge.update(form())
         assertEquals(before, harness.a11y.sent.size)
         assertTrue(harness.a11y.signals().isEmpty())
+    }
+
+    // ---- what the records add ----------------------------------------------------------
+
+    private fun sliderHarness(): Harness = Harness().also {
+        assertTrue(it.bridge.start())
+        it.bridge.update(
+            atspiTreeOf(
+                "w",
+                formElements() + AccessibleElement(
+                    ElementRole.SLIDER, 10f, 130f, 100f, 20f, "Volume", id = 14, value = "40 percent",
+                    actions = AccessibleAction.SET_VALUE or AccessibleAction.INCREMENT,
+                    rangeMin = 0f, rangeMax = 100f, rangeValue = 40f,
+                ),
+                1f, 400, 300,
+            ),
+        )
+    }
+
+    private fun Harness.interfaces(path: String): List<String> {
+        val reply = ask(path, AtspiServer.ACCESSIBLE, "GetInterfaces").body
+        val names = mutableListOf<String>()
+        reply.array(4) { names += reply.string() }
+        return names
+    }
+
+    private fun Harness.property(path: String, interfaceName: String, name: String): DBusReader =
+        ask(path, "org.freedesktop.DBus.Properties", "Get", "ss") {
+            string(interfaceName)
+            string(name)
+        }.body
+
+    @Test
+    fun nfr8_linux_a_field_a_reader_may_edit_has_editable_text_and_its_edits_reach_the_scene() {
+        val harness = joined()
+        assertTrue(AtspiServer.EDITABLE_TEXT in harness.interfaces(node(11)))
+        assertFalse(AtspiServer.EDITABLE_TEXT in harness.interfaces(node(13)))
+        assertEquals(1L, harness.ask(node(11), AtspiServer.EDITABLE_TEXT, "SetTextContents", "s") { string("abc") }.body.u32())
+        harness.ask(node(11), AtspiServer.EDITABLE_TEXT, "InsertText", "isi") { u32(1); string("x"); u32(1) }
+        harness.ask(node(11), AtspiServer.EDITABLE_TEXT, "DeleteText", "ii") { u32(0); u32(1) }
+        assertEquals(
+            listOf(
+                Triple(11, AccessibleAction.SET_VALUE, "abc"),
+                Triple(11, AccessibleAction.SET_VALUE, "한x글"),
+                Triple(11, AccessibleAction.SET_VALUE, "글"),
+            ),
+            harness.performed,
+            "every edit is said to the scene as the field's whole new text, counted in characters",
+        )
+    }
+
+    @Test
+    fun nfr8_linux_a_range_answers_through_value_and_takes_a_new_one() {
+        val harness = sliderHarness()
+        assertTrue(AtspiServer.VALUE in harness.interfaces(node(14)))
+        val current = harness.property(node(14), AtspiServer.VALUE, "CurrentValue")
+        assertEquals("d", current.signature())
+        assertEquals(40.0, current.double())
+        val maximum = harness.property(node(14), AtspiServer.VALUE, "MaximumValue")
+        maximum.signature()
+        assertEquals(100.0, maximum.double())
+        val text = harness.property(node(14), AtspiServer.VALUE, "Text")
+        text.signature()
+        assertEquals("40 percent", text.string())
+        val set = harness.ask(node(14), "org.freedesktop.DBus.Properties", "Set", "ssv") {
+            string(AtspiServer.VALUE)
+            string("CurrentValue")
+            variant("d") { double(55.0) }
+        }
+        assertEquals(DBusMessage.METHOD_RETURN, set.type)
+        assertEquals(listOf(Triple(14, AccessibleAction.SET_VALUE, "55.0")), harness.performed)
+        val increment = harness.ask(node(14), AtspiServer.ACTION, "DoAction", "i") { u32(0) }.body.u32()
+        assertEquals(1L, increment)
+        assertEquals(Triple(14, AccessibleAction.INCREMENT, null), harness.performed.last())
+    }
+
+    @Test
+    fun nfr8_linux_a_value_that_changes_is_announced() {
+        val harness = sliderHarness()
+        harness.bridge.update(
+            atspiTreeOf(
+                "w",
+                formElements() + AccessibleElement(
+                    ElementRole.SLIDER, 10f, 130f, 100f, 20f, "Volume", id = 14,
+                    actions = AccessibleAction.SET_VALUE, rangeMin = 0f, rangeMax = 100f, rangeValue = 60f,
+                ),
+                1f, 400, 300,
+            ),
+        )
+        val change = harness.a11y.signals().single { it.kind == "accessible-value" }
+        assertEquals(node(14), change.path)
+    }
+
+    @Test
+    fun nfr8_linux_the_hint_is_the_description() {
+        val harness = joined()
+        val description = harness.property(node(13), AtspiServer.ACCESSIBLE, "Description")
+        description.signature()
+        assertEquals("Saves the profile", description.string())
+    }
+
+    @Test
+    fun nfr8_linux_focus_is_asked_only_of_a_control_that_can_take_it() {
+        val harness = joined()
+        assertEquals(0L, harness.ask(node(10), AtspiServer.COMPONENT, "GrabFocus").body.u32(), "a heading takes no focus")
+        assertTrue(harness.focusRequests.isEmpty())
+    }
+
+    @Test
+    fun nfr8_linux_a_reader_is_listening_once_it_asks_or_the_desktop_says_so() {
+        val quiet = Harness()
+        assertTrue(quiet.bridge.start())
+        assertFalse(quiet.bridge.readerListening, "nobody has asked and the desktop said nothing")
+        quiet.ask(ROOT, AtspiServer.ACCESSIBLE, "GetChildren")
+        assertTrue(quiet.bridge.readerListening, "a question is a reader")
+        val enabled = Harness(statusEnabled = true)
+        assertTrue(enabled.bridge.start())
+        assertTrue(enabled.bridge.readerListening, "org.a11y.Status says assistive technology is on")
+        assertFalse(Harness(sessionAnswers = false).bridge.readerListening)
     }
 }

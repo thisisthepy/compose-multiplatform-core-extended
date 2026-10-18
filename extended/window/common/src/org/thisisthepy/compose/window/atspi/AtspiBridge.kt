@@ -30,6 +30,19 @@ class AtspiBridge(
 
     val connected: Boolean get() = connection != null
 
+    /** Whether the desktop said, when the window joined, that assistive technology is turned on. */
+    private var readerEnabled = false
+
+    /** Whether anything has asked this window a question since it joined. */
+    private var asked = false
+
+    /**
+     * Whether a reader is listening: the desktop says assistive technology is on (the session
+     * bus's `org.a11y.Status`), or a client has already asked this window something. Until one
+     * of them is true, describing the scene is work nobody reads.
+     */
+    val readerListening: Boolean get() = connected && (readerEnabled || asked)
+
     /** What this process is called on the accessibility bus; empty until it has joined. */
     val busName: String get() = server.busName
 
@@ -40,11 +53,13 @@ class AtspiBridge(
             if (call(session, BUS, "Hello", null, ByteArray(0), CALL_TIMEOUT_MILLIS) == null) return false
             val reply = call(session, A11Y_BUS, "GetAddress", null, ByteArray(0), ACTIVATION_TIMEOUT_MILLIS)
                 ?: return false
-            try {
+            val parsed = try {
                 BusAddress.parse(reply.body().string(), userId)
             } catch (_: IndexOutOfBoundsException) {
                 null
             }
+            readerEnabled = status(session, "IsEnabled") || status(session, "ScreenReaderEnabled")
+            parsed
         } finally {
             session.close()
         }
@@ -97,6 +112,7 @@ class AtspiBridge(
         while (true) {
             val bytes = bus.receive(0) ?: return
             val call = AtspiWire.parseCall(bytes) ?: continue
+            asked = true
             val reply = server.handle(call) { ++serial } ?: continue
             if (!bus.send(reply)) {
                 lost()
@@ -178,6 +194,11 @@ class AtspiBridge(
         for ((id, node) in tree.nodes) {
             val before = old.nodes[id] ?: continue
             if (before.name != node.name) signals += server.nameChanged(++serial, id, node.name)
+            if (before.description != node.description) {
+                signals += server.descriptionChanged(++serial, id, node.description)
+            }
+            val value = node.range?.current
+            if (value != null && before.range?.current != value) signals += server.valueChanged(++serial, id, value)
             for (state in TRACKED_STATES) {
                 val was = before.states and AtspiState.bit(state) != 0L
                 val now = node.states and AtspiState.bit(state) != 0L
@@ -188,6 +209,21 @@ class AtspiBridge(
 
     private fun siblings(tree: AtspiTree, parent: Int): List<Int> =
         if (parent == AtspiTree.FRAME) tree.roots else tree.nodes[parent]?.children ?: emptyList()
+
+    /** One boolean of `org.a11y.Status` on the session bus, false where it cannot be read. */
+    private fun status(session: BusConnection, name: String): Boolean {
+        val body = DBusWriter().apply {
+            string("org.a11y.Status")
+            string(name)
+        }.bytes()
+        val reply = call(session, A11Y_STATUS, "Get", "ss", body, CALL_TIMEOUT_MILLIS) ?: return false
+        return try {
+            val reader = reply.body()
+            reader.signature() == "b" && reader.u32() != 0L
+        } catch (_: IndexOutOfBoundsException) {
+            false
+        }
+    }
 
     /** Sends one call and waits for its answer, setting aside anything else that arrives. */
     private fun call(
@@ -229,6 +265,7 @@ class AtspiBridge(
 
         val BUS = Destination("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus")
         val A11Y_BUS = Destination("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus")
+        val A11Y_STATUS = Destination("org.a11y.Bus", "/org/a11y/bus", "org.freedesktop.DBus.Properties")
         val REGISTRY = Destination(
             "org.a11y.atspi.Registry",
             "/org/a11y/atspi/accessible/root",

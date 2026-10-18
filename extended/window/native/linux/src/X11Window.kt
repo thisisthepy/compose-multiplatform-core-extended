@@ -27,7 +27,14 @@ import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.set
 import kotlinx.cinterop.value
 import org.jetbrains.skia.Canvas
+import org.thisisthepy.compose.window.AccessibleElement
+import org.thisisthepy.compose.window.CaptionAction
+import org.thisisthepy.compose.window.CaptionGesture
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.WindowCaption
+import org.thisisthepy.compose.window.WindowEdge
+import org.thisisthepy.compose.window.X11Chrome
+import org.thisisthepy.compose.window.atspi.AtspiWindow
 import org.thisisthepy.compose.window.sizeHintsFor
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.ResizeStats
@@ -96,6 +103,29 @@ class X11Window : WindowPlatform {
     private var resizable = true
     private var openedWidth = 0
     private var openedHeight = 0
+    private var config: WindowConfig? = null
+    private var fullscreen = false
+
+    // The last press of the primary button, in window pixels and on the monotonic clock, which
+    // is where a press in the caption the scene draws was made.
+    private var pressX = 0f
+    private var pressY = 0f
+    private var pressNanos = 0L
+    private val gesture = CaptionGesture()
+
+    /** Whether a frame has been presented, after which the window joins the accessibility bus. */
+    private var presented = false
+
+    /** This window on the AT-SPI bus, published from the records [setAccessibility] is given. */
+    private val accessibility = AtspiWindow(
+        openSession = { PosixBusConnection.open() },
+        openAccessibility = { address -> PosixBusConnection.open(address) },
+        userId = { platform.posix.getuid().toLong() },
+        applicationName = { PosixBusConnection.applicationName() },
+        windowOrigin = { originOnScreen() },
+        requestFrame = { requestFrame() },
+        disabled = getenv("NO_AT_BRIDGE")?.toKString() == "1",
+    )
 
     private var measured = WindowMeasurement(0, 0, DENSITY)
 
@@ -245,6 +275,11 @@ class X11Window : WindowPlatform {
             XSetWMProtocols(display, window, protocols, count)
         }
         XStoreName(display, window, config.title)
+        this.config = config
+        // Before the window is mapped, because a manager decides on the frame when it maps it.
+        if (!X11Chrome.keepsFrame(config)) removeDecorations(display, window)
+        accessibility.listener = listener
+        accessibility.setTitle(config.title)
         measured = WindowMeasurement(config.width, config.height, DENSITY)
         surface = GlSurface(display, window, context)
         xim = XimContext.open(display, window, ime)?.also { input ->
@@ -289,8 +324,12 @@ class X11Window : WindowPlatform {
         }
         drained.clear()
         log.drain(drained)
-        val target = listener ?: return
-        for (event in drained) target.onEvent(event)
+        listener?.let { target -> for (event in drained) target.onEvent(event) }
+        // After the events, so that a reader's action lands after the input that came before
+        // it, and on this thread, which is the one the scene is on.
+        accessibility.setGeometry(measured.width, measured.height, measured.scale)
+        if (presented && !isClosed) accessibility.join()
+        accessibility.pump(isFocused)
     }
 
     /**
@@ -348,6 +387,7 @@ class X11Window : WindowPlatform {
     override fun present(drawnWidth: Int, drawnHeight: Int): FramePresentRecord {
         sync.frameDrawn()
         presentedSinceEvent = true
+        presented = true
         display?.let { XFlush(it) }
         val (width, height) = if (strictResizeAccounting) serverSize() else measured.width to measured.height
         resizeStats.presentAgainst(drawnWidth, drawnHeight, width, height)
@@ -416,6 +456,7 @@ class X11Window : WindowPlatform {
 
     override fun setTitle(title: String) {
         this.title = title
+        accessibility.setTitle(title)
         val display = display ?: return
         XStoreName(display, window, title)
         XFlush(display)
@@ -461,8 +502,135 @@ class X11Window : WindowPlatform {
                 setFullscreen(true)
             }
         }
+        when (visibility) {
+            WindowVisibility.Visible -> fullscreen = false
+            WindowVisibility.Fullscreen -> fullscreen = true
+            else -> {}
+        }
         XFlush(display)
     }
+
+    // The chrome: what the scene draws instead of the window manager's frame, and the moves
+    // and resizes a press in it hands to the manager.
+
+    /**
+     * The caption the scene draws, or none where the window manager draws its own frame. None
+     * while the window is full screen, which has no caption on any desktop.
+     */
+    override fun caption(): WindowCaption =
+        config?.let { X11Chrome.caption(it, fullscreen) } ?: WindowCaption.None
+
+    /**
+     * Hands the move to the window manager, from a press in an empty part of the caption, once
+     * the pointer has moved a few pixels with the button down ([CaptionGesture] says why). A
+     * second press close in time and place to the one before is a double click, which
+     * maximises or restores instead, as a double click on any title bar does.
+     */
+    override fun startMove(): Boolean {
+        if (display == null || isClosed) return false
+        if (gesture.move(pressNanos, pressX, pressY)) performCaptionAction(CaptionAction.ToggleMaximize)
+        return true
+    }
+
+    /** Hands the resize from [edge] to the window manager, from a press at that edge, once the pointer goes. */
+    override fun startResize(edge: WindowEdge): Boolean {
+        if (display == null || isClosed || !resizable) return false
+        gesture.resize(X11Chrome.direction(edge), pressX, pressY)
+        return true
+    }
+
+    override fun performCaptionAction(action: CaptionAction) {
+        val display = display ?: return
+        if (isClosed) return
+        when (action) {
+            CaptionAction.Minimize -> XIconifyWindow(display, window, XDefaultScreen(display))
+            CaptionAction.ToggleMaximize -> memScoped {
+                val event = alloc<XEvent>()
+                event.xclient.type = ClientMessage
+                event.xclient.window = window
+                event.xclient.message_type = XInternAtom(display, "_NET_WM_STATE", 0)
+                event.xclient.format = 32
+                event.xclient.data.l[0] = X11Chrome.STATE_TOGGLE
+                event.xclient.data.l[1] = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_VERT", 0).toLong()
+                event.xclient.data.l[2] = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_HORZ", 0).toLong()
+                event.xclient.data.l[3] = SOURCE_APPLICATION
+                XSendEvent(
+                    display,
+                    XRootWindow(display, XDefaultScreen(display)),
+                    0,
+                    SubstructureRedirectMask or SubstructureNotifyMask,
+                    event.ptr,
+                )
+            }
+            // The way the manager's own close button does it: the listener is asked first.
+            CaptionAction.Close -> if (listener?.onCloseRequested() != false) isClosed = true
+        }
+        XFlush(display)
+    }
+
+    /**
+     * Sends `_NET_WM_MOVERESIZE` in [direction] for the primary button. The position is where
+     * the button was pressed, on the screen, rather than where the pointer is now: the pointer
+     * has already gone a few pixels by the time the drag is handed over, and the manager moves
+     * the window by how far the pointer is from the position it is given. The press holds the
+     * pointer, so it is let go first, or the manager could not take it.
+     */
+    private fun moveResize(direction: Int): Boolean {
+        val display = display ?: return false
+        if (isClosed) return false
+        val (originX, originY) = originOnScreen()
+        val rootX = originX + pressX.toInt()
+        val rootY = originY + pressY.toInt()
+        XUngrabPointer(display, CurrentTime.convert())
+        memScoped {
+            val event = alloc<XEvent>()
+            event.xclient.type = ClientMessage
+            event.xclient.window = window
+            event.xclient.message_type = XInternAtom(display, "_NET_WM_MOVERESIZE", 0)
+            event.xclient.format = 32
+            event.xclient.data.l[0] = rootX.toLong()
+            event.xclient.data.l[1] = rootY.toLong()
+            event.xclient.data.l[2] = direction.toLong()
+            event.xclient.data.l[3] = PRIMARY_BUTTON
+            event.xclient.data.l[4] = SOURCE_APPLICATION
+            XSendEvent(
+                display,
+                XRootWindow(display, XDefaultScreen(display)),
+                0,
+                SubstructureRedirectMask or SubstructureNotifyMask,
+                event.ptr,
+            )
+        }
+        XFlush(display)
+        // The manager has the pointer until it is let go, so the release that ends this press
+        // never reaches the window. The scene is told it happened, or it would believe the
+        // button is still down.
+        log.heard(event(WindowEvent.POINTER_UP, pressX, pressY, 0, 0))
+        return true
+    }
+
+    /** Asks the manager for no frame: `_MOTIF_WM_HINTS` with only the decorations set, to none. */
+    private fun removeDecorations(display: CPointer<Display>, window: Window) {
+        val hints = XInternAtom(display, "_MOTIF_WM_HINTS", 0)
+        memScoped {
+            val words = allocArray<ULongVar>(MOTIF_HINT_WORDS)
+            words[0] = MOTIF_HINTS_DECORATIONS
+            for (index in 1 until MOTIF_HINT_WORDS) words[index] = 0uL
+            XChangeProperty(display, window, hints, hints, 32, PropModeReplace, words.reinterpret(), MOTIF_HINT_WORDS)
+        }
+    }
+
+    // Accessibility: the scene's records, published on the AT-SPI bus.
+
+    override fun setAccessibility(elements: List<AccessibleElement>) = accessibility.setElements(elements)
+
+    override val accessibilityActive: Boolean get() = accessibility.readerListening
+
+    /** What this window is called on the accessibility bus; empty until it has joined. */
+    val accessibilityBusName: String get() = accessibility.busName
+
+    /** Joins the accessibility bus now rather than after the first frame, for a test with nothing to draw. */
+    fun joinAccessibility(): Boolean = accessibility.join()
 
     private fun setFullscreen(on: Boolean) {
         val display = display ?: return
@@ -627,6 +795,7 @@ class X11Window : WindowPlatform {
     }
 
     override fun close() {
+        accessibility.close()
         val display = display ?: return
         isClosed = true
         xim?.close()
@@ -676,15 +845,25 @@ class X11Window : WindowPlatform {
         val taken = xim?.filter(event) == true
         if (taken && (event.type == KeyPress || event.type == KeyRelease)) return
         when (event.type) {
-            MotionNotify -> log.heard(
-                event(
-                    WindowEvent.POINTER_MOVE,
-                    event.xmotion.x.toFloat(),
-                    event.xmotion.y.toFloat(),
-                    buttonsOf(event.xmotion.state),
-                    modifiersOf(event.xmotion.state),
-                ),
-            )
+            MotionNotify -> {
+                log.heard(
+                    event(
+                        WindowEvent.POINTER_MOVE,
+                        event.xmotion.x.toFloat(),
+                        event.xmotion.y.toFloat(),
+                        buttonsOf(event.xmotion.state),
+                        modifiersOf(event.xmotion.state),
+                    ),
+                )
+                if (gesture.waiting) {
+                    if (event.xmotion.state.toLong() and Button1Mask.toLong() == 0L) {
+                        gesture.released()
+                    } else {
+                        val direction = gesture.moved(event.xmotion.x.toFloat(), event.xmotion.y.toFloat())
+                        if (direction != CaptionGesture.NONE) moveResize(direction)
+                    }
+                }
+            }
 
             ButtonPress, ButtonRelease -> {
                 val button = event.xbutton.button.toInt()
@@ -710,6 +889,12 @@ class X11Window : WindowPlatform {
                         )
                     }
                 } else {
+                    if (event.type == ButtonPress && button == 1) {
+                        pressX = event.xbutton.x.toFloat()
+                        pressY = event.xbutton.y.toFloat()
+                        pressNanos = monotonicClockNanos()
+                    }
+                    if (event.type == ButtonRelease && button == 1) gesture.released()
                     val bit = when (button) {
                         1 -> 1
                         3 -> 2
@@ -843,6 +1028,10 @@ class X11Window : WindowPlatform {
             0L
         const val SOURCE_APPLICATION = 1L
         const val SOURCE_PAGER = 2L
+        const val PRIMARY_BUTTON = 1L
+        const val MOTIF_HINT_WORDS = 5
+        /** The flags word of `_MOTIF_WM_HINTS`: only the decorations field is meant. */
+        const val MOTIF_HINTS_DECORATIONS = 2uL
         const val DENSITY = 1.0f
         const val WAKE_DRAIN_BYTES = 64
         const val CONFIRM_TIMEOUT_NANOS = 1_000_000_000L
