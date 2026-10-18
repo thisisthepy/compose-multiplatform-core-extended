@@ -165,6 +165,9 @@ class ComposeWindowHost(
         theme = platform.systemTheme()
         val measured = platform.measure()
         size = IntSize(measured.width, measured.height)
+        // Before the scene: its constructor starts Compose's global snapshot observer on the
+        // main dispatcher, which Compose asks for once.
+        useAsComposeMainDispatcher(work)
         val created = CanvasLayersComposeScene(
             density = Density(measured.scale),
             size = size,
