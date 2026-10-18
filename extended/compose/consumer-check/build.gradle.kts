@@ -56,6 +56,22 @@ kotlin {
         implementation("org.thisisthepy.compose.window:scene:$forkVersion")
         implementation("org.thisisthepy.compose.window:native-macos:$forkVersion")
     }
+    // native-linux, and native-linux-scene wherever this checkout has that module: both are
+    // published per architecture by extended/window/scripts/publish-native-linux.sh.
+    val linuxScene = rootDir.resolve("../../window/native/linux-scene/module.yaml").isFile
+    for (target in listOf("linuxX64", "linuxArm64").filter { withWindow && it in wantedTargets }) {
+        sourceSets.getByName("${target}Main").dependencies {
+            implementation("org.thisisthepy.compose.window:native-linux:$forkVersion")
+            // scene builds for Linux from the same change that adds native-linux-scene.
+            if (linuxScene) {
+                implementation("org.thisisthepy.compose.window:scene:$forkVersion")
+                implementation("org.thisisthepy.compose.window:native-linux-scene:$forkVersion")
+            }
+        }
+    }
+    if (withWindow && "mingwX64" in wantedTargets) sourceSets.mingwX64Main.dependencies {
+        implementation("org.thisisthepy.compose.window:windows-shared:$forkVersion")
+    }
 }
 
 // JetBrains' Compose that carries classes: foundation, ui, animation, material, material3 and

@@ -180,6 +180,7 @@ jobs:
         with:
           sparse-checkout: |
             extended/compose
+            extended/window/native
             gradle.properties
 
       - uses: actions/setup-java@v4
