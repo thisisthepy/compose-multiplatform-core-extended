@@ -9,21 +9,23 @@
 // JetBrains' org.jetbrains.compose.runtime is allowed: its runtime and runtime-saveable are stubs
 // with no classes that point at androidx.compose.runtime, as the fork's are, and JetBrains'
 // lifecycle and savedstate libraries ask for them by that name.
+import java.util.zip.ZipFile
+
 plugins {
     kotlin("multiplatform") version "2.3.20"
 }
 
 val forkVersion = providers.gradleProperty("forkVersion").orNull ?: "1.11.1-ext.1"
-val targets = (providers.gradleProperty("targets").orNull ?: "jvm,macosArm64,linuxX64,linuxArm64,mingwX64")
+val wantedTargets = (providers.gradleProperty("targets").orNull ?: "jvm,macosArm64,linuxX64,linuxArm64,mingwX64")
     .split(",").map { it.trim() }.filter { it.isNotEmpty() }
 val withWindow = providers.gradleProperty("window").orNull?.toBoolean() ?: true
 
 kotlin {
-    if ("jvm" in targets) jvm()
-    if ("macosArm64" in targets) macosArm64()
-    if ("linuxX64" in targets) linuxX64()
-    if ("linuxArm64" in targets) linuxArm64()
-    if ("mingwX64" in targets) mingwX64()
+    if ("jvm" in wantedTargets) jvm()
+    if ("macosArm64" in wantedTargets) macosArm64()
+    if ("linuxX64" in wantedTargets) linuxX64()
+    if ("linuxArm64" in wantedTargets) linuxArm64()
+    if ("mingwX64" in wantedTargets) mingwX64()
 
     sourceSets.commonMain.dependencies {
         implementation("org.thisisthepy.compose.foundation:foundation:$forkVersion")
@@ -31,14 +33,14 @@ kotlin {
         implementation("org.thisisthepy.compose.material3:material3:$forkVersion")
         if (withWindow) implementation("org.thisisthepy.compose.window:common:$forkVersion")
     }
-    if (withWindow && "jvm" in targets) sourceSets.jvmMain.dependencies {
+    if (withWindow && "jvm" in wantedTargets) sourceSets.jvmMain.dependencies {
         implementation("org.thisisthepy.compose.window:scene:$forkVersion")
         implementation("org.thisisthepy.compose.window:graalvm-macos:$forkVersion")
         implementation("org.thisisthepy.compose.window:graalvm-linux:$forkVersion")
         implementation("org.thisisthepy.compose.desktop:desktop:$forkVersion")
         implementation("org.thisisthepy.compose.skiko:skiko-awt:$forkVersion")
     }
-    if (withWindow && "macosArm64" in targets) sourceSets.macosArm64Main.dependencies {
+    if (withWindow && "macosArm64" in wantedTargets) sourceSets.macosArm64Main.dependencies {
         implementation("org.thisisthepy.compose.window:scene:$forkVersion")
         implementation("org.thisisthepy.compose.window:native-macos:$forkVersion")
     }
@@ -54,7 +56,7 @@ configurations.configureEach {
 }
 
 tasks.register("checkResolution") {
-    val names = targets.flatMap { target ->
+    val names = wantedTargets.flatMap { target ->
         when (target) {
             "jvm" -> listOf("jvmRuntimeClasspath", "jvmCompileClasspath")
             else -> listOf("${target}CompileKlibraries")
@@ -79,13 +81,13 @@ tasks.register("checkResolution") {
         // (JetBrains' org.jetbrains.compose.runtime and the fork's org.thisisthepy.compose.runtime)
         // are stubs that point at androidx.compose.runtime; the classes must come from exactly one
         // jar, androidx.compose.runtime:runtime-desktop, and no androidx.compose class from two.
-        if ("jvm" in targets) {
+        if ("jvm" in wantedTargets) {
             val artifacts = configurations.getByName("jvmRuntimeClasspath").incoming.artifacts.artifacts
             val owners = mutableMapOf<String, MutableSet<String>>()
             for (artifact in artifacts) {
                 val file = artifact.file
                 if (!file.name.endsWith(".jar")) continue
-                java.util.zip.ZipFile(file).use { zip ->
+                ZipFile(file).use { zip ->
                     for (entry in zip.entries()) {
                         val name = entry.name
                         if (name.startsWith("androidx/compose/") && name.endsWith(".class") && !name.startsWith("META-INF")) {
