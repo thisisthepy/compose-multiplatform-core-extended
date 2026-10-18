@@ -99,7 +99,7 @@ jobs:
         run: |
           set -euo pipefail
           symbols="$(MSYS_NO_PATHCONV=1 dumpbin /nologo /symbols out/dxc_win32_window.lib | tr -d '\r')"
-          for name in wake window_origin window_focused ime_reset resize_serial window_server_size debug_resize frame_time_nanos; do
+          for name in wake window_origin window_focused ime_reset resize_serial window_server_size debug_resize frame_time_nanos window_title_bar window_chrome accessibility_active take_accessibility_argument; do
             grep -qE "External +\| dxc_native_$name\$" <<<"$symbols" || {
               echo "win32_window.c defines no dxc_native_$name" >&2
               exit 1

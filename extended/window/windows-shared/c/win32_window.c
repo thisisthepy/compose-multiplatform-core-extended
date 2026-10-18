@@ -4120,3 +4120,15 @@ void dxc_native_window_chrome(
     (void)title_hidden;
     (void)unified_toolbar;
 }
+
+// macOS only, like the two above: the accessibility bridge's calls. No reader is listening
+// through them here, and there is no value waiting.
+int32_t dxc_native_accessibility_active(void) {
+    return 0;
+}
+
+int32_t dxc_native_take_accessibility_argument(char *out, int32_t capacity) {
+    (void)out;
+    (void)capacity;
+    return -1;
+}
