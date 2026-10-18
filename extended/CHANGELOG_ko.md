@@ -24,3 +24,6 @@
 - 두 Linux 창에 `startMove`, `startResize`, `performCaptionAction` 이 생겼습니다.
   `_NET_WM_MOVERESIZE` 와 `_NET_WM_STATE` 를 쓰며, 캡션을 더블 클릭하면 최대화하거나 되돌립니다
   ([#149](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/149)).
+- `native/linux-scene` (새 모듈, `org.thisisthepy.compose.window:native-linux-scene`): Kotlin/Native X11
+  창에서 `ComposeWindowHost` 가 그리는 표면 `x11WindowSurface` 입니다. 창의 새 `makeCurrent()` 와
+  `resizePainter` 를 씁니다 ([#149](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/149)).

@@ -111,6 +111,7 @@ Windows 에서 Skia 는 실행 파일 옆의 `icudtl.dat` 를 찾고, 없으면 
 | `scene` | `org.thisisthepy.compose.window:scene` | JVM, `macosArm64`, `linuxX64`, `linuxArm64` | `WindowPlatform` 으로 연 창에 Compose 장면을 올립니다. 프레임 루프, Compose 의 플랫폼 텍스트 입력을 거치는 포인터, 키, IME 텍스트, 캡션(`LocalWindowCaption`, 플랫폼이 창 버튼을 그리지 않을 때 그리는 버튼, 그 버튼과 가장자리로 하는 이동과 크기 조절), 그리고 읽는 프로그램이 들을 때 플랫폼의 접근성 다리로 넘기는 semantics 와 그 프로그램이 요청한 동작의 실행 |
 | `native/macos` | `org.thisisthepy.compose.window:native-macos` | `macosArm64` | Kotlin/Native 창: AppKit, Metal, 네이티브 텍스트 메뉴와 편집 메뉴, 창 크롬 |
 | `native/linux` | `org.thisisthepy.compose.window:native-linux` | `linuxX64`, `linuxArm64` | Kotlin/Native 창: Xlib, GLX, XIM, D-Bus 위의 AT-SPI |
+| `native/linux-scene` | `org.thisisthepy.compose.window:native-linux-scene` | `linuxX64`, `linuxArm64` | Kotlin/Native X11 창에서 `scene`이 그리는 GL 표면 `x11WindowSurface`. 창이 장면을 링크하지 않도록 `native/linux` 와 따로 둡니다 |
 | `graalvm/graalvm-macos` | `org.thisisthepy.compose.window:graalvm-macos` | JVM (native image) | native image 용 AppKit 창: `appkit_window.m` 과 그 Kotlin 쪽, 그리고 `scene`이 그리는 Metal 표면 `appKitWindowSurface` |
 | `graalvm/graalvm-linux` | `org.thisisthepy.compose.window:graalvm-linux` | JVM (native image) | native image 용 X11 창: `x11_window.c` 와 그 Kotlin 쪽, 그리고 `scene`이 그리는 GL 표면 `x11WindowSurface` |
 

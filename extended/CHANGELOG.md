@@ -37,5 +37,6 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   records. `AtspiSemanticsSource`, `NodeFacts`, `describeFacts` and graalvm-linux's
   `X11Accessibility` are removed, and `AtspiActions` is `perform(id, action, argument)` and
   `windowOrigin()`. (#149)
-- `native/linux`: `X11Window.resizePainter` and `makeCurrent()`, for a scene host that draws
-  through a surface of its own. (#149)
+- `native/linux-scene` (new, `org.thisisthepy.compose.window:native-linux-scene`): `x11WindowSurface`,
+  where `ComposeWindowHost` draws on the Kotlin/Native X11 window, through the window's new
+  `makeCurrent()` and `resizePainter`. (#149)
