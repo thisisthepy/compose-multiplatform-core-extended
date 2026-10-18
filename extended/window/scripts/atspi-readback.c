@@ -10,8 +10,9 @@
  * Finds the frame called <frame name> among the desktop's applications, walks everything under
  * it and requires, for each --expect, an object with that role and that name. Roles are named
  * as libatspi names them (entry, push button, label, check box, password text, ...).
- * --text requires the object of that name to hold that text through the Text interface;
- * --set replaces it through EditableText; --press does its first action. The walk is tried
+ * --text requires the object of that name that has the Text interface to hold that text;
+ * --set replaces the text of the one of that name with EditableText; --press does the first
+ * action of the one of that name with actions. The walk is tried
  * again until it succeeds or the timeout (default 20 seconds) runs out, because a window may
  * publish its tree after it joins. Prints every object it found; exits 0 when every
  * requirement holds and 1 otherwise.
@@ -119,12 +120,22 @@ static AtspiAccessible *find_frame(const char *frame_name) {
     return result;
 }
 
-static struct found *named(const char *name) {
+/*
+ * The first object called [name] that [has] answers for, or NULL. A label and the field it
+ * names are both called by the label's text, and only one of them takes text or a press.
+ */
+static gpointer named(const char *name, gpointer (*has)(AtspiAccessible *)) {
     for (int i = 0; i < found_count; i++) {
-        if (strcmp(found[i].name, name) == 0) return &found[i];
+        if (strcmp(found[i].name, name) != 0) continue;
+        gpointer iface = has(found[i].object);
+        if (iface != NULL) return iface;
     }
     return NULL;
 }
+
+static gpointer text_of(AtspiAccessible *object) { return atspi_accessible_get_text_iface(object); }
+static gpointer editable_of(AtspiAccessible *object) { return atspi_accessible_get_editable_text_iface(object); }
+static gpointer action_of(AtspiAccessible *object) { return atspi_accessible_get_action_iface(object); }
 
 /* Splits "left<separator>right" into two new strings. */
 static int split(const char *pair, char separator, char **left, char **right) {
@@ -163,8 +174,7 @@ static int check_texts(void) {
     for (int i = 0; i < text_count; i++) {
         char *name = NULL, *value = NULL;
         if (!split(texts[i], '=', &name, &value)) exit(2);
-        struct found *object = named(name);
-        AtspiText *text = object != NULL ? atspi_accessible_get_text_iface(object->object) : NULL;
+        AtspiText *text = named(name, text_of);
         if (text == NULL) {
             fprintf(stderr, "atspi-readback: FAIL: \"%s\" has no Text interface\n", name);
             ok = 0;
@@ -193,8 +203,7 @@ static int do_sets(void) {
     for (int i = 0; i < set_count; i++) {
         char *name = NULL, *value = NULL;
         if (!split(sets[i], '=', &name, &value)) exit(2);
-        struct found *object = named(name);
-        AtspiEditableText *editable = object != NULL ? atspi_accessible_get_editable_text_iface(object->object) : NULL;
+        AtspiEditableText *editable = named(name, editable_of);
         GError *error = NULL;
         gboolean done = editable != NULL && atspi_editable_text_set_text_contents(editable, value, &error);
         if (!done || error != NULL) {
@@ -215,8 +224,7 @@ static int do_sets(void) {
 static int do_presses(void) {
     int ok = 1;
     for (int i = 0; i < press_count; i++) {
-        struct found *object = named(presses[i]);
-        AtspiAction *action = object != NULL ? atspi_accessible_get_action_iface(object->object) : NULL;
+        AtspiAction *action = named(presses[i], action_of);
         GError *error = NULL;
         gboolean done = action != NULL && atspi_action_do_action(action, 0, &error);
         if (!done || error != NULL) {
