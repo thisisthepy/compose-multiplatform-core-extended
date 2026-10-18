@@ -119,6 +119,32 @@ Windows 에서 Skia 는 실행 파일 옆의 `icudtl.dat` 를 찾고, 없으면 
 아직 공개 저장소에 올린 것은 없습니다. Windows 창 `windows-shared` 는 [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32) 에서
 열려 있습니다.
 
+#### macOS 제목 표시줄과 접근성
+
+두 macOS 창, `native/macos` 와 `graalvm/graalvm-macos` 는 같은 두 `WindowConfig` 옵션으로
+`common` 의 한 규칙(`MacosTitleBar.of`)에 따라 제목 표시줄을 만듭니다. 그래서 같은 설정이면 어느
+경로에서든 모서리, 버튼, 콘텐츠 시작 높이가 같습니다.
+
+| `chrome` | `titleBar` | 창의 모양 |
+|---|---|---|
+| `WindowChrome.Modern` (기본값) | `TitleBarStyle.Normal` (기본값) | 콘텐츠가 투명한 제목 표시줄 아래까지 이어집니다. 제목은 앱 전환기를 위해 가지고 있지만 그리지 않습니다. 시스템의 닫기, 최소화, 확대 버튼은 그대로 있고, 통합 툴바가 두는 자리만큼 안쪽에 놓입니다. |
+| `WindowChrome.Modern` | `TitleBarStyle.Simple` | 같은 모양에, 기본 제목 표시줄의 높이, 버튼 자리, 모서리 반지름을 씁니다. |
+| `WindowChrome.System` | 무관 | 시스템의 제목 표시줄을 쓰고, 제목을 그리며, 콘텐츠는 그 아래에서 시작합니다. |
+
+`WindowPlatform.caption()` 은 피해야 할 띠를 포인트 단위로 알려 줍니다. 표시줄 높이, 앞쪽 끝에서
+버튼이 차지하는 폭, 창 모서리 반지름입니다. 버튼은 시스템의 것이므로 `buttonsDrawnByScene` 은
+false 입니다. AppKit 에는 창 모서리 반지름을 알려 주는 공개 API 가 없으므로, 반지름은 러너가 있는
+릴리스마다 CI 에서 잰 표에서 가져옵니다. macOS 14 와 15 는 두 스타일 모두 10.25 pt, macOS 26 은
+`Normal` 이 26.75 pt, `Simple` 이 16.75 pt 입니다. 비공개 API 는 쓰지 않습니다.
+
+`WindowPlatform.setAccessibility(elements)` 는 `AccessibleElement` 하나마다 AppKit 접근성 요소
+하나를 VoiceOver 에 줍니다. 요소는 `parentId` 로 중첩되고, 역할과 하위 역할, 레이블, 값, 범위, 힌트,
+사용 가능, 포커스, 선택 상태를 가집니다. 요소 객체는 `id` 가 같은 동안 유지됩니다. 읽기 프로그램의
+누르기, 증가, 감소, 메뉴, 값 바꾸기(필드의 텍스트나 슬라이더의 값), 포커스 요청, 스크롤은
+펌프하는 스레드에서 `WindowListener.onAccessibilityAction(id, action, argument)` 으로 옵니다.
+`accessibilityActive` 는 읽기 프로그램이 창에 무엇이든 물었거나 VoiceOver 가 켜져 있으면 true 가
+되므로, 듣는 이가 없는 동안 장면은 자신을 설명하는 일을 건너뛸 수 있습니다.
+
 ### Windows 창 크롬 (계획)
 
 `feature/windows-window-chrome` 브랜치는 Windows 용 Compose 창 프로시저를 정적 skiko 아카이브에
