@@ -103,6 +103,33 @@ interface WindowPlatform {
     /** Shows a context menu at the pointer. The answer arrives at [WindowListener.onContextMenuChosen]. */
     fun showContextMenu(items: List<ContextMenuItem>)
 
+    /**
+     * The window's caption as it is now, in points: what the content steps clear of, and whether
+     * the scene draws the buttons. Read by the scene before each frame, so a change of style,
+     * scale or full screen reaches the content on the next one. The default is no caption.
+     */
+    fun caption(): WindowCaption = WindowCaption.None
+
+    /**
+     * What the window tells a reader who cannot see it: the scene's semantics, flattened, in
+     * window points. Pushed by the scene whenever it changes (see [AccessibilityCache]); the
+     * platform answers the system's questions from the last list it was given. The default
+     * keeps nothing, for a platform with no accessibility bridge yet.
+     */
+    fun setAccessibility(elements: List<AccessibleElement>) {}
+
+    /**
+     * Starts moving the window under the pointer, from a press in an empty part of a caption
+     * the scene draws. Returns false where the platform moves the window itself or cannot.
+     */
+    fun startMove(): Boolean = false
+
+    /** Starts resizing the window from [edge], from a press at that edge. False where the platform does it itself. */
+    fun startResize(edge: WindowEdge): Boolean = false
+
+    /** Does what a caption button the scene drew asks: minimise, maximise or restore, close. */
+    fun performCaptionAction(action: CaptionAction) {}
+
     /** Destroys the window and everything the layer holds for it. */
     fun close()
 }
