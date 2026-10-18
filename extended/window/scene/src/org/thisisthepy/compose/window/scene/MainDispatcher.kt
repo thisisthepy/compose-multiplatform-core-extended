@@ -10,3 +10,13 @@ import kotlinx.coroutines.CoroutineDispatcher
  * frames, so the host's dispatcher has to be the answer.
  */
 internal expect fun useAsComposeMainDispatcher(dispatcher: CoroutineDispatcher)
+
+/**
+ * Compose's main-thread work for every host in the process, run by whichever host turns next.
+ *
+ * Compose has one main dispatcher, not one per window, and keeps it for the life of the process.
+ * Were it one host's own, the work would stop when that host closed, and a second window's scene
+ * would stop seeing state changes made outside its composition. Every host drains this one in
+ * its turn instead, so the work runs while any window is open.
+ */
+internal val sceneMainWork = FrameDispatcher()
