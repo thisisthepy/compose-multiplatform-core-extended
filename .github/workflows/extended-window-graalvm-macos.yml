@@ -11,12 +11,14 @@ on:
   pull_request:
     paths:
       - extended/window/**
+      - .github/actions/fork-compose/**
       - .github/workflows/extended-window-graalvm-macos.yml
   push:
     branches:
       - extended
     paths:
       - extended/window/**
+      - .github/actions/fork-compose/**
       - .github/workflows/extended-window-graalvm-macos.yml
 
 concurrency:
@@ -37,7 +39,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: extended/window
+          sparse-checkout: |
+            extended/window
+            extended/compose
+            .github/actions
           filter: blob:none
 
       - name: The module names no java.awt
@@ -96,6 +101,23 @@ jobs:
           key: extended-window-${{ runner.os }}-${{ hashFiles('extended/window/**/module.yaml', 'extended/window/kotlin') }}
           restore-keys: |
             extended-window-${{ runner.os }}-
+
+      # MetalWindowSurface and GlWindowSurface compile against the scene module, which compiles
+      # against this fork's foundation and UI. Nothing public has those, so they are published
+      # here first, for the JVM only.
+      - name: This fork's Compose for the JVM
+        uses: ./.github/actions/fork-compose
+        with:
+          targets: desktop
+
+      # The toolchain resolves every platform a module declares, and the scene declares
+      # macosArm64 too. These modules are JVM ones, so the scene is built as one here.
+      - name: The scene as a JVM module on this runner
+        working-directory: extended/window
+        shell: bash
+        run: |
+          perl -0pi -e 's/^  platforms: \[ jvm, macosArm64 \]$/  platforms: [ jvm ]/m' scene/module.yaml
+          grep -q '^  platforms: \[ jvm \]$' scene/module.yaml
 
       - name: Compile the Kotlin wrapper
         run: ./kotlin build -p jvm -m graalvm-macos

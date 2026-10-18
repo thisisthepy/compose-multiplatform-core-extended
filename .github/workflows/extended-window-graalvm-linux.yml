@@ -7,11 +7,13 @@ on:
   pull_request:
     paths:
       - extended/window/**
+      - .github/actions/fork-compose/**
       - .github/workflows/extended-window-graalvm-linux.yml
   push:
     branches: [ extended ]
     paths:
       - extended/window/**
+      - .github/actions/fork-compose/**
       - .github/workflows/extended-window-graalvm-linux.yml
 
 concurrency:
@@ -28,7 +30,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: extended/window
+          sparse-checkout: |
+            extended/window
+            extended/compose
+            .github/actions
+          filter: blob:none
 
       - uses: actions/setup-java@v4
         with:
@@ -68,6 +74,15 @@ jobs:
           cc -O1 -Wall -o build/resize_test test/c/resize_test.c -lX11 -lXext -lGL
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/resize_test
 
+      - name: A resize through a window manager that honours the sync counter (openbox, under a virtual display)
+        working-directory: extended/window/graalvm/graalvm-linux
+        env:
+          WM_DRAG_SCRIPT: ${{ github.workspace }}/extended/window/scripts/wm-drag.sh
+        run: |
+          sudo apt-get install -y openbox xdotool x11-utils
+          cc -O1 -Wall -pthread -o build/wm_resize_test test/c/wm_resize_test.c -lX11 -lXext -lGL
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/wm_resize_test | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: The semantics reader is the Kotlin/Native window's, unchanged
         working-directory: extended/window
         run: |
@@ -84,6 +99,23 @@ jobs:
             echo "java.awt is not allowed in this module" >&2
             exit 1
           fi
+
+      # MetalWindowSurface and GlWindowSurface compile against the scene module, which compiles
+      # against this fork's foundation and UI. Nothing public has those, so they are published
+      # here first, for the JVM only.
+      - name: This fork's Compose for the JVM
+        uses: ./.github/actions/fork-compose
+        with:
+          targets: desktop
+
+      # The toolchain resolves every platform a module declares, and the scene declares
+      # macosArm64 too. These modules are JVM ones, so the scene is built as one here.
+      - name: The scene as a JVM module on this runner
+        working-directory: extended/window
+        shell: bash
+        run: |
+          perl -0pi -e 's/^  platforms: \[ jvm, macosArm64 \]$/  platforms: [ jvm ]/m' scene/module.yaml
+          grep -q '^  platforms: \[ jvm \]$' scene/module.yaml
 
       - name: Compile and test the Kotlin
         working-directory: extended/window

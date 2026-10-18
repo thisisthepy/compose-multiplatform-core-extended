@@ -113,8 +113,8 @@ Windows 에서 Skia 는 실행 파일 옆의 `icudtl.dat` 를 찾고, 없으면 
 | `scene` | `org.thisisthepy.compose.window:scene` | JVM, `macosArm64` | `WindowPlatform` 으로 연 창에 Compose 장면을 올립니다. 프레임 루프, 그리고 Compose 의 플랫폼 텍스트 입력을 거치는 포인터, 키, IME 텍스트 |
 | `native/macos` | `org.thisisthepy.compose.window:native-macos` | `macosArm64` | Kotlin/Native 창: AppKit, Metal, 네이티브 텍스트 메뉴와 편집 메뉴, 창 크롬 |
 | `native/linux` | `org.thisisthepy.compose.window:native-linux` | `linuxX64`, `linuxArm64` | Kotlin/Native 창: Xlib, GLX, XIM, D-Bus 위의 AT-SPI |
-| `graalvm/graalvm-macos` | `org.thisisthepy.compose.window:graalvm-macos` | JVM (native image) | native image 용 AppKit 창: `appkit_window.m` 과 그 Kotlin 쪽 |
-| `graalvm/graalvm-linux` | `org.thisisthepy.compose.window:graalvm-linux` | JVM (native image) | native image 용 X11 창: `x11_window.c` 와 그 Kotlin 쪽 |
+| `graalvm/graalvm-macos` | `org.thisisthepy.compose.window:graalvm-macos` | JVM (native image) | native image 용 AppKit 창: `appkit_window.m` 과 그 Kotlin 쪽, 그리고 `scene`이 그리는 Metal 표면 `appKitWindowSurface` |
+| `graalvm/graalvm-linux` | `org.thisisthepy.compose.window:graalvm-linux` | JVM (native image) | native image 용 X11 창: `x11_window.c` 와 그 Kotlin 쪽, 그리고 `scene`이 그리는 GL 표면 `x11WindowSurface` |
 
 버전은 모두 포크의 한 버전 `1.11.1-ext.1` 입니다. "Extended window publish" 워크플로가 compose-rust 가 쓰는 방식대로 이를
 로컬 Maven 저장소에 배포합니다. `native/linux` 는 [#111](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/111) 에서 여기에 더해집니다.

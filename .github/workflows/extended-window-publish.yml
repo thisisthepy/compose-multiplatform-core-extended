@@ -39,11 +39,14 @@ jobs:
             modules: "common scene native/macos graalvm/graalvm-macos graalvm/graalvm-linux"
             compose: "desktop macosArm64"
           # The scene is published from macOS only: it compiles against this fork's Compose
-          # for macosArm64 as well as the JVM, and only a Mac builds the former.
+          # for macosArm64 as well as the JVM, and only a Mac builds the former. The GraalVM
+          # modules compile their window surfaces against it, so on Linux it is in the project
+          # as a JVM module (scene_jvm_only) and what it publishes stays on this runner.
           - os: ubuntu-24.04
-            modules: "common graalvm/graalvm-macos graalvm/graalvm-linux"
-            compose: "linuxX64 linuxArm64"
+            modules: "common scene graalvm/graalvm-macos graalvm/graalvm-linux"
+            compose: "desktop linuxX64 linuxArm64"
             compose_linux: true
+            scene_jvm_only: true
     runs-on: ${{ matrix.os }}
     timeout-minutes: 300
     defaults:
@@ -81,6 +84,13 @@ jobs:
         uses: ./.github/actions/fork-compose
         with:
           targets: ${{ matrix.compose }}
+
+      - name: The scene as a JVM module on this runner
+        if: ${{ matrix.scene_jvm_only }}
+        shell: bash
+        run: |
+          perl -0pi -e 's/^  platforms: \[ jvm, macosArm64 \]$/  platforms: [ jvm ]/m' scene/module.yaml
+          grep -q '^  platforms: \[ jvm \]$' scene/module.yaml
 
       - name: Publish to the local repository
         shell: bash

@@ -5,6 +5,13 @@ dependencies:
   # Annotations and C interop types for @CFunction and @CEntryPoint. The native-image
   # builder supplies them at image build time, so they are not bundled.
   - org.graalvm.sdk:nativeimage:25.0.1: compile-only
+  # The scene's WindowSurface, which MetalWindowSurface/GlWindowSurface implement, and Skia
+  # through it. Compiled against only: an application that hosts a scene depends on the scene
+  # module itself, and one that only opens a window never loads the surface.
+  - ../../scene: compile-only
+  # Skia's classes, which a compile-only module does not pass on. The application's own
+  # skiko-awt is the one it runs with.
+  - org.jetbrains.skiko:skiko-awt:0.144.6: compile-only
   # The semantics reader for AT-SPI reads Compose's semantics tree. The renderer that hosts
   # the window brings Compose UI itself, at the version it is built with, so this module only
   # compiles against it and does not choose one for it. No @Composable is declared here, so

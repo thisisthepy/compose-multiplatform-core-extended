@@ -111,8 +111,8 @@ says so), so any Compose application can open a window through it.
 | `scene` | `org.thisisthepy.compose.window:scene` | JVM, `macosArm64` | Hosts a Compose scene in a window opened through `WindowPlatform`: the frame loop, and pointer, key and IME text routed through Compose's platform text input |
 | `native/macos` | `org.thisisthepy.compose.window:native-macos` | `macosArm64` | The Kotlin/Native window: AppKit, Metal, the native text and edit menus, the window chrome |
 | `native/linux` | `org.thisisthepy.compose.window:native-linux` | `linuxX64`, `linuxArm64` | The Kotlin/Native window: Xlib, GLX, XIM, and AT-SPI over D-Bus |
-| `graalvm/graalvm-macos` | `org.thisisthepy.compose.window:graalvm-macos` | JVM (native image) | The AppKit window for a native image: `appkit_window.m` and its Kotlin side |
-| `graalvm/graalvm-linux` | `org.thisisthepy.compose.window:graalvm-linux` | JVM (native image) | The X11 window for a native image: `x11_window.c` and its Kotlin side |
+| `graalvm/graalvm-macos` | `org.thisisthepy.compose.window:graalvm-macos` | JVM (native image) | The AppKit window for a native image: `appkit_window.m` and its Kotlin side, and `appKitWindowSurface`, the Metal surface a `scene` draws into |
+| `graalvm/graalvm-linux` | `org.thisisthepy.compose.window:graalvm-linux` | JVM (native image) | The X11 window for a native image: `x11_window.c` and its Kotlin side, and `x11WindowSurface`, the GL surface a `scene` draws into |
 
 Each is at the fork's one version, `1.11.1-ext.1`. The "Extended window publish" workflow publishes them to the local
 Maven repository the way compose-rust consumes them; `native/linux` joins it in

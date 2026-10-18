@@ -13,6 +13,28 @@ static int failures;
 #define CHECK(condition, message) \
     do { if (!(condition)) { fprintf(stderr, "FAIL: %s\n", message); failures++; } } while (0)
 
+/*
+ * A stand-in for the renderer's frame painter: called where the window draws a frame, it notes
+ * the size the frame would be drawn at and the size the server has at that moment. They must
+ * be the same: a frame drawn at a size the server has already left is a stale frame.
+ */
+static int frames;
+static int stale_frames;
+
+static int32_t paint(void *thread) {
+    (void)thread;
+    XWindowAttributes attributes;
+    if (XGetWindowAttributes(dxc_display, dxc_window, &attributes)) {
+        frames++;
+        if (attributes.width != dxc_width || attributes.height != dxc_height) {
+            stale_frames++;
+            fprintf(stderr, "stale: drawn %dx%d, the server has %dx%d\n", dxc_width, dxc_height,
+                    attributes.width, attributes.height);
+        }
+    }
+    return 1;
+}
+
 int main(void) {
     struct dxc_native_window w;
     if (dxc_native_window_open("resize", 320, 240, &w) != 0) {
@@ -34,6 +56,23 @@ int main(void) {
     dxc_native_window_server_size(&width, &height);
     fprintf(stderr, "server says %dx%d\n", width, height);
     CHECK(width == 360 && height == 420, "the window did not end at the size the drag ended at");
+
+    /*
+     * A drag while work keeps arriving from another thread, which ends every wait in the pump
+     * at once: the drag must still ask for the next size only after this one was confirmed
+     * and drawn, so no frame is drawn at a size the server has already left.
+     */
+    dxc_native_set_frame_callback(paint, NULL);
+    dxc_native_window_server_size(&width, &height);
+    for (int i = 0; i < 4; i++) dxc_native_wake();
+    dxc_native_debug_resize(NULL, NULL, width, height, 300, 360, 30, 0);
+    for (int i = 0; i < 10; i++) dxc_native_pump(0.01);
+    fprintf(stderr, "frames drawn during a drag with wakes: %d, stale: %d\n", frames, stale_frames);
+    CHECK(frames >= 1, "the drag drew no frames");
+    CHECK(stale_frames == 0, "a frame was drawn at a size the server had already left");
+    dxc_native_window_server_size(&width, &height);
+    CHECK(width == 300 && height == 360, "the drag with wakes did not end at its size");
+    dxc_native_set_frame_callback(NULL, NULL);
 
     /* No steps, no window change. */
     int64_t still = dxc_native_resize_serial();
