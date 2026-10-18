@@ -1,26 +1,41 @@
-# Changelog
+# Changes in the fork's own modules (`extended/`)
 
-Changes to the fork's own modules under `extended/`, newest first. Upstream Compose's changes
-are in its own release notes.
+The upstream changelogs under `compose/` stay upstream's. This one is for the modules this fork
+adds: the window modules, the design systems, the skiko scripts and the packaging templates.
 
 ## Unreleased
 
-### Changed
+### Window modules (`org.thisisthepy.compose.window`, 0.1.0)
 
-- **Linux windows are undecorated by default.** `native/linux` and `graalvm/graalvm-linux` now
-  read `WindowConfig.chrome`, whose default is `WindowChrome.Modern`: the window manager's frame
-  is taken off and the scene draws the caption and its buttons (`caption()` reports the strip,
-  with `buttonsDrawnByScene = true`). This holds with `decorated = true` too. Pass
-  `chrome = WindowChrome.System` to keep the window manager's frame and title bar
-  ([#149](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/149)).
-- The Linux windows publish AT-SPI from the scene's `AccessibleElement` records
-  (`WindowPlatform.setAccessibility`). `AtspiSemanticsSource`, `NodeFacts` and `describeFacts`
-  and graalvm-linux's `X11Accessibility` are removed, and `AtspiActions` is now
-  `perform(id, action, argument)` and `windowOrigin()`
-  ([#149](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/149)).
-
-### Added
-
-- `startMove`, `startResize` and `performCaptionAction` on both Linux windows, through
-  `_NET_WM_MOVERESIZE` and `_NET_WM_STATE`, and a double click in the caption to maximise or
-  restore ([#149](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/149)).
+- **Breaking default.** `WindowConfig` gains `chrome` and `titleBar`, defaulting to
+  `WindowChrome.Modern` and `TitleBarStyle.Normal`: the content runs to the top of the window.
+  On Linux that means no system title bar; the scene draws the caption and its buttons. Pass
+  `chrome = WindowChrome.System` to keep the platform's title bar. (#144, #146)
+- `WindowPlatform` gains `caption()`, `setAccessibility(elements)`, `accessibilityActive`,
+  `startMove()`, `startResize(edge)` and `performCaptionAction(action)`, each with a default; an
+  implementation that already had a `setAccessibility(List<AccessibleElement>)` now marks it
+  `override`. (#144)
+- `AccessibleElement` gains `id`, `parentId`, `value`, `hint`, `states`, `actions` and a range,
+  and `WindowListener.onAccessibilityAction(id, action, argument)` carries a reader's request
+  back. (#144)
+- `scene`: `LocalWindowCaption`, `Modifier.windowCaptionPadding()`, the caption buttons it draws
+  where the platform has none, and the semantics it hands to the platform while a reader listens.
+  `ComposeWindowHost` and `runComposeWindow` take `padContentForCaption` before `content`; a call
+  that passed `content` fourth by position names it. The module gains `linuxX64` and
+  `linuxArm64`. (#146)
+- `scene`: Compose's main-thread work runs on a dispatcher every host shares, so it keeps running
+  while any window is open. (#142, #143)
+- `graalvm-macos` and `graalvm-linux`: `appKitWindowSurface` and `x11WindowSurface`, the surfaces
+  `runComposeWindow` draws into. (#138)
+- `native/linux` and `graalvm-linux`: the chrome API. Under `WindowChrome.Modern` (the default)
+  the window has no window manager frame, `decorated = true` included; `caption()` reports the
+  scene's strip (46 points for `Normal`, 32 for `Simple`); `startMove`, `startResize` and
+  `performCaptionAction` go through `_NET_WM_MOVERESIZE` and `_NET_WM_STATE`, and a double click
+  in the caption maximises or restores. `chrome = WindowChrome.System` keeps the window
+  manager's frame. (#149)
+- `native/linux` and `graalvm-linux`: AT-SPI is published from the scene's `AccessibleElement`
+  records. `AtspiSemanticsSource`, `NodeFacts`, `describeFacts` and graalvm-linux's
+  `X11Accessibility` are removed, and `AtspiActions` is `perform(id, action, argument)` and
+  `windowOrigin()`. (#149)
+- `native/linux`: `X11Window.resizePainter` and `makeCurrent()`, for a scene host that draws
+  through a surface of its own. (#149)

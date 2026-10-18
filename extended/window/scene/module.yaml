@@ -8,7 +8,7 @@
 # hand them over as a WindowSurface.
 product:
   type: lib
-  platforms: [ jvm, macosArm64 ]
+  platforms: [ jvm, macosArm64, linuxX64, linuxArm64 ]
 
 # Compose's compiler plugin through the template rather than `compose: enabled`, which would add
 # JetBrains' runtime and components-resources and with them JetBrains' Compose next to the fork's.

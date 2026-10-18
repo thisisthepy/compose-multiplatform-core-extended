@@ -1,7 +1,7 @@
-# 변경 기록
+# 포크 자체 모듈(`extended/`) 의 변경
 
-`extended/` 아래 포크 자체 모듈의 변경입니다. 최신이 위에 있습니다. upstream Compose 의 변경은
-upstream 의 릴리스 노트에 있습니다.
+`compose/` 아래의 upstream 변경 기록은 upstream 의 것입니다. 이 문서는 이 포크가 더한 모듈의 변경을 적습니다.
+영어판은 [CHANGELOG.md](CHANGELOG.md) 입니다.
 
 ## 출시 전
 

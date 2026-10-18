@@ -41,7 +41,7 @@ jobs:
           # The scene is published from macOS only: it compiles against this fork's Compose
           # for macosArm64 as well as the JVM, and only a Mac builds the former. The GraalVM
           # modules compile their window surfaces against it, so on Linux it is in the project
-          # as a JVM module (scene_jvm_only) and what it publishes stays on this runner.
+          # as a JVM module (scene_jvm_only) with its Linux targets, and what it publishes stays on this runner.
           - os: ubuntu-24.04
             modules: "common scene graalvm/graalvm-macos graalvm/graalvm-linux"
             compose: "desktop linuxX64 linuxArm64"
@@ -85,12 +85,19 @@ jobs:
         with:
           targets: ${{ matrix.compose }}
 
-      - name: The scene as a JVM module on this runner
+      - name: The scene for this runner's platforms (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          perl -0pi -e 's/^  platforms: \[.*\]$/  platforms: [ jvm, macosArm64 ]/m' scene/module.yaml
+          grep -q '^  platforms: \[ jvm, macosArm64 \]$' scene/module.yaml
+
+      - name: The scene as a JVM and Linux module on this runner
         if: ${{ matrix.scene_jvm_only }}
         shell: bash
         run: |
-          perl -0pi -e 's/^  platforms: \[ jvm, macosArm64 \]$/  platforms: [ jvm ]/m' scene/module.yaml
-          grep -q '^  platforms: \[ jvm \]$' scene/module.yaml
+          perl -0pi -e 's/^  platforms: \[.*\]$/  platforms: [ jvm, linuxX64, linuxArm64 ]/m' scene/module.yaml
+          grep -q '^  platforms: \[ jvm, linuxX64, linuxArm64 \]$' scene/module.yaml
 
       - name: Publish to the local repository
         shell: bash

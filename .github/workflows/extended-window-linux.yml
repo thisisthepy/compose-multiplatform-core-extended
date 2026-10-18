@@ -76,6 +76,15 @@ jobs:
         with:
           targets: linuxX64 linuxArm64
 
+      # The toolchain resolves every platform a module declares, even when asked to build one,
+      # and the scene declares the JVM and macOS too, whose Compose is not built here. On this
+      # runner it is the Linux module it is for.
+      - name: The scene as a Linux module on this runner
+        working-directory: extended/window
+        run: |
+          perl -0pi -e 's/^  platforms: \[.*\]$/  platforms: [ linuxX64, linuxArm64 ]/m' scene/module.yaml
+          grep -q '^  platforms: \[ linuxX64, linuxArm64 \]$' scene/module.yaml
+
       - name: Build x64
         working-directory: extended/window
         run: ./kotlin build -p linuxX64

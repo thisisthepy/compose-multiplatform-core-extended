@@ -123,7 +123,7 @@ jobs:
         working-directory: extended/window
         shell: bash
         run: |
-          perl -0pi -e 's/^  platforms: \[ jvm, macosArm64 \]$/  platforms: [ jvm ]/m' scene/module.yaml
+          perl -0pi -e 's/^  platforms: \[.*\]$/  platforms: [ jvm ]/m' scene/module.yaml
           grep -q '^  platforms: \[ jvm \]$' scene/module.yaml
 
       # On a session bus of its own, so AtspiReadbackTest publishes to a real at-spi2 registry and

@@ -19,7 +19,9 @@ import org.thisisthepy.compose.window.FrameClock
 import org.thisisthepy.compose.window.FrameRequestCoalescer
 import org.thisisthepy.compose.window.FramePresentLog
 import org.thisisthepy.compose.window.ImeSession
+import org.thisisthepy.compose.window.AccessibilityCache
 import org.thisisthepy.compose.window.SystemTheme
+import org.thisisthepy.compose.window.WindowCaption
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowEventLog
@@ -83,6 +85,11 @@ class ComposeWindowHost(
     private val platform: WindowPlatform,
     private val config: WindowConfig,
     private val surfaceFor: (WindowPlatform) -> WindowSurface?,
+    /**
+     * Whether the host steps the content clear of the window's caption. False for content that
+     * lays itself out against [LocalWindowCaption], such as a top bar on the buttons' line.
+     */
+    private val padContentForCaption: Boolean = true,
     private val content: @Composable () -> Unit,
 ) {
     /** Every presented frame, for the resize check. */
@@ -105,6 +112,12 @@ class ComposeWindowHost(
     private var surface: WindowSurface? = null
     private var frames: WindowFrames? = null
     private var theme by mutableStateOf(SystemTheme.Light)
+    private var caption by mutableStateOf(WindowCaption.None)
+    private var density = 1f
+    private val semantics = SceneSemantics()
+    // Described only while a reader is listening: it costs about a third of a frame.
+    private val accessibility = AccessibilityCache(describe = { semantics.describe(density) }, push = platform::setAccessibility)
+    private var readerWasListening = false
 
     /** Where the drawn edit menu is open, in pixels, or null while it is closed. */
     internal var editMenuAt by mutableStateOf<IntOffset?>(null)
@@ -148,6 +161,12 @@ class ComposeWindowHost(
             closed = true
             return true
         }
+
+        override fun onAccessibilityAction(id: Int, action: Int, argument: String?): Boolean {
+            val done = semantics.perform(id, action, argument)
+            requestFrame()
+            return done
+        }
     }
 
     /** Asks for a frame. Safe from any thread; requests made before the next turn coalesce. */
@@ -163,7 +182,9 @@ class ComposeWindowHost(
         }
         surface = drawable
         theme = platform.systemTheme()
+        caption = platform.caption()
         val measured = platform.measure()
+        density = measured.scale
         size = IntSize(measured.width, measured.height)
         // Before the scene: its constructor starts Compose's global snapshot observer on the
         // main dispatcher, which Compose asks for once.
@@ -172,11 +193,11 @@ class ComposeWindowHost(
             density = Density(measured.scale),
             size = size,
             coroutineContext = work,
-            platformContext = ScenePlatformContext({ size }, textInput),
+            platformContext = ScenePlatformContext({ size }, textInput, semantics),
         )
         created.setContent {
-            CompositionLocalProvider(LocalSystemTheme provides theme) {
-                content()
+            CompositionLocalProvider(LocalSystemTheme provides theme, LocalWindowCaption provides caption) {
+                WindowFrame(platform, caption, theme, config.resizable, padContentForCaption) { content() }
                 DrawnEditMenu(editMenuAt, onChosen = { listener.onContextMenuChosen(it) }, onDismiss = { editMenuAt = null })
             }
         }
@@ -212,11 +233,17 @@ class ComposeWindowHost(
                 WindowEvent.TEXT_COMPOSE -> textInput.compose(event.text)
             }
         }
+        // The caption as it is now: a change of style, scale or full screen reaches the content
+        // in this frame, as a state change the scene sees as an invalidation.
+        val measuredCaption = platform.caption()
+        if (measuredCaption != caption) caption = measuredCaption
         val asked = requests.take()
+        var drew = false
         if (!painted || heard.isNotEmpty() || asked || current.hasInvalidations()) {
-            frames?.draw()
+            drew = frames?.draw() == true && drewLast
         }
         placeInputMethod()
+        describeForReaders(drew)
     }
 
     /** Runs [turn] until the window closes, then releases everything. */
@@ -253,6 +280,7 @@ class ComposeWindowHost(
         if (current.size != fitted) current.size = fitted
         if (current.density.density != scale) current.density = Density(scale)
         size = fitted
+        density = scale
         try {
             current.render(target.surface.canvas.asComposeCanvas(), clock.frameNanos())
             // Submitted, not only recorded: a buffer presented before the work behind it
@@ -264,6 +292,23 @@ class ComposeWindowHost(
         presentLog.record(platform.present(width, height))
         painted = true
         drewLast = true
+    }
+
+    /**
+     * Hands the platform what a reader is told, while a reader is listening. After a painted
+     * frame it is described again whether or not anything said it changed, because a control
+     * that moved sends no change; the cache's comparison makes an unchanged tree free. When a
+     * reader starts listening, the tree is pushed at once.
+     */
+    private fun describeForReaders(drew: Boolean) {
+        val listening = platform.accessibilityActive
+        if (!listening) {
+            readerWasListening = false
+            return
+        }
+        val first = !readerWasListening
+        readerWasListening = true
+        if (first || drew || semantics.changed) accessibility.pushIfChanged(afterDrawing = true)
     }
 
     private fun placeInputMethod() {
@@ -290,9 +335,10 @@ fun runComposeWindow(
     platform: WindowPlatform,
     config: WindowConfig,
     surfaceFor: (WindowPlatform) -> WindowSurface?,
+    padContentForCaption: Boolean = true,
     content: @Composable () -> Unit,
 ): Boolean {
-    val host = ComposeWindowHost(platform, config, surfaceFor, content)
+    val host = ComposeWindowHost(platform, config, surfaceFor, padContentForCaption, content)
     if (!host.open()) return false
     host.run()
     return true
