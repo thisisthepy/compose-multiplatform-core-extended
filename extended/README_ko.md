@@ -226,11 +226,20 @@ JetBrains 의 것 그대로이고 그룹과 버전만 다릅니다. 모든 좌�
 |---|---|
 | Compose 모듈 | `org.thisisthepy.compose.<group>:<artifact>:1.11.1-ext.1`. 예: `org.thisisthepy.compose.ui:ui:1.11.1-ext.1` 과 그 타깃 `ui-desktop`, `ui-linuxx64`, `ui-mingwx64`, `ui-macosarm64` |
 | Material 3 | `org.thisisthepy.compose.material3:material3:1.11.1-ext.1` |
-| JetBrains 가 `org.jetbrains.androidx.*` 로 내는 라이브러리 | `org.thisisthepy.compose.androidx.<library>`. 예: `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:2.11.0-beta01-ext.1` |
+| JetBrains 가 `org.jetbrains.androidx.*` 로 내는 라이브러리 | `org.thisisthepy.compose.androidx.<library>`. 예: `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:1.11.1-ext.1` |
 | runtime, `runtime-saveable`, annotation, collection | `org.thisisthepy.compose.runtime:runtime:1.11.1-ext.1` 등. JetBrains 의 것과 같이 클래스 없이 `androidx.compose.runtime` 을 가리키는 스텁입니다 |
 | 창 모듈 | `org.thisisthepy.compose.window:<module>:1.11.1-ext.1` |
-| `mingwX64` 용 skiko | `org.jetbrains.skiko:skiko-mingwx64:0.144.6`. skiko 루트 메타데이터에 이 타깃을 더합니다 |
+| `mingwX64` 용 skiko | `org.thisisthepy.compose.skiko:skiko-mingwx64:1.11.1-ext.1`. C++ 쪽, Skia, ICU 데이터는 그 `msvc` zip 에 있고, Compose 의 mingwX64 모듈이 이것에 의존합니다 |
+| 실제로 도는 Compose runtime | `androidx.compose.runtime:runtime` `1.11.2`(Google 의 것). JetBrains 의 Compose 1.11.1 과 같습니다 |
 | AWT 스위치를 단 skiko-awt | `org.thisisthepy.compose.skiko:skiko-awt:1.11.1-ext.1`. `extended/skiko/build-skiko-awt.sh` 가 만들고, `org.jetbrains.skiko:skiko-awt` 를 대신합니다 |
+
+runtime 의 클래스는 Google 의 것입니다. 이 포크는 시작한 JetBrains 릴리스에 비해 `compose/runtime` 아래를
+바꾸지 않았고, JetBrains 자신의 `org.jetbrains.compose.runtime:runtime:1.11.1` 도
+`androidx.compose.runtime:runtime:1.11.2` 에 의존하는 스텁입니다. 포크의 스텁도 같은 아티팩트를 가리킵니다
+(`artifactRedirection.version.androidx.compose`). 그 옆에 runtime 이 하나 더 있으면 같은 클래스가 두 번
+들어가므로, `extended/compose/consumer-check` 가 그 좌표를 고정합니다. JVM 과 모든 Kotlin/Native 타깃에서
+runtime 은 그 버전의 `androidx.compose.runtime` 에서만 와야 하고, 포크나 JetBrains 그룹의 어떤 것에서도
+와서는 안 됩니다.
 
 모든 것이 한 버전 줄 `<Compose Multiplatform version>-ext.<N>`(`1.11.1-ext.1`)에 있습니다. Compose
 라이브러리와 다른 라이브러리 줄, 창 모듈, skiko-awt, Gradle 플러그인이 모두 그렇습니다. 그래서 사용하는

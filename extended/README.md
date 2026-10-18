@@ -228,11 +228,20 @@ version differ. [`COORDINATES.md`](COORDINATES.md) lists every coordinate.
 |---|---|
 | Compose modules | `org.thisisthepy.compose.<group>:<artifact>:1.11.1-ext.1`, for example `org.thisisthepy.compose.ui:ui:1.11.1-ext.1` and its `ui-desktop`, `ui-linuxx64`, `ui-mingwx64`, `ui-macosarm64` targets |
 | Material 3 | `org.thisisthepy.compose.material3:material3:1.11.1-ext.1` |
-| Libraries JetBrains publishes as `org.jetbrains.androidx.*` | `org.thisisthepy.compose.androidx.<library>`, for example `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:2.11.0-beta01-ext.1` |
+| Libraries JetBrains publishes as `org.jetbrains.androidx.*` | `org.thisisthepy.compose.androidx.<library>`, for example `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:1.11.1-ext.1` |
 | Runtime, `runtime-saveable`, annotation and collection | `org.thisisthepy.compose.runtime:runtime:1.11.1-ext.1` and the others: stubs with no classes that point at `androidx.compose.runtime`, as JetBrains' do |
 | The window modules | `org.thisisthepy.compose.window:<module>:1.11.1-ext.1` |
-| skiko for `mingwX64` | `org.jetbrains.skiko:skiko-mingwx64:0.144.6`, with skiko's root metadata extended to name it |
+| skiko for `mingwX64` | `org.thisisthepy.compose.skiko:skiko-mingwx64:1.11.1-ext.1`, with its C++ half, Skia and the ICU data as its `msvc` zip; Compose's mingwX64 modules depend on it |
+| The Compose runtime that runs | `androidx.compose.runtime:runtime` at `1.11.2` (Google's), as with JetBrains' Compose 1.11.1 |
 | skiko-awt with the AWT switch | `org.thisisthepy.compose.skiko:skiko-awt:1.11.1-ext.1`, from `extended/skiko/build-skiko-awt.sh`, standing in for `org.jetbrains.skiko:skiko-awt` |
+
+The runtime's classes are Google's. This fork changes nothing under `compose/runtime` relative
+to the JetBrains release it starts from, and JetBrains' own `org.jetbrains.compose.runtime:runtime:1.11.1`
+is a stub that depends on `androidx.compose.runtime:runtime:1.11.2`; the fork's stub points at
+the same artifact (`artifactRedirection.version.androidx.compose`). A second copy of the runtime
+beside it would be the same classes twice, so `extended/compose/consumer-check` pins that
+coordinate: on the JVM and on every Kotlin/Native target the runtime must come from
+`androidx.compose.runtime` at that version and from nothing in the fork's or JetBrains' group.
 
 Everything is on one version line, `<Compose Multiplatform version>-ext.<N>` (`1.11.1-ext.1`):
 the Compose libraries and every other library line, the window modules, skiko-awt and the

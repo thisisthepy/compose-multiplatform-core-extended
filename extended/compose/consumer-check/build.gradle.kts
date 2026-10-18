@@ -6,9 +6,16 @@
 // Usage: gradle -p extended/compose/consumer-check checkResolution [-PforkVersion=1.11.1-ext.1]
 //        [-Ptargets=jvm,macosArm64,linuxX64,linuxArm64,mingwX64] [-Pwindow=true]
 //
-// JetBrains' org.jetbrains.compose.runtime is allowed: its runtime and runtime-saveable are stubs
-// with no classes that point at androidx.compose.runtime, as the fork's are, and JetBrains'
-// lifecycle and savedstate libraries ask for them by that name.
+// The Compose runtime that ships is Google's androidx.compose.runtime, at the version JetBrains'
+// own Compose maps to (artifactRedirection.version.androidx.compose in gradle.properties: 1.11.2
+// for JetBrains' 1.11.1, whose org.jetbrains.compose.runtime:runtime depends on exactly that).
+// The fork changes nothing under compose/runtime relative to the JetBrains release it starts
+// from, so its org.thisisthepy.compose.runtime:runtime and runtime-saveable are stubs with no
+// classes that point there, as JetBrains' are. Both stubs are allowed, JetBrains' because its
+// lifecycle and savedstate libraries ask for it by that name. The check pins that coordinate:
+// the runtime's classes (the JVM's Composer, the package androidx.compose.runtime in a klib)
+// must come from androidx.compose.runtime at that version and from nothing else, so a copy of
+// the runtime in the fork's group or JetBrains' fails it.
 import java.util.zip.ZipFile
 
 plugins {
@@ -19,6 +26,11 @@ val forkVersion = providers.gradleProperty("forkVersion").orNull ?: "1.11.1-ext.
 val wantedTargets = (providers.gradleProperty("targets").orNull ?: "jvm,macosArm64,linuxX64,linuxArm64,mingwX64")
     .split(",").map { it.trim() }.filter { it.isNotEmpty() }
 val withWindow = providers.gradleProperty("window").orNull?.toBoolean() ?: true
+// The androidx runtime version the fork's runtime stubs redirect to.
+val runtimeVersion = providers.gradleProperty("runtimeVersion").orNull
+    ?: rootDir.resolve("../../../gradle.properties").takeIf { it.isFile }?.readLines()
+        ?.firstOrNull { it.startsWith("artifactRedirection.version.androidx.compose=") }?.substringAfter("=")?.trim()
+    ?: error("no androidx runtime version: pass -PruntimeVersion or run from the fork's checkout")
 
 kotlin {
     if ("jvm" in wantedTargets) jvm()
@@ -100,10 +112,41 @@ tasks.register("checkResolution") {
                 problems += "jvmRuntimeClasspath: $name comes from ${from.joinToString()}"
             }
             val runtime = owners["androidx/compose/runtime/Composer.class"].orEmpty()
-            if (runtime.size != 1 || runtime.none { it.startsWith("androidx.compose.runtime:runtime") }) {
-                problems += "jvmRuntimeClasspath: the Compose runtime (androidx/compose/runtime/Composer.class) comes from ${runtime.ifEmpty { setOf("nothing") }.joinToString()}, not from androidx.compose.runtime:runtime alone"
+            val expected = "androidx.compose.runtime:runtime-desktop:$runtimeVersion"
+            if (runtime != setOf(expected)) {
+                problems += "jvmRuntimeClasspath: the Compose runtime (androidx/compose/runtime/Composer.class) comes from ${runtime.ifEmpty { setOf("nothing") }.joinToString()}, not from $expected alone"
             } else {
                 println("jvmRuntimeClasspath: one Compose runtime, from ${runtime.single()}")
+            }
+        }
+        // The same on every Kotlin/Native target: androidx.compose.runtime:runtime-<target> at the
+        // pinned version, and the package androidx.compose.runtime in no klib outside that group.
+        for (target in wantedTargets.filter { it != "jvm" }) {
+            val name = "${target}CompileKlibraries"
+            val configuration = configurations.findByName(name) ?: continue
+            val runtimes = configuration.incoming.resolutionResult.allComponents.mapNotNull { it.moduleVersion }
+                .filter { it.group == "androidx.compose.runtime" && it.name == "runtime-${target.lowercase()}" }
+            if (runtimes.size != 1 || runtimes.single().version != runtimeVersion) {
+                problems += "$name: androidx.compose.runtime:runtime-${target.lowercase()} resolves as ${runtimes.joinToString { it.version }.ifEmpty { "nothing" }}, not $runtimeVersion"
+            }
+            val owners = mutableSetOf<String>()
+            for (artifact in configuration.incoming.artifacts.artifacts) {
+                val file = artifact.file
+                if (!file.isFile || !file.name.endsWith(".klib")) continue
+                ZipFile(file).use { zip ->
+                    if (zip.entries().asSequence().any { it.name.startsWith("default/linkdata/package_androidx.compose.runtime/") }) {
+                        owners += artifact.id.componentIdentifier.displayName
+                    }
+                }
+            }
+            val strangers = owners.filter { !it.startsWith("androidx.compose.runtime:") }
+            if (owners.none { it.startsWith("androidx.compose.runtime:runtime-${target.lowercase()}:") }) {
+                // The runtime's own klib must show the package, or this looks in the wrong place.
+                problems += "$name: no klib holds default/linkdata/package_androidx.compose.runtime/, not even androidx.compose.runtime's"
+            } else if (strangers.isNotEmpty()) {
+                problems += "$name: the package androidx.compose.runtime also comes from ${strangers.joinToString()}"
+            } else {
+                println("$name: one Compose runtime, androidx.compose.runtime:runtime-${target.lowercase()}:$runtimeVersion")
             }
         }
         if (problems.isNotEmpty()) {
