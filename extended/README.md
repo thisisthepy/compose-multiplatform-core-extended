@@ -116,6 +116,45 @@ Maven repository the way compose-rust consumes them; `native/linux` joins it in
 [#111](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/111). Nothing is on a public repository yet. The Windows window,
 `windows-shared`, is open in [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32).
 
+### Linux window chrome and accessibility
+
+Both Linux windows, `native/linux` and `graalvm/graalvm-linux`, take the chrome options from
+`WindowConfig` in `common` and answer the chrome and accessibility parts of `WindowPlatform` the
+same way. The rules both follow are in `common` (`X11Chrome`, `CaptionGesture`), so the two
+come up alike.
+
+| `WindowConfig` | What the window does on Linux |
+|---|---|
+| `chrome = WindowChrome.Modern` (the default) | No frame of the window manager's: the window asks for no decorations through `_MOTIF_WM_HINTS`. `caption()` reports the strip the scene draws its caption and buttons in, with `buttonsDrawnByScene = true` and the buttons at the trailing end. |
+| `chrome = WindowChrome.System` | The window manager's own frame and title bar, with the content below it. `caption()` is `WindowCaption.None`. |
+| `titleBar = TitleBarStyle.Normal` (the default) | A 46 point caption, the height of a GNOME header bar. |
+| `titleBar = TitleBarStyle.Simple` | A 32 point caption. On Linux the two styles differ only in height. |
+| `decorated = false` | No frame of the manager's under either chrome. |
+
+Moving and resizing stay the window manager's, so its snapping and keyboard moves still apply.
+The scene calls `startMove()` on a press in an empty part of its caption and `startResize(edge)`
+on a press at an edge; the window hands the drag to the manager with `_NET_WM_MOVERESIZE` once
+the pointer has moved four pixels with the button down. Handed over on the press itself, a
+quick click would leave the manager waiting for a release that already happened. A second
+press in the caption within 400 ms and 5 pixels of the first maximises or restores, as GTK's
+defaults do. `performCaptionAction` iconifies, toggles `_NET_WM_STATE_MAXIMIZED_*`, or asks
+the listener whether to close, the way the manager's own close button does. A full screen
+window has no caption.
+
+`setAccessibility(elements)` publishes the scene's `AccessibleElement` records on the AT-SPI
+bus, so Orca and every other libatspi client reads the window: roles, names, the hint as the
+description, states, actions, a field's text (Text, EditableText) and a range's numbers
+(Value). A reader's action comes back on the window's thread, inside `pump`, as
+`WindowListener.onAccessibilityAction`. The window joins the bus after its first frame, so a
+desktop with a slow accessibility bus does not delay the window, and `accessibilityActive` is
+true once the desktop says assistive technology is on (`org.a11y.Status`) or a reader has asked
+something. `NO_AT_BRIDGE=1` keeps the window off the bus, as it does every toolkit's bridge.
+
+CI checks both windows under Xvfb and openbox: the frame, a caption drag, a drag at each edge
+and corner with no stale or stretched frame, and the double click (`scripts/wm-chrome.sh`).
+The tree is read back by libatspi from a real at-spi2 registry (`scripts/atspi-readback.c`).
+Whether Orca speaks it well is a check by hand on a desktop.
+
 ### Windows window chrome (planned)
 
 The branch `feature/windows-window-chrome` adds Compose's window procedure for Windows to the
