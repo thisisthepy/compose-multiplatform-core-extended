@@ -116,6 +116,15 @@ Maven repository the way compose-rust consumes them; `native/linux` joins it in
 [#111](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/111). Nothing is on a public repository yet. The Windows window,
 `windows-shared`, is open in [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32).
 
+**A changed default.** `WindowConfig` takes `chrome = WindowChrome.Modern` and
+`titleBar = TitleBarStyle.Normal` when nothing is said: the content runs to the top of the
+window. On macOS the system's buttons stay over a transparent title bar. On Linux the window has
+no system title bar; the scene draws the caption and its buttons, and moves and resizes the
+window from them. A window that should keep the platform's own title bar passes
+`chrome = WindowChrome.System`. Content that lays itself out against the caption reads
+`LocalWindowCaption` and is hosted with `padContentForCaption = false`; other content is
+stepped clear of the caption by the host.
+
 ### Windows window chrome (planned)
 
 The branch `feature/windows-window-chrome` adds Compose's window procedure for Windows to the

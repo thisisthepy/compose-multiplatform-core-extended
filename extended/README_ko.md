@@ -119,6 +119,13 @@ Windows 에서 Skia 는 실행 파일 옆의 `icudtl.dat` 를 찾고, 없으면 
 아직 공개 저장소에 올린 것은 없습니다. Windows 창 `windows-shared` 는 [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32) 에서
 열려 있습니다.
 
+**바뀐 기본값.** `WindowConfig` 는 아무것도 말하지 않으면 `chrome = WindowChrome.Modern`,
+`titleBar = TitleBarStyle.Normal` 을 씁니다. 콘텐츠가 창 맨 위까지 올라갑니다. macOS 에서는 시스템의
+창 버튼이 투명한 타이틀바 위에 그대로 남습니다. Linux 에서는 시스템 타이틀바가 없고, 장면이 캡션과 그
+버튼을 그리며 그것으로 창을 옮기고 크기를 바꿉니다. 플랫폼의 타이틀바를 그대로 두려면
+`chrome = WindowChrome.System` 을 넘깁니다. 캡션에 맞춰 스스로 자리를 잡는 콘텐츠는 `LocalWindowCaption` 을
+읽고 `padContentForCaption = false` 로 올리며, 그 밖의 콘텐츠는 호스트가 캡션 아래로 내려 줍니다.
+
 ### Windows 창 크롬 (계획)
 
 `feature/windows-window-chrome` 브랜치는 Windows 용 Compose 창 프로시저를 정적 skiko 아카이브에
