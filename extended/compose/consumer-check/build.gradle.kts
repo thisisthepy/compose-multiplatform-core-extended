@@ -91,7 +91,10 @@ tasks.register("checkResolution") {
         }
     }
     // The shared source sets' metadata, under whichever name this Kotlin Gradle plugin gives it.
-    val optional = listOf("allSourceSetsCompileDependenciesMetadata", "commonMainResolvableDependenciesMetadata")
+    val optional = listOfNotNull(
+        listOf("commonMainResolvableDependenciesMetadata", "allSourceSetsCompileDependenciesMetadata")
+            .firstOrNull { configurations.findByName(it) != null }
+    )
     doLast {
         val problems = mutableListOf<String>()
         for (name in names + optional.filter { configurations.findByName(it) != null }) {
