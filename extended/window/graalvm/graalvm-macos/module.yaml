@@ -23,10 +23,6 @@ test-dependencies:
   - $kotlin.test
 
 settings:
-  jvm:
-    jdk:
-      version: 21
-      selectionMode: javaHome
   publishing:
     enabled: true
     group: org.thisisthepy.compose.window

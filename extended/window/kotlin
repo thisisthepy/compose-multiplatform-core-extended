@@ -280,6 +280,52 @@ download_and_extract "Kotlin Toolchain distribution v$kotlin_cli_version" "$kotl
 
 # ********** Launch the Kotlin CLI **********
 
+# GitHub Releases 302 redirects return a 9KB+ Content-Security-Policy header which exceeds
+# Ktor HTTP client's 8192-byte line buffer in Amper. Pre-download the JDK tarball with curl if missing.
+preseed_amper_jdk() {
+  download_cache="$(dirname "$default_kotlin_cli_cache_dir")/download.cache"
+  arch="$(uname -m)"
+  case "$kernelName" in
+    Darwin* )
+      case "$arch" in
+        arm64|aarch64)
+          pkg="f8362503fc-OpenJDK25U-jdk_aarch64_mac_hotspot_25.0.5_8.tar.gz"
+          url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_aarch64_mac_hotspot_25.0.5_8.tar.gz"
+          ;;
+        *)
+          pkg="0e15cf058e-OpenJDK25U-jdk_x64_mac_hotspot_25.0.5_8.tar.gz"
+          url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_mac_hotspot_25.0.5_8.tar.gz"
+          ;;
+      esac
+      ;;
+    Linux* )
+      case "$arch" in
+        arm64|aarch64)
+          pkg="e259c06f4c-OpenJDK25U-jdk_aarch64_linux_hotspot_25.0.5_8.tar.gz"
+          url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_aarch64_linux_hotspot_25.0.5_8.tar.gz"
+          ;;
+        *)
+          pkg="bd467c5b70-OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz"
+          url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz"
+          ;;
+      esac
+      ;;
+    CYGWIN* | MSYS* | MINGW* )
+      pkg="3f354780d9-OpenJDK25U-jdk_x64_windows_hotspot_25.0.5_8.zip"
+      url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_windows_hotspot_25.0.5_8.zip"
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+  if [ -n "$url" ] && [ ! -s "$download_cache/$pkg" ]; then
+    mkdir -p "$download_cache"
+    echo "Pre-fetching $pkg with curl to avoid Ktor line length limit on GitHub CSP..."
+    curl -fsSL -o "$download_cache/$pkg.tmp" "$url" && mv "$download_cache/$pkg.tmp" "$download_cache/$pkg" || rm -f "$download_cache/$pkg.tmp"
+  fi
+}
+preseed_amper_jdk || true
+
 launcher_script="$kotlin_cli_target_dir/bin/launcher.sh"
 
 KOTLIN_CLI_WRAPPER_PATH="$(realpath "$0")" \
