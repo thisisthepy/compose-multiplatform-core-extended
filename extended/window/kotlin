@@ -281,7 +281,7 @@ download_and_extract "Kotlin Toolchain distribution v$kotlin_cli_version" "$kotl
 # ********** Launch the Kotlin CLI **********
 
 # GitHub Releases 302 redirects return a 9KB+ Content-Security-Policy header which exceeds
-# Ktor HTTP client's 8192-byte line buffer in Amper. Pre-download the JDK tarball with curl if missing.
+# Ktor HTTP client's 8192-byte line buffer in Amper. Pre-download the JDK tarball and konan bundle with curl if missing.
 preseed_amper_jdk() {
   download_cache="$(dirname "$default_kotlin_cli_cache_dir")/download.cache"
   arch="$(uname -m)"
@@ -289,44 +289,69 @@ preseed_amper_jdk() {
     Darwin* )
       case "$arch" in
         arm64|aarch64)
-          pkg="f8362503fc-OpenJDK25U-jdk_aarch64_mac_hotspot_25.0.5_8.tar.gz"
-          url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_aarch64_mac_hotspot_25.0.5_8.tar.gz"
+          jdk_pkg="f8362503fc-OpenJDK25U-jdk_aarch64_mac_hotspot_25.0.5_8.tar.gz"
+          jdk_url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_aarch64_mac_hotspot_25.0.5_8.tar.gz"
+          konan_pkg="26d759b7fb-kotlin-native-prebuilt-2.4.10-macos-aarch64.tar.gz"
+          konan_url="https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/2.4.10/kotlin-native-prebuilt-2.4.10-macos-aarch64.tar.gz"
           ;;
         *)
-          pkg="0e15cf058e-OpenJDK25U-jdk_x64_mac_hotspot_25.0.5_8.tar.gz"
-          url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_mac_hotspot_25.0.5_8.tar.gz"
+          jdk_pkg="0e15cf058e-OpenJDK25U-jdk_x64_mac_hotspot_25.0.5_8.tar.gz"
+          jdk_url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_mac_hotspot_25.0.5_8.tar.gz"
+          konan_pkg="22668bcb71-kotlin-native-prebuilt-2.4.10-macos-x86_64.tar.gz"
+          konan_url="https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/2.4.10/kotlin-native-prebuilt-2.4.10-macos-x86_64.tar.gz"
           ;;
       esac
       ;;
     Linux* )
       case "$arch" in
         arm64|aarch64)
-          pkg="e259c06f4c-OpenJDK25U-jdk_aarch64_linux_hotspot_25.0.5_8.tar.gz"
-          url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_aarch64_linux_hotspot_25.0.5_8.tar.gz"
+          jdk_pkg="e259c06f4c-OpenJDK25U-jdk_aarch64_linux_hotspot_25.0.5_8.tar.gz"
+          jdk_url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_aarch64_linux_hotspot_25.0.5_8.tar.gz"
+          konan_pkg="66f9a83c65-kotlin-native-prebuilt-2.4.10-linux-aarch64.tar.gz"
+          konan_url="https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/2.4.10/kotlin-native-prebuilt-2.4.10-linux-aarch64.tar.gz"
           ;;
         *)
-          pkg="bd467c5b70-OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz"
-          url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz"
+          jdk_pkg="bd467c5b70-OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz"
+          jdk_url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz"
+          konan_pkg="691b1a7bf3-kotlin-native-prebuilt-2.4.10-linux-x86_64.tar.gz"
+          konan_url="https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/2.4.10/kotlin-native-prebuilt-2.4.10-linux-x86_64.tar.gz"
           ;;
       esac
       ;;
     CYGWIN* | MSYS* | MINGW* )
-      pkg="3f354780d9-OpenJDK25U-jdk_x64_windows_hotspot_25.0.5_8.zip"
-      url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_windows_hotspot_25.0.5_8.zip"
+      jdk_pkg="3f354780d9-OpenJDK25U-jdk_x64_windows_hotspot_25.0.5_8.zip"
+      jdk_url="https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_windows_hotspot_25.0.5_8.zip"
+      konan_pkg="d191950bff-kotlin-native-prebuilt-2.4.10-windows-x86_64.zip"
+      konan_url="https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/2.4.10/kotlin-native-prebuilt-2.4.10-windows-x86_64.zip"
       ;;
     *)
       return 0
       ;;
   esac
-  if [ -n "$url" ] && [ ! -s "$download_cache/$pkg" ]; then
-    mkdir -p "$download_cache"
-    echo "Pre-fetching $pkg with curl to avoid Ktor line length limit on GitHub CSP..."
-    curl -fsSL -o "$download_cache/$pkg.tmp" "$url" && mv "$download_cache/$pkg.tmp" "$download_cache/$pkg" || rm -f "$download_cache/$pkg.tmp"
+  mkdir -p "$download_cache"
+  if [ -n "${jdk_url:-}" ] && [ ! -s "$download_cache/$jdk_pkg" ]; then
+    echo "Pre-fetching $jdk_pkg with curl to avoid Ktor line length limit on GitHub CSP..."
+    curl -fsSL -o "$download_cache/$jdk_pkg.tmp" "$jdk_url" && mv "$download_cache/$jdk_pkg.tmp" "$download_cache/$jdk_pkg" || rm -f "$download_cache/$jdk_pkg.tmp"
+  fi
+  if [ -n "${konan_url:-}" ] && [ ! -s "$download_cache/$konan_pkg" ]; then
+    echo "Pre-fetching $konan_pkg with curl..."
+    curl -fsSL -o "$download_cache/$konan_pkg.tmp" "$konan_url" && mv "$download_cache/$konan_pkg.tmp" "$download_cache/$konan_pkg" || rm -f "$download_cache/$konan_pkg.tmp"
   fi
 }
 preseed_amper_jdk || true
 
 launcher_script="$kotlin_cli_target_dir/bin/launcher.sh"
 
-KOTLIN_CLI_WRAPPER_PATH="$(realpath "$0")" \
-exec /bin/sh "$launcher_script" "$@"
+KOTLIN_CLI_WRAPPER_PATH="$(realpath "$0")"
+/bin/sh "$launcher_script" "$@"
+rc=$?
+if [ $rc -ne 0 ]; then
+  echo "== amper failure (exit $rc), build logs:" >&2
+  for f in build/logs/*.log; do
+    if [ -f "$f" ]; then
+      echo "== $f ==" >&2
+      grep -C 15 -E "TooLongLineException|Exception|Caused by" "$f" | tail -60 >&2 || tail -60 "$f" >&2
+    fi
+  done
+fi
+exit $rc

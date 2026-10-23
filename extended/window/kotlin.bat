@@ -245,6 +245,8 @@ set "win_jdk_file1=%amper_download_cache%\c93db5a50c-OpenJDK25U-jdk_x64_windows_
 if not exist "%win_jdk_file1%" curl -fsSL -o "%win_jdk_file1%.tmp" "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.4.1%%2B1/OpenJDK25U-jdk_x64_windows_hotspot_25.0.4.1_1.zip" && move /y "%win_jdk_file1%.tmp" "%win_jdk_file1%"
 set "win_jdk_file2=%amper_download_cache%\3f354780d9-OpenJDK25U-jdk_x64_windows_hotspot_25.0.5_8.zip"
 if not exist "%win_jdk_file2%" curl -fsSL -o "%win_jdk_file2%.tmp" "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%%2B8/OpenJDK25U-jdk_x64_windows_hotspot_25.0.5_8.zip" && move /y "%win_jdk_file2%.tmp" "%win_jdk_file2%"
+set "win_konan_file=%amper_download_cache%\d191950bff-kotlin-native-prebuilt-2.4.10-windows-x86_64.zip"
+if not exist "%win_konan_file%" curl -fsSL -o "%win_konan_file%.tmp" "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/2.4.10/kotlin-native-prebuilt-2.4.10-windows-x86_64.zip" && move /y "%win_konan_file%.tmp" "%win_konan_file%"
 
 REM ********** Launch the Kotlin CLI **********
 
