@@ -298,10 +298,10 @@ case "$kernelName" in
     ;;
 esac
 if [ -n "${native_target:-}" ] && [ ! -s "$native_target" ]; then
-  curl -sSL --retry 3 -o "$native_target.tmp" "$native_url" && mv "$native_target.tmp" "$native_target" || rm -f "$native_target.tmp"
+  curl -fsSL --retry 3 -o "$native_target.tmp" "$native_url" && mv "$native_target.tmp" "$native_target" || rm -f "$native_target.tmp"
 fi
 if [ -n "${jdk_target:-}" ] && [ ! -s "$jdk_target" ]; then
-  curl -sSL --retry 3 -o "$jdk_target.tmp" "$jdk_url" && mv "$jdk_target.tmp" "$jdk_target" || rm -f "$jdk_target.tmp"
+  curl -fsSL --retry 3 -o "$jdk_target.tmp" "$jdk_url" && mv "$jdk_target.tmp" "$jdk_target" || rm -f "$jdk_target.tmp"
 fi
 
 launcher_script="$kotlin_cli_target_dir/bin/launcher.sh"

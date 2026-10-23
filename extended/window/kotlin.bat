@@ -261,7 +261,7 @@ if not exist "%native_target%" (
 )
 set "jdk_target=%download_cache_dir%\c93db5a50c-OpenJDK25U-jdk_x64_windows_hotspot_25.0.4.1_1.zip"
 if not exist "%jdk_target%" (
-    curl.exe -sSL --retry 3 -o "%jdk_target%.tmp" "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.4.1%2B1/OpenJDK25U-jdk_x64_windows_hotspot_25.0.4.1_1.zip"
+    curl.exe -fsSL --retry 3 -o "%jdk_target%.tmp" "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.4.1+1/OpenJDK25U-jdk_x64_windows_hotspot_25.0.4.1_1.zip"
     if exist "%jdk_target%.tmp" move /y "%jdk_target%.tmp" "%jdk_target%"
 )
 set KOTLIN_CLI_WRAPPER_PATH=%~f0

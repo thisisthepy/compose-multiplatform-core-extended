@@ -60,6 +60,26 @@ test-settings:
       - -module-name
       - org.thisisthepy.compose.window:scene-test
 
+test-settings@linuxX64:
+  kotlin:
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.window:scene-test
+      - -linker-option
+      - -lfontconfig
+      - -linker-option
+      - -lfreetype
+
+test-settings@linuxArm64:
+  kotlin:
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.window:scene-test
+      - -linker-option
+      - -lfontconfig
+      - -linker-option
+      - -lfreetype
+
 repositories:
   - id: mavenLocal
     url: mavenLocal
