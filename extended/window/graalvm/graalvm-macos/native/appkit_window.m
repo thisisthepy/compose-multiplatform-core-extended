@@ -591,6 +591,7 @@ static NSMenu *dxc_text_menu(id target) {
 
 /** True once the window has been closed, so the renderer knows to stop. */
 static atomic_bool dxc_window_closed;
+static atomic_bool dxc_window_key = true;
 
 int32_t dxc_native_window_closed(void) {
     return atomic_load(&dxc_window_closed) ? 1 : 0;
@@ -603,6 +604,12 @@ int32_t dxc_native_window_closed(void) {
 @implementation DxcWindowDelegate
 - (void)windowWillClose:(NSNotification *)notification {
     atomic_store(&dxc_window_closed, true);
+}
+- (void)windowDidBecomeKey:(NSNotification *)notification {
+    atomic_store(&dxc_window_key, true);
+}
+- (void)windowDidResignKey:(NSNotification *)notification {
+    atomic_store(&dxc_window_key, false);
 }
 @end
 
@@ -679,8 +686,9 @@ void dxc_native_set_cursor(int32_t shape) {
     if (kind == DXC_EVENT_SCROLL) {
         // The wheel's travel rides in the same two fields the pointer uses, because a
         // scroll has no position of its own beyond where the pointer already is.
-        record.x = (float)event.scrollingDeltaX;
-        record.y = (float)event.scrollingDeltaY;
+        CGFloat divisor = event.hasPreciseScrollingDeltas ? 10.0 : 1.0;
+        record.x = (float)(-event.scrollingDeltaX / divisor);
+        record.y = (float)(-event.scrollingDeltaY / divisor);
     }
     if (kind == DXC_EVENT_KEY_DOWN || kind == DXC_EVENT_KEY_UP) {
         record.key_code = (int32_t)event.keyCode;
@@ -1236,9 +1244,9 @@ int32_t dxc_native_window_open(
             // hang from, so neither is asked to change. The window and the layer then
             // stop claiming to fill their rectangle, or nothing composites behind them.
             NSVisualEffectView *effect = [[NSVisualEffectView alloc] init];
-            effect.material = NSVisualEffectMaterialSidebar;
+            effect.material = NSVisualEffectMaterialUnderWindowBackground;
             effect.blendingMode = NSVisualEffectBlendingModeBehindWindow;
-            effect.state = NSVisualEffectStateActive;
+            effect.state = NSVisualEffectStateFollowsWindowActiveState;
             effect.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
             NSView *frame_view = window.contentView.superview;
             effect.frame = frame_view.bounds;
@@ -1667,7 +1675,7 @@ void dxc_native_window_origin(int32_t *x, int32_t *y) {
 }
 
 int32_t dxc_native_window_focused(void) {
-    return 0;
+    return atomic_load(&dxc_window_key) ? 1 : 0;
 }
 
 int32_t dxc_native_ime_reset(char *out, int32_t capacity) {

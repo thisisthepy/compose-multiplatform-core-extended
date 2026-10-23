@@ -130,6 +130,9 @@ private external fun droppedPaths(out: Pointer?, capacity: Int): Int
 @CFunction("dxc_native_window_closed")
 private external fun windowClosed(): Int
 
+@CFunction("dxc_native_window_focused")
+private external fun windowFocused(): Int
+
 @CFunction("dxc_native_soak_state")
 private external fun soakState(): Int
 /**
@@ -454,6 +457,9 @@ fun frameTimeNanos(): Long = nativeFrameTimeNanos()
 
 /** True once the reader has closed the window. */
 fun isWindowClosed(): Boolean = windowClosed() != 0
+
+/** True while the window is the key window. */
+fun isWindowFocused(): Boolean = windowFocused() != 0
 
 /**
  * Where the resize soak asked for with DXC_RESIZE_SOAK is (see `native/appkit_resize_soak.h`):
