@@ -252,6 +252,13 @@ if "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
 
 rem We use busybox here because it doesn't reinterpret the user-passed command-line arguments (that we pass via %*).
 rem Also this way we can use the unified launcher script (.sh)
+set "download_cache_dir=%LOCALAPPDATA%\JetBrains\Kotlin\download.cache"
+if not exist "%download_cache_dir%" mkdir "%download_cache_dir%"
+set "native_target=%download_cache_dir%\d191950bff-kotlin-native-prebuilt-2.4.10-windows-x86_64.zip"
+if not exist "%native_target%" (
+    curl.exe -sSL --retry 3 -o "%native_target%.tmp" "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/2.4.10/kotlin-native-prebuilt-2.4.10-windows-x86_64.zip"
+    if exist "%native_target%.tmp" move /y "%native_target%.tmp" "%native_target%"
+)
 set KOTLIN_CLI_WRAPPER_PATH=%~f0
 
 rem The '& call' after the app run is to avoid the "Terminate batch job (Y/N)?" prompt

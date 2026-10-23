@@ -280,6 +280,23 @@ download_and_extract "Kotlin Toolchain distribution v$kotlin_cli_version" "$kotl
 
 # ********** Launch the Kotlin CLI **********
 
+# Pre-download kotlin-native-prebuilt with curl so Ktor's 8192-char header parser limit is never hit
+download_cache_dir="$(dirname "$kotlin_cli_cache_dir")/download.cache"
+mkdir -p "$download_cache_dir"
+case "$kernelName" in
+  Darwin* )
+    native_target="$download_cache_dir/26d759b7fb-kotlin-native-prebuilt-2.4.10-macos-aarch64.tar.gz"
+    native_url="https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/2.4.10/kotlin-native-prebuilt-2.4.10-macos-aarch64.tar.gz"
+    ;;
+  Linux* )
+    native_target="$download_cache_dir/691b1a7bf3-kotlin-native-prebuilt-2.4.10-linux-x86_64.tar.gz"
+    native_url="https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/2.4.10/kotlin-native-prebuilt-2.4.10-linux-x86_64.tar.gz"
+    ;;
+esac
+if [ -n "${native_target:-}" ] && [ ! -s "$native_target" ]; then
+  curl -sSL --retry 3 -o "$native_target.tmp" "$native_url" && mv "$native_target.tmp" "$native_target" || rm -f "$native_target.tmp"
+fi
+
 launcher_script="$kotlin_cli_target_dir/bin/launcher.sh"
 
 KOTLIN_CLI_WRAPPER_PATH="$(realpath "$0")" \
