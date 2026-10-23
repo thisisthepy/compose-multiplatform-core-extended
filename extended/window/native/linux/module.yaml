@@ -33,7 +33,7 @@ dependencies@linuxX64:
   - org.thisisthepy.compose.foundation:foundation-linuxx64:1.11.1-ext.1
   - org.thisisthepy.compose.foundation:foundation-layout-linuxx64:1.11.1-ext.1
   - org.thisisthepy.compose.material:material-ripple-linuxx64:1.11.1-ext.1
-  - org.thisisthepy.compose.material3:material3-linuxx64:1.11.0-alpha07-ext.1
+  - org.thisisthepy.compose.material3:material3-linuxx64:1.11.1-ext.1
   - org.thisisthepy.compose.ui:ui-linuxx64:1.11.1-ext.1
   - org.thisisthepy.compose.ui:ui-backhandler-linuxx64:1.11.1-ext.1
   - org.thisisthepy.compose.ui:ui-geometry-linuxx64:1.11.1-ext.1
@@ -51,7 +51,7 @@ dependencies@linuxArm64:
   - org.thisisthepy.compose.foundation:foundation-linuxarm64:1.11.1-ext.1
   - org.thisisthepy.compose.foundation:foundation-layout-linuxarm64:1.11.1-ext.1
   - org.thisisthepy.compose.material:material-ripple-linuxarm64:1.11.1-ext.1
-  - org.thisisthepy.compose.material3:material3-linuxarm64:1.11.0-alpha07-ext.1
+  - org.thisisthepy.compose.material3:material3-linuxarm64:1.11.1-ext.1
   - org.thisisthepy.compose.ui:ui-linuxarm64:1.11.1-ext.1
   - org.thisisthepy.compose.ui:ui-backhandler-linuxarm64:1.11.1-ext.1
   - org.thisisthepy.compose.ui:ui-geometry-linuxarm64:1.11.1-ext.1
@@ -69,7 +69,7 @@ settings:
     enabled: true
     group: org.thisisthepy.compose.window
     artifactId: native-linux
-    version: 0.1.0
+    version: 1.11.1-ext.1
   kotlin:
     # A klib's unique_name defaults to the Amper module name, which is the directory name
     # (`common`, `macos`, `linux`). The Kotlin/Native linker refuses two libraries with the

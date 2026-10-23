@@ -27,7 +27,7 @@ restore() {
 }
 trap restore EXIT
 
-root="$HOME/.m2/repository/org/thisisthepy/compose/window/native-linux/0.1.0/native-linux-0.1.0.module"
+root="$HOME/.m2/repository/org/thisisthepy/compose/window/native-linux/1.11.1-ext.1/native-linux-1.11.1-ext.1.module"
 roots="$(mktemp -d)"
 
 for arch in linuxX64 linuxArm64; do
