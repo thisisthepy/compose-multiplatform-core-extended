@@ -40,6 +40,9 @@ test-dependencies@jvm:
   - org.jetbrains.skiko:skiko-awt-runtime-windows-x64:0.144.6
 
 settings:
+  jvm:
+    jdk:
+      version: 21
   publishing:
     enabled: true
     group: org.thisisthepy.compose.window

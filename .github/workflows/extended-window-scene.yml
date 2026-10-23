@@ -48,6 +48,11 @@ jobs:
             .github/actions
           filter: blob:none
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
       - name: The module names no java.awt and no toolkit window
         run: |
           if grep -rEn '^import (java\.awt|javax\.swing|sun\.awt|androidx\.compose\.ui\.awt|androidx\.compose\.ui\.window)' scene/src; then

@@ -45,6 +45,11 @@ jobs:
             .github/actions
           filter: blob:none
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
       - name: The module names no java.awt
         run: |
           if grep -rEn 'java\.awt|javax\.swing|sun\.awt' graalvm/graalvm-macos/src graalvm/graalvm-macos/module.yaml; then
