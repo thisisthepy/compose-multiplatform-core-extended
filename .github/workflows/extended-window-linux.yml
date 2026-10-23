@@ -14,6 +14,7 @@ on:
     paths:
       - extended/window/common/**
       - extended/window/native/linux/**
+      - extended/window/scene/**
       - extended/window/project.yaml
       - extended/window/scripts/**
       - .github/workflows/extended-window-linux.yml
@@ -25,6 +26,7 @@ on:
     paths:
       - extended/window/common/**
       - extended/window/native/linux/**
+      - extended/window/scene/**
       - extended/window/project.yaml
       - extended/window/scripts/**
       - .github/workflows/extended-window-linux.yml
@@ -74,6 +76,18 @@ jobs:
         uses: ./.github/actions/fork-compose
         with:
           targets: linuxX64 linuxArm64
+
+      # The toolchain resolves every platform a module declares, even when asked to build one,
+      # and the scene declares the JVM and macOS too, whose Compose is not built here. On this
+      # runner it is the Linux module it is for, and the project is the Linux modules: the
+      # GraalVM ones depend on the scene's JVM side.
+      - name: The Linux modules, with the scene as a Linux module
+        working-directory: extended/window
+        run: |
+          printf 'modules:\n  - common\n  - scene\n  - native/linux\n' > project.yaml
+          cat project.yaml
+          perl -0pi -e 's/^  platforms: \[.*\]$/  platforms: [ linuxX64, linuxArm64 ]/m' scene/module.yaml
+          grep -q '^  platforms: \[ linuxX64, linuxArm64 \]$' scene/module.yaml
 
       - name: Build x64
         working-directory: extended/window
