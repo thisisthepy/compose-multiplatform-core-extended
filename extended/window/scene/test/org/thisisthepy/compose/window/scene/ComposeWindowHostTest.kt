@@ -34,7 +34,7 @@ import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.WindowPlatform
 import org.thisisthepy.compose.window.WindowVisibility
 
-private class FakePlatform : WindowPlatform {
+internal class FakePlatform : WindowPlatform {
     override var name = "fake"
     val chosen = ArrayList<Int>()
     var width = 200
@@ -80,7 +80,7 @@ private class FakePlatform : WindowPlatform {
     }
 }
 
-private class FakeSurface : WindowSurface {
+internal class FakeSurface : WindowSurface {
     var painter: (() -> Boolean)? = null
     var begun = 0
     var closed = false

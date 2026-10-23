@@ -12,7 +12,6 @@ import kotlinx.coroutines.CoroutineDispatcher
  */
 @OptIn(InternalComposeUiApi::class)
 internal actual fun useAsComposeMainDispatcher(dispatcher: CoroutineDispatcher) {
-    // The first host's: the global snapshot observer Compose starts with the first scene stays
-    // on whatever answered then, and an embedder that set one itself keeps its own.
+    // An embedder that set one itself keeps its own.
     if (ExtendedMainDispatcher.override == null) ExtendedMainDispatcher.override = dispatcher
 }

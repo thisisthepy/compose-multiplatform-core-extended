@@ -167,7 +167,7 @@ class ComposeWindowHost(
         size = IntSize(measured.width, measured.height)
         // Before the scene: its constructor starts Compose's global snapshot observer on the
         // main dispatcher, which Compose asks for once.
-        useAsComposeMainDispatcher(work)
+        useAsComposeMainDispatcher(sceneMainWork)
         val created = CanvasLayersComposeScene(
             density = Density(measured.scale),
             size = size,
@@ -202,6 +202,7 @@ class ComposeWindowHost(
         log.read { platform.pump(timeoutMillis) }
         if (closed) return
         work.runPending()
+        sceneMainWork.runPending()
         heard.clear()
         log.drain(heard)
         for (event in heard) {
