@@ -252,11 +252,6 @@ if "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
 
 rem We use busybox here because it doesn't reinterpret the user-passed command-line arguments (that we pass via %*).
 rem Also this way we can use the unified launcher script (.sh)
-if "%KOTLIN_CLI_JAVA_HOME%"=="" (
-    if not "%JAVA_HOME%"=="" (
-        set "KOTLIN_CLI_JAVA_HOME=%JAVA_HOME%"
-    )
-)
 set KOTLIN_CLI_WRAPPER_PATH=%~f0
 
 rem The '& call' after the app run is to avoid the "Terminate batch job (Y/N)?" prompt

@@ -282,9 +282,5 @@ download_and_extract "Kotlin Toolchain distribution v$kotlin_cli_version" "$kotl
 
 launcher_script="$kotlin_cli_target_dir/bin/launcher.sh"
 
-if [ -z "${KOTLIN_CLI_JAVA_HOME:-}" ] && [ -n "${JAVA_HOME:-}" ]; then
-  export KOTLIN_CLI_JAVA_HOME="$JAVA_HOME"
-fi
-
 KOTLIN_CLI_WRAPPER_PATH="$(realpath "$0")" \
 exec /bin/sh "$launcher_script" "$@"
