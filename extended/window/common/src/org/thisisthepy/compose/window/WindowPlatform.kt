@@ -21,6 +21,15 @@ interface WindowListener {
 
     /** The window manager asked the window to close. Return true to let it close. */
     fun onCloseRequested(): Boolean = true
+
+    /**
+     * A reader asked a control to do something: [id] is the [AccessibleElement.id] it was given,
+     * [action] one [AccessibleAction] value, [argument] the new value for
+     * [AccessibleAction.SET_VALUE] and null otherwise. Arrives on the thread that pumps, from
+     * [WindowPlatform.pump]. Returns whether the scene did it, which the platform reports back
+     * to the system where it asks.
+     */
+    fun onAccessibilityAction(id: Int, action: Int, argument: String? = null): Boolean = false
 }
 
 /**
@@ -102,6 +111,43 @@ interface WindowPlatform {
 
     /** Shows a context menu at the pointer. The answer arrives at [WindowListener.onContextMenuChosen]. */
     fun showContextMenu(items: List<ContextMenuItem>)
+
+    /**
+     * The window's caption as it is now, in points: what the content steps clear of, and whether
+     * the scene draws the buttons. Read by the scene before each frame, so a change of style,
+     * scale or full screen reaches the content on the next one. The default is no caption.
+     */
+    fun caption(): WindowCaption = WindowCaption.None
+
+    /**
+     * What the window tells a reader who cannot see it: the scene's semantics, flattened, in
+     * window points. Pushed by the scene whenever it changes (see [AccessibilityCache]); the
+     * platform answers the system's questions from the last list it was given. The default
+     * keeps nothing, for a platform with no accessibility bridge yet.
+     */
+    fun setAccessibility(elements: List<AccessibleElement>) {}
+
+    /**
+     * Whether a reader is listening: a screen reader or another accessibility client has asked
+     * this window something, or the system says one is running. Describing the scene costs about
+     * a third of a frame, so the scene describes and pushes only while this is true, and a live
+     * resize with nobody listening pays nothing. Read by the scene before each frame; when it
+     * turns true the scene describes on the next one. The default is false, for a platform with
+     * no accessibility bridge.
+     */
+    val accessibilityActive: Boolean get() = false
+
+    /**
+     * Starts moving the window under the pointer, from a press in an empty part of a caption
+     * the scene draws. Returns false where the platform moves the window itself or cannot.
+     */
+    fun startMove(): Boolean = false
+
+    /** Starts resizing the window from [edge], from a press at that edge. False where the platform does it itself. */
+    fun startResize(edge: WindowEdge): Boolean = false
+
+    /** Does what a caption button the scene drew asks: minimise, maximise or restore, close. */
+    fun performCaptionAction(action: CaptionAction) {}
 
     /** Destroys the window and everything the layer holds for it. */
     fun close()
