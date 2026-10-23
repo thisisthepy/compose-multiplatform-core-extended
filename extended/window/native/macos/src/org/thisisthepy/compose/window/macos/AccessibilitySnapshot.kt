@@ -24,7 +24,7 @@ import platform.Foundation.NSDefaultRunLoopMode
 import platform.Foundation.NSRunLoop
 import platform.Foundation.dateWithTimeIntervalSinceNow
 import platform.Foundation.runMode
-import platform.darwin.QOS_CLASS_USER_INITIATED
+import platform.darwin.DISPATCH_QUEUE_PRIORITY_HIGH
 import platform.darwin.dispatch_async
 import platform.darwin.dispatch_get_global_queue
 import platform.posix.getpid
@@ -98,7 +98,7 @@ fun axApiProbe(): MacosAxApiAnswer {
     val count = AtomicInt(-1)
     val done = AtomicInt(0)
     val pid = getpid()
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED.toLong(), 0u)) {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH.toLong(), 0u)) {
         val app = AXUIElementCreateApplication(pid)
         if (app != null) {
             AXUIElementSetMessagingTimeout(app, 3.0f)
