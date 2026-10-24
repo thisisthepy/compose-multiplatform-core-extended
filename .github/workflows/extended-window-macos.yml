@@ -51,6 +51,9 @@ jobs:
       - name: The corner radius table matches the corner macOS draws
         run: ./scripts/check-macos-corner-radius.sh
 
+      - name: The vertical resize check tells a mark that moved from one that held still
+        run: ./scripts/check-vresize-jump.test.sh
+
   build:
     name: Window macosArm64
     runs-on: macos-latest
