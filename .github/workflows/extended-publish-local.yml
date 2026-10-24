@@ -1,0 +1,321 @@
+# Everything this fork ships, published to the local Maven repository with
+# extended/publish-local-all.sh and kept as one repository. A Mac publishes everything that has
+# a root (Compose for the desktop JVM, macosArm64, linuxX64, linuxArm64 and mingwX64, skiko-awt,
+# the window modules but two, the plugin), so every Kotlin Multiplatform root and its shared
+# metadata come from one build that had every target. Linux adds native/linux, which reads the
+# system's X11 headers, and Windows adds windows-shared, whose C half is MSVC's; neither touches
+# a root the Mac wrote. Then a Gradle consumer resolves all of it for every target and fails if
+# JetBrains' Compose comes with it. Heavy, so it runs on demand and when these files change.
+name: Extended publish local
+
+on:
+  workflow_dispatch:
+    inputs:
+      mac_run:
+        description: >-
+          Take the Mac's repository from this earlier run of this workflow and run only the Windows
+          program against it (empty: publish everything)
+        required: false
+        default: ''
+      plugin_ref:
+        description: >-
+          With mac_run: publish org.thisisthepy.kotlin.native.desktop from this ref of
+          thisisthepy/compose-multiplatform-extended over the one in that repository
+        required: false
+        default: ''
+  pull_request:
+    paths:
+      - extended/publish-local-all.sh
+      - extended/compose/**
+      - extended/skiko/**
+      - .github/workflows/extended-publish-local.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  XWIN_VERSION: 0.6.5
+
+jobs:
+  mac:
+    name: Publish everything with a root (macOS)
+    if: ${{ !inputs.mac_run }}
+    runs-on: macos-latest
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'corretto'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: The MSVC runtime and Windows SDK headers, for skiko's C++ half for mingwX64
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in arm64) triple=aarch64-apple-darwin ;; *) triple=x86_64-apple-darwin ;; esac
+          curl -fsSL "https://github.com/Jake-Shadle/xwin/releases/download/$XWIN_VERSION/xwin-$XWIN_VERSION-$triple.tar.gz" |
+            tar xz -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/xwin-$XWIN_VERSION-$triple/xwin" --accept-license \
+            splat --output "$HOME/Library/Caches/cargo-xwin/xwin"
+
+      - name: Publish
+        env:
+          ANDROIDX_JDK21: ${{ env.JAVA_HOME }}
+        run: |
+          set -euo pipefail
+          ./extended/publish-local-all.sh "$RUNNER_TEMP/publish"
+          find ~/.m2/repository/org/thisisthepy -name '*.module' | sed 's#.*/repository/##' | sort
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: org-thisisthepy-mac
+          path: ~/.m2/repository/org/thisisthepy
+          retention-days: 14
+
+  linux:
+    name: Add native/linux (Linux)
+    needs: mac
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            extended
+            gradle.properties
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'corretto'
+
+      - name: Linux packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libx11-dev libxext-dev libgl1-mesa-dev \
+            libfontconfig1-dev libfreetype6-dev
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: org-thisisthepy-mac
+          path: ~/.m2/repository/org/thisisthepy
+
+      - name: Publish
+        run: |
+          set -euo pipefail
+          ./extended/publish-local-all.sh "$RUNNER_TEMP/publish"
+          find ~/.m2/repository/org/thisisthepy/compose/window -path '*native-linux*' -name '*.module' | sort
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: org-thisisthepy-linux
+          path: ~/.m2/repository/org/thisisthepy/compose/window/native-linux*
+          retention-days: 14
+
+  windows:
+    name: Add windows-shared (Windows)
+    if: ${{ !inputs.mac_run }}
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            extended
+            gradle.properties
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Publish
+        run: |
+          set -euo pipefail
+          ./extended/publish-local-all.sh "$RUNNER_TEMP/publish"
+          find ~/.m2/repository/org/thisisthepy/compose/window -path '*windows-shared*' -name '*.module' | sort
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: org-thisisthepy-windows
+          path: ~/.m2/repository/org/thisisthepy/compose/window/windows-shared*
+          retention-days: 14
+
+  consumer:
+    name: A consumer resolves no JetBrains Compose (macOS)
+    needs: [mac, linux, windows]
+    if: >-
+      ${{ !cancelled() && (inputs.mac_run ||
+      (needs.mac.result == 'success' && needs.linux.result == 'success' && needs.windows.result == 'success')) }}
+    runs-on: macos-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            extended/compose
+            extended/window/native
+            gradle.properties
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'corretto'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.4.0'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: org-thisisthepy-mac
+          path: ~/.m2/repository/org/thisisthepy
+          run-id: ${{ inputs.mac_run || github.run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: org-thisisthepy-linux
+          path: ~/.m2/repository/org/thisisthepy/compose/window
+          run-id: ${{ inputs.mac_run || github.run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: org-thisisthepy-windows
+          path: ~/.m2/repository/org/thisisthepy/compose/window
+          run-id: ${{ inputs.mac_run || github.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Every target resolves, with no JetBrains Compose that carries classes
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^jetbrains.publication.version.COMPOSE=//p' gradle.properties)"
+          gradle -p extended/compose/consumer-check checkResolution --no-daemon "-PforkVersion=$version"
+
+      - name: The repository, as one artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: org-thisisthepy
+          path: ~/.m2/repository/org/thisisthepy
+          retention-days: 14
+
+  windows-program:
+    name: A Windows program links from the repository alone (Windows)
+    needs: mac
+    if: ${{ !cancelled() && (needs.mac.result == 'success' || inputs.mac_run) }}
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Only the consumer project: everything it builds from comes from the published repository.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extended/compose/consumer-check/mingw-program
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.4.0'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: org-thisisthepy-mac
+          path: ~/.m2/repository/org/thisisthepy
+          run-id: ${{ inputs.mac_run || github.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: The native desktop plugin from another ref
+        if: ${{ inputs.mac_run && inputs.plugin_ref }}
+        env:
+          PLUGIN_REF: ${{ inputs.plugin_ref }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^jetbrains.publication.version.COMPOSE=//p' gradle.properties)"
+          plugin="$RUNNER_TEMP/plugin"
+          git init -q "$plugin"
+          git -C "$plugin" fetch -q --depth 1 https://github.com/thisisthepy/compose-multiplatform-extended.git "$PLUGIN_REF"
+          git -C "$plugin" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          (cd "$plugin/gradle-plugins" && ./gradlew --no-daemon --console=plain \
+            :kotlin-native-desktop:publishToMavenLocal "-Pdeploy.version=$version")
+
+      - name: Take every ICU data file off the runner
+        # The program has to shape Korean with the ICU data linked into it. A hosted runner ships
+        # browsers that carry icudtl.dat, so they are removed and the next step confirms none is
+        # left anywhere the program could be pointed at one.
+        run: |
+          { find "/c/Program Files" "/c/Program Files (x86)" /c/Users /c/Windows /d -name 'icudtl.dat' 2>/dev/null || true; } |
+            while IFS= read -r file; do echo "removing $file"; rm -f "$file"; done
+
+      - name: Link with MSVC through org.thisisthepy.kotlin.native.desktop, then run it alone
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^jetbrains.publication.version.COMPOSE=//p' gradle.properties)"
+          if [ -d ~/.m2/repository/org/jetbrains ]; then
+            echo "the local repository holds org/jetbrains, so this would not prove the published one is enough" >&2
+            exit 1
+          fi
+          project=extended/compose/consumer-check/mingw-program
+          gradle -p "$project" linkReleaseExecutableMingwX64 --no-daemon --console=plain "-PforkVersion=$version"
+
+          # One file: no DLL, no icudtl.dat, nothing else beside the executable.
+          out="$project/build/bin/mingwX64/releaseExecutable"
+          ls -la "$out"
+          files="$(find "$out" -mindepth 1 | wc -l | tr -d ' ')"
+          if [ "$files" != 1 ] || [ ! -f "$out/mingw-program.exe" ]; then
+            echo "the output holds $files entries, not mingw-program.exe alone" >&2
+            exit 1
+          fi
+          icu="$({ find "/c/Program Files" "/c/Program Files (x86)" /c/Users /c/Windows /d -name 'icudtl.dat' 2>/dev/null || true; } | head -20)"
+          if [ -n "$icu" ]; then
+            echo "an ICU data file is on this runner, so the Korean check would not prove anything:" >&2
+            echo "$icu" >&2
+            exit 1
+          fi
+
+          # Alone in an empty directory.
+          run="$RUNNER_TEMP/alone"
+          rm -rf "$run" && mkdir -p "$run"
+          cp "$out/mingw-program.exe" "$run/"
+          (cd "$run" && ./mingw-program.exe) | tee run.log
+          grep -q 'mingw program ok' run.log
+
+      # What the MSVC link was given, after the MinGW rewrite, for reading off the runner.
+      - name: Keep the link's inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mingw-program-link-inputs
+          path: extended/compose/consumer-check/mingw-program/build/msvc
+          retention-days: 7
+          if-no-files-found: ignore

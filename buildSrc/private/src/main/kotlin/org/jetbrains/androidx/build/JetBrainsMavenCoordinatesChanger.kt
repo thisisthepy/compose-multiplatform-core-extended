@@ -18,6 +18,35 @@ package org.jetbrains.androidx.build
 
 import androidx.build.Version
 import org.gradle.api.Project
+import org.gradle.api.publish.PublishingExtension
+import org.gradle.api.publish.maven.MavenPublication
+
+private const val UPSTREAM_VERSION_PREFIX = "extended.upstream.version."
+
+/**
+ * Appends the upstream version a line's sources are to the description of every POM this
+ * project publishes, so the one version line the fork ships on loses nothing.
+ */
+private fun Project.recordUpstreamVersion(library: String, upstream: String) {
+    plugins.withId("maven-publish") {
+        extensions.getByType(PublishingExtension::class.java).publications
+            .withType(MavenPublication::class.java)
+            .configureEach { publication ->
+                publication.pom.withXml { xml ->
+                    val root = xml.asNode()
+                    val note = "Upstream version: $upstream ($library line)."
+                    val existing = root.children().filterIsInstance<groovy.util.Node>()
+                        // A plain name or a namespaced one ("{http://maven.apache.org/POM/4.0.0}description").
+                        .firstOrNull { it.name().toString().substringAfterLast('}') == "description" }
+                    if (existing == null) {
+                        root.appendNode("description", note)
+                    } else {
+                        existing.setValue("${existing.text().trimEnd()} $note".trim())
+                    }
+                }
+            }
+    }
+}
 
 fun Project.changeMavenCoordinatesToJetBrains() {
     // we are interested in changing coordinates only for what we publish
@@ -25,9 +54,19 @@ fun Project.changeMavenCoordinatesToJetBrains() {
     val versions = JetBrainsVersionsService.versions(project)
 
     val group = JetBrainsPublication.mavenGroupFor(path)
-    val version = Version(versions.versionOf(component.library()))
+    val published = versions.versionOf(component.library())
+    // Every line publishes on the fork's one version; the upstream version its sources are
+    // decides what the version means to the build (stable, alpha, final API), and is written
+    // into the POM's description.
+    val upstream = findProperty(UPSTREAM_VERSION_PREFIX + component.library())?.toString()
+    val version =
+        if (upstream == null) Version(published)
+        else Version(upstream).copy(forkRelease = Version(published).forkRelease, publishedAs = published)
     this.group = group
     this.version = version
+    if (upstream != null) {
+        recordUpstreamVersion(component.library(), upstream)
+    }
 
     afterEvaluate {
         check(this.group == group) {

@@ -129,13 +129,13 @@ jobs:
           base=~/.m2/repository/org/thisisthepy/compose/window
           for artifact in native-linux native-linux-scene; do
             for arch in linuxx64 linuxarm64; do
-              dir="$base/$artifact-$arch/0.1.0"
-              for file in "$artifact-$arch-0.1.0.klib" "$artifact-$arch-0.1.0.module" "$artifact-$arch-0.1.0.pom"; do
+              dir="$base/$artifact-$arch/1.11.1-ext.1"
+              for file in "$artifact-$arch-1.11.1-ext.1.klib" "$artifact-$arch-1.11.1-ext.1.module" "$artifact-$arch-1.11.1-ext.1.pom"; do
                 test -s "$dir/$file" || { echo "missing $dir/$file" >&2; exit 1; }
               done
               echo "ok    $artifact-$arch is published as its own coordinate"
             done
-            root="$base/$artifact/0.1.0/$artifact-0.1.0.module"
+            root="$base/$artifact/1.11.1-ext.1/$artifact-1.11.1-ext.1.module"
             test -s "$root" || { echo "missing the root module $root" >&2; exit 1; }
             cat "$root"
             for arch in linuxx64 linuxarm64; do

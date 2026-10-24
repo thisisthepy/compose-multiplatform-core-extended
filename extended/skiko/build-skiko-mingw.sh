@@ -25,6 +25,8 @@
 #
 # Output, in <work-dir>/out/windows-x64/:
 #   skiko-bridges.lib   skiko's C++ half, MSVC, static C runtime (/MT)
+#   embedded_icu.obj    Skia's ICU data compiled in (embedded_icu.cpp), to link whole: Skia
+#                       on Windows would otherwise read icudtl.dat from beside the executable
 #   skia/               the prebuilt Skia libraries the bridges link against
 #   skia-include/       Skia's distribution, for anything else compiled against it
 #
@@ -141,11 +143,13 @@ obj="$WORK/obj"
 rm -rf "$out" "$obj"
 mkdir -p "$out" "$obj"
 src="$checkout/skiko/src"
-flags=(
-    --driver-mode=cl --target=x86_64-pc-windows-msvc /std:c++17 /O2 /MT /GR- /c /nologo
-    -Wno-everything
+msvc_headers=(
     -imsvc "$xwin/crt/include" -imsvc "$xwin/sdk/include/ucrt"
     -imsvc "$xwin/sdk/include/um" -imsvc "$xwin/sdk/include/shared"
+)
+flags=(
+    --driver-mode=cl --target=x86_64-pc-windows-msvc /std:c++17 /O2 /MT /GR- /c /nologo
+    -Wno-everything "${msvc_headers[@]}"
     /DSK_ALLOW_STATIC_GLOBAL_INITIALIZERS=1 /DSK_FORCE_DISTANCE_FIELD_TEXT=0 /DSK_GAMMA_APPLY_TO_A8
     /DSK_GAMMA_SRGB /DSK_SCALAR_TO_FLOAT_EXCLUDED /DSK_SUPPORT_GPU=1 /DSK_GANESH /DSK_GL
     /DSK_SHAPER_HARFBUZZ_AVAILABLE /DSK_UNICODE_AVAILABLE /DSK_SHAPER_UNICODE_AVAILABLE
@@ -167,7 +171,9 @@ flags+=("/I$src/nativeJsMain/cpp" "/I$src/commonMain/cpp/common/include" "/I$src
 compile() {
     local file="$1" name
     name="$(echo "${file#"$src"/}" | tr '/' '_')"
-    "$llvm_bin/clang" "${flags[@]}" "$file" "/Fo$obj/${name%.*}.obj" ||
+    # The source after `--`: in MSVC mode an argument starting with a slash is an option, and on
+    # macOS every absolute path does ("/Users/..." reads as /U, which undefines a macro).
+    "$llvm_bin/clang" "${flags[@]}" "/Fo$obj/${name%.*}.obj" -- "$file" ||
         die "skiko's $file did not compile in MSVC mode"
 }
 count=0
@@ -182,9 +188,18 @@ built=$(ls "$obj"/*.obj | wc -l | tr -d ' ')
 [[ "$built" -eq "$count" ]] || die "compiled $built of skiko's $count C++ files"
 "$llvm_bin/llvm-ar" rcs "$out/skiko-bridges.lib" "$obj"/*.obj
 
+# ICU's data, compiled in rather than shipped as icudtl.dat beside the executable: a program
+# is one file. A separate object, linked whole, so its SkLoadICU is the one the link keeps and
+# Skia's, which reads the file, is a library member nothing asks for. Kotlin/Native's clang 19
+# gives #embed's bytes a signed value (-112 for 0x90) even with char unsigned, and narrowing that
+# into the unsigned char array is an error by default; the conversion itself gives back the byte,
+# so the narrowing diagnostic is turned off for this one file.
+"$llvm_bin/clang" --driver-mode=cl --target=x86_64-pc-windows-msvc /std:c++latest /O2 /MT /c /nologo \
+    "${msvc_headers[@]}" -Wno-c23-extensions -Wno-c++11-narrowing "/clang:--embed-dir=$skia_out" "/Fo$out/embedded_icu.obj" -- "$HERE/embedded_icu.cpp" ||
+    die "embedded_icu.cpp did not compile" "It needs clang 19 or later for #embed; Kotlin/Native's LLVM is that from Kotlin 2.2."
+
 mkdir -p "$out/skia"
 cp "$skia_out"/*.lib "$out/skia/"
-cp "$skia_out/icudtl.dat" "$out/skia/"
 ln -sfn "$skia" "$out/skia-include"
 
 echo "skiko $PUBLISHED_AS for mingwX64 published to the local Maven repository"

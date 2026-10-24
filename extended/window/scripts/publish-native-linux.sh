@@ -62,7 +62,7 @@ if anchor not in text:
     sys.exit("%s has no ../../common line to add the list after" % path)
 text = text.replace(anchor, anchor + mine.group(1), 1)
 # The scene by its published coordinate for this architecture, not as a module of the project.
-text = text.replace("  - ../../scene\n", "  - org.thisisthepy.compose.window:scene-%s:0.1.0\n" % arch.lower())
+text = text.replace("  - ../../scene\n", "  - org.thisisthepy.compose.window:scene-%s:1.11.1-ext.1\n" % arch.lower())
 open(path, "w").write(text)
 PY
         echo "== $module as a one-target module: $arch"
@@ -71,14 +71,14 @@ PY
     printf 'modules:\n  - common\n  - native/linux\n  - native/linux-scene\n' > project.yaml
     ./kotlin publish mavenLocal
     for artifact in "${artifacts[@]}"; do
-        root="$repository/$artifact/0.1.0/$artifact-0.1.0.module"
+        root="$repository/$artifact/1.11.1-ext.1/$artifact-1.11.1-ext.1.module"
         [[ -f "$root" ]] || { echo "the publish left no root module at $root" >&2; exit 1; }
         cp "$root" "$roots/$artifact-$arch.module"
     done
 done
 
 for artifact in "${artifacts[@]}"; do
-    root="$repository/$artifact/0.1.0/$artifact-0.1.0.module"
+    root="$repository/$artifact/1.11.1-ext.1/$artifact-1.11.1-ext.1.module"
     python3 - "$roots/$artifact-linuxX64.module" "$roots/$artifact-linuxArm64.module" "$root" <<'PY'
 import json
 import sys
