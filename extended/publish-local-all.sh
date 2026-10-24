@@ -5,7 +5,7 @@
 #
 # Usage: extended/publish-local-all.sh <work-dir> [--targets "<publish-local.sh targets>"]
 #
-# The version is gradle.properties' (jetbrains.publication.version.COMPOSE, 1.11.1-ext.1), and
+# The version is gradle.properties' (jetbrains.publication.version.COMPOSE, 1.11.1-ext.2), and
 # every artifact below is published at it, so a consumer pins one set:
 #
 #   org.thisisthepy.compose.<group>:<artifact>        extended/compose/publish-local.sh

@@ -115,7 +115,7 @@ says so), so any Compose application can open a window through it.
 | `graalvm/graalvm-macos` | `org.thisisthepy.compose.window:graalvm-macos` | JVM (native image) | The AppKit window for a native image: `appkit_window.m` and its Kotlin side, and `appKitWindowSurface`, the Metal surface a `scene` draws into |
 | `graalvm/graalvm-linux` | `org.thisisthepy.compose.window:graalvm-linux` | JVM (native image) | The X11 window for a native image: `x11_window.c` and its Kotlin side, and `x11WindowSurface`, the GL surface a `scene` draws into |
 
-Each is at the fork's one version, `1.11.1-ext.1`. The "Extended window publish" workflow publishes them to the local
+Each is at the fork's one version, `1.11.1-ext.2`. The "Extended window publish" workflow publishes them to the local
 Maven repository the way compose-rust consumes them; `native/linux` joins it in
 [#111](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/111). Nothing is on a public repository yet. The Windows window,
 `windows-shared`, is open in [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32).
@@ -307,14 +307,14 @@ version differ. [`COORDINATES.md`](COORDINATES.md) lists every coordinate.
 
 | What | Coordinate |
 |---|---|
-| Compose modules | `org.thisisthepy.compose.<group>:<artifact>:1.11.1-ext.1`, for example `org.thisisthepy.compose.ui:ui:1.11.1-ext.1` and its `ui-desktop`, `ui-linuxx64`, `ui-mingwx64`, `ui-macosarm64` targets |
-| Material 3 | `org.thisisthepy.compose.material3:material3:1.11.1-ext.1` |
-| Libraries JetBrains publishes as `org.jetbrains.androidx.*` | `org.thisisthepy.compose.androidx.<library>`, for example `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:1.11.1-ext.1` |
-| Runtime, `runtime-saveable`, annotation and collection | `org.thisisthepy.compose.runtime:runtime:1.11.1-ext.1` and the others: stubs with no classes that point at `androidx.compose.runtime`, as JetBrains' do |
-| The window modules | `org.thisisthepy.compose.window:<module>:1.11.1-ext.1` |
-| skiko for `mingwX64` | `org.thisisthepy.compose.skiko:skiko-mingwx64:1.11.1-ext.1`, with its C++ half, Skia and the ICU data as its `msvc` zip; Compose's mingwX64 modules depend on it |
+| Compose modules | `org.thisisthepy.compose.<group>:<artifact>:1.11.1-ext.2`, for example `org.thisisthepy.compose.ui:ui:1.11.1-ext.2` and its `ui-desktop`, `ui-linuxx64`, `ui-mingwx64`, `ui-macosarm64` targets |
+| Material 3 | `org.thisisthepy.compose.material3:material3:1.11.1-ext.2` |
+| Libraries JetBrains publishes as `org.jetbrains.androidx.*` | `org.thisisthepy.compose.androidx.<library>`, for example `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:1.11.1-ext.2` |
+| Runtime, `runtime-saveable`, annotation and collection | `org.thisisthepy.compose.runtime:runtime:1.11.1-ext.2` and the others: stubs with no classes that point at `androidx.compose.runtime`, as JetBrains' do |
+| The window modules | `org.thisisthepy.compose.window:<module>:1.11.1-ext.2` |
+| skiko for `mingwX64` | `org.thisisthepy.compose.skiko:skiko-mingwx64:1.11.1-ext.2`, with its C++ half, Skia and the ICU data as its `msvc` zip; Compose's mingwX64 modules depend on it |
 | The Compose runtime that runs | `androidx.compose.runtime:runtime` at `1.11.2` (Google's), as with JetBrains' Compose 1.11.1 |
-| skiko-awt with the AWT switch | `org.thisisthepy.compose.skiko:skiko-awt:1.11.1-ext.1`, from `extended/skiko/build-skiko-awt.sh`, standing in for `org.jetbrains.skiko:skiko-awt` |
+| skiko-awt with the AWT switch | `org.thisisthepy.compose.skiko:skiko-awt:1.11.1-ext.2`, from `extended/skiko/build-skiko-awt.sh`, standing in for `org.jetbrains.skiko:skiko-awt` |
 
 The runtime's classes are Google's. This fork changes nothing under `compose/runtime` relative
 to the JetBrains release it starts from, and JetBrains' own `org.jetbrains.compose.runtime:runtime:1.11.1`
@@ -324,7 +324,7 @@ beside it would be the same classes twice, so `extended/compose/consumer-check` 
 coordinate: on the JVM and on every Kotlin/Native target the runtime must come from
 `androidx.compose.runtime` at that version and from nothing in the fork's or JetBrains' group.
 
-Everything is on one version line, `<Compose Multiplatform version>-ext.<N>` (`1.11.1-ext.1`):
+Everything is on one version line, `<Compose Multiplatform version>-ext.<N>` (`1.11.1-ext.2`):
 the Compose libraries and every other library line, the window modules, skiko-awt and the
 Gradle plugin, so a consumer pins one set. `N` counts this fork's releases on that Compose. The
 upstream version each artifact's sources are is in its POM's description. A local build that is
@@ -355,8 +355,8 @@ dependencyResolutionManagement {
 kotlin {
     linuxX64()
     sourceSets.commonMain.dependencies {
-        implementation("org.thisisthepy.compose.foundation:foundation:1.11.1-ext.1")
-        implementation("org.thisisthepy.compose.material3:material3:1.11.1-ext.1")
+        implementation("org.thisisthepy.compose.foundation:foundation:1.11.1-ext.2")
+        implementation("org.thisisthepy.compose.material3:material3:1.11.1-ext.2")
     }
 }
 ```
@@ -375,7 +375,7 @@ the groups differ. Anything used with this fork has to be built against it.
 Every merge into `extended` publishes everything above (Compose, the window modules and, once
 it moves under `org.thisisthepy`, skiko-awt) to GitHub Packages as
 `<version>-dev.<commit>`, where `<commit>` is the first ten characters of the merge commit:
-`1.11.1-ext.1-dev.0123456789`, for example. The `-dev.` part keeps these apart from releases,
+`1.11.1-ext.2-dev.0123456789`, for example. The `-dev.` part keeps these apart from releases,
 which never carry it. `.github/workflows/extended-publish.yml` does it, and before uploading
 it checks that no POM or Gradle module in the build names a fork version without that suffix,
 and resolves a window module and the Compose under it from a small consumer

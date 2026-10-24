@@ -36,7 +36,7 @@ fork's group back into the androidx group the Android variant points at.
 Everything this fork ships is on one version line, so a consumer pins one set: every library
 line in `gradle.properties`, the window modules, skiko-awt and the Gradle plugin of
 thisisthepy/compose-multiplatform-extended all publish as `<Compose Multiplatform version>-ext.<N>`,
-today `1.11.1-ext.1`.
+today `1.11.1-ext.2`.
 
 - `N` counts this fork's releases on that Compose, from 1. A release raises it everywhere in
   one commit, and the commit is tagged.
@@ -73,54 +73,54 @@ a target's component, the root's variant for it, or a row of this table.
 
 | Line | JetBrains, Compose Multiplatform 1.11.1 | This fork |
 |---|---|---|
-| `COMPOSE` | `org.jetbrains.compose.annotation-internal:annotation:1.11.1` | `org.thisisthepy.compose.annotation-internal:annotation:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.collection-internal:collection:1.11.1` | `org.thisisthepy.compose.collection-internal:collection:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.animation:animation:1.11.1` | `org.thisisthepy.compose.animation:animation:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.animation:animation-core:1.11.1` | `org.thisisthepy.compose.animation:animation-core:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.animation:animation-graphics:1.11.1` | `org.thisisthepy.compose.animation:animation-graphics:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.foundation:foundation:1.11.1` | `org.thisisthepy.compose.foundation:foundation:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.foundation:foundation-layout:1.11.1` | `org.thisisthepy.compose.foundation:foundation-layout:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.material:material:1.11.1` | `org.thisisthepy.compose.material:material:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.material:material-navigation:1.11.1` | `org.thisisthepy.compose.material:material-navigation:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.material:material-ripple:1.11.1` | `org.thisisthepy.compose.material:material-ripple:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.runtime:runtime:1.11.1` | `org.thisisthepy.compose.runtime:runtime:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.runtime:runtime-saveable:1.11.1` | `org.thisisthepy.compose.runtime:runtime-saveable:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.ui:ui:1.11.1` | `org.thisisthepy.compose.ui:ui:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.ui:ui-geometry:1.11.1` | `org.thisisthepy.compose.ui:ui-geometry:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.ui:ui-backhandler:1.11.1` | `org.thisisthepy.compose.ui:ui-backhandler:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.ui:ui-graphics:1.11.1` | `org.thisisthepy.compose.ui:ui-graphics:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.ui:ui-test:1.11.1` | `org.thisisthepy.compose.ui:ui-test:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.ui:ui-test-junit4:1.11.1` | `org.thisisthepy.compose.ui:ui-test-junit4:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.ui:ui-text:1.11.1` | `org.thisisthepy.compose.ui:ui-text:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.ui:ui-tooling:1.11.1` | `org.thisisthepy.compose.ui:ui-tooling:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.ui:ui-tooling-data:1.11.1` | `org.thisisthepy.compose.ui:ui-tooling-data:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.ui:ui-tooling-preview:1.11.1` | `org.thisisthepy.compose.ui:ui-tooling-preview:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.ui:ui-uikit:1.11.1` | `org.thisisthepy.compose.ui:ui-uikit:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.ui:ui-unit:1.11.1` | `org.thisisthepy.compose.ui:ui-unit:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.ui:ui-util:1.11.1` | `org.thisisthepy.compose.ui:ui-util:1.11.1-ext.1` |
-| `COMPOSE` | `org.jetbrains.compose.desktop:desktop:1.11.1` | `org.thisisthepy.compose.desktop:desktop:1.11.1-ext.1` |
-| `COMPOSE_MATERIAL3` | `org.jetbrains.compose.material3:material3:1.11.0-alpha07` | `org.thisisthepy.compose.material3:material3:1.11.1-ext.1` |
-| `COMPOSE_MATERIAL3` | `org.jetbrains.compose.material3:material3-window-size-class:1.11.0-alpha07` | `org.thisisthepy.compose.material3:material3-window-size-class:1.11.1-ext.1` |
-| `COMPOSE_MATERIAL3` | `org.jetbrains.compose.material3:material3-adaptive-navigation-suite:1.11.0-alpha07` | `org.thisisthepy.compose.material3:material3-adaptive-navigation-suite:1.11.1-ext.1` |
-| `COMPOSE_MATERIAL3_ADAPTIVE` | `org.jetbrains.compose.material3.adaptive:adaptive:1.3.0-alpha07` | `org.thisisthepy.compose.material3.adaptive:adaptive:1.11.1-ext.1` |
-| `COMPOSE_MATERIAL3_ADAPTIVE` | `org.jetbrains.compose.material3.adaptive:adaptive-layout:1.3.0-alpha07` | `org.thisisthepy.compose.material3.adaptive:adaptive-layout:1.11.1-ext.1` |
-| `COMPOSE_MATERIAL3_ADAPTIVE` | `org.jetbrains.compose.material3.adaptive:adaptive-navigation:1.3.0-alpha07` | `org.thisisthepy.compose.material3.adaptive:adaptive-navigation:1.11.1-ext.1` |
-| `COMPOSE_MATERIAL3_ADAPTIVE` | `org.jetbrains.compose.material3.adaptive:adaptive-navigation3:1.3.0-alpha07` | `org.thisisthepy.compose.material3.adaptive:adaptive-navigation3:1.11.1-ext.1` |
-| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-common:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-common:1.11.1-ext.1` |
-| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-runtime:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime:1.11.1-ext.1` |
-| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-viewmodel:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-viewmodel:1.11.1-ext.1` |
-| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-savedstate:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-viewmodel-savedstate:1.11.1-ext.1` |
-| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:1.11.1-ext.1` |
-| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-viewmodel-compose:1.11.1-ext.1` |
-| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-navigation3:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-viewmodel-navigation3:1.11.1-ext.1` |
-| `NAVIGATION` | `org.jetbrains.androidx.navigation:navigation-compose:2.9.2` | `org.thisisthepy.compose.androidx.navigation:navigation-compose:1.11.1-ext.1` |
-| `NAVIGATION` | `org.jetbrains.androidx.navigation:navigation-common:2.9.2` | `org.thisisthepy.compose.androidx.navigation:navigation-common:1.11.1-ext.1` |
-| `NAVIGATION` | `org.jetbrains.androidx.navigation:navigation-runtime:2.9.2` | `org.thisisthepy.compose.androidx.navigation:navigation-runtime:1.11.1-ext.1` |
-| `NAVIGATION_3` | `org.jetbrains.androidx.navigation3:navigation3-ui:1.1.1` | `org.thisisthepy.compose.androidx.navigation3:navigation3-ui:1.11.1-ext.1` |
-| `NAVIGATION_EVENT` | `org.jetbrains.androidx.navigationevent:navigationevent-compose:1.1.0` | `org.thisisthepy.compose.androidx.navigationevent:navigationevent-compose:1.11.1-ext.1` |
-| `SAVEDSTATE` | `org.jetbrains.androidx.savedstate:savedstate:1.4.0` | `org.thisisthepy.compose.androidx.savedstate:savedstate:1.11.1-ext.1` |
-| `SAVEDSTATE` | `org.jetbrains.androidx.savedstate:savedstate-compose:1.4.0` | `org.thisisthepy.compose.androidx.savedstate:savedstate-compose:1.11.1-ext.1` |
-| `WINDOW` | `org.jetbrains.androidx.window:window-core:1.5.1` | `org.thisisthepy.compose.androidx.window:window-core:1.11.1-ext.1` |
+| `COMPOSE` | `org.jetbrains.compose.annotation-internal:annotation:1.11.1` | `org.thisisthepy.compose.annotation-internal:annotation:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.collection-internal:collection:1.11.1` | `org.thisisthepy.compose.collection-internal:collection:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.animation:animation:1.11.1` | `org.thisisthepy.compose.animation:animation:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.animation:animation-core:1.11.1` | `org.thisisthepy.compose.animation:animation-core:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.animation:animation-graphics:1.11.1` | `org.thisisthepy.compose.animation:animation-graphics:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.foundation:foundation:1.11.1` | `org.thisisthepy.compose.foundation:foundation:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.foundation:foundation-layout:1.11.1` | `org.thisisthepy.compose.foundation:foundation-layout:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.material:material:1.11.1` | `org.thisisthepy.compose.material:material:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.material:material-navigation:1.11.1` | `org.thisisthepy.compose.material:material-navigation:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.material:material-ripple:1.11.1` | `org.thisisthepy.compose.material:material-ripple:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.runtime:runtime:1.11.1` | `org.thisisthepy.compose.runtime:runtime:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.runtime:runtime-saveable:1.11.1` | `org.thisisthepy.compose.runtime:runtime-saveable:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.ui:ui:1.11.1` | `org.thisisthepy.compose.ui:ui:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.ui:ui-geometry:1.11.1` | `org.thisisthepy.compose.ui:ui-geometry:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.ui:ui-backhandler:1.11.1` | `org.thisisthepy.compose.ui:ui-backhandler:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.ui:ui-graphics:1.11.1` | `org.thisisthepy.compose.ui:ui-graphics:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.ui:ui-test:1.11.1` | `org.thisisthepy.compose.ui:ui-test:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.ui:ui-test-junit4:1.11.1` | `org.thisisthepy.compose.ui:ui-test-junit4:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.ui:ui-text:1.11.1` | `org.thisisthepy.compose.ui:ui-text:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.ui:ui-tooling:1.11.1` | `org.thisisthepy.compose.ui:ui-tooling:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.ui:ui-tooling-data:1.11.1` | `org.thisisthepy.compose.ui:ui-tooling-data:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.ui:ui-tooling-preview:1.11.1` | `org.thisisthepy.compose.ui:ui-tooling-preview:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.ui:ui-uikit:1.11.1` | `org.thisisthepy.compose.ui:ui-uikit:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.ui:ui-unit:1.11.1` | `org.thisisthepy.compose.ui:ui-unit:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.ui:ui-util:1.11.1` | `org.thisisthepy.compose.ui:ui-util:1.11.1-ext.2` |
+| `COMPOSE` | `org.jetbrains.compose.desktop:desktop:1.11.1` | `org.thisisthepy.compose.desktop:desktop:1.11.1-ext.2` |
+| `COMPOSE_MATERIAL3` | `org.jetbrains.compose.material3:material3:1.11.0-alpha07` | `org.thisisthepy.compose.material3:material3:1.11.1-ext.2` |
+| `COMPOSE_MATERIAL3` | `org.jetbrains.compose.material3:material3-window-size-class:1.11.0-alpha07` | `org.thisisthepy.compose.material3:material3-window-size-class:1.11.1-ext.2` |
+| `COMPOSE_MATERIAL3` | `org.jetbrains.compose.material3:material3-adaptive-navigation-suite:1.11.0-alpha07` | `org.thisisthepy.compose.material3:material3-adaptive-navigation-suite:1.11.1-ext.2` |
+| `COMPOSE_MATERIAL3_ADAPTIVE` | `org.jetbrains.compose.material3.adaptive:adaptive:1.3.0-alpha07` | `org.thisisthepy.compose.material3.adaptive:adaptive:1.11.1-ext.2` |
+| `COMPOSE_MATERIAL3_ADAPTIVE` | `org.jetbrains.compose.material3.adaptive:adaptive-layout:1.3.0-alpha07` | `org.thisisthepy.compose.material3.adaptive:adaptive-layout:1.11.1-ext.2` |
+| `COMPOSE_MATERIAL3_ADAPTIVE` | `org.jetbrains.compose.material3.adaptive:adaptive-navigation:1.3.0-alpha07` | `org.thisisthepy.compose.material3.adaptive:adaptive-navigation:1.11.1-ext.2` |
+| `COMPOSE_MATERIAL3_ADAPTIVE` | `org.jetbrains.compose.material3.adaptive:adaptive-navigation3:1.3.0-alpha07` | `org.thisisthepy.compose.material3.adaptive:adaptive-navigation3:1.11.1-ext.2` |
+| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-common:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-common:1.11.1-ext.2` |
+| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-runtime:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime:1.11.1-ext.2` |
+| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-viewmodel:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-viewmodel:1.11.1-ext.2` |
+| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-savedstate:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-viewmodel-savedstate:1.11.1-ext.2` |
+| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:1.11.1-ext.2` |
+| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-viewmodel-compose:1.11.1-ext.2` |
+| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-navigation3:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-viewmodel-navigation3:1.11.1-ext.2` |
+| `NAVIGATION` | `org.jetbrains.androidx.navigation:navigation-compose:2.9.2` | `org.thisisthepy.compose.androidx.navigation:navigation-compose:1.11.1-ext.2` |
+| `NAVIGATION` | `org.jetbrains.androidx.navigation:navigation-common:2.9.2` | `org.thisisthepy.compose.androidx.navigation:navigation-common:1.11.1-ext.2` |
+| `NAVIGATION` | `org.jetbrains.androidx.navigation:navigation-runtime:2.9.2` | `org.thisisthepy.compose.androidx.navigation:navigation-runtime:1.11.1-ext.2` |
+| `NAVIGATION_3` | `org.jetbrains.androidx.navigation3:navigation3-ui:1.1.1` | `org.thisisthepy.compose.androidx.navigation3:navigation3-ui:1.11.1-ext.2` |
+| `NAVIGATION_EVENT` | `org.jetbrains.androidx.navigationevent:navigationevent-compose:1.1.0` | `org.thisisthepy.compose.androidx.navigationevent:navigationevent-compose:1.11.1-ext.2` |
+| `SAVEDSTATE` | `org.jetbrains.androidx.savedstate:savedstate:1.4.0` | `org.thisisthepy.compose.androidx.savedstate:savedstate:1.11.1-ext.2` |
+| `SAVEDSTATE` | `org.jetbrains.androidx.savedstate:savedstate-compose:1.4.0` | `org.thisisthepy.compose.androidx.savedstate:savedstate-compose:1.11.1-ext.2` |
+| `WINDOW` | `org.jetbrains.androidx.window:window-core:1.5.1` | `org.thisisthepy.compose.androidx.window:window-core:1.11.1-ext.2` |
 
 ## What is not renamed, and why
 
@@ -129,7 +129,7 @@ a target's component, the root's variant for it, or a row of this table.
   `org.jetbrains.skiko`. It is not published by this fork, and every Compose module asks for
   skiko by that coordinate.
 - **skiko-awt** is the exception among the skiko artifacts: the patched jar (the AWT switch) is
-  this fork's, `org.thisisthepy.compose.skiko:skiko-awt:1.11.1-ext.1`, from
+  this fork's, `org.thisisthepy.compose.skiko:skiko-awt:1.11.1-ext.2`, from
   `extended/skiko/build-skiko-awt.sh`. Its Gradle module metadata declares JetBrains'
   `org.jetbrains.skiko:skiko-awt` as a capability at `0.144.6.1`, so Gradle sees the two as one
   library and, resolving the conflict by version, keeps this one. Its natives are JetBrains'

@@ -18,7 +18,7 @@
 #              targets other hosts build. The run that publishes the roots takes this.
 #
 # Runs from anywhere; the Gradle build is the checkout this script is in. Every module is
-# published at the version gradle.properties gives its line (1.11.1-ext.1 for Compose), so a
+# published at the version gradle.properties gives its line (1.11.1-ext.2 for Compose), so a
 # consumer names exactly that and nothing JetBrains publishes can stand in for it.
 #
 # Why lists of modules rather than everything: each target gets the modules upstream publishes
