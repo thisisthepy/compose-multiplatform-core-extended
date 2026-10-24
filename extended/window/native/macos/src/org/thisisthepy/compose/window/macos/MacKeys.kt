@@ -124,7 +124,7 @@ private val SELECTOR_KEYS: Map<String, Pair<Key, Long>> = mapOf(
 )
 
 /** Where each key the table above names sits on the board, which is what an event carries. */
-private val MAC_KEY_CODES: Map<Key, Int> = mapOf(
+internal val MAC_KEY_CODES: Map<Key, Int> = mapOf(
     Key.A to 0x00,
     Key.C to 0x08,
     Key.E to 0x0E,

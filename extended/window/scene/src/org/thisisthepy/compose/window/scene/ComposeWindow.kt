@@ -294,6 +294,14 @@ class ComposeWindowHost(
         drewLast = true
     }
 
+    /** Renders directly to [canvas] at the given pixel dimensions, using the host's clock and scene. */
+    fun renderTo(canvas: org.jetbrains.skia.Canvas, widthInPixels: Int, heightInPixels: Int) {
+        val current = scene ?: return
+        val fitted = IntSize(widthInPixels, heightInPixels)
+        if (current.size != fitted) current.size = fitted
+        current.render(canvas.asComposeCanvas(), clock.frameNanos())
+    }
+
     /**
      * Hands the platform what a reader is told, while a reader is listening. After a painted
      * frame it is described again whether or not anything said it changed, because a control
