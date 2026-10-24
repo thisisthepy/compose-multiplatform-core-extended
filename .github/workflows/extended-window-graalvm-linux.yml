@@ -53,6 +53,18 @@ jobs:
           mkdir -p build
           cc -c -O2 -fPIC -Wall -o build/x11_window.o c/x11_window.c
 
+      # The renderer's one native image carries the macOS window's calls on every desktop and
+      # links every C function its reachable code names, so the X11 library defines them too.
+      - name: The macOS window's calls the image carries resolve here too
+        working-directory: extended/window/graalvm/graalvm-linux
+        run: |
+          for name in window_title_bar window_chrome set_accessibility accessibility_active take_accessibility_argument accessibility_snapshot ax_api_probe; do
+            nm build/x11_window.o | grep -q " T dxc_native_$name\$" || {
+              echo "x11_window.c defines no dxc_native_$name" >&2
+              exit 1
+            }
+          done
+
       - name: Drag files onto the window (XDND client under a virtual display)
         working-directory: extended/window/graalvm/graalvm-linux
         run: |

@@ -120,6 +120,33 @@ Maven repository the way compose-rust consumes them; `native/linux` joins it in
 [#111](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/111). Nothing is on a public repository yet. The Windows window,
 `windows-shared`, is open in [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32).
 
+### macOS title bar and accessibility
+
+Both macOS windows, `native/macos` and `graalvm/graalvm-macos`, build their title bar from the
+same two `WindowConfig` options, by one rule in `common` (`MacosTitleBar.of`), so a
+configuration gives the same corners, buttons and content top on either path.
+
+| `chrome` | `titleBar` | What the window gets |
+|---|---|---|
+| `WindowChrome.Modern` (default) | `TitleBarStyle.Normal` (default) | Content runs under a transparent title bar. The title is carried for the switcher but not drawn. The system's close, minimise and zoom buttons stay, set in as a unified toolbar sets them. |
+| `WindowChrome.Modern` | `TitleBarStyle.Simple` | The same, with the plain title bar's height, button place and corner radius. |
+| `WindowChrome.System` | either | The system's own title bar, with its title drawn and the content below it. |
+
+`WindowPlatform.caption()` reports the strip to keep clear of, in points: the bar's height, the
+room the buttons take at the leading edge, and the radius of the window's corners.
+`buttonsDrawnByScene` is false, because the buttons are the system's. AppKit has no public API
+for a window's corner radius, so the radius comes from a table measured in CI on each release
+with a runner: macOS 14 and 15 draw 10.25 pt in both styles, and macOS 26 draws 26.75 pt for
+`Normal` and 16.75 pt for `Simple`. No private API is used.
+
+`WindowPlatform.setAccessibility(elements)` gives VoiceOver one AppKit accessibility element per
+`AccessibleElement`, nested by `parentId`, with its role and subrole, label, value, range, hint
+and enabled, focused and selected states. An element keeps its object for as long as its `id`
+does. A reader's press, increment, decrement, menu, value change (a field's text or a slider's
+value), focus request and scroll arrive at `WindowListener.onAccessibilityAction(id, action,
+argument)` on the thread that pumps. `accessibilityActive` turns true once a reader has asked the
+window anything or VoiceOver is on, so a scene can skip describing itself while nobody listens.
+
 ### Linux window chrome and accessibility
 
 Both Linux windows, `native/linux` and `graalvm/graalvm-linux`, take the chrome options from
