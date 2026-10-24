@@ -47,13 +47,13 @@ import platform.posix.dlsym
  * frame on the screen together.
  */
 class MetalSurface {
-    private val device = requireNotNull(MTLCreateSystemDefaultDevice()) {
+    internal val device = requireNotNull(MTLCreateSystemDefaultDevice()) {
         "this machine has no Metal device; the renderer draws with Metal on this platform"
     }
-    private val queue = requireNotNull(device.newCommandQueue()) {
+    internal val queue = requireNotNull(device.newCommandQueue()) {
         "the Metal device would not give a command queue"
     }
-    private val context = DirectContext.makeMetal(device.objcPtr(), queue.objcPtr())
+    internal val context = DirectContext.makeMetal(device.objcPtr(), queue.objcPtr())
 
     /** What Metal has allocated for this device, in bytes, for measuring. */
     val allocatedBytes: Long get() = device.currentAllocatedSize.toLong()
@@ -166,7 +166,7 @@ class MetalSurface {
      * by nothing in Kotlin. The pool [draw] wraps the frame in is its only owner, and it
      * goes back to the layer the moment the frame ends, on the thread that drew it.
      */
-    private fun nextDrawable(): COpaquePointer? =
+    internal fun nextDrawable(): COpaquePointer? =
         sendForObject(interpretCPointer<CPointed>(layer.objcPtr()), NEXT_DRAWABLE)
 
     private fun drawFrame(paint: (Canvas, Int, Int) -> Unit): Boolean {
@@ -266,9 +266,9 @@ class MetalSurface {
             return flips % 2 == 0
         }
 
-        private val NEXT_DRAWABLE = requireNotNull(sel_registerName("nextDrawable"))
-        private val TEXTURE = requireNotNull(sel_registerName("texture"))
-        private val PRESENT = requireNotNull(sel_registerName("present"))
+        internal val NEXT_DRAWABLE = requireNotNull(sel_registerName("nextDrawable"))
+        internal val TEXTURE = requireNotNull(sel_registerName("texture"))
+        internal val PRESENT = requireNotNull(sel_registerName("present"))
 
         /**
          * `objc_msgSend`, found at run time. The runtime declares it without a prototype,
@@ -280,13 +280,13 @@ class MetalSurface {
         ) { "the Objective-C runtime has no objc_msgSend" }
 
         /** Sends a selector that takes nothing and answers an object, at +0. */
-        private fun sendForObject(receiver: COpaquePointer?, selector: COpaquePointer): COpaquePointer? =
+        internal fun sendForObject(receiver: COpaquePointer?, selector: COpaquePointer): COpaquePointer? =
             messageSend
                 .reinterpret<CFunction<(COpaquePointer?, COpaquePointer?) -> COpaquePointer?>>()
                 .invoke(receiver, selector)
 
         /** Sends a selector that takes nothing and answers nothing. */
-        private fun sendForNothing(receiver: COpaquePointer?, selector: COpaquePointer) {
+        internal fun sendForNothing(receiver: COpaquePointer?, selector: COpaquePointer) {
             messageSend
                 .reinterpret<CFunction<(COpaquePointer?, COpaquePointer?) -> Unit>>()
                 .invoke(receiver, selector)

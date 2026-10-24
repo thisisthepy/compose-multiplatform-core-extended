@@ -294,22 +294,46 @@ class ComposeWindowHost(
         drewLast = true
     }
 
+    /** Renders directly to [canvas] at the given pixel dimensions, using the host's clock and scene. */
+    fun renderTo(canvas: org.jetbrains.skia.Canvas, widthInPixels: Int, heightInPixels: Int) {
+        val current = scene ?: return
+        work.runPending()
+        sceneMainWork.runPending()
+        val fitted = IntSize(widthInPixels, heightInPixels)
+        if (current.size != fitted) current.size = fitted
+        current.render(canvas.asComposeCanvas(), clock.frameNanos())
+        work.runPending()
+        sceneMainWork.runPending()
+    }
+
     /**
      * Hands the platform what a reader is told, while a reader is listening. After a painted
      * frame it is described again whether or not anything said it changed, because a control
      * that moved sends no change; the cache's comparison makes an unchanged tree free. When a
      * reader starts listening, the tree is pushed at once.
      */
-    private fun describeForReaders(drew: Boolean) {
+    fun describeForReaders(drew: Boolean = true) {
         val listening = platform.accessibilityActive
         if (!listening) {
             readerWasListening = false
             return
         }
+        work.runPending()
+        sceneMainWork.runPending()
         val first = !readerWasListening
         readerWasListening = true
         if (first || drew || semantics.changed) accessibility.pushIfChanged(afterDrawing = true)
     }
+
+    /** Runs pending coroutines on the host's dispatchers. */
+    fun runPendingWork() {
+        work.runPending()
+        sceneMainWork.runPending()
+    }
+
+    /** Does what a reader asked of control [id]. */
+    fun onAccessibilityAction(id: Int, action: Int, argument: String?): Boolean =
+        semantics.perform(id, action, argument).also { if (it) requestFrame() }
 
     private fun placeInputMethod() {
         if (!textInput.isActive) return

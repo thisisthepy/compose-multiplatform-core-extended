@@ -135,6 +135,7 @@ jobs:
         working-directory: extended/window
         shell: bash
         run: |
+          perl -0pi -e 's/^[ \t]*- native\/macos\n//m' project.yaml
           perl -0pi -e 's/^  platforms: \[.*\]$/  platforms: [ jvm ]/m' scene/module.yaml
           grep -q '^  platforms: \[ jvm \]$' scene/module.yaml
 

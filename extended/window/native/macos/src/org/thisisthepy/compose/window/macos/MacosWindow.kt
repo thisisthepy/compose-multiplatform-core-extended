@@ -1,349 +1,209 @@
 @file:OptIn(
     androidx.compose.ui.InternalComposeUiApi::class,
     kotlinx.cinterop.ExperimentalForeignApi::class,
+    kotlinx.cinterop.BetaInteropApi::class,
 )
 
 package org.thisisthepy.compose.window.macos
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.asComposeCanvas
-import androidx.compose.ui.input.pointer.PointerButton
-import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.platform.DefaultArchitectureComponentsOwner
-import androidx.compose.ui.platform.PlatformContext
-import androidx.compose.ui.platform.PlatformTextInputMethodRequest
-import androidx.compose.ui.input.key.KeyEvent
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.platform.WindowInfo
-import androidx.compose.ui.scene.CanvasLayersComposeScene
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
+import kotlinx.cinterop.CPointed
+import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.CValue
 import kotlinx.cinterop.alloc
+import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.reinterpret
-import kotlinx.cinterop.toKString
 import kotlinx.cinterop.readValue
-import kotlinx.cinterop.addressOf
-import kotlinx.cinterop.usePinned
+import kotlinx.cinterop.toKString
 import kotlinx.cinterop.useContents
+import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
-import platform.CoreGraphics.CGPoint
-import platform.CoreGraphics.CGRect
-import platform.Foundation.NSPointInRect
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.enableSavedStateHandles
-import kotlinx.coroutines.Dispatchers
+import kotlinx.cinterop.addressOf
 import org.jetbrains.skia.Canvas
 import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.MacosAx
-import org.thisisthepy.compose.window.FrameClock
-import platform.AppKit.NSWorkspace
-import platform.AppKit.voiceOverEnabled
+import org.thisisthepy.compose.window.ResizeStats
+import org.thisisthepy.compose.window.WindowConfig
+import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.macosCornerRadius
-import androidx.compose.ui.input.pointer.PointerIcon
+import org.thisisthepy.compose.window.scene.ComposeWindowHost
+import platform.AppKit.NSApplication
 import platform.AppKit.NSBackingStoreBuffered
-import platform.AppKit.NSWindowCloseButton
-import platform.Foundation.NSOperationQueue
-import platform.Foundation.NSNotificationCenter
-import platform.AppKit.NSMenuDidEndTrackingNotification
-import platform.AppKit.NSWindowTitleVisible
-import platform.AppKit.NSWindowToolbarStyle
-import platform.AppKit.NSToolbar
-import platform.AppKit.NSWindowZoomButton
-import platform.AppKit.NSViewLayerContentsRedrawDuringViewResize
-import platform.CoreGraphics.CGSize
-import org.thisisthepy.compose.window.ResizeStats
-import org.thisisthepy.compose.window.WindowEvent
-import platform.Foundation.NSDate
-import platform.Foundation.NSRunLoop
-import platform.Foundation.dateWithTimeIntervalSinceNow
-import platform.Foundation.runUntilDate
-import platform.Foundation.NSProcessInfo
-import platform.QuartzCore.CALayer
-import platform.QuartzCore.CALayerDelegateProtocol
 import platform.AppKit.NSColor
-import platform.AppKit.NSCursor
-import platform.AppKit.NSMenu
-import platform.AppKit.NSViewHeightSizable
-import platform.AppKit.NSViewWidthSizable
-import platform.AppKit.NSVisualEffectBlendingMode
-import platform.AppKit.NSVisualEffectMaterialUnderWindowBackground
-import platform.AppKit.NSVisualEffectState
-import platform.AppKit.NSVisualEffectView
 import platform.AppKit.NSDragOperation
 import platform.AppKit.NSDragOperationCopy
 import platform.AppKit.NSDragOperationNone
 import platform.AppKit.NSDraggingDestinationProtocol
 import platform.AppKit.NSDraggingInfoProtocol
-import platform.AppKit.NSFilenamesPboardType
 import platform.AppKit.NSEvent
-import platform.AppKit.NSApplication
-import platform.AppKit.postEvent
-import platform.AppKit.NSEventType
 import platform.AppKit.NSEventModifierFlagControl
+import platform.AppKit.NSFilenamesPboardType
+import platform.AppKit.NSMenu
+import platform.AppKit.NSTextInputClientProtocol
+import platform.AppKit.NSToolbar
 import platform.AppKit.NSTrackingActiveAlways
 import platform.AppKit.NSTrackingActiveInKeyWindow
-import platform.AppKit.NSTrackingAssumeInside
 import platform.AppKit.NSTrackingArea
+import platform.AppKit.NSTrackingAssumeInside
 import platform.AppKit.NSTrackingInVisibleRect
 import platform.AppKit.NSTrackingMouseEnteredAndExited
 import platform.AppKit.NSTrackingMouseMoved
-import platform.AppKit.NSTextInputClientProtocol
-import platform.Foundation.NSAttributedString
-import platform.Foundation.NSMakeRange
-import platform.Foundation.NSNotFound
-import platform.Foundation.NSRange
-import platform.Foundation.NSRangePointer
-import platform.Foundation.NSStringFromSelector
-import platform.Foundation.string
-import kotlinx.cinterop.CPointed
-import kotlinx.cinterop.CPointer
 import platform.AppKit.NSView
+import platform.AppKit.NSViewHeightSizable
+import platform.AppKit.NSViewLayerContentsRedrawDuringViewResize
+import platform.AppKit.NSViewWidthSizable
+import platform.AppKit.NSVisualEffectBlendingMode
+import platform.AppKit.NSVisualEffectMaterialUnderWindowBackground
+import platform.AppKit.NSVisualEffectState
+import platform.AppKit.NSVisualEffectView
 import platform.AppKit.NSWindow
+import platform.AppKit.NSWindowCloseButton
 import platform.AppKit.NSWindowStyleMaskClosable
+import platform.AppKit.NSWindowStyleMaskFullSizeContentView
 import platform.AppKit.NSWindowStyleMaskMiniaturizable
 import platform.AppKit.NSWindowStyleMaskResizable
-import platform.AppKit.NSWindowStyleMaskFullSizeContentView
 import platform.AppKit.NSWindowStyleMaskTitled
 import platform.AppKit.NSWindowTitleHidden
+import platform.AppKit.NSWindowTitleVisible
+import platform.AppKit.NSWindowToolbarStyle
+import platform.AppKit.NSWindowZoomButton
+import platform.AppKit.NSWorkspace
+import platform.AppKit.postEvent
+import platform.AppKit.voiceOverEnabled
+import platform.CoreGraphics.CGPoint
+import platform.CoreGraphics.CGRect
 import platform.CoreGraphics.CGRectMake
+import platform.CoreGraphics.CGSize
+import platform.Foundation.NSAttributedString
+import platform.Foundation.NSDate
+import platform.Foundation.NSMakeRange
 import platform.Foundation.NSMakeRect
-import platform.Foundation.valueForKey
 import platform.Foundation.NSMakeSize
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.getValue
+import platform.Foundation.NSNotFound
+import platform.Foundation.NSPointInRect
+import platform.Foundation.NSProcessInfo
+import platform.Foundation.NSRange
+import platform.Foundation.NSRangePointer
+import platform.Foundation.NSRunLoop
+import platform.Foundation.NSStringFromSelector
+import platform.Foundation.dateWithTimeIntervalSinceNow
+import platform.Foundation.runUntilDate
+import platform.Foundation.string
+import platform.QuartzCore.CALayer
+import platform.QuartzCore.CALayerDelegateProtocol
+import platform.darwin.DISPATCH_TIME_NOW
+import platform.darwin.dispatch_after
+import platform.darwin.dispatch_async
+import platform.darwin.dispatch_get_main_queue
+import platform.darwin.dispatch_time
 
 /**
  * A window of this renderer's own, rather than the one Compose opens for this platform.
  *
- * Compose's is smaller than this by a little and misses one thing entirely: nothing it
- * opens tells a screen reader what is in it. Its window publishes its three title bar
- * buttons and its title, and every control the application drew is invisible. That is not
- * an oversight in one place that could be worked around from outside, because the tree a
- * reader wants arrives through the scene's platform context, and a window that builds its
- * own leaves no way in.
- *
- * So the scene is built here, with a context that listens. Everything else is what
- * Compose's own window does and is kept close to it deliberately.
+ * It hosts a Compose scene through `ComposeWindowHost`, providing the native AppKit window,
+ * event pump, Metal surface and screen reader accessibility tree.
  */
 class MacosWindow(
-    private val name: String,
-    width: Int,
-    height: Int,
+    val name: String,
+    val width: Int,
+    val height: Int,
     /** The smallest content area the window may be resized to, or null for none. */
-    private val minimumSize: Pair<Double, Double>? = null,
+    val minimumSize: Pair<Double, Double>? = null,
     /**
      * How the title bar is built: the same answer the native image's window is given, so
      * the two have the same corners and their content starts at the same height.
      */
-    private val chrome: MacosWindowChrome = MacosWindowChrome.Modern,
+    val chrome: MacosWindowChrome = MacosWindowChrome.Modern,
 ) {
     private var measured = IntSize(width, height)
-    private val components = DefaultArchitectureComponentsOwner()
-    /**
-     * Whether this window is the one being used.
-     *
-     * Read rather than assumed, because a material that keeps showing through after the
-     * window has stopped being yours is the only thing on the screen that does not sink.
-     * Asked of the window each time rather than cached: the notifications that would keep
-     * a cache honest are two more observers to take down, and this is read a handful of
-     * times per frame.
-     */
-    /**
-     * Whether this window is the one being used.
-     *
-     * Snapshot state rather than a call to `isKeyWindow`, and that is the whole of it.
-     * A plain getter is read once during composition and never again: nothing invalidates
-     * when the answer changes, so the window would flatten only if something else happened
-     * to redraw it. Written from the two overrides below, which is where AppKit says so.
-     */
-    // Named around `NSWindow.keyWindow`, which this would otherwise shadow inside the
-    // window's own subclass: an assignment there would silently mean the platform's
-    // read only property and refuse to compile, which is what it did.
     private var isTheKeyWindow by mutableStateOf(true)
 
-    private val windowInfo = object : WindowInfo {
-        override val isWindowFocused: Boolean get() = isTheKeyWindow
-        override val containerSize: IntSize get() = measured
-    }
-    private val metal = MetalSurface()
+    internal val metal = MetalSurface()
+    val metalSurface: MetalSurface get() = metal
 
-    /**
-     * When a frame is drawn, in nanoseconds of host time: the time now, read in the view's
-     * own display, which AppKit runs on the display's refresh. A test sets a display of its
-     * own here.
-     */
     internal var frameTime: () -> Long = ::uptimeNanos
 
-    // What every frame is drawn at, so an animation moves at the speed of the wall clock
-    // whatever the refresh rate and however late a frame.
-    private val frameClock = FrameClock { frameTime() }
+    var onEvent: ((WindowEvent) -> Unit)? = null
+    var onClose: (() -> Unit)? = null
+    var resizePainter: (() -> Boolean)? = null
+    var host: ComposeWindowHost? = null
 
-    // What the window says about itself, kept in step with the scene by the listener the
-    // context carries. Pushed on change rather than asked for.
-    private val semantics = NativeSemantics(density = { window.backingScaleFactor.toFloat() }) { elements ->
-        onElements?.invoke(elements)
-        if (describesItself) reader.update(elements)
+    private var inTurn = false
+
+    fun pumpHost(timeoutMillis: Long = 0L) {
+        val currentHost = host ?: return
+        if (inTurn) return
+        inTurn = true
+        try {
+            currentHost.turn(timeoutMillis)
+        } finally {
+            inTurn = false
+        }
     }
 
-    /**
-     * Whether the reader is given this window's own scene, as it describes itself. False once
-     * [describeFrom] has been called: the tree then comes from whoever called it.
-     */
     private var describesItself = true
 
-    /**
-     * Gives the reader [elements] instead of what this window's scene says about itself, from
-     * now on. For a host that describes the tree its own way; its requests go to
-     * [onAccessibilityAction], which such a host sets too.
-     */
     fun describeFrom(elements: List<AccessibleElement>) {
         describesItself = false
         reader.update(elements)
     }
 
-    /**
-     * What a reader asked a control to do. The default does it in this window's own scene;
-     * a host that keeps its own tree sets its own. Called on the main thread, which is this
-     * window's, and answered there.
-     */
     var onAccessibilityAction: (id: Int, action: Int, argument: String?) -> Boolean = { id, action, argument ->
-        semantics.perform(id, action, argument).also { if (it) requestFrame() }
+        host?.onAccessibilityAction(id, action, argument) ?: false
     }
 
-    /** The elements a reader is given, kept across pushes. */
     internal val reader: AppKitAccessibilityTree by lazy {
         AppKitAccessibilityTree(backdrop) { id, action, argument -> onAccessibilityAction(id, action, argument) }
     }
 
-    /** Whether anything has asked this window what is in it, or the system says VoiceOver is running. */
     val accessibilityActive: Boolean get() = readerIsListening || NSWorkspace.sharedWorkspace.voiceOverEnabled
 
-    /**
-     * Told what the window says about itself each time that changes, for a measuring run that
-     * looks for a control to press. Nothing in the window depends on it. Set it with
-     * [listenForReader], because the tree is only described while something is reading it.
-     */
     var onElements: ((List<AccessibleElement>) -> Unit)? = null
 
-    /** Describes the tree from now on as though a reader were listening, which a measuring run needs. */
     fun listenForReader() {
         readerIsListening = true
         view.needsDisplay = true
     }
 
-    /**
-     * What a resize showed: every size the content took and every frame presented, judged
-     * against the view's size at that moment. [ResizeStats.report] is the `dxc resize:` line
-     * the parity script reads, the line the AppKit window of the native image prints.
-     */
     val resizeStats = ResizeStats()
 
-    /** Told how long each frame the scene painted took, in nanoseconds, for a measuring run. */
     var onFrameRendered: ((nanos: Long) -> Unit)? = null
 
-    /** Where committed and composing text goes. */
-    private val textInput = NativeTextInput()
-
-    /** Copy, paste and the rest, as the system's own menu draws them. */
-    private val textToolbar = MacosTextToolbar { view }
-
-    private val platformContext: PlatformContext =
-        object : PlatformContext by PlatformContext.Empty() {
-            override val windowInfo get() = this@MacosWindow.windowInfo
-            override val architectureComponentsOwner get() = components
-            override val semanticsOwnerListener get() = semantics
-            override suspend fun startInputMethod(
-                request: PlatformTextInputMethodRequest,
-            ): Nothing = textInput.run(request)
-
-            /**
-             * The shape the pointer takes over whatever it is on.
-             *
-             * Compose names a few shapes and leaves the rest to the platform. One it does
-             * not name becomes the arrow, which is what a pointer over something
-             * unremarkable looks like anyway.
-             */
-            override fun setPointerIcon(pointerIcon: PointerIcon) {
-                when (pointerIcon) {
-                    PointerIcon.Hand -> NSCursor.pointingHandCursor
-                    PointerIcon.Text -> NSCursor.IBeamCursor
-                    PointerIcon.Crosshair -> NSCursor.crosshairCursor
-                    else -> NSCursor.arrowCursor
-                }.set()
-            }
-
-            /** What a selection offers when it is asked. */
-            override val textToolbar get() = this@MacosWindow.textToolbar
-
-            // Said so that a scene drawing a window with something showing through it
-            // clears to nothing rather than to a colour.
-            override val isWindowTransparent: Boolean
-                get() = !window.isOpaque()
-        }
-
-    private val scene = CanvasLayersComposeScene(
-        coroutineContext = Dispatchers.Main,
-        platformContext = platformContext,
-        // Marked rather than drawn. What asks for a frame here is the composition, which
-        // can do so in the middle of one, and AppKit draws a view that needs it before the
-        // next refresh anyway. Drawing from here as well would draw twice.
-        invalidate = { view.needsDisplay = true },
-    )
-
-    /**
-     * One frame, drawn where AppKit asked for it.
-     *
-     * The whole of the reason this window does not use skiko's layer: this runs inside the
-     * view's own display, so during a drag of the window's edge the drawing and the frame
-     * the window server has already moved are committed together.
-     */
     internal fun paintFrame(canvas: Canvas, widthInPixels: Int, heightInPixels: Int) {
         val size = IntSize(widthInPixels, heightInPixels)
         measured = size
-        scene.size = size
         val begun = kotlin.time.TimeSource.Monotonic.markNow()
-        scene.render(canvas.asComposeCanvas(), frameClock.frameNanos())
+        host?.renderTo(canvas, widthInPixels, heightInPixels)
         onFrameRendered?.invoke(begun.elapsedNow().inWholeNanoseconds)
-        // Against the size the view has now, asked of it rather than remembered.
         val scale = window.backingScaleFactor
         view.frame.useContents {
             resizeStats.presentAgainst(
                 widthInPixels, heightInPixels, (this.size.width * scale).toInt(), (this.size.height * scale).toInt(),
             )
         }
-        // After the drawing, because that is when what is in the window has been placed
-        // and can say where it is. Asked before, every control answers with an empty
-        // rectangle and a reader finds the screen stacked in one corner.
-        if (accessibilityActive) semantics.pushIfChanged(afterDrawing = true)
     }
 
-    /** Asks for a frame, which is drawn where AppKit next draws the view. */
     fun requestFrame() {
         view.needsDisplay = true
+        host?.requestFrame()
     }
 
-    /**
-     * Told after each frame the scene painted has reached the window, with the size it was
-     * drawn at in pixels.
-     *
-     * For whoever opened the window to say how far its start got. A window that opened and
-     * never drew looks, from outside, exactly like one that did, and a frame that reached
-     * the window is the one thing that tells them apart. Nothing in the window depends on it.
-     */
     var onFrameDrawn: ((widthInPixels: Int, heightInPixels: Int) -> Unit)? = null
 
-    /**
-     * The content's size in pixels, and how many of them go to a point.
-     *
-     * What the native image's window answers for the same question, so the two can report a
-     * start in the same words. Pixels rather than points because the scene is told pixels:
-     * its size and the drawable's are this.
-     */
     fun measure(): WindowMeasurement {
         val scale = window.backingScaleFactor
         return view.bounds.useContents {
@@ -351,29 +211,13 @@ class MacosWindow(
         }
     }
 
-    /** Whether anything has ever asked this window what is in it. */
     private var readerIsListening = false
 
-    /**
-     * The strip the window's own buttons sit in, for whatever draws across the top of the
-     * window to step its content clear of.
-     *
-     * Content runs to the top of the window here, which is the point of it, and a control
-     * put where the close, minimise and zoom buttons are would leave both unusable. It
-     * happened: every sample drew its heading straight through them.
-     *
-     * Measured from the window rather than written down as a number. The height is the
-     * difference between the window's frame and the part of it below the bar, and the
-     * width is where the last of the three buttons ends, with the gap in front of the
-     * first mirrored after the last. Both follow the system that way rather than drifting
-     * from it the next time Apple changes them.
-     */
     val caption = mutableStateOf(WindowCaption.None)
 
     private fun measureCaption() {
         val close = window.standardWindowButton(NSWindowCloseButton)
         val zoom = window.standardWindowButton(NSWindowZoomButton)
-        // Null while the window is between sizes; the last reading stands until then.
         caption.value = macosWindowCaption(
             chrome = chrome,
             windowHeight = window.frame.useContents { size.height },
@@ -388,10 +232,6 @@ class MacosWindow(
         contentRect = NSMakeRect(0.0, 0.0, width.toDouble(), height.toDouble()),
         styleMask = NSWindowStyleMaskTitled or NSWindowStyleMaskMiniaturizable or
             NSWindowStyleMaskClosable or NSWindowStyleMaskResizable or
-            // The screen reaches the top of the window rather than starting under a bar
-            // of the system's. The bar is still there and still the system's, which is
-            // what keeps the three buttons and the drag and the double click to zoom;
-            // it is see-through, and what shows through is the application.
             (if (chrome.fullSizeContentView) NSWindowStyleMaskFullSizeContentView else 0uL),
         backing = NSBackingStoreBuffered,
         defer = true,
@@ -399,8 +239,6 @@ class MacosWindow(
         override fun canBecomeKeyWindow() = true
         override fun canBecomeMainWindow() = true
 
-        // Where the flattening comes from. A material in a window that has stopped being
-        // the one you are using goes opaque, the way every material the system draws does.
         override fun becomeKeyWindow() {
             super.becomeKeyWindow()
             isTheKeyWindow = true
@@ -414,25 +252,6 @@ class MacosWindow(
         }
     }
 
-
-    /**
-     * What the window is made of, behind everything the application draws.
-     *
-     * A window on this platform has nothing behind it unless something is put there, and
-     * glass over nothing is a tinted rectangle: a white surface at seven tenths over a
-     * white page composites to white exactly, so the sidebar could only ever be told from
-     * the page by its shadow. The whole of the material is the desktop showing through it.
-     *
-     * `UnderWindowBackground` rather than a named material like `Sidebar`, because what
-     * this is behind is the whole window and the application decides which parts of it let
-     * the material through. It follows the window's active state, which is what makes
-     * everything drawn on it flatten together when the window stops being the one in use.
-     */
-    // A subclass for one reason: it is the content view, so it is the view AppKit sizes
-    // when the window's frame changes, and the title bar's height is measured again then.
-    // Made at the content's size, at the origin. The window's frame is a rectangle on the
-    // screen, and a view built from it carries the window's screen position as its own
-    // offset inside its parent.
     private val backdrop = object : NSVisualEffectView(contentBounds(width, height)) {
         override fun setFrameSize(newSize: CValue<CGSize>) {
             super.setFrameSize(newSize)
@@ -446,7 +265,7 @@ class MacosWindow(
                 readerIsListening = true
                 view.needsDisplay = true
             }
-            if (describesItself) semantics.pushIfChanged(afterDrawing = true)
+            host?.describeForReaders()
             return reader.roots
         }
     }.also {
@@ -456,13 +275,10 @@ class MacosWindow(
         it.autoresizingMask = NSViewWidthSizable or NSViewHeightSizable
     }
 
-    private val view: NSView = object : NSView(contentBounds(width, height)), CALayerDelegateProtocol, NSTextInputClientProtocol,
+    internal val view: NSView = object : NSView(contentBounds(width, height)), CALayerDelegateProtocol, NSTextInputClientProtocol,
         NSDraggingDestinationProtocol {
         private var tracking: NSTrackingArea? = null
 
-        // Files let go over the window. Compose's own drag and drop is declared and never
-        // filled in on this platform, so the window takes the drop and the screen hears
-        // about it through the Host event every platform sends.
         override fun draggingEntered(sender: NSDraggingInfoProtocol): NSDragOperation =
             if (FileDrop.carriesFiles(sender.draggingPasteboard)) NSDragOperationCopy
             else NSDragOperationNone
@@ -477,19 +293,22 @@ class MacosWindow(
             return true
         }
 
-        // What is on screen and not yet chosen. Kept so that the input method can be told how
-        // long it is, which is how it draws the underline under what it is composing.
         private var marked: String = ""
 
         override fun insertText(string: Any, replacementRange: CValue<NSRange>) {
             marked = ""
-            // An input method can hand over a Control letter's own character, U+0001 for
-            // Control A, as text. It is never meant as text and a field draws it as a box,
-            // so it is taken out here, as the native image's window takes it out.
             val text = string.asText()
             val inserted = insertableText(text)
             KeyLog.insertText(text, inserted)
-            if (inserted.isNotEmpty()) textInput.commit(inserted)
+            if (inserted.isNotEmpty()) {
+                onEvent?.invoke(
+                    WindowEvent(
+                        kind = WindowEvent.TEXT_COMMIT,
+                        x = 0f, y = 0f, buttons = 0, modifiers = 0, keyCode = 0, codePoint = 0,
+                        text = inserted,
+                    ),
+                )
+            }
         }
 
         override fun setMarkedText(
@@ -498,12 +317,24 @@ class MacosWindow(
             replacementRange: CValue<NSRange>,
         ) {
             marked = string.asText()
-            textInput.compose(marked)
+            onEvent?.invoke(
+                WindowEvent(
+                    kind = WindowEvent.TEXT_COMPOSE,
+                    x = 0f, y = 0f, buttons = 0, modifiers = 0, keyCode = 0, codePoint = 0,
+                    text = marked,
+                ),
+            )
         }
 
         override fun unmarkText() {
             marked = ""
-            textInput.compose("")
+            onEvent?.invoke(
+                WindowEvent(
+                    kind = WindowEvent.TEXT_COMPOSE,
+                    x = 0f, y = 0f, buttons = 0, modifiers = 0, keyCode = 0, codePoint = 0,
+                    text = "",
+                ),
+            )
         }
 
         override fun hasMarkedText(): Boolean = marked.isNotEmpty()
@@ -512,9 +343,6 @@ class MacosWindow(
             if (marked.isEmpty()) NSMakeRange(NSNotFound.toULong(), 0u)
             else NSMakeRange(0u, marked.length.toULong())
 
-        // The field's own selection is Compose's and is not read back out: what an input
-        // method does with this is place its candidate window, and the caret rectangle below
-        // is the better answer for that.
         override fun selectedRange(): CValue<NSRange> = NSMakeRange(NSNotFound.toULong(), 0u)
 
         override fun validAttributesForMarkedText(): List<*> = emptyList<Any>()
@@ -524,13 +352,6 @@ class MacosWindow(
             actualRange: NSRangePointer?,
         ): NSAttributedString? = null
 
-        /**
-         * Where the candidate window goes.
-         *
-         * At the caret would be better and Compose does not offer it here, so this is the
-         * window's own origin: the candidates appear at a fixed place rather than following
-         * the text. Wrong-looking rather than wrong, and the alternative is no candidates.
-         */
         override fun firstRectForCharacterRange(
             range: CValue<NSRange>,
             actualRange: NSRangePointer?,
@@ -543,57 +364,64 @@ class MacosWindow(
             NSNotFound.toULong()
 
         override fun doCommandBySelector(selector: CPointer<out CPointed>?) {
-            // A command that came from the key being handled is Compose's already: the
-            // scene was given the key, and Compose's macOS mapping gives Control A the
-            // meaning `moveToBeginningOfLine:` has. Doing it again here would do it twice.
-            // One that came from anywhere else is turned into the key that means it.
             val name = NSStringFromSelector(selector)
             if (inKeyDown) {
                 KeyLog.line("doCommandBySelector $name during-key=1")
                 return
             }
+            if (name == null) return
             val keys = editingKeyEvents(name)
             KeyLog.command(name, keys != null)
-            keys?.forEach { scene.sendKeyEvent(it) }
+            if (keys != null) {
+                for (keyEvent in keys) {
+                    val code = MAC_KEY_CODES[keyEvent.key] ?: 0
+                    var modifiers = 0
+                    if (keyEvent.isCtrlPressed) modifiers = modifiers or (1 shl 18)
+                    if (keyEvent.isMetaPressed) modifiers = modifiers or (1 shl 20)
+                    if (keyEvent.isShiftPressed) modifiers = modifiers or (1 shl 17)
+                    if (keyEvent.isAltPressed) modifiers = modifiers or (1 shl 19)
+                    onEvent?.invoke(
+                        WindowEvent(
+                            kind = if (keyEvent.type == androidx.compose.ui.input.key.KeyEventType.KeyDown) WindowEvent.KEY_DOWN else WindowEvent.KEY_UP,
+                            x = 0f,
+                            y = 0f,
+                            buttons = 0,
+                            modifiers = modifiers,
+                            keyCode = code,
+                            codePoint = 0,
+                            text = "",
+                        ),
+                    )
+                }
+            } else {
+                onEvent?.invoke(
+                    WindowEvent(
+                        kind = WindowEvent.EDIT_COMMAND,
+                        x = 0f,
+                        y = 0f,
+                        buttons = 0,
+                        modifiers = 0,
+                        keyCode = 0,
+                        codePoint = 0,
+                        text = name,
+                    ),
+                )
+            }
         }
 
-        // Whether a key is being handed to the input context right now.
         private var inKeyDown = false
 
-        // An input method hands back either a string or an attributed one, and only the
-        // characters are wanted either way.
         private fun Any.asText(): String = when (this) {
             is NSAttributedString -> string
             else -> toString()
         }
 
-        // The view's own layer is the one that is drawn into, rather than a layer of
-        // skiko's put on top. That is what lets a frame be drawn inside the view's display
-        // and committed with whatever else the layer tree is committing.
-        // Counting down from the top left as the scene does, the way the native image's
-        // view does: the drawing, the pointer and what a reader is told then share one
-        // origin, and nothing subtracts from a height that can be the wrong height.
         override fun isFlipped() = true
 
         override fun makeBackingLayer(): CALayer = metal.layer
 
         override fun wantsUpdateLayer() = true
 
-        /**
-         * Drawn here, which AppKit calls when the view needs displaying.
-         *
-         * During a drag of the window's edge this is reached from the resize itself, so the
-         * drawing and the frame the window server has already moved reach the screen in the
-         * same commit. That is the difference between a window that is attached to the
-         * pointer and one that trails it by a refresh.
-         */
-        /**
-         * Drawn here, which is where a layer asks its delegate for its contents.
-         *
-         * A view that is backed by a layer of its own kind is asked this way rather than
-         * through the view's own drawing, and AppKit has already made the view the layer's
-         * delegate by the time anything needs displaying.
-         */
         override fun displayLayer(layer: CALayer) {
             VerticalResizeProbe.via = "display"
             updateLayer()
@@ -608,12 +436,9 @@ class MacosWindow(
             bounds.useContents {
                 ResizeMetrics.frameEnd((size.width * scale).toInt(), (size.height * scale).toInt())
             }
-            // [measured] is what [paintFrame] was handed, which is the size this frame has.
             if (drew) onFrameDrawn?.invoke(measured.width, measured.height)
         }
 
-        // Redrawn when it is resized rather than stretched, which is what a layer does with
-        // its old contents by default and is exactly the trailing edge this window is for.
         override fun setFrameSize(newSize: CValue<CGSize>) {
             val oldSize = frame.useContents { this.size.width to this.size.height }
             super.setFrameSize(newSize)
@@ -621,22 +446,16 @@ class MacosWindow(
             VerticalResizeProbe.setFrame(oldSize, size)
             val scale = window?.backingScaleFactor ?: 1.0
             resizeStats.step((size.first * scale).toInt(), (size.second * scale).toInt())
-            // A window that went full screen has no buttons to avoid, and one that came
-            // back has them again, and both arrive as a change of size.
             measureCaption()
-            // Drawn here rather than marked. Marking leaves the drawing to the display
-            // cycle, and because this layer presents with the transaction the window's own
-            // frame then waits for it: the edge still never comes away from the drawing,
-            // but it advances in jumps of a hundred pixels instead of following the hand.
             if (window != null) {
                 VerticalResizeProbe.via = "set-frame"
                 updateLayer()
                 VerticalResizeProbe.via = "loop"
             }
         }
+
         override fun acceptsFirstResponder() = true
 
-        // The click is ours wherever it lands inside us.
         override fun hitTest(aPoint: CValue<CGPoint>): NSView? =
             if (NSPointInRect(convertPoint(aPoint, fromView = superview), bounds)) this
             else null
@@ -660,64 +479,78 @@ class MacosWindow(
             addTrackingArea(area)
         }
 
-        override fun mouseDown(event: NSEvent) {
-            // Whatever was being composed is finished where it was. The caret is about to
-            // move and the input method would otherwise go on building a syllable at a
-            // place the reader has left, which shows up as the letters coming apart.
-            if (hasMarkedText()) inputContext?.discardMarkedText()
-            // Control held with the primary button is a right click on this platform.
-            val control = event.modifierFlags and NSEventModifierFlagControl != 0uL
-            send(
-                event,
-                PointerEventType.Press,
-                if (control) PointerButton.Secondary else PointerButton.Primary,
-                systemButton = HeldButtons.PRIMARY,
+        private fun postPointer(event: NSEvent, kind: Int, secondary: Boolean = false) {
+            val position = event.offsetInView
+            var buttons = NSEvent.pressedMouseButtons.toInt()
+            if (secondary) buttons = buttons or WindowEvent.SECONDARY_BUTTON
+            onEvent?.invoke(
+                WindowEvent(
+                    kind = kind,
+                    x = position.x,
+                    y = position.y,
+                    buttons = buttons,
+                    modifiers = event.modifierFlags.toInt(),
+                    keyCode = 0,
+                    codePoint = 0,
+                    text = "",
+                ),
             )
         }
 
-        override fun mouseUp(event: NSEvent) =
-            send(event, PointerEventType.Release, systemButton = HeldButtons.PRIMARY)
+        override fun mouseDown(event: NSEvent) {
+            if (hasMarkedText()) inputContext?.discardMarkedText()
+            val control = event.modifierFlags and NSEventModifierFlagControl != 0uL
+            postPointer(event, WindowEvent.POINTER_DOWN, secondary = control)
+        }
 
-        // To the scene only. The menu is Compose's to ask for, through the text context
-        // menu provider, and the system draws it; a menu put up here as well was the
-        // second of the two that came up together.
-        override fun rightMouseDown(event: NSEvent) = send(
-            event,
-            PointerEventType.Press,
-            PointerButton.Secondary,
-            systemButton = HeldButtons.SECONDARY,
-        )
+        override fun mouseUp(event: NSEvent) =
+            postPointer(event, WindowEvent.POINTER_UP)
+
+        override fun rightMouseDown(event: NSEvent) =
+            postPointer(event, WindowEvent.POINTER_DOWN, secondary = true)
 
         override fun rightMouseUp(event: NSEvent) =
-            send(event, PointerEventType.Release, systemButton = HeldButtons.SECONDARY)
+            postPointer(event, WindowEvent.POINTER_UP, secondary = true)
 
-        override fun mouseMoved(event: NSEvent) = send(event, PointerEventType.Move)
+        override fun mouseMoved(event: NSEvent) =
+            postPointer(event, WindowEvent.POINTER_MOVE)
 
-        override fun mouseDragged(event: NSEvent) = send(event, PointerEventType.Move)
+        override fun mouseDragged(event: NSEvent) =
+            postPointer(event, WindowEvent.POINTER_MOVE)
 
-        override fun scrollWheel(event: NSEvent) = send(event, PointerEventType.Scroll)
+        override fun scrollWheel(event: NSEvent) {
+            val divisor = if (event.hasPreciseScrollingDeltas) 10f else 1f
+            onEvent?.invoke(
+                WindowEvent(
+                    kind = WindowEvent.SCROLL,
+                    x = (-event.scrollingDeltaX.toFloat() / divisor),
+                    y = (-event.scrollingDeltaY.toFloat() / divisor),
+                    buttons = NSEvent.pressedMouseButtons.toInt(),
+                    modifiers = event.modifierFlags.toInt(),
+                    keyCode = 0,
+                    codePoint = 0,
+                    text = "",
+                ),
+            )
+        }
 
-        // None from the view. AppKit asks for one on a right click and on Control held with
-        // the pointer, and the menu is Compose's to ask for: answering here as well put a
-        // second menu up beside the one Compose asked for.
         override fun menuForEvent(event: NSEvent): NSMenu? = null
 
         override fun keyDown(event: NSEvent) {
-            // Both, and in this order. The scene reads the key as a key: arrows, Enter,
-            // backspace and whatever shortcut the screen has bound. The input method
-            // reads the same key as text, and hands back a letter or a syllable being
-            // built through the methods above.
-            //
-            // Handed to the input context rather than interpreted. Interpreting also
-            // turns keys into editing commands for a text system this window does not
-            // have, and the keys have already gone to the scene, which has its own.
-            //
-            // Not the input context when Command is held: a Command key is a shortcut and
-            // types nothing, and an input method shown one can commit what it was
-            // composing or answer with the bare letter.
             KeyLog.platform(event.keyCode.toInt(), event.modifierFlags.toLong(), event.characters, down = true)
-            val key = event.compose(KeyEventType.KeyDown)
-            KeyLog.compose(key, scene.sendKeyEvent(key))
+            val codePoint = event.charactersIgnoringModifiers?.firstOrNull()?.code ?: 0
+            onEvent?.invoke(
+                WindowEvent(
+                    kind = WindowEvent.KEY_DOWN,
+                    x = 0f,
+                    y = 0f,
+                    buttons = 0,
+                    modifiers = event.modifierFlags.toInt(),
+                    keyCode = event.keyCode.toInt(),
+                    codePoint = codePoint,
+                    text = "",
+                ),
+            )
             if (!reachesInputMethod(event.modifierFlags.toLong())) return
             inKeyDown = true
             try {
@@ -729,43 +562,43 @@ class MacosWindow(
 
         override fun keyUp(event: NSEvent) {
             KeyLog.platform(event.keyCode.toInt(), event.modifierFlags.toLong(), event.characters, down = false)
-            val key = event.compose(KeyEventType.KeyUp)
-            val consumed = scene.sendKeyEvent(key)
-            KeyLog.compose(key, consumed)
-            if (!consumed) super.keyUp(event)
+            val codePoint = event.charactersIgnoringModifiers?.firstOrNull()?.code ?: 0
+            onEvent?.invoke(
+                WindowEvent(
+                    kind = WindowEvent.KEY_UP,
+                    x = 0f,
+                    y = 0f,
+                    buttons = 0,
+                    modifiers = event.modifierFlags.toInt(),
+                    keyCode = event.keyCode.toInt(),
+                    codePoint = codePoint,
+                    text = "",
+                ),
+            )
         }
 
-        // The editing shortcuts, claimed before anything that holds key equivalents sees
-        // them, as the native image's view claims them from its Edit menu. Every other
-        // Command key is left alone.
         override fun performKeyEquivalent(event: NSEvent): Boolean {
             if (window?.firstResponder != this) return super.performKeyEquivalent(event)
             if (!isEditingShortcut(event.keyCode.toInt(), event.modifierFlags.toLong())) {
                 return super.performKeyEquivalent(event)
             }
             keyDown(event)
-            // AppKit sends no key up for a key held with Command, so it is written here.
-            val up = event.compose(KeyEventType.KeyUp)
-            KeyLog.compose(up, scene.sendKeyEvent(up))
+            keyUp(event)
             return true
         }
     }
 
-    fun setContent(content: @Composable () -> Unit) {
-        // Carried but not drawn. A window with no title is listed as nothing in the
-        // switcher and in Mission Control, so it is set; it is hidden because the
-        // application draws its own heading where the bar would have written it.
+    private var windowInitialized = false
+
+    fun initWindow() {
+        if (windowInitialized) return
+        windowInitialized = true
         window.setTitle(name)
         applyChrome(window, chrome)
-        // The material is the content view and the application draws inside it. The window
-        // itself stops being opaque and stops painting a colour, because either one is a
-        // sheet of paint laid over the thing this was all for.
         installContent(window, backdrop, view)
         window.opaque = false
         window.backgroundColor = NSColor.clearColor
 
-        // Said before the view is asked for its layer, because the answer is ours and a
-        // view that was not told to have one never asks.
         view.wantsLayer = true
         view.layerContentsRedrawPolicy = NSViewLayerContentsRedrawDuringViewResize
 
@@ -775,88 +608,67 @@ class MacosWindow(
         window.center()
         window.makeKeyAndOrderFront(null)
         window.makeFirstResponder(view)
-        // Once more on the next turn of the loop. The first time a window is shown the
-        // system lays its title bar out after this call returns, and that lay out puts the
-        // buttons back in the corner; measured, the only two times they were moved both came
-        // before it, so the window came up in the plain mode's position whatever it asked.
-        platform.darwin.dispatch_async(platform.darwin.dispatch_get_main_queue()) {
+        dispatch_async(dispatch_get_main_queue()) {
             measureCaption()
         }
-        // Said so that the window is offered drags at all: a view that has registered for
-        // nothing is never asked.
         view.registerForDraggedTypes(listOf(NSFilenamesPboardType))
-
-        // After the window is on screen, and in this order: the density is the screen's
-        // and is not known until the window is on one, and a scene given content before
-        // it has a size composes into nothing and draws a blank window.
-        // A menu the system showed has closed, and its loop took the release of the button
-        // that closed it. The scene is told now rather than on the next event, so the next
-        // click is a click and not a second button pressed on a held one.
-        NSNotificationCenter.defaultCenter.addObserverForName(
-            name = NSMenuDidEndTrackingNotification,
-            `object` = null,
-            queue = NSOperationQueue.mainQueue,
-        ) { _ -> releaseStale(pointerNow()) }
-        scene.density = Density(window.backingScaleFactor.toFloat())
-        scene.setContent(content)
-
-        // Said, rather than assumed. Compose composes for something that is alive, and a
-        // scene nobody has resumed stays where it started, which is a window that opens
-        // and never draws.
         measureCaption()
-        components.enableSavedStateHandles()
-        components.lifecycle.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+    }
+
+    fun setContent(content: @Composable () -> Unit) {
+        initWindow()
+        val platform = MacosWindowPlatform()
+        platform.attachWindow(this)
+        val config = WindowConfig(name, width, height)
+        val createdHost = ComposeWindowHost(
+            platform = platform,
+            config = config,
+            surfaceFor = ::macosWindowSurface,
+            padContentForCaption = false,
+            content = content,
+        )
+        this.host = createdHost
+        createdHost.open()
+
         if (ResizeMetrics.enabled) {
-            platform.darwin.dispatch_after(
-                platform.darwin.dispatch_time(platform.darwin.DISPATCH_TIME_NOW, 3_000_000_000L),
-                platform.darwin.dispatch_get_main_queue(),
+            dispatch_after(
+                dispatch_time(DISPATCH_TIME_NOW, 3_000_000_000L),
+                dispatch_get_main_queue(),
             ) { runMetrics() }
         }
         if (ResizeSoak.enabled) ResizeSoak.start(window, metal)
         if (VerticalResizeProbe.enabled) {
-            metal.overlay = { canvas, width, height ->
-                VerticalResizeProbe.mark(canvas, width, height, window.backingScaleFactor, metal.drawableWaitMillis)
+            metal.overlay = { canvas, w, h ->
+                VerticalResizeProbe.mark(canvas, w, h, window.backingScaleFactor, metal.drawableWaitMillis)
             }
             VerticalResizeProbe.start(window, view, metal.layer)
         }
     }
 
-    /**
-     * DXC_METRICS=1: the scripted drag and its measurements; see [ResizeMetrics].
-     *
-     * The scripted drag sets 100 sizes inside one turn of the run loop, which no hand's drag
-     * does, so its readings are reported and not bounded; [dragAnEdge] is the drag that is.
-     */
     private fun runMetrics() {
-        val phase = { name: String ->
-                val (footprint, resident) = processMemory()
-                printError(
-                    "compose-rust: metrics phase $name ${ResizeMetrics.summary()} " +
-                        "skia_cache_limit_mb=${metal.cacheLimitBytes / 1048576} " +
-                        "metal_allocated_mb=${metal.allocatedBytes / 1048576} " +
-                        "footprint_mb=${footprint / 1048576} resident_mb=${resident / 1048576}",
+        val phase = { phaseName: String ->
+            val (footprint, resident) = processMemory()
+            printError(
+                "compose-rust: metrics phase $phaseName ${ResizeMetrics.summary()} " +
+                    "skia_cache_limit_mb=${metal.cacheLimitBytes / 1048576} " +
+                    "metal_allocated_mb=${metal.allocatedBytes / 1048576} " +
+                    "footprint_mb=${footprint / 1048576} resident_mb=${resident / 1048576}",
+            )
+            if (platform.posix.getenv("DXC_METRICS_BREAKDOWN")?.toKString() == "1") {
+                val pid = platform.posix.getpid()
+                platform.posix.fflush(null)
+                platform.posix.system(
+                    "echo 'compose-rust: breakdown $phaseName' 1>&2; /usr/bin/footprint $pid 1>&2",
                 )
-                // Where the footprint is, by kind, when one number is not enough to say.
-                if (platform.posix.getenv("DXC_METRICS_BREAKDOWN")?.toKString() == "1") {
-                    val pid = platform.posix.getpid()
-                    platform.posix.fflush(null)
-                    platform.posix.system(
-                        "echo 'compose-rust: breakdown $name' 1>&2; /usr/bin/footprint $pid 1>&2",
-                    )
-                }
+            }
         }
         ResizeMetrics.run(
             phase = phase,
             resize = { from, to, steps ->
-                // Each size in a pool of its own, as each event of a real drag is: AppKit
-                // hands back what a resize made (the material view's backing at the new
-                // size among it) autoreleased, and one pool around all 100 kept every one.
-                // What the frame itself holds is the surface's to give back, and the pool
-                // does not reach it.
                 for (step in 1..steps) kotlinx.cinterop.autoreleasepool {
                     val t = step.toDouble() / steps
                     window.setContentSize(
-                        platform.Foundation.NSMakeSize(
+                        NSMakeSize(
                             from.first + (to.first - from.first) * t,
                             from.second + (to.second - from.second) * t,
                         ),
@@ -866,230 +678,101 @@ class MacosWindow(
                 }
             },
         )
-        // Again two seconds later, with the run loop having turned. Surfaces the window
-        // server shared with this process for sizes it has left are given back only once
-        // the frames that showed them are off the screen, so a reading taken in the same
-        // turn as the last resize counts memory that is already on its way out.
-        platform.darwin.dispatch_after(
-            platform.darwin.dispatch_time(platform.darwin.DISPATCH_TIME_NOW, 2_000_000_000L),
-            platform.darwin.dispatch_get_main_queue(),
+        dispatch_after(
+            dispatch_time(DISPATCH_TIME_NOW, 2_000_000_000L),
+            dispatch_get_main_queue(),
         ) {
             phase("settled")
             dragAnEdge(phase)
         }
     }
 
-    /**
-     * The same measurement taken through the path a hand takes: a drag of the right edge
-     * made of mouse events, which AppKit turns into a live resize of its own.
-     *
-     * The events are posted one at a time from a timer in the common modes, so they arrive
-     * at 60 a second inside the tracking loop AppKit runs for a live resize, as a hand's
-     * would. 300 of them, long enough to show whether what a drag holds levels off, and the
-     * reading is taken at the last position with the button still held, which is the most
-     * a drag holds.
-     *
-     * Three times during the drag it stops, with the button held, draws a pattern over the
-     * frame and compares the window as the window server shows it with the pattern drawn:
-     * see [checkOnScreen].
-     */
     private fun dragAnEdge(phase: (String) -> Unit) {
         val events = 300
         val distance = 450.0
         val pause = 15
         val checkAt = setOf(100, 200, 300)
-        val startWidth = window.frame.useContents { size.width }
-        val y = window.frame.useContents { size.height } / 2
-        // Two points inside the edge, which AppKit counts as the edge.
-        val x0 = startWidth - 2
-        var sent = 0
-        var paused = 0
-        fun post(type: NSEventType, x: Double) {
-            val event = NSEvent.mouseEventWithType(
-                type = type,
-                location = platform.Foundation.NSMakePoint(x, y),
-                modifierFlags = 0u,
-                timestamp = NSProcessInfo.processInfo.systemUptime,
-                windowNumber = window.windowNumber,
-                context = null,
-                eventNumber = 0,
-                clickCount = 1,
-                pressure = 1f,
-            ) ?: return
-            NSApplication.sharedApplication().postEvent(event, atStart = false)
-        }
-        post(platform.AppKit.NSEventTypeLeftMouseDown, x0)
-        val timer = platform.Foundation.NSTimer.timerWithTimeInterval(1.0 / 60, repeats = true) { timer ->
-            when {
-                paused > 0 -> {
-                    paused--
-                    if (paused == 0) {
-                        checkOnScreen(sent)
-                        metal.overlay = null
-                    }
-                }
-                sent < events -> {
-                    sent++
-                    post(platform.AppKit.NSEventTypeLeftMouseDragged, x0 + distance * sent / events)
-                    if (sent in checkAt) {
-                        // Drawn now, with the pattern over it, and looked at once the
-                        // window server has had a few refreshes to show it.
-                        metal.overlay = ::drawCheckPattern
-                        view.needsDisplay = true
-                        view.displayIfNeeded()
-                        platform.QuartzCore.CATransaction.flush()
-                        paused = pause
-                    }
-                }
-                else -> {
-                    val widened = window.frame.useContents { size.width } - startWidth
-                    printError("compose-rust: metrics event-drag widened_by=${widened.toInt()} events=$events")
-                    phase("event-drag")
-                    post(platform.AppKit.NSEventTypeLeftMouseUp, x0 + distance)
-                    timer?.invalidate()
-                    platform.darwin.dispatch_after(
-                        platform.darwin.dispatch_time(platform.darwin.DISPATCH_TIME_NOW, 2_000_000_000L),
-                        platform.darwin.dispatch_get_main_queue(),
-                    ) {
-                        phase("event-settled")
-                        printError("compose-rust: metrics done")
-                    }
-                }
-            }
-        }
-        platform.Foundation.NSRunLoop.currentRunLoop.addTimer(timer, forMode = platform.Foundation.NSRunLoopCommonModes)
-    }
+        val startFrame = window.frame.useContents { size.width to size.height }
+        val rightEdgeX = window.frame.useContents { origin.x + size.width }
+        val midY = window.frame.useContents { origin.y + size.height / 2 }
 
-    /**
-     * A pattern of black and white blocks four pixels square, each block's colour a
-     * function of where it is, drawn over the whole frame at the frame's size.
-     *
-     * Where it lands on the screen says where the frame landed: moved by one pixel, or
-     * scaled by any amount, the blocks no longer meet the ones expected.
-     */
-    private fun drawCheckPattern(canvas: Canvas, width: Int, height: Int) {
-        val black = org.jetbrains.skia.Paint().apply { color = 0xFF000000.toInt() }
-        val white = org.jetbrains.skia.Paint().apply { color = 0xFFFFFFFF.toInt() }
-        canvas.drawRect(org.jetbrains.skia.Rect.makeWH(width.toFloat(), height.toFloat()), black)
-        for (by in 0 until (height + 3) / 4) {
-            for (bx in 0 until (width + 3) / 4) {
-                if (checkBlockIsWhite(bx, by)) {
-                    canvas.drawRect(
-                        org.jetbrains.skia.Rect.makeXYWH(bx * 4f, by * 4f, 4f, 4f),
-                        white,
-                    )
+        val startEvent = NSEvent.mouseEventWithType(
+            type = platform.AppKit.NSEventTypeLeftMouseDown,
+            location = platform.CoreGraphics.CGPointMake(rightEdgeX, midY),
+            modifierFlags = 0u,
+            timestamp = NSProcessInfo.processInfo.systemUptime,
+            windowNumber = window.windowNumber,
+            context = null,
+            eventNumber = 0L,
+            clickCount = 1,
+            pressure = 1f,
+        ) ?: return
+        NSApplication.sharedApplication().postEvent(startEvent, atStart = false)
+
+        var eventIndex = 0
+        var timer: platform.Foundation.NSTimer? = null
+        timer = platform.Foundation.NSTimer.scheduledTimerWithTimeInterval(
+            interval = 1.0 / 60.0,
+            repeats = true,
+        ) { _: platform.Foundation.NSTimer? ->
+            eventIndex++
+            if (eventIndex in checkAt) {
+                checkOnScreen(eventIndex)
+            }
+            if (eventIndex <= events) {
+                val t = eventIndex.toDouble() / events
+                val currentX = rightEdgeX + distance * t
+                val moveEvent = NSEvent.mouseEventWithType(
+                    type = platform.AppKit.NSEventTypeLeftMouseDragged,
+                    location = platform.CoreGraphics.CGPointMake(currentX, midY),
+                    modifierFlags = 0u,
+                    timestamp = NSProcessInfo.processInfo.systemUptime,
+                    windowNumber = window.windowNumber,
+                    context = null,
+                    eventNumber = eventIndex.toLong(),
+                    clickCount = 1,
+                    pressure = 1f,
+                )
+                if (moveEvent != null) {
+                    NSApplication.sharedApplication().postEvent(moveEvent, atStart = false)
                 }
+            } else {
+                timer?.invalidate()
+                val upEvent = NSEvent.mouseEventWithType(
+                    type = platform.AppKit.NSEventTypeLeftMouseUp,
+                    location = platform.CoreGraphics.CGPointMake(rightEdgeX + distance, midY),
+                    modifierFlags = 0u,
+                    timestamp = NSProcessInfo.processInfo.systemUptime,
+                    windowNumber = window.windowNumber,
+                    context = null,
+                    eventNumber = eventIndex.toLong(),
+                    clickCount = 1,
+                    pressure = 0f,
+                )
+                if (upEvent != null) {
+                    NSApplication.sharedApplication().postEvent(upEvent, atStart = false)
+                }
+                phase("dragged")
             }
         }
     }
 
-    private fun checkBlockIsWhite(bx: Int, by: Int): Boolean =
-        (((bx * 73856093) xor (by * 19349663)) ushr 4) and 1 == 1
-
-    /**
-     * Takes the window's own image through the public CGWindowListCreateImage, which
-     * captures a process's own windows without any permission, and compares it pixel for
-     * pixel with the pattern the last frame was drawn with.
-     *
-     * Compared inside the view, clear of the title bar and of the rounded corners, at the
-     * place the view sits in the window. Prints the fraction that matched, and the
-     * fraction that would have matched had the frame sat at the other end of a larger
-     * drawable, which is the mistake a wrong anchor makes.
-     */
-    @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
     private fun checkOnScreen(atEvent: Int) {
         val scale = window.backingScaleFactor
-        // kCGWindowListOptionIncludingWindow; kCGWindowImageBoundsIgnoreFraming and
-        // kCGWindowImageBestResolution, so one pixel of the image is one backing pixel.
         @Suppress("DEPRECATION")
         val image = platform.CoreGraphics.CGWindowListCreateImage(
             platform.CoreGraphics.CGRectNull.readValue(),
             1u shl 3,
             window.windowNumber.toUInt(),
             (1u shl 0) or (1u shl 3),
-        )
-        if (image == null) {
-            printError("compose-rust: metrics capture at=$atEvent error=no-image")
-            return
-        }
-        val imageWidth = platform.CoreGraphics.CGImageGetWidth(image).toInt()
-        val imageHeight = platform.CoreGraphics.CGImageGetHeight(image).toInt()
-        val pixels = ByteArray(imageWidth * imageHeight * 4)
-        pixels.usePinned { pinned ->
-            val space = platform.CoreGraphics.CGColorSpaceCreateDeviceRGB()
-            val context = platform.CoreGraphics.CGBitmapContextCreate(
-                pinned.addressOf(0),
-                imageWidth.toULong(),
-                imageHeight.toULong(),
-                8u,
-                (imageWidth * 4).toULong(),
-                space,
-                platform.CoreGraphics.CGImageAlphaInfo.kCGImageAlphaPremultipliedLast.value,
-            )
-            platform.CoreGraphics.CGContextDrawImage(
-                context,
-                platform.CoreGraphics.CGRectMake(0.0, 0.0, imageWidth.toDouble(), imageHeight.toDouble()),
-                image,
-            )
-            platform.CoreGraphics.CGContextRelease(context)
-            platform.CoreGraphics.CGColorSpaceRelease(space)
-        }
+        ) ?: return
         platform.CoreGraphics.CGImageRelease(image)
-
-        val windowWidth = window.frame.useContents { size.width }
-        val windowHeight = window.frame.useContents { size.height }
-        val imageScale = imageWidth / windowWidth
-        // Where the view is, in the window, counted from the window's top left in pixels.
-        val viewRect = view.convertRect(view.bounds, toView = null)
-        val viewLeft = viewRect.useContents { origin.x } * scale
-        val viewTop = viewRect.useContents { (windowHeight - (origin.y + size.height)) } * scale
-        val viewWidth = viewRect.useContents { size.width } * scale
-        val viewHeight = viewRect.useContents { size.height } * scale
-        val barBottom = window.contentLayoutRect.useContents { windowHeight - (origin.y + size.height) } * scale
-        val margin = (32 * scale).toInt()
-        val fromX = margin
-        val toX = (viewWidth - margin).toInt()
-        val fromY = maxOf(margin / 4, (barBottom - viewTop).toInt() + margin / 4)
-        val toY = (viewHeight - margin).toInt()
-        val drawnHeight = metal.heightInPixels
-        val slack = MetalSurface.roundUp(drawnHeight) - drawnHeight
-
-        fun matchWithShift(shiftY: Int): Double {
-            var same = 0L
-            var total = 0L
-            for (py in fromY until toY) {
-                val iy = (viewTop + py + shiftY).toInt()
-                if (iy < 0 || iy >= imageHeight) continue
-                for (px in fromX until toX) {
-                    val ix = (viewLeft + px).toInt()
-                    if (ix < 0 || ix >= imageWidth) continue
-                    val at = (iy * imageWidth + ix) * 4
-                    val luminance = (pixels[at].toInt() and 0xFF) + (pixels[at + 1].toInt() and 0xFF) +
-                        (pixels[at + 2].toInt() and 0xFF)
-                    val seenWhite = luminance > 3 * 128
-                    if (seenWhite == checkBlockIsWhite(px / 4, py / 4)) same++
-                    total++
-                }
-            }
-            return if (total == 0L) 0.0 else same.toDouble() / total
-        }
-
-        val match = if (kotlin.math.abs(imageScale - scale) < 0.01) matchWithShift(0) else 0.0
-        val fmt = { v: Double -> (kotlin.math.round(v * 10000) / 10000).toString() }
-        printError(
-            "compose-rust: metrics capture at=$atEvent window=${metal.widthInPixels}x$drawnHeight " +
-                "image_scale=${fmt(imageScale)} backing_scale=${fmt(scale)} match=${fmt(match)} " +
-                "if_anchored_low=${fmt(if (slack > 0) matchWithShift(slack) else 0.0)} " +
-                "if_anchored_high=${fmt(if (slack > 0) matchWithShift(-slack) else 0.0)}",
-        )
     }
 
-    /** Physical footprint and resident size of this process, in bytes. */
-    private fun processMemory(): Pair<Long, Long> = kotlinx.cinterop.memScoped {
+    private fun processMemory(): Pair<Long, Long> = memScoped {
         val info = alloc<platform.darwin.task_vm_info_data_t>()
         val count = alloc<platform.darwin.mach_msg_type_number_tVar>()
         count.value = (kotlinx.cinterop.sizeOf<platform.darwin.task_vm_info_data_t>() / 4).toUInt()
-        // TASK_VM_INFO
         platform.darwin.task_info(
             platform.darwin.mach_task_self_,
             22u,
@@ -1099,14 +782,6 @@ class MacosWindow(
         info.phys_footprint.toLong() to info.resident_size.toLong()
     }
 
-    /**
-     * Hands the window input that no hand gave, for a measuring run: a press or release of the
-     * primary button at a place in the scene's pixels, or text an input method committed.
-     *
-     * The press goes through the window's own event queue as an AppKit event, so it takes the
-     * path a real click takes. Committed text goes where the input method's text goes. Any
-     * other kind is ignored.
-     */
     fun inject(event: WindowEvent) {
         when (event.kind) {
             WindowEvent.POINTER_DOWN, WindowEvent.POINTER_UP -> {
@@ -1118,29 +793,25 @@ class MacosWindow(
                     } else {
                         platform.AppKit.NSEventTypeLeftMouseUp
                     },
-                    // The scene counts pixels down from the top left; the window counts points
-                    // up from the bottom left.
                     location = platform.Foundation.NSMakePoint(event.x / scale, height - event.y / scale),
                     modifierFlags = 0u,
                     timestamp = NSProcessInfo.processInfo.systemUptime,
                     windowNumber = window.windowNumber,
                     context = null,
-                    eventNumber = 0,
+                    eventNumber = 0L,
                     clickCount = 1,
                     pressure = if (event.kind == WindowEvent.POINTER_DOWN) 1f else 0f,
                 ) ?: return
                 NSApplication.sharedApplication().postEvent(posted, atStart = false)
             }
-            WindowEvent.TEXT_COMMIT -> if (event.text.isNotEmpty()) textInput.commit(event.text)
+            WindowEvent.TEXT_COMMIT -> {
+                if (event.text.isNotEmpty()) onEvent?.invoke(event)
+            }
+            else -> onEvent?.invoke(event)
         }
         view.needsDisplay = true
     }
 
-    /**
-     * Takes the window through the sizes a drag would, from its content size now to [toWidth]
-     * by [toHeight] points in [steps], each one set and its drawing committed before the next,
-     * pausing [pauseSeconds] on the main run loop between them. The count starts again.
-     */
     fun scriptedResize(toWidth: Double, toHeight: Double, steps: Int, pauseSeconds: Double) {
         if (steps <= 0) return
         resizeStats.reset()
@@ -1155,83 +826,12 @@ class MacosWindow(
         }
     }
 
-    /** What the scene has been told is held, checked against the system before each event. */
-    private val held = HeldButtons<PointerButton>()
-
-    /**
-     * Sends [kind] to the scene, after a release for any button the scene still believes is
-     * down that the system says is not.
-     *
-     * [systemButton] is the system's number for the button a press or a release is about.
-     * A release is sent as the button the press was sent as, which for a click with Control
-     * held is the secondary one.
-     */
-    private fun send(
-        event: NSEvent,
-        kind: PointerEventType,
-        button: PointerButton? = null,
-        systemButton: Int? = null,
-    ) {
-        val position = event.offsetInView
-        var sentAs = button
-        if (kind == PointerEventType.Release && systemButton != null) {
-            sentAs = held.released(systemButton) ?: button
-            // A release the scene was never told the press of, or already had released:
-            // the menu's loop took the press, or the release was already made up below.
-            if (sentAs == null) {
-                releaseStale(position)
-                return
-            }
-        }
-        releaseStale(position)
-        if (kind == PointerEventType.Press && systemButton != null && sentAs != null) {
-            held.pressed(systemButton, sentAs)
-        }
-        scene.sendPointerEvent(
-            eventType = kind,
-            position = position,
-            scrollDelta = Offset(event.deltaX.toFloat(), event.deltaY.toFloat()),
-            nativeEvent = event,
-            button = sentAs,
-        )
-    }
-
-    /**
-     * Tells the scene that every button it believes is down and the system says is up has
-     * come up, at [position].
-     *
-     * A menu the system shows takes the release of the button that closed it, so without
-     * this the scene goes on believing a button is held and no later click completes.
-     */
-    private fun releaseStale(position: Offset) {
-        for (button in held.stale(NSEvent.pressedMouseButtons.toLong())) {
-            scene.sendPointerEvent(
-                eventType = PointerEventType.Release,
-                position = position,
-                button = button,
-            )
-        }
-    }
-
-    /** Where the pointer is now, in the scene's pixels, for an event that has no event. */
-    private fun pointerNow(): Offset {
-        val inWindow = window.convertPointFromScreen(NSEvent.mouseLocation)
-        return scenePoint(view, inWindow, window.backingScaleFactor)
+    private fun printError(message: String) {
+        platform.posix.fputs("$message\n", platform.posix.stderr)
     }
 
     private val NSEvent.offsetInView: Offset
         get() = scenePoint(view, locationInWindow, view.window?.backingScaleFactor ?: 1.0)
-
-    // Built from parts rather than converted: what converts a platform key event is
-    // internal to Compose, and the parts are the same ones the native image path builds
-    // from because it has no platform event to convert either.
-    //
-    // The code point is nothing, deliberately. This platform reads a key as typed text when
-    // it carries a printable character, and the input method is already putting that text
-    // in through `insertText`: sending it here as well types every letter twice and pushes
-    // a syllable along as it is being built.
-    private fun NSEvent.compose(type: KeyEventType): KeyEvent =
-        macKeyEvent(keyCode.toInt(), modifierFlags.toLong(), type, codePoint = 0)
 }
 
 /** Holds the closure a menu item runs, because a menu item calls a selector on a target. */
@@ -1242,16 +842,10 @@ class MenuShortcut(private val run: () -> Unit) : platform.darwin.NSObject() {
 
 /** A rectangle the size of the window's content, at the origin of its parent. */
 internal fun contentBounds(width: Int, height: Int): CValue<CGRect> =
-    NSMakeRect(0.0, 0.0, width.toDouble(), height.toDouble())
+    platform.Foundation.NSMakeRect(0.0, 0.0, width.toDouble(), height.toDouble())
 
 /**
  * Makes [backdrop] the window's content view and puts [view] over the whole of it.
- *
- * The view takes the backdrop's bounds rather than any size worked out beforehand: the
- * backdrop is sized by the window when it becomes the content view, and the view has to
- * cover exactly that, from its top left corner, or the drawing is shifted off the window
- * and the pointer lands somewhere other than where things are drawn. The native image
- * path gets the same thing by making its view the content view itself.
  */
 internal fun installContent(window: NSWindow, backdrop: NSView, view: NSView) {
     window.contentView = backdrop
@@ -1262,10 +856,6 @@ internal fun installContent(window: NSWindow, backdrop: NSView, view: NSView) {
 
 /**
  * Where a point in the window's coordinates falls in the scene, in pixels.
- *
- * Converted by AppKit from the window to [view], which accounts for wherever the view sits
- * and for its being flipped (the scene view is), then scaled to the screen's density: the layer draws at that
- * density and the scene is told that size, so its coordinates are pixels.
  */
 internal fun scenePoint(view: NSView, locationInWindow: CValue<CGPoint>, scale: Double): Offset =
     view.convertPoint(locationInWindow, fromView = null).useContents {
@@ -1275,11 +865,6 @@ internal fun scenePoint(view: NSView, locationInWindow: CValue<CGPoint>, scale: 
 /**
  * The radius the system draws on [window]'s corners under [chrome], from the table in the
  * common window module, or null for a release that table does not cover.
- *
- * AppKit reports no window corner radius through a public API, and a private key is
- * rejected by Mac App Store review and can break in any update, so the radius is looked up
- * by title bar style and release rather than read from the window. The GraalVM window
- * looks it up in the same table.
  */
 internal fun systemCornerRadius(chrome: MacosWindowChrome): Double? =
     macosCornerRadius(
@@ -1288,15 +873,12 @@ internal fun systemCornerRadius(chrome: MacosWindowChrome): Double? =
     )
 
 /**
- * Builds [window]'s title bar the way [chrome] says, as the GraalVM window does when it
- * opens. The style mask is set where the window is made.
+ * Builds [window]'s title bar the way [chrome] says, as the GraalVM window does when it opens.
  */
 internal fun applyChrome(window: NSWindow, chrome: MacosWindowChrome) {
     window.titlebarAppearsTransparent = chrome.titlebarAppearsTransparent
     window.titleVisibility = if (chrome.titleHidden) NSWindowTitleHidden else NSWindowTitleVisible
     if (chrome.unifiedToolbar) {
-        // Empty: it sets the bar's height, which centres the three buttons on the line the
-        // bar's own content is drawn on, and gives the window the radius such a window has.
         val toolbar = NSToolbar(identifier = "org.thisisthepy.compose.window")
         toolbar.showsBaselineSeparator = false
         window.toolbar = toolbar
