@@ -447,7 +447,7 @@ class MacosWindow(
                 view.needsDisplay = true
             }
             if (describesItself) semantics.pushIfChanged(afterDrawing = true)
-            return super.accessibilityChildren()
+            return reader.roots
         }
     }.also {
         it.material = NSVisualEffectMaterialUnderWindowBackground
@@ -641,12 +641,7 @@ class MacosWindow(
             if (NSPointInRect(convertPoint(aPoint, fromView = superview), bounds)) this
             else null
 
-        // Asked only when something is reading the screen, which is what this is for.
-        // Describing the tree costs about a third of a frame, and until now it was paid on
-        // every frame by everyone, whether or not anyone was listening. A drag of the
-        // window's edge is where that showed: every control moves on every frame, so the
-        // comparison that usually makes it free always failed.
-        override fun accessibilityChildren(): List<*>? = backdrop.accessibilityChildren()
+        override fun isAccessibilityElement(): Boolean = false
 
         override fun acceptsFirstMouse(event: NSEvent?) = true
         override fun viewWillMoveToWindow(newWindow: NSWindow?) = updateTrackingAreas()
