@@ -104,7 +104,7 @@ class ComposeWindowHost(
     private val textInput = SceneTextInput()
     private val work = FrameDispatcher().also {
         it.onDispatched = {
-            requests.requestFrame()
+            requests.request()
             platform.requestFrame()
         }
     }
