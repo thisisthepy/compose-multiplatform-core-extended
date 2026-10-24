@@ -21,6 +21,13 @@ inputs:
       the targets another runner builds.
     required: false
     default: 'false'
+  all-modules:
+    description: >-
+      'true' makes publish-local.sh publish every module upstream lists (lifecycle, savedstate,
+      navigation, window-core, the adaptive family and so on), which needs every Apple target
+      built as well. Only the publish workflow takes it.
+    required: false
+    default: 'false'
 
 runs:
   using: composite
@@ -37,6 +44,7 @@ runs:
         script="$(git rev-parse HEAD:extended/compose)"
         targets="$(echo '${{ inputs.targets }}' | tr ' ' '\n' | sort | paste -sd- -)"
         [[ '${{ inputs.all-roots }}' != true ]] || targets="$targets-roots"
+        [[ '${{ inputs.all-modules }}' != true ]] || targets="$targets-modules"
         echo "key=fork-compose-${{ runner.os }}-${{ runner.arch }}-$targets-$sources-$script" >> "$GITHUB_OUTPUT"
 
     - name: Restore this fork's Compose
@@ -94,12 +102,14 @@ runs:
       env:
         TARGETS: ${{ inputs.targets }}
         ALL_ROOTS: ${{ inputs.all-roots }}
+        ALL_MODULES: ${{ inputs.all-modules }}
         XWIN_VERSION: 0.6.5
       run: |
         set -euo pipefail
         export ANDROIDX_JDK21="$JAVA_HOME"
         roots=()
         [[ "$ALL_ROOTS" != true ]] || roots=(--all-roots)
+        [[ "$ALL_MODULES" != true ]] || roots+=(--all-modules)
         others=()
         mingw=0
         for target in $TARGETS; do

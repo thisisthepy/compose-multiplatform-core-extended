@@ -9,6 +9,10 @@
 #              js, wasmJs
 #   --list     prints the Gradle tasks it would run, one per line, and runs nothing; a task
 #              starting with `?` is run only where the project has it
+#   --all-modules  also publishes the libraries and modules upstream lists beyond the ones an
+#              application draws with: lifecycle, savedstate, navigation, window-core, the
+#              adaptive family and so on. Off, a run publishes what it always has; on, it needs
+#              every Apple target built too, because those libraries' shared metadata names them.
 #   --all-roots  configures every platform group that does not need something this host lacks
 #              (JavaScript and Wasm; Windows only with mingwX64), so each module's root lists the
 #              targets other hosts build. The run that publishes the roots takes this.
@@ -123,14 +127,16 @@ jvm_only_modules=(
 
 list=0
 all_roots=0
+all_modules=0
 targets=()
 gradle_args=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --list) list=1; shift ;;
         --all-roots) all_roots=1; shift ;;
+        --all-modules) all_modules=1; shift ;;
         --) shift; gradle_args=("$@"); break ;;
-        -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
         desktop|macosArm64|linuxX64|linuxArm64|mingwX64|iosArm64|iosSimulatorArm64|tvosArm64|tvosSimulatorArm64|watchosArm64|watchosArm32|watchosSimulatorArm64|js|wasmJs)
             targets+=("$1"); shift ;;
         *) die "unknown argument '$1'" "known targets: desktop, macosArm64, linuxX64, linuxArm64, mingwX64, iosArm64, iosSimulatorArm64," "tvosArm64, tvosSimulatorArm64, watchosArm64, watchosArm32, watchosSimulatorArm64, js, wasmJs" ;;
@@ -193,8 +199,8 @@ for target in "${targets[@]}"; do
         tvos*|watchos*) for module in "${base_all_modules[@]}"; do add_module "$module" "$publication" "$required"; done ;;
         *) for module in "${common_modules[@]}"; do add_module "$module" "$publication" "$required"; done ;;
     esac
-    for module in "${all_platform_modules[@]}"; do add_module "$module" "$publication" "?"; done
-    if [[ $skiko_target -eq 1 ]]; then
+    [[ $all_modules -eq 0 ]] || for module in "${all_platform_modules[@]}"; do add_module "$module" "$publication" "?"; done
+    if [[ $skiko_target -eq 1 && $all_modules -eq 1 ]]; then
         for module in "${skiko_modules[@]}"; do add_module "$module" "$publication" "?"; done
     fi
     if [[ "$target" == iosArm64 || "$target" == iosSimulatorArm64 ]]; then
@@ -206,7 +212,7 @@ for target in "${targets[@]}"; do
     add_task "?:compose:ui:ui-uikit:publishKotlinMultiplatformDecoratedPublicationToMavenLocal"
     if [[ "$target" == desktop ]]; then
         for module in "${desktop_modules[@]}"; do add_module "$module" "$publication"; done
-        for module in "${jvm_only_modules[@]}"; do add_module "$module" "$publication" "?"; done
+        [[ $all_modules -eq 0 ]] || for module in "${jvm_only_modules[@]}"; do add_module "$module" "$publication" "?"; done
         add_task "?:compose:desktop:desktop:publishKotlinMultiplatformPublicationToMavenLocal"
         add_task ":compose:desktop:desktop:publishJvmPublicationToMavenLocal"
         for system in "${desktop_systems[@]}"; do
