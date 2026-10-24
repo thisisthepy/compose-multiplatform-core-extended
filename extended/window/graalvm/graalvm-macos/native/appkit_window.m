@@ -111,49 +111,6 @@ static void dxc_on_main(void (^work)(void)) {
     }
 }
 
-// What the window would tell a reader who cannot see it.
-//
-// A snapshot rather than a question. Accessibility is asked for on the thread AppKit
-// answers on, at moments nobody chose, and the tree it describes lives where the scene
-// does: answering by asking across would block whichever thread asked, and one of them is
-// the thread the frame is drawn from. The scene pushes what it has whenever it changes,
-// and this answers from that.
-struct dxc_element {
-    int32_t role;
-    // In points from the top left of the view, which is what the scene measures in.
-    float x;
-    float y;
-    float width;
-    float height;
-    char label[DXC_TEXT_BYTES];
-};
-
-// Rebuilt whenever the scene pushes, which is rarely: a tree changes when the screen
-// does, not when a frame is drawn.
-static NSArray<NSAccessibilityElement *> *dxc_accessibility_children;
-
-// The roles a scene can describe, as numbers, because a name would be a string crossing
-// for every element on every push. Which AppKit role each one is is decided here.
-enum {
-    DXC_ROLE_GROUP = 0,
-    DXC_ROLE_BUTTON = 1,
-    DXC_ROLE_TEXT = 2,
-    DXC_ROLE_FIELD = 3,
-    DXC_ROLE_CHECKBOX = 4,
-    DXC_ROLE_IMAGE = 5,
-};
-
-static NSAccessibilityRole dxc_appkit_role(int32_t role) {
-    switch (role) {
-        case DXC_ROLE_BUTTON: return NSAccessibilityButtonRole;
-        case DXC_ROLE_TEXT: return NSAccessibilityStaticTextRole;
-        case DXC_ROLE_FIELD: return NSAccessibilityTextFieldRole;
-        case DXC_ROLE_CHECKBOX: return NSAccessibilityCheckBoxRole;
-        case DXC_ROLE_IMAGE: return NSAccessibilityImageRole;
-        default: return NSAccessibilityGroupRole;
-    }
-}
-
 // Room for a burst rather than for a session. A queue that fills is a queue nobody is
 // draining, and holding a thousand stale mouse moves helps no one.
 #define DXC_EVENT_CAPACITY 256
@@ -179,60 +136,7 @@ static void dxc_push_event(struct dxc_event event) {
     pthread_mutex_unlock(&dxc_event_lock);
 }
 
-/**
- * Replaces what the window tells a reader who cannot see it.
- *
- * Called from the thread the scene lives on, and the elements it builds are read from the
- * thread AppKit asks on, so the array is swapped whole: a reader either sees the tree
- * before this call or the one after it, never half of each.
- */
-void dxc_native_set_accessibility(const struct dxc_element *elements, int32_t count, void *view_pointer) {
-    // Built where the caller already is. The window this renders into runs on the thread
-    // AppKit answers on, so this is that thread and there is nothing to hand the work to.
-    //
-    // It was queued for a while, from when the renderer ran on a thread of its own and
-    // waiting here would have stopped it draining the window's events. Queuing outlived
-    // that: a block put on the main queue runs when the run loop turns, and a loop that
-    // only takes events never turns for it, so the window described nothing at all.
-    size_t bytes = (size_t)count * sizeof(struct dxc_element);
-    struct dxc_element *copy = count > 0 ? malloc(bytes) : NULL;
-    if (copy != NULL) {
-        memcpy(copy, elements, bytes);
-    }
-    dxc_on_main(^{
-        NSView *view = (__bridge NSView *)view_pointer;
-        NSMutableArray<NSAccessibilityElement *> *built =
-            [NSMutableArray arrayWithCapacity:count];
-        for (int32_t index = 0; index < count; index++) {
-            const struct dxc_element *element = &copy[index];
-            NSString *label = [NSString stringWithUTF8String:element->label];
-            NSAccessibilityElement *made = [NSAccessibilityElement
-                accessibilityElementWithRole:dxc_appkit_role(element->role)
-                                       frame:NSZeroRect
-                                       label:label != nil ? label : @""
-                                      parent:view];
-            // The scene's pixels, turned into the view's points.
-            CGFloat scale = view.window.backingScaleFactor > 0 ? view.window.backingScaleFactor : 1;
-            NSRect local = NSMakeRect(element->x / scale, element->y / scale,
-                                      element->width / scale, element->height / scale);
-            NSRect inWindow = [view convertRect:local toView:nil];
-            NSRect onScreen = [view.window convertRectToScreen:inWindow];
-            [made setAccessibilityFrame:onScreen];
-            if (index == 0 && getenv("DXC_REPORT_FRAMES") != NULL) {
-                fprintf(stderr,
-                        "dxc frames: %s scene (%.0f %.0f %.0fx%.0f) -> screen "
-                        "(%.0f %.0f %.0fx%.0f)\n",
-                        element->label, local.origin.x, local.origin.y,
-                        local.size.width, local.size.height,
-                        onScreen.origin.x, onScreen.origin.y,
-                        onScreen.size.width, onScreen.size.height);
-            }
-            [built addObject:made];
-        }
-        dxc_accessibility_children = built;
-        free(copy);
-    });
-}
+#include "appkit_accessibility.h"
 
 /** No paste waits on this desktop: a paste is read through the clipboard call. Present because the shared Kotlin names it. */
 int32_t dxc_native_take_paste(char *out, int32_t capacity) {
@@ -687,6 +591,7 @@ static NSMenu *dxc_text_menu(id target) {
 
 /** True once the window has been closed, so the renderer knows to stop. */
 static atomic_bool dxc_window_closed;
+static atomic_bool dxc_window_key = true;
 
 int32_t dxc_native_window_closed(void) {
     return atomic_load(&dxc_window_closed) ? 1 : 0;
@@ -699,6 +604,12 @@ int32_t dxc_native_window_closed(void) {
 @implementation DxcWindowDelegate
 - (void)windowWillClose:(NSNotification *)notification {
     atomic_store(&dxc_window_closed, true);
+}
+- (void)windowDidBecomeKey:(NSNotification *)notification {
+    atomic_store(&dxc_window_key, true);
+}
+- (void)windowDidResignKey:(NSNotification *)notification {
+    atomic_store(&dxc_window_key, false);
 }
 @end
 
@@ -775,8 +686,9 @@ void dxc_native_set_cursor(int32_t shape) {
     if (kind == DXC_EVENT_SCROLL) {
         // The wheel's travel rides in the same two fields the pointer uses, because a
         // scroll has no position of its own beyond where the pointer already is.
-        record.x = (float)event.scrollingDeltaX;
-        record.y = (float)event.scrollingDeltaY;
+        CGFloat divisor = event.hasPreciseScrollingDeltas ? 10.0 : 1.0;
+        record.x = (float)(-event.scrollingDeltaX / divisor);
+        record.y = (float)(-event.scrollingDeltaY / divisor);
     }
     if (kind == DXC_EVENT_KEY_DOWN || kind == DXC_EVENT_KEY_UP) {
         record.key_code = (int32_t)event.keyCode;
@@ -947,7 +859,7 @@ void dxc_native_set_cursor(int32_t shape) {
 // A reader who cannot see the window gets this and nothing else, so an empty answer is a
 // window that appears to contain nothing at all. What is in it is whatever the scene last
 // pushed.
-- (NSArray *)accessibilityChildren { return dxc_accessibility_children ?: @[]; }
+- (NSArray *)accessibilityChildren { return dxc_ax_children(self); }
 - (NSArray *)accessibilityChildrenInNavigationOrder { return self.accessibilityChildren; }
 - (NSAccessibilityRole)accessibilityRole { return NSAccessibilityGroupRole; }
 - (BOOL)isAccessibilityElement { return YES; }
@@ -1204,6 +1116,15 @@ void dxc_native_window_chrome(
  * Returns zero on success, one or two for unavailable Metal resources, and three if the
  * process cannot be registered as a foreground application.
  */
+#include "appkit_resize_soak.h"
+
+/**
+ * Where the resize soak is (see appkit_resize_soak.h), which the renderer polls to know
+ * when to print its heap line and when to collect. Defined here, with the other names the
+ * renderer reaches, rather than in the header.
+ */
+int32_t dxc_native_soak_state(void) { return dxc_soak_state; }
+
 int32_t dxc_native_window_open(
     const char *title,
     int32_t width,
@@ -1323,9 +1244,9 @@ int32_t dxc_native_window_open(
             // hang from, so neither is asked to change. The window and the layer then
             // stop claiming to fill their rectangle, or nothing composites behind them.
             NSVisualEffectView *effect = [[NSVisualEffectView alloc] init];
-            effect.material = NSVisualEffectMaterialSidebar;
+            effect.material = NSVisualEffectMaterialUnderWindowBackground;
             effect.blendingMode = NSVisualEffectBlendingModeBehindWindow;
-            effect.state = NSVisualEffectStateActive;
+            effect.state = NSVisualEffectStateFollowsWindowActiveState;
             effect.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
             NSView *frame_view = window.contentView.superview;
             effect.frame = frame_view.bounds;
@@ -1346,6 +1267,7 @@ int32_t dxc_native_window_open(
         out->device = (__bridge_retained void *)device;
         out->queue = (__bridge_retained void *)queue;
         out->layer = (__bridge_retained void *)layer;
+        dxc_soak_start(window, device);
     }
     });
     return status;
@@ -1467,6 +1389,28 @@ void dxc_native_window_size(void *layer_pointer, int32_t *width, int32_t *height
 // of the window rather than a file-level one.
 static id<CAMetalDrawable> dxc_pending_drawable;
 
+// The autorelease pool a frame is drawn in, from the drawable being taken to its being handed
+// to the screen. Public runtime calls, declared here because the header that has them is not
+// part of the SDK's public set.
+extern void *objc_autoreleasePoolPush(void);
+extern void objc_autoreleasePoolPop(void *pool);
+
+// What Skia hands the frame (its command buffers among them) comes back autoreleased, on the
+// thread that draws. A frame the window draws from inside a resize is inside the pool the
+// event pump drains, but one the renderer's loop draws is not inside any: that thread runs
+// no run loop of its own and nothing drains for it, so everything autoreleased there was
+// kept for the life of the process. A command buffer keeps 64 KB of the graphics driver's
+// memory for tracking its progress, which is what compose-rust's resize soak saw grow by
+// two regions after every drag, without end (CI runs 39049234802 and 39052658073: 128 KB a
+// drag over 60 drags, allocated under -[_MTLCommandBuffer initProgressTracking]). The
+// Kotlin/Native window draws each frame in a pool of its own for the same reason.
+//
+// A stack, because a frame can be asked for while another is open (a resize drawing from
+// inside the view while a frame is under way), and pools close in the order they opened.
+#define DXC_FRAME_POOLS 8
+static void *dxc_frame_pools[DXC_FRAME_POOLS];
+static int dxc_frame_pool_depth;
+
 /**
  * Takes the next drawable and answers the texture to paint into.
  *
@@ -1476,6 +1420,10 @@ static id<CAMetalDrawable> dxc_pending_drawable;
  */
 int32_t dxc_native_frame_begin(void *layer_pointer, void **texture_out) {
     __block int32_t status = 0;
+    // Opened on the drawing thread, before anything of the frame exists, and closed by
+    // dxc_native_frame_end on the same thread, which every frame that was given a drawable
+    // reaches. A frame that was not given one draws nothing and closes nothing.
+    void *pool = objc_autoreleasePoolPush();
     dxc_on_main(^{
     @autoreleasepool {
         CAMetalLayer *layer = (__bridge CAMetalLayer *)layer_pointer;
@@ -1490,6 +1438,11 @@ int32_t dxc_native_frame_begin(void *layer_pointer, void **texture_out) {
         *texture_out = (__bridge void *)drawable.texture;
     }
     });
+    if (status == 0 && dxc_frame_pool_depth < DXC_FRAME_POOLS) {
+        dxc_frame_pools[dxc_frame_pool_depth++] = pool;
+    } else {
+        objc_autoreleasePoolPop(pool);
+    }
     return status;
 }
 
@@ -1520,6 +1473,9 @@ void dxc_native_frame_end(void *queue_pointer) {
         }
     }
     });
+    if (dxc_frame_pool_depth > 0) {
+        objc_autoreleasePoolPop(dxc_frame_pools[--dxc_frame_pool_depth]);
+    }
 }
 
 /**
@@ -1719,7 +1675,7 @@ void dxc_native_window_origin(int32_t *x, int32_t *y) {
 }
 
 int32_t dxc_native_window_focused(void) {
-    return 0;
+    return atomic_load(&dxc_window_key) ? 1 : 0;
 }
 
 int32_t dxc_native_ime_reset(char *out, int32_t capacity) {

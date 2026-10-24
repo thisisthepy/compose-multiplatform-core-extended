@@ -11,6 +11,9 @@
 #
 # Applied with `apply: [ <path>/compose.module-template.yaml ]`.
 settings:
+  jvm:
+    jdk:
+      version: 21
   kotlin:
     compilerPlugins:
       - id: androidx.compose.compiler.plugins.kotlin

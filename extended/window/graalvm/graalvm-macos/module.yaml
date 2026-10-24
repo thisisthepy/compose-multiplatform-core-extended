@@ -11,16 +11,26 @@ dependencies:
   # time, so they are not bundled into the jar.
   - ../../common
   - org.graalvm.sdk:nativeimage:25.0.1: compile-only
+  # The scene's WindowSurface, which MetalWindowSurface/GlWindowSurface implement, and Skia
+  # through it. Compiled against only: an application that hosts a scene depends on the scene
+  # module itself, and one that only opens a window never loads the surface.
+  - ../../scene: compile-only
+  # Skia's classes, which a compile-only module does not pass on. The application's own
+  # skiko-awt is the one it runs with.
+  - org.jetbrains.skiko:skiko-awt:0.144.6: compile-only
 
 test-dependencies:
   - $kotlin.test
 
 settings:
+  jvm:
+    jdk:
+      version: 21
   publishing:
     enabled: true
     group: org.thisisthepy.compose.window
     artifactId: graalvm-macos
-    version: 0.1.0
+    version: 1.11.1-ext.1
 
 repositories:
   - id: mavenLocal

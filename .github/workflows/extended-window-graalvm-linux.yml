@@ -7,11 +7,13 @@ on:
   pull_request:
     paths:
       - extended/window/**
+      - .github/actions/fork-compose/**
       - .github/workflows/extended-window-graalvm-linux.yml
   push:
     branches: [ extended ]
     paths:
       - extended/window/**
+      - .github/actions/fork-compose/**
       - .github/workflows/extended-window-graalvm-linux.yml
 
 concurrency:
@@ -28,21 +30,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: extended/window
+          sparse-checkout: |
+            extended/window
+            extended/compose
+            .github/actions
+          filter: blob:none
 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
-      - name: X11 and GL headers
-        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxext-dev libgl-dev libgl1-mesa-dri libglx-mesa0 xvfb
+      - name: X11 and GL headers, and at-spi2 with a session bus
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxext-dev libgl-dev libgl1-mesa-dri libglx-mesa0 xvfb \
+            openbox xdotool x11-utils dbus at-spi2-core libatspi2.0-dev pkg-config
 
       - name: Compile the C
         working-directory: extended/window/graalvm/graalvm-linux
         run: |
           mkdir -p build
           cc -c -O2 -fPIC -Wall -o build/x11_window.o c/x11_window.c
+
+      # The renderer's one native image carries the macOS window's calls on every desktop and
+      # links every C function its reachable code names, so the X11 library defines them too.
+      - name: The macOS window's calls the image carries resolve here too
+        working-directory: extended/window/graalvm/graalvm-linux
+        run: |
+          for name in window_title_bar window_chrome set_accessibility accessibility_active take_accessibility_argument accessibility_snapshot ax_api_probe; do
+            nm build/x11_window.o | grep -q " T dxc_native_$name\$" || {
+              echo "x11_window.c defines no dxc_native_$name" >&2
+              exit 1
+            }
+          done
 
       - name: Drag files onto the window (XDND client under a virtual display)
         working-directory: extended/window/graalvm/graalvm-linux
@@ -68,14 +89,29 @@ jobs:
           cc -O1 -Wall -o build/resize_test test/c/resize_test.c -lX11 -lXext -lGL
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/resize_test
 
-      - name: The semantics reader is the Kotlin/Native window's, unchanged
+      - name: A resize through a window manager that honours the sync counter (openbox, under a virtual display)
+        working-directory: extended/window/graalvm/graalvm-linux
+        env:
+          WM_DRAG_SCRIPT: ${{ github.workspace }}/extended/window/scripts/wm-drag.sh
+        run: |
+          sudo apt-get install -y openbox xdotool x11-utils
+          cc -O1 -Wall -pthread -o build/wm_resize_test test/c/wm_resize_test.c -lX11 -lXext -lGL
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/wm_resize_test | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: The caption drag, every edge and the double click, then the System frame (openbox, under a virtual display)
+        working-directory: extended/window/graalvm/graalvm-linux
+        env:
+          WM_CHROME_SCRIPT: ${{ github.workspace }}/extended/window/scripts/wm-chrome.sh
+        run: |
+          cc -O1 -Wall -pthread -o build/chrome_test test/c/chrome_test.c -lX11 -lXext -lGL -lm
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/chrome_test modern | tee -a "$GITHUB_STEP_SUMMARY"
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/chrome_test system | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: The AT-SPI reader the tests read the tree back with
         working-directory: extended/window
         run: |
-          cmp native/linux/src/AtspiSemantics.kt \
-            graalvm/graalvm-linux/src/org/thisisthepy/compose/window/atspi/AtspiSemantics.kt || {
-            echo "graalvm-linux's AtspiSemantics.kt differs from native/linux's; change both together" >&2
-            exit 1
-          }
+          mkdir -p build
+          cc -O1 -Wall -o build/atspi-readback scripts/atspi-readback.c $(pkg-config --cflags --libs atspi-2 gobject-2.0)
 
       - name: The Kotlin module has no java.awt
         working-directory: extended/window/graalvm/graalvm-linux
@@ -85,8 +121,59 @@ jobs:
             exit 1
           fi
 
+      # MetalWindowSurface and GlWindowSurface compile against the scene module, which compiles
+      # against this fork's foundation and UI. Nothing public has those, so they are published
+      # here first, for the JVM only.
+      - name: This fork's Compose for the JVM
+        uses: ./.github/actions/fork-compose
+        with:
+          targets: desktop
+
+      # The toolchain resolves every platform a module declares, and the scene declares
+      # macosArm64 too. These modules are JVM ones, so the scene is built as one here.
+      - name: The scene as a JVM module on this runner
+        working-directory: extended/window
+        shell: bash
+        run: |
+          perl -0pi -e 's/^[ \t]*- native\/macos\n//m' project.yaml
+          perl -0pi -e 's/^  platforms: \[.*\]$/  platforms: [ jvm ]/m' scene/module.yaml
+          grep -q '^  platforms: \[ jvm \]$' scene/module.yaml
+
+      # On a session bus of its own, so AtspiReadbackTest publishes to a real at-spi2 registry and
+      # reads the tree back with libatspi.
       - name: Compile and test the Kotlin
         working-directory: extended/window
+        env:
+          ATSPI_READBACK: ${{ github.workspace }}/extended/window/build/atspi-readback
         run: |
           ./kotlin build -m graalvm-linux -p jvm
-          ./kotlin test -m graalvm-linux -p jvm
+          dbus-run-session -- xvfb-run -a ./kotlin test -m graalvm-linux -p jvm
+
+  # The C layer on arm64, which is where a GraalVM image for arm64 Linux links it: the same
+  # chrome checks under openbox. The Kotlin above is the same bytes on either architecture.
+  chrome-arm64:
+    name: C chrome under openbox (Linux arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            extended/window
+          filter: blob:none
+
+      - name: X11 and GL headers, openbox and xdotool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxext-dev libgl-dev libgl1-mesa-dri libglx-mesa0 xvfb \
+            openbox xdotool x11-utils
+
+      - name: The caption drag, every edge and the double click, then the System frame
+        working-directory: extended/window/graalvm/graalvm-linux
+        env:
+          WM_CHROME_SCRIPT: ${{ github.workspace }}/extended/window/scripts/wm-chrome.sh
+        run: |
+          mkdir -p build
+          cc -O1 -Wall -pthread -o build/chrome_test test/c/chrome_test.c -lX11 -lXext -lGL -lm
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/chrome_test modern | tee -a "$GITHUB_STEP_SUMMARY"
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/chrome_test system | tee -a "$GITHUB_STEP_SUMMARY"

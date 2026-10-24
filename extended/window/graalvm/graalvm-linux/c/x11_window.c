@@ -124,6 +124,19 @@ static int dxc_focused = 1;
 // whose frame it never drew.
 static int64_t dxc_resize_serial;
 
+// DXC_REPORT_RESIZE_DETAIL: one line on standard error for every size asked for by the scripted
+// drag and every size the server confirmed, so a frame presented at the wrong size can be
+// placed among them. Read once, when the window opens.
+static int dxc_resize_detail;
+
+static void dxc_detail(const char *what, int32_t width, int32_t height) {
+    if (!dxc_resize_detail) return;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    fprintf(stderr, "dxc resize detail: t=%lldus %s %dx%d\n",
+            (long long)now.tv_sec * 1000000LL + now.tv_nsec / 1000, what, width, height);
+}
+
 // An eventfd that another thread writes to end the frame's wait in dxc_native_pump early.
 // Made the first time anyone asks for it, from whichever thread that is, and kept for the
 // life of the process; -1 until then, or where the kernel would not make one.
@@ -792,19 +805,13 @@ void dxc_native_window_action(int32_t action) {
     XFlush(dxc_display);
 }
 
-/**
- * Hands the move or the resize to the window manager: 0 moves, and 1 to 8 pull the left,
- * right, top and bottom edges and the four corners in that order.
+/*
+ * Sends _NET_WM_MOVERESIZE for [edge] from ([root_x], [root_y]) on the screen, and tells the
+ * scene the press is over. [x], [y] is the same point in the window, for that release.
  */
-void dxc_native_window_begin_drag(int32_t edge) {
-    if (dxc_display == NULL || dxc_window == None) return;
-    // The directions _NET_WM_MOVERESIZE names, indexed by the edge numbers above.
+static void dxc_move_resize(int32_t edge, int root_x, int root_y, float x, float y) {
+    // The directions _NET_WM_MOVERESIZE names, indexed by the edge numbers below.
     static const long direction[9] = { 8, 7, 3, 1, 5, 0, 2, 6, 4 };
-    if (edge < 0 || edge > 8) return;
-    Window root, child;
-    int root_x = 0, root_y = 0, x = 0, y = 0;
-    unsigned int mask = 0;
-    XQueryPointer(dxc_display, dxc_window, &root, &child, &root_x, &root_y, &x, &y, &mask);
     XUngrabPointer(dxc_display, CurrentTime);
     XEvent message;
     memset(&message, 0, sizeof message);
@@ -826,9 +833,39 @@ void dxc_native_window_begin_drag(int32_t edge) {
     struct dxc_event record;
     memset(&record, 0, sizeof record);
     record.kind = DXC_EVENT_POINTER_UP;
-    record.x = (float)x;
-    record.y = (float)y;
+    record.x = x;
+    record.y = y;
     dxc_push_event(record);
+}
+
+/**
+ * Hands the move or the resize to the window manager: 0 moves, and 1 to 8 pull the left,
+ * right, top and bottom edges and the four corners in that order. From where the pointer is.
+ */
+void dxc_native_window_begin_drag(int32_t edge) {
+    if (dxc_display == NULL || dxc_window == None) return;
+    if (edge < 0 || edge > 8) return;
+    Window root, child;
+    int root_x = 0, root_y = 0, x = 0, y = 0;
+    unsigned int mask = 0;
+    XQueryPointer(dxc_display, dxc_window, &root, &child, &root_x, &root_y, &x, &y, &mask);
+    dxc_move_resize(edge, root_x, root_y, (float)x, (float)y);
+}
+
+/**
+ * [dxc_native_window_begin_drag] from the point ([x], [y]) in the window, in pixels: where the
+ * button was pressed. A drag handed over once the pointer has gone a few pixels is given the
+ * press, because the manager moves the window by how far the pointer is from the position it
+ * is told, and the pointer's position now would lose the pixels it has already gone.
+ */
+void dxc_native_window_begin_drag_at(int32_t edge, float x, float y) {
+    if (dxc_display == NULL || dxc_window == None) return;
+    if (edge < 0 || edge > 8) return;
+    int root_x = 0, root_y = 0;
+    Window child;
+    XTranslateCoordinates(dxc_display, dxc_window, DefaultRootWindow(dxc_display), (int)x, (int)y,
+                          &root_x, &root_y, &child);
+    dxc_move_resize(edge, root_x, root_y, x, y);
 }
 
 /** Reads how many pixels go to a point: the toolkit-independent settings desktops write. */
@@ -989,6 +1026,7 @@ static void dxc_pump_events(void) {
                 // Counted before the frame is asked for, so that the frame drawn for this size
                 // is counted against it (dxc_native_resize_serial).
                 dxc_resize_serial++;
+                dxc_detail("configure", dxc_width, dxc_height);
                 // The frame is drawn here, inside the handling of the size change, rather
                 // than written down for the next turn of the loop.
                 //
@@ -1131,6 +1169,30 @@ void dxc_native_window_chrome(
     (void)unified_toolbar;
 }
 
+// macOS only, like the two above: the accessibility bridge's calls. No reader is listening
+// through them here, and there is no value waiting.
+int32_t dxc_native_accessibility_active(void) {
+    return 0;
+}
+
+int32_t dxc_native_take_accessibility_argument(char *out, int32_t capacity) {
+    (void)out;
+    (void)capacity;
+    return -1;
+}
+
+int32_t dxc_native_accessibility_snapshot(char *out, int32_t capacity) {
+    (void)out;
+    (void)capacity;
+    return 0;
+}
+
+int32_t dxc_native_ax_api_probe(int32_t *trusted, int32_t *windows) {
+    *trusted = -1;
+    *windows = -1;
+    return -1;
+}
+
 /**
  * Gives the window the picture it named, from its pixels: eight bits each of red, green,
  * blue and alpha, the colour already multiplied by the alpha, row after row.
@@ -1219,6 +1281,7 @@ int32_t dxc_native_window_open(const char *title, int32_t width, int32_t height,
     memset(out, 0, sizeof *out);
     dxc_display = XOpenDisplay(NULL);
     if (dxc_display == NULL) return 1;
+    dxc_resize_detail = getenv("DXC_REPORT_RESIZE_DETAIL") != NULL;
     int screen = DefaultScreen(dxc_display);
     // The size asked for is in points; the window is made in the pixels they come to on
     // this display.
@@ -1493,8 +1556,26 @@ void dxc_native_debug_resize(void *window_pointer, void *view_pointer, int32_t f
         int32_t height = from_height + (int32_t)((to_height - from_height) * t);
         if (width < 1) width = 1;
         if (height < 1) height = 1;
+        dxc_detail("request", width, height);
+        int64_t before = dxc_resize_serial;
         XResizeWindow(dxc_display, dxc_window, (unsigned)width, (unsigned)height);
         XFlush(dxc_display);
+        // The next size is asked for only once the server has confirmed this one and its frame
+        // has been drawn, which is what a window manager holding the frame for the sync
+        // counter does. Asked for earlier, the frame for this size is drawn while the server
+        // already has the next one: a frame presented at a size the window no longer has. A
+        // pump can return before the confirmation arrives (a wake from another thread ends
+        // its wait), so it is asked again, for up to a second.
+        struct timespec start;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        while (dxc_resize_serial == before && !dxc_closed &&
+               (dxc_width != width || dxc_height != height)) {
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            double waited = (double)(now.tv_sec - start.tv_sec) + (now.tv_nsec - start.tv_nsec) / 1e9;
+            if (waited > 1.0) break;
+            dxc_native_pump(0.05);
+        }
         dxc_native_pump(pause_micros / 1.0e6);
     }
 }
@@ -1523,6 +1604,15 @@ void dxc_native_window_server_size(int32_t *width, int32_t *height) {
 /** True once the reader has closed the window. */
 int32_t dxc_native_window_closed(void) {
     return dxc_closed ? 1 : 0;
+}
+
+/*
+ * Answered here and says no soak is running. The resize soak (DXC_RESIZE_SOAK) is the macOS
+ * window's, but the Kotlin that asks for it names it on every desktop, and a name nothing
+ * defines is a link that fails.
+ */
+int32_t dxc_native_soak_state(void) {
+    return 0;
 }
 
 /**

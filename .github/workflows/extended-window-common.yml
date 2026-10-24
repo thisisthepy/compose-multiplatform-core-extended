@@ -86,3 +86,22 @@ jobs:
         run: |
           .\kotlin.bat test -m common
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Show build logs on failure
+        if: failure() && runner.os != 'Windows'
+        working-directory: extended/window
+        run: |
+          find build -type f -name "*.log" | while read -r f; do
+            echo "===== $f ====="
+            tail -n 80 "$f"
+          done
+
+      - name: Show build logs on failure (Windows)
+        if: failure() && runner.os == 'Windows'
+        working-directory: extended/window
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path build -Recurse -Filter *.log | ForEach-Object {
+            Write-Host "===== $($_.FullName) ====="
+            Get-Content $_.FullName -Tail 80
+          }

@@ -24,7 +24,11 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.jetbrains.skia.Surface
+import org.thisisthepy.compose.window.AccessibleElement
+import org.thisisthepy.compose.window.CaptionAction
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.WindowCaption
+import org.thisisthepy.compose.window.WindowEdge
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.WindowConfig
@@ -34,7 +38,7 @@ import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.WindowPlatform
 import org.thisisthepy.compose.window.WindowVisibility
 
-private class FakePlatform : WindowPlatform {
+internal class FakePlatform : WindowPlatform {
     override var name = "fake"
     val chosen = ArrayList<Int>()
     var width = 200
@@ -43,6 +47,16 @@ private class FakePlatform : WindowPlatform {
     var closedCalls = 0
     var askClose = false
     val queued = ArrayList<WindowEvent>()
+    var scale = 1f
+    var listening = false
+    var captionNow = WindowCaption.None
+    val pushed = ArrayList<List<AccessibleElement>>()
+    val captionActions = ArrayList<CaptionAction>()
+    var moves = 0
+    val resizes = ArrayList<WindowEdge>()
+    /** Reader requests to deliver in the next pump: id, action, argument. */
+    val readerAsks = ArrayList<Triple<Int, Int, String?>>()
+    val readerAnswers = ArrayList<Boolean>()
     private var listener: WindowListener? = null
 
     override fun open(config: WindowConfig, listener: WindowListener): Boolean {
@@ -60,9 +74,30 @@ private class FakePlatform : WindowPlatform {
         for (id in ArrayList(chosen)) listener?.onContextMenuChosen(id)
         chosen.clear()
         if (askClose) listener?.onCloseRequested()
+        for ((id, action, argument) in ArrayList(readerAsks)) {
+            readerAnswers += listener?.onAccessibilityAction(id, action, argument) == true
+        }
+        readerAsks.clear()
     }
 
-    override fun measure() = WindowMeasurement(width, height, 1f)
+    override fun caption() = captionNow
+    override val accessibilityActive: Boolean get() = listening
+    override fun setAccessibility(elements: List<AccessibleElement>) {
+        pushed += elements
+    }
+    override fun startMove(): Boolean {
+        moves++
+        return true
+    }
+    override fun startResize(edge: WindowEdge): Boolean {
+        resizes += edge
+        return true
+    }
+    override fun performCaptionAction(action: CaptionAction) {
+        captionActions += action
+    }
+
+    override fun measure() = WindowMeasurement(width, height, scale)
     override fun requestFrame() {}
     override fun present(drawnWidth: Int, drawnHeight: Int) =
         FramePresentRecord(drawnWidth, drawnHeight, width, height)
@@ -80,7 +115,7 @@ private class FakePlatform : WindowPlatform {
     }
 }
 
-private class FakeSurface : WindowSurface {
+internal class FakeSurface : WindowSurface {
     var painter: (() -> Boolean)? = null
     var begun = 0
     var closed = false
@@ -106,7 +141,7 @@ private class FakeSurface : WindowSurface {
 class ComposeWindowHostTest {
 
     private fun host(platform: FakePlatform, surface: FakeSurface, content: @androidx.compose.runtime.Composable () -> Unit) =
-        ComposeWindowHost(platform, WindowConfig("test", 200, 100), { surface }, content)
+        ComposeWindowHost(platform, WindowConfig("test", 200, 100), { surface }, content = content)
 
     @Test
     fun resize_every_presented_frame_is_drawn_at_the_current_window_size() {

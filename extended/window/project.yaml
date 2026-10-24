@@ -2,6 +2,10 @@
 # Module names are the directory names and must be unique, so the GraalVM layers are
 # graalvm-macos and graalvm-linux. native/linux is added by its own PR (#28).
 # Nothing here may depend on the renderer, its wire protocol or its node table.
+#
+# native/linux-scene is not listed: it depends on the scene's Linux targets, and the workflows
+# that build this whole project build the scene for the JVM or macOS only. The Linux workflow
+# and scripts/publish-native-linux.sh write a project of the Linux modules with it.
 modules:
   - common
   - native/macos

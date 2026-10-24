@@ -33,28 +33,26 @@ fork's group back into the androidx group the Android variant points at.
 
 ## Versions
 
-Every library line publishes as `<upstream version>-ext.<N>`:
+Everything this fork ships is on one version line, so a consumer pins one set: every library
+line in `gradle.properties`, the window modules, skiko-awt and the Gradle plugin of
+thisisthepy/compose-multiplatform-extended all publish as `<Compose Multiplatform version>-ext.<N>`,
+today `1.11.1-ext.1`.
 
-- `<upstream version>` is the version JetBrains published the same sources as in Compose
-  Multiplatform 1.11.1. Navigation, SavedState and WindowManager here are not the sources
-  JetBrains published for 1.11.1 (their `artifactRedirection.version` is newer, or older,
-  than what 1.11.1 shipped), so for those three it is the androidx version the sources are
-  copied from.
-- `N` counts this fork's releases of that upstream version, from 1. A release raises `N` for
-  every line in `gradle.properties` in one commit, and the commit is tagged.
+- `N` counts this fork's releases on that Compose, from 1. A release raises it everywhere in
+  one commit, and the commit is tagged.
 - A local build that is not a release passes `-Pextended.publication.dev=true` and publishes
-  `-ext.<N>-dev`, so it can never shadow the release of the same number in a local
-  repository.
+  `-ext.<N>-dev`, so it can never shadow the release of the same number in a local repository.
 - A version without the suffix is refused when the build is configured.
+- The upstream version each line's sources are is kept in `gradle.properties`
+  (`extended.upstream.version.<LINE>`) and written into every published POM's description
+  ("Upstream version: 1.11.0-alpha07 (COMPOSE_MATERIAL3 line)."). It is what JetBrains published
+  the same sources as in Compose Multiplatform 1.11.1; for Navigation, SavedState and
+  WindowManager, which are not the sources JetBrains published for 1.11.1, it is the androidx
+  version they are copied from. The build reads a line's version with that upstream meaning, so
+  Material 3 is still an alpha to every check that asks.
 
-The versions are the `jetbrains.publication.version.*` properties at the end of
-`gradle.properties`. In `androidx.build.Version` the `-ext.<N>` part is kept out of semantic
-versioning's pre-release, so that `1.11.1-ext.1` is still a stable version to every check
-that asks.
-
-The Compose Gradle plugin of thisisthepy/compose-multiplatform-extended follows the same rule
-(`org.thisisthepy.compose:compose-gradle-plugin:1.11.1-ext.1`, plugin ID
-`org.thisisthepy.compose`), and its aliases resolve to the coordinates below.
+`extended/publish-local-all.sh` publishes all of it to the local Maven repository at that
+version, the plugin included.
 
 ## Every artifact
 
@@ -92,28 +90,28 @@ by this fork: the root metadata points them at the androidx artifact.
 | `COMPOSE` | `org.jetbrains.compose.ui:ui-unit:1.11.1` | `org.thisisthepy.compose.ui:ui-unit:1.11.1-ext.1` |
 | `COMPOSE` | `org.jetbrains.compose.ui:ui-util:1.11.1` | `org.thisisthepy.compose.ui:ui-util:1.11.1-ext.1` |
 | `COMPOSE` | `org.jetbrains.compose.desktop:desktop:1.11.1` | `org.thisisthepy.compose.desktop:desktop:1.11.1-ext.1` |
-| `COMPOSE_MATERIAL3` | `org.jetbrains.compose.material3:material3:1.11.0-alpha07` | `org.thisisthepy.compose.material3:material3:1.11.0-alpha07-ext.1` |
-| `COMPOSE_MATERIAL3` | `org.jetbrains.compose.material3:material3-window-size-class:1.11.0-alpha07` | `org.thisisthepy.compose.material3:material3-window-size-class:1.11.0-alpha07-ext.1` |
-| `COMPOSE_MATERIAL3` | `org.jetbrains.compose.material3:material3-adaptive-navigation-suite:1.11.0-alpha07` | `org.thisisthepy.compose.material3:material3-adaptive-navigation-suite:1.11.0-alpha07-ext.1` |
-| `COMPOSE_MATERIAL3_ADAPTIVE` | `org.jetbrains.compose.material3.adaptive:adaptive:1.3.0-alpha07` | `org.thisisthepy.compose.material3.adaptive:adaptive:1.3.0-alpha07-ext.1` |
-| `COMPOSE_MATERIAL3_ADAPTIVE` | `org.jetbrains.compose.material3.adaptive:adaptive-layout:1.3.0-alpha07` | `org.thisisthepy.compose.material3.adaptive:adaptive-layout:1.3.0-alpha07-ext.1` |
-| `COMPOSE_MATERIAL3_ADAPTIVE` | `org.jetbrains.compose.material3.adaptive:adaptive-navigation:1.3.0-alpha07` | `org.thisisthepy.compose.material3.adaptive:adaptive-navigation:1.3.0-alpha07-ext.1` |
-| `COMPOSE_MATERIAL3_ADAPTIVE` | `org.jetbrains.compose.material3.adaptive:adaptive-navigation3:1.3.0-alpha07` | `org.thisisthepy.compose.material3.adaptive:adaptive-navigation3:1.3.0-alpha07-ext.1` |
-| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-common:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-common:2.11.0-beta01-ext.1` |
-| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-runtime:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime:2.11.0-beta01-ext.1` |
-| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-viewmodel:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-viewmodel:2.11.0-beta01-ext.1` |
-| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-savedstate:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-viewmodel-savedstate:2.11.0-beta01-ext.1` |
-| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:2.11.0-beta01-ext.1` |
-| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0-beta01-ext.1` |
-| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-navigation3:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-viewmodel-navigation3:2.11.0-beta01-ext.1` |
-| `NAVIGATION` | `org.jetbrains.androidx.navigation:navigation-compose:2.9.2` | `org.thisisthepy.compose.androidx.navigation:navigation-compose:2.10.0-alpha01-ext.1` |
-| `NAVIGATION` | `org.jetbrains.androidx.navigation:navigation-common:2.9.2` | `org.thisisthepy.compose.androidx.navigation:navigation-common:2.10.0-alpha01-ext.1` |
-| `NAVIGATION` | `org.jetbrains.androidx.navigation:navigation-runtime:2.9.2` | `org.thisisthepy.compose.androidx.navigation:navigation-runtime:2.10.0-alpha01-ext.1` |
-| `NAVIGATION_3` | `org.jetbrains.androidx.navigation3:navigation3-ui:1.1.1` | `org.thisisthepy.compose.androidx.navigation3:navigation3-ui:1.1.1-ext.1` |
-| `NAVIGATION_EVENT` | `org.jetbrains.androidx.navigationevent:navigationevent-compose:1.1.0` | `org.thisisthepy.compose.androidx.navigationevent:navigationevent-compose:1.1.0-ext.1` |
-| `SAVEDSTATE` | `org.jetbrains.androidx.savedstate:savedstate:1.4.0` | `org.thisisthepy.compose.androidx.savedstate:savedstate:1.5.0-alpha01-ext.1` |
-| `SAVEDSTATE` | `org.jetbrains.androidx.savedstate:savedstate-compose:1.4.0` | `org.thisisthepy.compose.androidx.savedstate:savedstate-compose:1.5.0-alpha01-ext.1` |
-| `WINDOW` | `org.jetbrains.androidx.window:window-core:1.5.1` | `org.thisisthepy.compose.androidx.window:window-core:1.5.0-ext.1` |
+| `COMPOSE_MATERIAL3` | `org.jetbrains.compose.material3:material3:1.11.0-alpha07` | `org.thisisthepy.compose.material3:material3:1.11.1-ext.1` |
+| `COMPOSE_MATERIAL3` | `org.jetbrains.compose.material3:material3-window-size-class:1.11.0-alpha07` | `org.thisisthepy.compose.material3:material3-window-size-class:1.11.1-ext.1` |
+| `COMPOSE_MATERIAL3` | `org.jetbrains.compose.material3:material3-adaptive-navigation-suite:1.11.0-alpha07` | `org.thisisthepy.compose.material3:material3-adaptive-navigation-suite:1.11.1-ext.1` |
+| `COMPOSE_MATERIAL3_ADAPTIVE` | `org.jetbrains.compose.material3.adaptive:adaptive:1.3.0-alpha07` | `org.thisisthepy.compose.material3.adaptive:adaptive:1.11.1-ext.1` |
+| `COMPOSE_MATERIAL3_ADAPTIVE` | `org.jetbrains.compose.material3.adaptive:adaptive-layout:1.3.0-alpha07` | `org.thisisthepy.compose.material3.adaptive:adaptive-layout:1.11.1-ext.1` |
+| `COMPOSE_MATERIAL3_ADAPTIVE` | `org.jetbrains.compose.material3.adaptive:adaptive-navigation:1.3.0-alpha07` | `org.thisisthepy.compose.material3.adaptive:adaptive-navigation:1.11.1-ext.1` |
+| `COMPOSE_MATERIAL3_ADAPTIVE` | `org.jetbrains.compose.material3.adaptive:adaptive-navigation3:1.3.0-alpha07` | `org.thisisthepy.compose.material3.adaptive:adaptive-navigation3:1.11.1-ext.1` |
+| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-common:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-common:1.11.1-ext.1` |
+| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-runtime:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime:1.11.1-ext.1` |
+| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-viewmodel:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-viewmodel:1.11.1-ext.1` |
+| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-savedstate:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-viewmodel-savedstate:1.11.1-ext.1` |
+| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:1.11.1-ext.1` |
+| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-viewmodel-compose:1.11.1-ext.1` |
+| `LIFECYCLE` | `org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-navigation3:2.11.0-beta01` | `org.thisisthepy.compose.androidx.lifecycle:lifecycle-viewmodel-navigation3:1.11.1-ext.1` |
+| `NAVIGATION` | `org.jetbrains.androidx.navigation:navigation-compose:2.9.2` | `org.thisisthepy.compose.androidx.navigation:navigation-compose:1.11.1-ext.1` |
+| `NAVIGATION` | `org.jetbrains.androidx.navigation:navigation-common:2.9.2` | `org.thisisthepy.compose.androidx.navigation:navigation-common:1.11.1-ext.1` |
+| `NAVIGATION` | `org.jetbrains.androidx.navigation:navigation-runtime:2.9.2` | `org.thisisthepy.compose.androidx.navigation:navigation-runtime:1.11.1-ext.1` |
+| `NAVIGATION_3` | `org.jetbrains.androidx.navigation3:navigation3-ui:1.1.1` | `org.thisisthepy.compose.androidx.navigation3:navigation3-ui:1.11.1-ext.1` |
+| `NAVIGATION_EVENT` | `org.jetbrains.androidx.navigationevent:navigationevent-compose:1.1.0` | `org.thisisthepy.compose.androidx.navigationevent:navigationevent-compose:1.11.1-ext.1` |
+| `SAVEDSTATE` | `org.jetbrains.androidx.savedstate:savedstate:1.4.0` | `org.thisisthepy.compose.androidx.savedstate:savedstate:1.11.1-ext.1` |
+| `SAVEDSTATE` | `org.jetbrains.androidx.savedstate:savedstate-compose:1.4.0` | `org.thisisthepy.compose.androidx.savedstate:savedstate-compose:1.11.1-ext.1` |
+| `WINDOW` | `org.jetbrains.androidx.window:window-core:1.5.1` | `org.thisisthepy.compose.androidx.window:window-core:1.11.1-ext.1` |
 
 ## What is not renamed, and why
 
@@ -121,10 +119,12 @@ by this fork: the root metadata points them at the androidx artifact.
   JetBrains' sources with a patch, into a local repository, under JetBrains' own
   `org.jetbrains.skiko`. It is not published by this fork, and every Compose module asks for
   skiko by that coordinate.
-- **skiko-awt** keeps `org.jetbrains.skiko` too, and gets a version of its own instead:
-  `extended/skiko/build-skiko-awt.sh` publishes the patched jar as `0.144.6.1`, which sorts
-  above JetBrains' `0.144.6` in Gradle and Maven alike. Its natives are JetBrains'
-  `skiko-awt-runtime-*` jars at `0.144.6`.
+- **skiko-awt** is the exception among the skiko artifacts: the patched jar (the AWT switch) is
+  this fork's, `org.thisisthepy.compose.skiko:skiko-awt:1.11.1-ext.1`, from
+  `extended/skiko/build-skiko-awt.sh`. Its Gradle module metadata declares JetBrains'
+  `org.jetbrains.skiko:skiko-awt` as a capability at `0.144.6.1`, so Gradle sees the two as one
+  library and, resolving the conflict by version, keeps this one. Its natives are JetBrains'
+  `skiko-awt-runtime-*` jars at `0.144.6`, and its packages are skiko's own.
 - **Stubs this fork depends on from JetBrains.** Some modules depend on JetBrains artifacts
   at fixed versions that carry no classes and only point at androidx (the runtime, lifecycle,
   savedstate, navigationevent, window, and the internal annotation and collection libraries).

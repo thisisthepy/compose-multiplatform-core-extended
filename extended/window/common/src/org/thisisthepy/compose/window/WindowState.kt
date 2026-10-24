@@ -17,6 +17,10 @@ data class WindowConfig(
     val transparent: Boolean = false,
     /** False holds the window to the size it opens at. */
     val resizable: Boolean = true,
+    /** Who draws the strip at the top of the window. */
+    val chrome: WindowChrome = WindowChrome.Modern,
+    /** Which caption a [WindowChrome.Modern] window has. */
+    val titleBar: TitleBarStyle = TitleBarStyle.Normal,
 )
 
 /** The system's light or dark setting. */

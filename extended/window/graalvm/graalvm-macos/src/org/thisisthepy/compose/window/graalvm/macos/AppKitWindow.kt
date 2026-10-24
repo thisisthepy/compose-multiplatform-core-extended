@@ -13,6 +13,7 @@ import org.graalvm.nativeimage.IsolateThread
 import org.graalvm.nativeimage.c.function.CFunctionPointer
 import org.graalvm.word.Pointer
 import org.graalvm.word.WordFactory
+import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.macosCornerRadius
 import org.thisisthepy.compose.window.WindowMeasurement
@@ -51,6 +52,18 @@ private external fun pollEvent(out: Pointer?): Int
 
 @CFunction("dxc_native_set_accessibility")
 private external fun setAccessibility(elements: Pointer?, count: Int, view: Pointer?)
+
+@CFunction("dxc_native_accessibility_active")
+private external fun accessibilityActiveNative(): Int
+
+@CFunction("dxc_native_take_accessibility_argument")
+private external fun takeAccessibilityArgument(out: Pointer?, capacity: Int): Int
+
+@CFunction("dxc_native_ax_api_probe")
+private external fun axApiProbeNative(trusted: CIntPointer?, windows: CIntPointer?): Int
+
+@CFunction("dxc_native_accessibility_snapshot")
+private external fun accessibilitySnapshotNative(out: Pointer?, capacity: Int): Int
 
 @CFunction("dxc_native_set_cursor")
 private external fun setCursorShape(shape: Int)
@@ -116,6 +129,12 @@ private external fun droppedPaths(out: Pointer?, capacity: Int): Int
 
 @CFunction("dxc_native_window_closed")
 private external fun windowClosed(): Int
+
+@CFunction("dxc_native_window_focused")
+private external fun windowFocused(): Int
+
+@CFunction("dxc_native_soak_state")
+private external fun soakState(): Int
 /**
  * The four pointers a window is, once AppKit has made one.
  *
@@ -235,24 +254,81 @@ fun NativeWindow.describeTo(elements: List<AccessibleElement>) = describeWindow(
  * layout, written once, so a field that moves cannot move in one place only.
  */
 fun describeWindow(view: Long, elements: List<AccessibleElement>) {
-    val capped = if (elements.size > MAX_ELEMENTS) elements.take(MAX_ELEMENTS) else elements
-    val records = StackValue.get<Pointer>(MAX_ELEMENTS * ELEMENT_BYTES)
-    for ((index, element) in capped.withIndex()) {
-        val at = index * ELEMENT_BYTES
-        records.writeInt(at, element.role)
-        records.writeFloat(at + 4, element.x)
-        records.writeFloat(at + 8, element.y)
-        records.writeFloat(at + 12, element.width)
-        records.writeFloat(at + 16, element.height)
-        val bytes = element.label.toByteArray(Charsets.UTF_8)
-        var length = 0
-        while (length < bytes.size && length < TEXT_BYTES - 1) {
-            records.writeByte(at + ELEMENT_LABEL_OFFSET + length, bytes[length])
-            length++
-        }
-        records.writeByte(at + ELEMENT_LABEL_OFFSET + length, ZERO)
+    val bytes = encodeAccessibilityRecords(elements)
+    val count = bytes.size / AX_RECORD_BYTES
+    if (count == 0) {
+        setAccessibility(WordFactory.nullPointer(), 0, WordFactory.pointer(view))
+        return
     }
-    setAccessibility(records, capped.size, WordFactory.pointer(view))
+    // On the heap rather than the stack: a full tree is close to a megabyte.
+    val records = UnmanagedMemory.malloc<Pointer>(bytes.size)
+    try {
+        CTypeConversion.asByteBuffer(records, bytes.size).put(bytes)
+        setAccessibility(records, count, WordFactory.pointer(view))
+    } finally {
+        UnmanagedMemory.free(records)
+    }
+}
+
+/** Whether a reader is listening to the window: one has asked it something, or VoiceOver is on. */
+fun isAccessibilityActive(): Boolean = accessibilityActiveNative() != 0
+
+/**
+ * Every accessibility element of the application's visible windows, as the snapshot text the
+ * common module reads (`parseMacosAxSnapshot`), walked in process through what AppKit's
+ * accessibility server answers clients from. For a check on a machine where no outside client
+ * is trusted for accessibility.
+ */
+fun accessibilitySnapshotText(): String {
+    var capacity = 64 * 1024
+    while (true) {
+        val buffer = UnmanagedMemory.malloc<Pointer>(capacity)
+        try {
+            val length = accessibilitySnapshotNative(buffer, capacity)
+            if (length <= capacity) {
+                val bytes = ByteArray(length.coerceAtLeast(0))
+                if (length > 0) CTypeConversion.asByteBuffer(buffer, length).get(bytes)
+                return String(bytes, Charsets.UTF_8)
+            }
+            capacity = length
+        } finally {
+            UnmanagedMemory.free(buffer)
+        }
+    }
+}
+
+/**
+ * Asks the system's accessibility API for this application's windows, as an outside client
+ * does, and says what it answered: on a machine that has not trusted the process, an error.
+ */
+fun axApiProbe(): org.thisisthepy.compose.window.MacosAxApiAnswer {
+    val trusted = StackValue.get<CIntPointer>(4)
+    val windows = StackValue.get<CIntPointer>(4)
+    val error = axApiProbeNative(trusted, windows)
+    return org.thisisthepy.compose.window.MacosAxApiAnswer(error, trusted.read(), windows.read())
+}
+
+/**
+ * The new value a reader set with the oldest set-value request still to be read, or null
+ * where there is none. One is kept for each such request the event queue carries.
+ */
+fun takeAccessibilityArgument(): String? {
+    var capacity = 1024
+    while (true) {
+        val buffer = UnmanagedMemory.malloc<Pointer>(capacity)
+        try {
+            val length = takeAccessibilityArgument(buffer, capacity)
+            if (length < 0) return null
+            if (length <= capacity) {
+                val bytes = ByteArray(length)
+                CTypeConversion.asByteBuffer(buffer, length).get(bytes)
+                return String(bytes, Charsets.UTF_8)
+            }
+            capacity = length
+        } finally {
+            UnmanagedMemory.free(buffer)
+        }
+    }
 }
 
 /**
@@ -382,6 +458,17 @@ fun frameTimeNanos(): Long = nativeFrameTimeNanos()
 /** True once the reader has closed the window. */
 fun isWindowClosed(): Boolean = windowClosed() != 0
 
+/** True while the window is the key window. */
+fun isWindowFocused(): Boolean = windowFocused() != 0
+
+/**
+ * Where the resize soak asked for with DXC_RESIZE_SOAK is (see `native/appkit_resize_soak.h`):
+ * 0 when none is running, 1 while its rounds run, 2 once they have ended and a collection is
+ * wanted before its last reading. The heap is only visible from this side, so the renderer
+ * prints it while this is not 0.
+ */
+fun resizeSoakState(): Int = soakState()
+
 /**
  * Gives the application the menu bar every application on this platform has.
  *
@@ -448,9 +535,6 @@ object PointerShape {
  * Enough for a screen and not for a document. A list of ten thousand rows is windowed
  * before it reaches the scene, so what is here is what is on screen.
  */
-private const val MAX_ELEMENTS = 256
-private const val ELEMENT_LABEL_OFFSET = 20
-private const val ELEMENT_BYTES = 116
 
 private const val ZERO: Byte = 0
 private const val TEXT_OFFSET = 28

@@ -42,6 +42,8 @@ internal class SceneInputModeManager : InputModeManager {
 internal class ScenePlatformContext(
     size: () -> IntSize,
     private val textInput: SceneTextInput,
+    /** Hears every change to the scene's semantics, for the window's accessibility. */
+    override val semanticsOwnerListener: PlatformContext.SemanticsOwnerListener? = null,
 ) : PlatformContext {
     override val windowInfo: WindowInfo = SceneWindowInfo(size)
     override val inputModeManager: InputModeManager = SceneInputModeManager()
