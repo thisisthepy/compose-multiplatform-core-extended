@@ -60,6 +60,7 @@ test-settings:
       - -module-name
       - org.thisisthepy.compose.window:scene-test
 
+# Link fontconfig and freetype for Linux tests
 test-settings@linuxX64:
   kotlin:
     freeCompilerArgs:
