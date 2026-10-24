@@ -142,6 +142,35 @@ class MacosWindow(
     var resizePainter: (() -> Boolean)? = null
     var host: ComposeWindowHost? = null
 
+    private var inTurn = false
+    private var loopTimer: platform.Foundation.NSTimer? = null
+
+    fun pumpHost(timeoutMillis: Long = 0L) {
+        val currentHost = host ?: return
+        if (inTurn) return
+        inTurn = true
+        try {
+            currentHost.turn(timeoutMillis)
+        } finally {
+            inTurn = false
+        }
+    }
+
+    fun startLoopTimer() {
+        if (loopTimer != null) return
+        loopTimer = platform.Foundation.NSTimer.scheduledTimerWithTimeInterval(
+            interval = 0.016,
+            repeats = true,
+        ) { _: platform.Foundation.NSTimer? ->
+            pumpHost(0)
+        }
+    }
+
+    fun stopLoopTimer() {
+        loopTimer?.invalidate()
+        loopTimer = null
+    }
+
     private var describesItself = true
 
     fun describeFrom(elements: List<AccessibleElement>) {
@@ -252,6 +281,7 @@ class MacosWindow(
                 readerIsListening = true
                 view.needsDisplay = true
             }
+            pumpHost(0)
             host?.describeForReaders()
             return reader.roots
         }
@@ -618,6 +648,7 @@ class MacosWindow(
         val createdHost = ComposeWindowHost(platform, config, ::macosWindowSurface, content = content)
         this.host = createdHost
         createdHost.open()
+        startLoopTimer()
 
         if (ResizeMetrics.enabled) {
             dispatch_after(
