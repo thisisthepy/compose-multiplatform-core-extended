@@ -22,6 +22,9 @@ test-dependencies:
   - $kotlin.test
 
 settings:
+  jvm:
+    jdk:
+      version: 21
   publishing:
     enabled: true
     group: org.thisisthepy.compose.window
