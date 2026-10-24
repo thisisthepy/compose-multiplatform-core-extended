@@ -38,6 +38,7 @@ import androidx.lifecycle.enableSavedStateHandles
 import kotlinx.coroutines.Dispatchers
 import org.jetbrains.skia.Canvas
 import org.thisisthepy.compose.window.AccessibleElement
+import org.thisisthepy.compose.window.MacosAx
 import org.thisisthepy.compose.window.FrameClock
 import platform.AppKit.NSWorkspace
 import platform.AppKit.voiceOverEnabled
@@ -216,7 +217,7 @@ class MacosWindow(
 
     /** The elements a reader is given, kept across pushes. */
     internal val reader: AppKitAccessibilityTree by lazy {
-        AppKitAccessibilityTree(view) { id, action, argument -> onAccessibilityAction(id, action, argument) }
+        AppKitAccessibilityTree(backdrop) { id, action, argument -> onAccessibilityAction(id, action, argument) }
     }
 
     /** Whether anything has asked this window what is in it, or the system says VoiceOver is running. */
@@ -437,6 +438,17 @@ class MacosWindow(
             super.setFrameSize(newSize)
             measureCaption()
         }
+
+        override fun accessibilityRole(): String? = MacosAx.GROUP
+        override fun isAccessibilityElement(): Boolean = true
+        override fun accessibilityChildren(): List<*>? {
+            if (!readerIsListening) {
+                readerIsListening = true
+                view.needsDisplay = true
+            }
+            if (describesItself) semantics.pushIfChanged(afterDrawing = true)
+            return super.accessibilityChildren()
+        }
     }.also {
         it.material = NSVisualEffectMaterialUnderWindowBackground
         it.blendingMode = NSVisualEffectBlendingMode.NSVisualEffectBlendingModeBehindWindow
@@ -634,16 +646,7 @@ class MacosWindow(
         // every frame by everyone, whether or not anyone was listening. A drag of the
         // window's edge is where that showed: every control moves on every frame, so the
         // comparison that usually makes it free always failed.
-        override fun accessibilityChildren(): List<*>? {
-            if (!readerIsListening) {
-                readerIsListening = true
-                // A host that describes the tree itself does so after a frame, so it is
-                // given one as soon as someone is listening.
-                needsDisplay = true
-            }
-            if (describesItself) semantics.pushIfChanged(afterDrawing = true)
-            return super.accessibilityChildren()
-        }
+        override fun accessibilityChildren(): List<*>? = backdrop.accessibilityChildren()
 
         override fun acceptsFirstMouse(event: NSEvent?) = true
         override fun viewWillMoveToWindow(newWindow: NSWindow?) = updateTrackingAreas()
