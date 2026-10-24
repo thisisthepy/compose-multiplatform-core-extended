@@ -150,7 +150,7 @@ class MacosWindow(
     }
 
     var onAccessibilityAction: (id: Int, action: Int, argument: String?) -> Boolean = { id, action, argument ->
-        false
+        host?.onAccessibilityAction(id, action, argument) ?: false
     }
 
     internal val reader: AppKitAccessibilityTree by lazy {
@@ -252,6 +252,7 @@ class MacosWindow(
                 readerIsListening = true
                 view.needsDisplay = true
             }
+            host?.describeForReaders()
             return reader.roots
         }
     }.also {

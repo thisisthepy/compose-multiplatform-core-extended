@@ -308,7 +308,7 @@ class ComposeWindowHost(
      * that moved sends no change; the cache's comparison makes an unchanged tree free. When a
      * reader starts listening, the tree is pushed at once.
      */
-    private fun describeForReaders(drew: Boolean) {
+    fun describeForReaders(drew: Boolean = true) {
         val listening = platform.accessibilityActive
         if (!listening) {
             readerWasListening = false
@@ -318,6 +318,10 @@ class ComposeWindowHost(
         readerWasListening = true
         if (first || drew || semantics.changed) accessibility.pushIfChanged(afterDrawing = true)
     }
+
+    /** Does what a reader asked of control [id]. */
+    fun onAccessibilityAction(id: Int, action: Int, argument: String?): Boolean =
+        semantics.perform(id, action, argument).also { if (it) requestFrame() }
 
     private fun placeInputMethod() {
         if (!textInput.isActive) return

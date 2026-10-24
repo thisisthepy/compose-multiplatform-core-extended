@@ -207,7 +207,9 @@ class MacosWindowPlatform(
         val current = window ?: return
         val sink = listener
         current.onAccessibilityAction = { id, action, argument ->
-            sink?.onAccessibilityAction(id, action, argument) ?: false
+            internalHost?.onAccessibilityAction(id, action, argument)
+                ?: sink?.onAccessibilityAction(id, action, argument)
+                ?: false
         }
         current.describeFrom(elements)
     }
