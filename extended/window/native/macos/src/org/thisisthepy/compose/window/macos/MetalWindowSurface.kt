@@ -41,9 +41,7 @@ class MetalWindowSurface(private val window: MacosWindow) : WindowSurface {
         metal.resize(width / scale, height / scale, scale)
         val drawableWidth = MetalSurface.roundUp(width)
         val drawableHeight = MetalSurface.roundUp(height)
-        val drawable = autoreleasepool {
-            metal.nextDrawable()
-        } ?: return null
+        val drawable = metal.nextDrawable() ?: return null
         val texture = MetalSurface.sendForObject(drawable, MetalSurface.TEXTURE) ?: return null
         val target = BackendRenderTarget.makeMetal(drawableWidth, drawableHeight, texture.rawValue)
         val surface = Surface.makeFromBackendRenderTarget(

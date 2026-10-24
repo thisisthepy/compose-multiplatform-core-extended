@@ -18,15 +18,11 @@ import kotlinx.coroutines.Runnable
  */
 internal class FrameDispatcher : CoroutineDispatcher() {
     private val waiting = AtomicReference<List<Runnable>>(emptyList())
-    var onDispatched: (() -> Unit)? = null
 
     override fun dispatch(context: CoroutineContext, block: Runnable) {
         while (true) {
             val now = waiting.load()
-            if (waiting.compareAndSet(now, now + block)) {
-                onDispatched?.invoke()
-                return
-            }
+            if (waiting.compareAndSet(now, now + block)) return
         }
     }
 

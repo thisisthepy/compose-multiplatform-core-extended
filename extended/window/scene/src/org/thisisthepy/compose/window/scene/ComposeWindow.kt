@@ -102,12 +102,7 @@ class ComposeWindowHost(
     private val requests = FrameRequestCoalescer()
     private val log = WindowEventLog()
     private val textInput = SceneTextInput()
-    private val work = FrameDispatcher().also {
-        it.onDispatched = {
-            requests.request()
-            platform.requestFrame()
-        }
-    }
+    private val work = FrameDispatcher()
     // The platform's account of when each frame reaches the screen, so an animation moves at
     // the speed of the wall clock whatever the display's refresh rate and however late a frame.
     private val clock = FrameClock(platform::frameTimeNanos)
