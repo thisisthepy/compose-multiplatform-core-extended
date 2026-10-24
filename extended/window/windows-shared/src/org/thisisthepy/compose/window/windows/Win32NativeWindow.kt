@@ -32,6 +32,7 @@ import org.thisisthepy.compose.window.windows.c.dxc_native_set_accessibility
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_cursor
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_draw_callback
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_raster_resize
+import org.thisisthepy.compose.window.windows.c.dxc_native_text_scale_percent
 import org.thisisthepy.compose.window.windows.c.dxc_native_window
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_action
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_closed
