@@ -1,0 +1,32 @@
+# The GraalVM native image's Win32 window: the @CFunction calls into the shared C
+# (windows-shared/c/win32_window.c, compiled into the image by the application's build), the
+# window object over them, the frame door and the upcall the window draws through during a
+# resize. The Kotlin/Native Windows layer over the same C is windows-shared; the two share
+# that C and nothing else.
+# Names no Compose type and nothing of any renderer: what draws into the frame is the
+# application's, and the frame's time comes from this window.
+product: jvm/lib
+
+dependencies:
+  - ../../common
+  # Annotations and C interop types for @CFunction and @CEntryPoint. The native-image
+  # builder supplies them at image build time, so they are not bundled.
+  - org.graalvm.sdk:nativeimage:25.0.1: compile-only
+
+test-dependencies:
+  - $kotlin.test
+
+settings:
+  jvm:
+    jdk:
+      version: 21
+  publishing:
+    enabled: true
+    group: org.thisisthepy.compose.window
+    artifactId: graalvm-windows
+    version: 1.11.1-ext.2
+
+repositories:
+  - id: mavenLocal
+    url: mavenLocal
+    publish: true

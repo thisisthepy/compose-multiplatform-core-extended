@@ -25,6 +25,10 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   `linuxArm64`. (#146)
 - `scene`: Compose's main-thread work runs on a dispatcher every host shares, so it keeps running
   while any window is open. (#142, #143)
+- `graalvm-windows`: the Win32 window for a native image (`Win32GraalWindow`, `Win32Frames`, and the
+  upcall a resize draws through), moved from compose-rust. `frameTimeNanos()` reads a
+  `FrameClock` on the monotonic clock, so a frame is timed by the wall clock and not by a count
+  of 16 ms steps.
 - `graalvm-macos` and `graalvm-linux`: `appKitWindowSurface` and `x11WindowSurface`, the surfaces
   `runComposeWindow` draws into. (#138)
 - `native/linux` and `graalvm-linux`: the chrome API. Under `WindowChrome.Modern` (the default)
