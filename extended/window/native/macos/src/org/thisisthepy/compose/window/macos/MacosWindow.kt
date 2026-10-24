@@ -27,6 +27,7 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.readValue
+import kotlinx.cinterop.toKString
 import kotlinx.cinterop.useContents
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
@@ -104,6 +105,11 @@ import platform.Foundation.runUntilDate
 import platform.Foundation.string
 import platform.QuartzCore.CALayer
 import platform.QuartzCore.CALayerDelegateProtocol
+import platform.darwin.DISPATCH_TIME_NOW
+import platform.darwin.dispatch_after
+import platform.darwin.dispatch_async
+import platform.darwin.dispatch_get_main_queue
+import platform.darwin.dispatch_time
 
 /**
  * A window of this renderer's own, rather than the one Compose opens for this platform.
@@ -694,9 +700,9 @@ class MacosWindow(
         var eventIndex = 0
         var timer: platform.Foundation.NSTimer? = null
         timer = platform.Foundation.NSTimer.scheduledTimerWithTimeInterval(
-            ti = 1.0 / 60.0,
+            interval = 1.0 / 60.0,
             repeats = true,
-        ) { _ ->
+        ) { _: platform.Foundation.NSTimer? ->
             eventIndex++
             if (eventIndex in checkAt) {
                 checkOnScreen(eventIndex)
