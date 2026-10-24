@@ -63,6 +63,7 @@
 #include <stdlib.h>
 #include <stddef.h>
 
+#include "win32_buttons.h"
 #include "win32_resize.h"
 #include "win32_ime_text.h"
 
@@ -1256,12 +1257,12 @@ void dxc_native_set_accessibility(const struct dxc_element *elements,
     }
 }
 
-/** Which mouse buttons are down, as bit zero for the left one and bit one for the right. */
+/** Which mouse buttons are down, in the bits win32_buttons.h names. */
 static int32_t dxc_pressed_buttons(void) {
     int32_t buttons = 0;
-    if (GetKeyState(VK_LBUTTON) < 0) buttons |= 1;
-    if (GetKeyState(VK_RBUTTON) < 0) buttons |= 2;
-    if (GetKeyState(VK_MBUTTON) < 0) buttons |= 4;
+    if (GetKeyState(VK_LBUTTON) < 0) buttons |= DXC_PRIMARY_HELD;
+    if (GetKeyState(VK_RBUTTON) < 0) buttons |= DXC_SECONDARY_HELD;
+    if (GetKeyState(VK_MBUTTON) < 0) buttons |= DXC_MIDDLE_HELD;
     return buttons;
 }
 
@@ -1294,13 +1295,13 @@ static float dxc_wheel_lines(void) {
     return (float)lines;
 }
 
-static void dxc_push_pointer(int32_t kind, LPARAM where) {
+static void dxc_push_pointer(int32_t kind, LPARAM where, int secondary_event) {
     struct dxc_event record;
     memset(&record, 0, sizeof record);
     record.kind = kind;
     record.x = (float)GET_X_LPARAM(where);
     record.y = (float)GET_Y_LPARAM(where);
-    record.buttons = dxc_pressed_buttons();
+    record.buttons = dxc_pointer_buttons(dxc_pressed_buttons(), secondary_event);
     record.modifiers = dxc_held_modifiers();
     dxc_push_event(record);
 }
@@ -2092,7 +2093,7 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
         // No tracking area. Windows delivers a move whenever the pointer is over the
         // client area, so hover, which is half of what a desktop control does, arrives
         // without having to be asked for.
-        dxc_push_pointer(DXC_EVENT_POINTER_MOVE, lparam);
+        dxc_push_pointer(DXC_EVENT_POINTER_MOVE, lparam, 0);
         return 0;
     case WM_SETCURSOR:
         if (LOWORD(lparam) == HTCLIENT) {
@@ -2106,13 +2107,13 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
         // Held so that a drag leaving the window still reports where it went, and so the
         // release that ends it is heard at all.
         SetCapture(window);
-        dxc_push_pointer(DXC_EVENT_POINTER_DOWN, lparam);
+        dxc_push_pointer(DXC_EVENT_POINTER_DOWN, lparam, message == WM_RBUTTONDOWN);
         return 0;
     case WM_LBUTTONUP:
     case WM_RBUTTONUP:
     case WM_MBUTTONUP:
         ReleaseCapture();
-        dxc_push_pointer(DXC_EVENT_POINTER_UP, lparam);
+        dxc_push_pointer(DXC_EVENT_POINTER_UP, lparam, message == WM_RBUTTONUP);
         return 0;
     case WM_MOUSEWHEEL:
         dxc_push_scroll(0.0f,

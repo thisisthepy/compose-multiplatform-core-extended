@@ -72,7 +72,7 @@ enum {
 };
 
 // Set in `buttons` on a press or release of the secondary button. The buttons held down
-// cannot say which one was let go.
+// cannot say which one was let go. The same value as WindowEvent.SECONDARY_BUTTON.
 #define DXC_SECONDARY_BUTTON (1 << 16)
 
 // Room for what an input method is composing, which is a syllable or a word and never a

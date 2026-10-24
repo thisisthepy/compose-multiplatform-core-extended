@@ -82,7 +82,7 @@ class ChromeTest {
             override fun onEvent(event: WindowEvent) {
                 when (event.kind) {
                     WindowEvent.RESIZE -> window.present(event.x.toInt(), event.y.toInt())
-                    WindowEvent.POINTER_DOWN -> if (event.buttons and 1 != 0) {
+                    WindowEvent.POINTER_DOWN -> if (event.buttons and WindowEvent.PRIMARY_HELD != 0) {
                         val size = window.measure()
                         val edge = edgeAt(event.x, event.y, size.width, size.height)
                         when {

@@ -5,7 +5,7 @@ application for Windows without a JVM.
 
 - `c/win32_window.c`: Win32, a Direct3D 12 swapchain, IMM32 composition, UI Automation, the
   clipboard, file drops and the live resize. `c/win32_notifications.c`: toasts.
-  `c/win32_resize.h` and `c/win32_ime_text.h` are header-only logic that compiles without
+  `c/win32_resize.h`, `c/win32_ime_text.h` and `c/win32_buttons.h` are header-only logic that compiles without
   Windows.
 - `cinterop/include/win32_window.h`: the whole surface, functions and records. It includes
   no Windows header, so cinterop and any C compiler read it.

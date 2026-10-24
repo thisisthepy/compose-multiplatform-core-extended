@@ -46,7 +46,7 @@ internal fun ComposeScene.receive(event: WindowEvent, keyOf: (Int) -> Key = ::co
         WindowEvent.POINTER_MOVE -> sendPointerEvent(
             eventType = PointerEventType.Move,
             position = Offset(event.x, event.y),
-            buttons = PointerButtons(isPrimaryPressed = event.buttons and 1 != 0),
+            buttons = PointerButtons(isPrimaryPressed = event.buttons and WindowEvent.PRIMARY_HELD != 0),
         )
 
         WindowEvent.POINTER_DOWN -> sendPointerEvent(
