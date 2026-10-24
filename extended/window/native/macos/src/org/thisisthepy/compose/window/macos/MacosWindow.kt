@@ -602,7 +602,7 @@ class MacosWindow(
         window.center()
         window.makeKeyAndOrderFront(null)
         window.makeFirstResponder(view)
-        platform.darwin.dispatch_async(platform.darwin.dispatch_get_main_queue()) {
+        dispatch_async(dispatch_get_main_queue()) {
             measureCaption()
         }
         view.registerForDraggedTypes(listOf(NSFilenamesPboardType))
@@ -619,9 +619,9 @@ class MacosWindow(
         createdHost.open()
 
         if (ResizeMetrics.enabled) {
-            platform.darwin.dispatch_after(
-                platform.darwin.dispatch_time(platform.darwin.DISPATCH_TIME_NOW, 3_000_000_000L),
-                platform.darwin.dispatch_get_main_queue(),
+            dispatch_after(
+                dispatch_time(DISPATCH_TIME_NOW, 3_000_000_000L),
+                dispatch_get_main_queue(),
             ) { runMetrics() }
         }
         if (ResizeSoak.enabled) ResizeSoak.start(window, metal)
@@ -666,9 +666,9 @@ class MacosWindow(
                 }
             },
         )
-        platform.darwin.dispatch_after(
-            platform.darwin.dispatch_time(platform.darwin.DISPATCH_TIME_NOW, 2_000_000_000L),
-            platform.darwin.dispatch_get_main_queue(),
+        dispatch_after(
+            dispatch_time(DISPATCH_TIME_NOW, 2_000_000_000L),
+            dispatch_get_main_queue(),
         ) {
             phase("settled")
             dragAnEdge(phase)
