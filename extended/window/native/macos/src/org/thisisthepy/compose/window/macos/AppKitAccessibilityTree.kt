@@ -219,21 +219,19 @@ class AxElement internal constructor(private val tree: AppKitAccessibilityTree) 
      * answers, so VoiceOver does not list a press on a label or let a reader type into text.
      */
     override fun isAccessibilitySelectorAllowed(selector: COpaquePointer?): Boolean = when (selector) {
-        PRESS -> has(AccessibleAction.PRESS)
-        INCREMENT -> has(AccessibleAction.INCREMENT)
-        DECREMENT -> has(AccessibleAction.DECREMENT)
-        SHOW_MENU -> has(AccessibleAction.SHOW_MENU)
-        SET_VALUE -> ax.valueSettable
-        SET_FOCUSED -> ax.focusSettable
+        SELECTOR_PRESS -> has(AccessibleAction.PRESS)
+        SELECTOR_INCREMENT -> has(AccessibleAction.INCREMENT)
+        SELECTOR_DECREMENT -> has(AccessibleAction.DECREMENT)
+        SELECTOR_SHOW_MENU -> has(AccessibleAction.SHOW_MENU)
+        SELECTOR_SET_VALUE -> ax.valueSettable
+        SELECTOR_SET_FOCUSED -> ax.focusSettable
         else -> super.isAccessibilitySelectorAllowed(selector)
     }
-
-    private companion object {
-        val PRESS = NSSelectorFromString("accessibilityPerformPress")
-        val INCREMENT = NSSelectorFromString("accessibilityPerformIncrement")
-        val DECREMENT = NSSelectorFromString("accessibilityPerformDecrement")
-        val SHOW_MENU = NSSelectorFromString("accessibilityPerformShowMenu")
-        val SET_VALUE = NSSelectorFromString("setAccessibilityValue:")
-        val SET_FOCUSED = NSSelectorFromString("setAccessibilityFocused:")
-    }
 }
+
+private val SELECTOR_PRESS = NSSelectorFromString("accessibilityPerformPress")
+private val SELECTOR_INCREMENT = NSSelectorFromString("accessibilityPerformIncrement")
+private val SELECTOR_DECREMENT = NSSelectorFromString("accessibilityPerformDecrement")
+private val SELECTOR_SHOW_MENU = NSSelectorFromString("accessibilityPerformShowMenu")
+private val SELECTOR_SET_VALUE = NSSelectorFromString("setAccessibilityValue:")
+private val SELECTOR_SET_FOCUSED = NSSelectorFromString("setAccessibilityFocused:")
