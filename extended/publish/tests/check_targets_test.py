@@ -43,6 +43,7 @@ def component(bundle, group, artifact, variants=()):
 
 
 def suffix(target):
+    """The artifact suffix; lifecycle-common (a jvm() module) is made special by the caller."""
     return {"Desktop": "desktop", "WasmJs": "wasm-js"}.get(target, target.lower())
 
 
@@ -55,14 +56,16 @@ def make_bundle(bundle, only=None, without=(), no_variants_for=()):
             continue
         targets = [t for t in sorted(supported) if t != "KotlinMultiplatform"]
         built = [t for t in targets if t != "Android" and (only is None or t in only)]
+        own_android = ct.read_android_targets(CATALOG)
         variants = [("android" if t == "Android" else t[0].lower() + t[1:]) + "ApiElements-published"
-                    for t in targets if t == "Android" or t in built]
+                    for t in targets if (t == "Android" and project not in own_android) or t in built]
         if project in no_variants_for:
             variants = []
         component(bundle, group, artifact, variants)
         if not custom:
             for target in built:
-                component(bundle, group, f"{artifact}-{suffix(target)}")
+                name = "jvm" if target == "Desktop" and project in ct.SPECIAL_JVM_COMPONENTS else suffix(target)
+                component(bundle, group, f"{artifact}-{name}")
 
 
 class CheckTargets(unittest.TestCase):
@@ -83,6 +86,7 @@ class CheckTargets(unittest.TestCase):
         self.assertNotIn("MingwX64", paths[":navigation:navigation-common"])
         self.assertIn("MingwX64", paths[":savedstate:savedstate"])
         self.assertIn("WasmJs", paths[":compose:ui:ui"])
+        self.assertEqual({":compose:ui:ui-backhandler"}, ct.read_android_targets(CATALOG))
         self.assertNotIn("LinuxX64", paths[":compose:ui:ui"])
 
     def test_release_1_11_1_ext_1_fails(self):

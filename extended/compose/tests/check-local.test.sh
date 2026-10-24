@@ -66,6 +66,8 @@ desktop="$("$compose/publish-local.sh" --list desktop)"
 grep -qx ':compose:desktop:desktop:publishJvmmacos-arm64PublicationToMavenLocal' <<< "$desktop" || fail "the desktop module's macOS jar is not published"
 grep -qx ':compose:ui:ui-test-junit4:publishDesktopPublicationToMavenLocal' <<< "$desktop" || fail "ui-test-junit4 is not published for the desktop"
 grep -qx ':annotation:annotation:publishJvmPublicationToMavenLocal' <<< "$desktop" || fail "annotation's desktop publication is not its Jvm one"
+grep -qx '?:lifecycle:lifecycle-common:publishJvmPublicationToMavenLocal' <<< "$desktop" || fail "lifecycle-common's desktop publication is not its Jvm one"
+grep -qx '?:lifecycle:lifecycle-runtime:publishDesktopPublicationToMavenLocal' <<< "$desktop" || fail "lifecycle-runtime is not published for the desktop"
 
 ios="$("$compose/publish-local.sh" --list iosArm64 js wasmJs)"
 grep -qx '?:compose:ui:ui:publishIosArm64PublicationToMavenLocal' <<< "$ios" || fail "iosArm64 does not publish ui for its target"

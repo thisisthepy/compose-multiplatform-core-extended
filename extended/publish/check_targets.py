@@ -20,7 +20,9 @@ that platform, because a consumer on a target the root does not list is told the
 support it. Android is not published by this fork: the root points it at androidx, so the root
 must list an android variant and no component is asked for. A module with custom tasks (the
 desktop module and its per-system jars) is checked for its root only. Versions are not compared:
-any version of a component counts, so the same check serves a release and a dev build.
+any version of a component counts, so the same check serves a release and a dev build. A
+module JetBrainsPublication.kt lists as having an Android target of its own (ui-backhandler) is
+not asked for an android variant either.
 
 Exits 1 on any gap, printing each one.
 """
@@ -38,7 +40,7 @@ TARGET_ARTIFACT_ALIASES = {
     "desktop": ("desktop", "jvm"),
     "wasmjs": ("wasm-js", "wasmjs"),
 }
-SPECIAL_JVM_COMPONENTS = {":annotation:annotation", ":collection:collection"}
+SPECIAL_JVM_COMPONENTS = {":annotation:annotation", ":collection:collection", ":lifecycle:lifecycle-common"}
 
 
 def strip_comments(text):
@@ -124,6 +126,15 @@ def read_platforms(path):
             continue
         names[name] = evaluate(expression.replace("\n", " "), names)
     return names
+
+
+def read_android_targets(path):
+    """The projects JetBrainsPublication.kt says have an Android target of their own, which the
+    root therefore does not redirect to androidx."""
+    with open(path, encoding="utf-8") as handle:
+        text = strip_comments(handle.read())
+    match = re.search(r"jetBrainsProjectsWithAndroidTarget\s*=\s*setOf\(([^)]*)\)", text)
+    return set(re.findall(r'"(:[^"]+)"', match.group(1))) if match else set()
 
 
 def read_catalog(path, names):
@@ -222,6 +233,7 @@ def check(bundle, catalog, platforms, coordinates=None, skip=()):
     problems = []
     index = bundle_index(bundle)
     skipped = {target.lower() for target in skip}
+    own_android = read_android_targets(catalog)
 
     for library, project, supported, custom in read_catalog(catalog, names):
         group, artifact = fork_coordinate(project)
@@ -238,6 +250,8 @@ def check(bundle, catalog, platforms, coordinates=None, skip=()):
             if platform == "KotlinMultiplatform":
                 continue
             if platform == "Android":
+                if project in own_android:
+                    continue
                 if not any(v.lower().startswith("android") for v in variants):
                     problems.append(f"{where}: the root lists no android variant, which is what points an Android app at androidx")
                 continue
@@ -245,7 +259,7 @@ def check(bundle, catalog, platforms, coordinates=None, skip=()):
                 continue
             aliases = TARGET_ARTIFACT_ALIASES.get(target.lower(), (target.lower(),))
             if project in SPECIAL_JVM_COMPONENTS and target == "Desktop":
-                aliases = ("jvm",) + aliases
+                aliases = ("jvm",) + aliases  # the first alias is the one the message names
             if not any((group, f"{artifact}-{alias}") in index for alias in aliases):
                 problems.append(f"{where}: no {artifact}-{aliases[0]} component for {target}, which upstream publishes")
             elif not lists_target(variants, target) and not (project in SPECIAL_JVM_COMPONENTS and lists_target(variants, "jvm")):

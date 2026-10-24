@@ -152,9 +152,9 @@ add_task() {
 add_module() {
     # A third argument `?` makes the target's own publication optional too.
     local optional="${3:-}"
-    # annotation and collection declare a plain jvm() target where Compose declares desktop(),
-    # so their desktop publication is the Jvm one.
-    if [[ "$2" == Desktop && ( "$1" == annotation:annotation || "$1" == collection:collection ) ]]; then
+    # annotation, collection and lifecycle-common declare a plain jvm() target where Compose
+    # declares desktop(), so their desktop publication is the Jvm one.
+    if [[ "$2" == Desktop && ( "$1" == annotation:annotation || "$1" == collection:collection || "$1" == lifecycle:lifecycle-common ) ]]; then
         add_task "${optional}:$1:publishJvmPublicationToMavenLocal"
     else
         add_task "${optional}:$1:publish$2PublicationToMavenLocal"

@@ -173,7 +173,7 @@ jobs:
             echo "version=$version"; echo "suffix="; } >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build the publications (${{ matrix.os }})
+    name: Build the publications (${{ matrix.name }})
     needs: plan
     strategy:
       fail-fast: false
