@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "win32_buttons.h"
 #include "win32_resize.h"
 #include "win32_ime_text.h"
 #include "win32_window.h"
@@ -50,6 +51,15 @@ static void resize_decisions(void) {
     CHECK(dxc_resize_draw_here(&resize) == 0);
 }
 
+// The values Kotlin's WindowEvent names, and a right-button press carrying its own flag.
+static void pointer_buttons(void) {
+    CHECK(DXC_PRIMARY_HELD == 1 && DXC_SECONDARY_HELD == 2 && DXC_MIDDLE_HELD == 4);
+    CHECK(DXC_SECONDARY_BUTTON == (1 << 16));
+    CHECK(dxc_pointer_buttons(DXC_SECONDARY_HELD, 1) == (DXC_SECONDARY_HELD | DXC_SECONDARY_BUTTON));
+    CHECK(dxc_pointer_buttons(DXC_PRIMARY_HELD, 1) == (DXC_PRIMARY_HELD | DXC_SECONDARY_BUTTON));
+    CHECK(dxc_pointer_buttons(DXC_PRIMARY_HELD, 0) == DXC_PRIMARY_HELD);
+}
+
 static void utf8_conversion(void) {
     const uint16_t pair[] = { 0xd83d, 0xde00 };
     char out[16];
@@ -85,6 +95,7 @@ static void x11_names(void) {
 
 int main(int argc, char **argv) {
     resize_decisions();
+    pointer_buttons();
     utf8_conversion();
     frame_time();
     x11_names();

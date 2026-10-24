@@ -53,6 +53,12 @@ jobs:
           mkdir -p build
           cc -c -O2 -fPIC -Wall -o build/x11_window.o c/x11_window.c
 
+      - name: The buttons of a pointer event use the encoding common names
+        working-directory: extended/window/graalvm/graalvm-linux
+        run: |
+          cc -O1 -Wall -o build/buttons_test test/c/buttons_test.c
+          ./build/buttons_test
+
       # The renderer's one native image carries the macOS window's calls on every desktop and
       # links every C function its reachable code names, so the X11 library defines them too.
       - name: The macOS window's calls the image carries resolve here too

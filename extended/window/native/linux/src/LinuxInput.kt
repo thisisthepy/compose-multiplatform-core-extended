@@ -2,6 +2,7 @@
 
 package org.thisisthepy.compose.window.linux
 
+import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.x11Modifiers
 
 import x11.Button1Mask
@@ -32,6 +33,7 @@ import x11.XK_Return
 import x11.XK_Right
 import x11.XK_Tab
 import x11.XK_Up
+import org.thisisthepy.compose.window.WindowEvent
 import x11.XK_space
 
 // What this display server calls a thing, turned into what the shared reader calls it.
@@ -47,9 +49,26 @@ fun buttonsOf(state: UInt): Int {
     // first looks harmless and does not compile: a mask is a constant of the header's own
     // type, not a number this code chose.
     val bits = state.toInt()
-    return (if (bits and Button1Mask != 0) 1 else 0) or
-        (if (bits and Button3Mask != 0) 2 else 0) or
-        (if (bits and Button2Mask != 0) 4 else 0)
+    return (if (bits and Button1Mask != 0) WindowEvent.PRIMARY_HELD else 0) or
+        (if (bits and Button3Mask != 0) WindowEvent.SECONDARY_HELD else 0) or
+        (if (bits and Button2Mask != 0) WindowEvent.MIDDLE_HELD else 0)
+}
+
+/**
+ * The `buttons` of a press or release of [button] (the server's number: 1 primary, 2 middle,
+ * 3 secondary) when the server said [state] was held before it. The server reports the
+ * state before the event, so the button itself is added on a press and removed on a
+ * release, and the secondary button's own events carry [WindowEvent.SECONDARY_BUTTON].
+ */
+fun pointerButtonsOf(state: UInt, button: Int, press: Boolean): Int {
+    val bit = when (button) {
+        1 -> WindowEvent.PRIMARY_HELD
+        3 -> WindowEvent.SECONDARY_HELD
+        2 -> WindowEvent.MIDDLE_HELD
+        else -> 0
+    }
+    val held = buttonsOf(state)
+    return WindowEvent.pointerButtons(if (press) held or bit else held and bit.inv(), button == 3)
 }
 
 /**

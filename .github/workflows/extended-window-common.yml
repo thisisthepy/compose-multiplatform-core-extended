@@ -55,6 +55,11 @@ jobs:
             exit 1
           fi
 
+      - name: Pointer buttons are read through the named constants
+        if: runner.os == 'Linux'
+        working-directory: extended/window
+        run: ./scripts/check-button-constants.sh
+
       - name: Build all targets this host can build
         if: runner.os != 'Windows'
         working-directory: extended/window

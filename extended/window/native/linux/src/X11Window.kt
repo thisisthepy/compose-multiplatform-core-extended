@@ -919,19 +919,12 @@ class X11Window : WindowPlatform {
                         pressNanos = monotonicClockNanos()
                     }
                     if (event.type == ButtonRelease && button == 1) gesture.released()
-                    val bit = when (button) {
-                        1 -> 1
-                        3 -> 2
-                        2 -> 4
-                        else -> 0
-                    }
-                    val held = buttonsOf(event.xbutton.state)
                     log.heard(
                         event(
                             if (event.type == ButtonPress) WindowEvent.POINTER_DOWN else WindowEvent.POINTER_UP,
                             event.xbutton.x.toFloat(),
                             event.xbutton.y.toFloat(),
-                            if (event.type == ButtonPress) held or bit else held and bit.inv(),
+                            pointerButtonsOf(event.xbutton.state, button, event.type == ButtonPress),
                             modifiersOf(event.xbutton.state),
                         ),
                     )

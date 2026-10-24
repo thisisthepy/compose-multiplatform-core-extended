@@ -494,8 +494,7 @@ class MacosWindow(
 
         private fun postPointer(event: NSEvent, kind: Int, secondary: Boolean = false) {
             val position = event.offsetInView
-            var buttons = NSEvent.pressedMouseButtons.toInt()
-            if (secondary) buttons = buttons or WindowEvent.SECONDARY_BUTTON
+            val buttons = WindowEvent.pointerButtons(NSEvent.pressedMouseButtons.toInt(), secondary)
             onEvent?.invoke(
                 WindowEvent(
                     kind = kind,
