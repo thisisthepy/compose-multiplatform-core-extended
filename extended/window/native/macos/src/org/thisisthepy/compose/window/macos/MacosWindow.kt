@@ -424,11 +424,7 @@ class MacosWindow(
 
         override fun displayLayer(layer: CALayer) {
             VerticalResizeProbe.via = "display"
-            if (host != null) {
-                host?.turn(0)
-            } else {
-                updateLayer()
-            }
+            updateLayer()
             VerticalResizeProbe.via = "loop"
         }
 
@@ -453,13 +449,7 @@ class MacosWindow(
             measureCaption()
             if (window != null) {
                 VerticalResizeProbe.via = "set-frame"
-                if (resizePainter != null) {
-                    resizePainter?.invoke()
-                } else if (host != null) {
-                    host?.turn(0)
-                } else {
-                    updateLayer()
-                }
+                updateLayer()
                 VerticalResizeProbe.via = "loop"
             }
         }

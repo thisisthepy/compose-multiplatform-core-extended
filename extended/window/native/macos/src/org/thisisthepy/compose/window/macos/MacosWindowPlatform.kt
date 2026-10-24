@@ -121,11 +121,8 @@ class MacosWindowPlatform(
         }
     }
 
-    override fun measure(): WindowMeasurement {
-        val w = window?.window ?: return WindowMeasurement(0, 0, 1f)
-        val size = w.contentView?.frame?.useContents { size.width to size.height } ?: (0.0 to 0.0)
-        return WindowMeasurement(size.first.toInt(), size.second.toInt(), w.backingScaleFactor.toFloat())
-    }
+    override fun measure(): WindowMeasurement =
+        window?.measure() ?: WindowMeasurement(0, 0, 1f)
 
     override fun requestFrame() {
         internalHost?.requestFrame()
