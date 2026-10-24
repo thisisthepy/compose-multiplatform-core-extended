@@ -67,4 +67,21 @@ grep -qx ':compose:desktop:desktop:publishJvmmacos-arm64PublicationToMavenLocal'
 grep -qx ':compose:ui:ui-test-junit4:publishDesktopPublicationToMavenLocal' <<< "$desktop" || fail "ui-test-junit4 is not published for the desktop"
 grep -qx ':annotation:annotation:publishJvmPublicationToMavenLocal' <<< "$desktop" || fail "annotation's desktop publication is not its Jvm one"
 
+ios="$("$compose/publish-local.sh" --list iosArm64 js wasmJs)"
+grep -qx '?:compose:ui:ui:publishIosArm64PublicationToMavenLocal' <<< "$ios" || fail "iosArm64 does not publish ui for its target"
+grep -qx '?:compose:ui:ui-uikit:publishIosArm64PublicationToMavenLocal' <<< "$ios" || fail "iosArm64 does not publish ui-uikit"
+grep -qx '?:compose:ui:ui:publishJsPublicationToMavenLocal' <<< "$ios" || fail "js does not publish ui"
+grep -qx '?:compose:ui:ui:publishWasmJsPublicationToMavenLocal' <<< "$ios" || fail "wasmJs does not publish ui"
+grep -qx '?:lifecycle:lifecycle-common:publishIosArm64PublicationToMavenLocal' <<< "$ios" || fail "lifecycle-common is not published for iOS"
+grep -qx '?:navigation:navigation-compose:publishWasmJsPublicationToMavenLocal' <<< "$ios" || fail "navigation-compose is not published for the web"
+grep -qx '?:compose:material3:adaptive:adaptive:publishJsPublicationToMavenLocal' <<< "$ios" || fail "adaptive is not published for the web"
+tvos="$("$compose/publish-local.sh" --list tvosArm64 watchosArm32)"
+grep -qx '?:compose:runtime:runtime:publishTvosArm64PublicationToMavenLocal' <<< "$tvos" || fail "the runtime is not published for tvOS"
+grep -qx '?:savedstate:savedstate:publishWatchosArm32PublicationToMavenLocal' <<< "$tvos" || fail "savedstate is not published for watchOS"
+! grep -q 'ui:ui:publishTvos' <<< "$tvos" || fail "ui is published for tvOS, which upstream does not"
+linux="$("$compose/publish-local.sh" --list linuxX64 mingwX64)"
+grep -qx '?:window:window-core:publishLinuxX64PublicationToMavenLocal' <<< "$linux" || fail "window-core is not published for Linux"
+grep -qx '?:savedstate:savedstate:publishMingwX64PublicationToMavenLocal' <<< "$linux" || fail "savedstate is not published for mingwX64"
+! grep -q 'adaptive' <<< "$linux" || fail "the adaptive family is published for Linux, which upstream does not"
+
 if [[ "$failures" -eq 0 ]]; then echo "  ok"; else exit 1; fi

@@ -19,6 +19,13 @@
 # build-skiko-awt.sh for skiko-awt. The bundle tool only reads the local repositories they
 # write.
 #
+# Every target upstream Compose Multiplatform publishes is built, on the host that can:
+# macOS builds the Apple targets (macOS, iOS, tvOS, watchOS), the desktop JVM and mingwX64 (with
+# skiko for it) and writes the roots, which list every target; Linux builds linuxX64 and
+# linuxArm64; a third job builds JavaScript and Wasm. extended/publish/check_targets.py then
+# holds the bundle to the catalogue in buildSrc (JetBrainsPublication.kt) and to
+# extended/COORDINATES.md, and fails the run when a coordinate or a target is missing.
+#
 # Secrets a release reads (dev and dry runs read none; dev uploads with GITHUB_TOKEN):
 #   MAVEN_GPG_PRIVATE_KEY   the signing key, ASCII armoured (gpg --armor --export-secret-keys)
 #   MAVEN_GPG_PASSPHRASE    its passphrase
@@ -50,6 +57,8 @@ on:
       - extended/compose/**
       - extended/window/**
       - extended/skiko/**
+      - extended/COORDINATES.md
+      - buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build/**
       - gradle.properties
       - .github/actions/fork-compose/**
       - .github/workflows/extended-publish.yml
@@ -99,11 +108,16 @@ jobs:
           fetch-depth: 0
           sparse-checkout: |
             extended/publish
+            extended/COORDINATES.md
+            buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build
             gradle.properties
           sparse-checkout-cone-mode: false
 
       - name: Test the bundle tool
         run: extended/publish/tests/central-bundle.test.sh
+
+      - name: Test the target check
+        run: python3 -I extended/publish/tests/check_targets_test.py
 
       - name: Work out the mode, the ref and the version
         id: plan
@@ -167,17 +181,30 @@ jobs:
         include:
           # The macOS build is staged first, so where both publish a module its copy wins:
           # its Compose and window roots list every target, the Linux ones only Linux.
+          # mingwX64 is last in the list: publish-local.sh publishes it after skiko for it is
+          # built (.github/actions/fork-compose), and its run writes the roots again, with the
+          # Windows target in them.
           - os: macos-latest
             name: macos
             modules: "common scene native/macos graalvm/graalvm-macos graalvm/graalvm-linux"
-            compose: "desktop macosArm64"
+            compose: "desktop macosArm64 iosArm64 iosSimulatorArm64 tvosArm64 tvosSimulatorArm64 watchosArm64 watchosArm32 watchosSimulatorArm64 mingwX64"
+            all-roots: true
+            timeout: 360
           - os: ubuntu-24.04
             name: linux
             modules: "common scene"
             compose: "desktop linuxX64 linuxArm64"
             linux: true
+            timeout: 300
+          # JavaScript and Wasm build on any host; the roots that list them are macOS's.
+          - os: ubuntu-24.04
+            name: web
+            modules: ""
+            compose: "js wasmJs"
+            disk: true
+            timeout: 300
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 300
+    timeout-minutes: ${{ matrix.timeout }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -193,7 +220,7 @@ jobs:
           java-version: '21'
 
       - name: Free disk space
-        if: ${{ matrix.linux }}
+        if: ${{ matrix.linux || matrix.disk }}
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost \
             /opt/hostedtoolcache/CodeQL /usr/share/swift /usr/local/share/powershell \
@@ -211,6 +238,7 @@ jobs:
         uses: ./.github/actions/fork-compose
         with:
           targets: ${{ matrix.compose }}
+          all-roots: ${{ matrix.all-roots || false }}
 
       - name: The scene for this runner's platforms (macOS)
         if: runner.os == 'macOS'
@@ -312,7 +340,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.plan.outputs.ref }}
-          sparse-checkout: extended/publish
+          # Cone mode: extended/COORDINATES.md comes with the files beside extended/publish.
+          sparse-checkout: |
+            extended/publish
+            buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build
 
       - uses: actions/download-artifact@v4
         with:
@@ -355,6 +386,7 @@ jobs:
           python3 -I extended/publish/central_bundle.py stage \
             --from "$RUNNER_TEMP/repos/repo-macos" \
             --from "$RUNNER_TEMP/repos/repo-linux" \
+            --from "$RUNNER_TEMP/repos/repo-web" \
             --from "$RUNNER_TEMP/repos/repo-skiko-awt" \
             --out "$RUNNER_TEMP/dev" \
             --project thisisthepy/compose-multiplatform-core-extended \
@@ -379,6 +411,15 @@ jobs:
           python3 -I extended/publish/central_bundle.py validate "$RUNNER_TEMP/dev" \
             --dev="$SUFFIX" --unsigned "${req_args[@]}"
 
+      - name: Every upstream target and coordinate is in the dev build
+        if: env.DEV == 'true'
+        shell: bash
+        run: |
+          python3 -I extended/publish/check_targets.py "$RUNNER_TEMP/dev" \
+            --catalog buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build/JetBrainsPublication.kt \
+            --platforms buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build/ComposePlatforms.kt \
+            --coordinates extended/COORDINATES.md
+
       - name: Resolve the dev build from a consumer
         if: env.DEV == 'true'
         run: bash "$RUNNER_TEMP/consume.sh" "$RUNNER_TEMP/dev" "$SUFFIX"
@@ -396,6 +437,7 @@ jobs:
           python3 -I extended/publish/central_bundle.py stage \
             --from "$RUNNER_TEMP/repos/repo-macos" \
             --from "$RUNNER_TEMP/repos/repo-linux" \
+            --from "$RUNNER_TEMP/repos/repo-web" \
             --from "$RUNNER_TEMP/repos/repo-skiko-awt" \
             --out "$RUNNER_TEMP/staging" \
             --project thisisthepy/compose-multiplatform-core-extended
@@ -432,6 +474,15 @@ jobs:
           for coordinate in $REQUIRED; do req_args+=(--require "$coordinate"); done
           python3 -I extended/publish/central_bundle.py validate "$RUNNER_TEMP/staging" \
             --version "$VERSION" --verify-signatures "${req_args[@]}"
+
+      - name: Every upstream target and coordinate is in the Central bundle
+        if: env.CENTRAL == 'true'
+        shell: bash
+        run: |
+          python3 -I extended/publish/check_targets.py "$RUNNER_TEMP/staging" \
+            --catalog buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build/JetBrainsPublication.kt \
+            --platforms buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build/ComposePlatforms.kt \
+            --coordinates extended/COORDINATES.md
 
       - name: Resolve the Central bundle from a consumer
         if: env.CENTRAL == 'true'

@@ -58,9 +58,18 @@ version, the plugin included.
 
 Each row is a module's root coordinate. Its targets are published beside it as
 `<artifact>-<target>` in the same group and version (`ui-desktop`, `ui-macosarm64`,
-`ui-linuxx64`, `ui-uikitarm64` and so on), and `desktop` also as
+`ui-iosarm64`, `ui-js`, `ui-wasm-js`, `ui-linuxx64` and so on), and `desktop` also as
 `desktop-jvm-<os>-<arch>` for the six desktop systems. Android variants are not published
 by this fork: the root metadata points them at the androidx artifact.
+
+Which targets a module has is what upstream publishes it for, `supportedPlatforms` in
+`buildSrc/.../JetBrainsPublication.kt` (the Skiko platforms by default: desktop, macosArm64,
+iosArm64, iosSimulatorArm64, js and wasmJs; every platform, tvOS, watchOS, Linux and mingwX64
+included, for the runtime, lifecycle, savedstate and the like). The fork's Compose has no
+`iosX64` or `macosX64` target, and so no such artifact. Beyond that list the fork builds
+linuxX64 and linuxArm64 for the modules it always has. `extended/publish/check_targets.py`
+reads the catalogue and this table and fails the publish workflow when the bundle lacks a root,
+a target's component, the root's variant for it, or a row of this table.
 
 | Line | JetBrains, Compose Multiplatform 1.11.1 | This fork |
 |---|---|---|

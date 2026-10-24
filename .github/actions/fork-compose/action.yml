@@ -8,8 +8,19 @@ description: >-
 
 inputs:
   targets:
-    description: Space separated targets for publish-local.sh (macosArm64, linuxX64, linuxArm64, desktop).
+    description: >-
+      Space separated targets for publish-local.sh (desktop, macosArm64, linuxX64, linuxArm64,
+      mingwX64, iosArm64, iosSimulatorArm64, tvosArm64, tvosSimulatorArm64, watchosArm64,
+      watchosArm32, watchosSimulatorArm64, js, wasmJs). With mingwX64 on macOS, skiko for it is
+      built first (extended/skiko/build-skiko-mingw.sh) and the rest of the targets are published
+      before it.
     required: true
+  all-roots:
+    description: >-
+      'true' makes publish-local.sh configure JavaScript and Wasm too, so the roots it writes list
+      the targets another runner builds.
+    required: false
+    default: 'false'
 
 runs:
   using: composite
@@ -25,6 +36,7 @@ runs:
         sources="$(git ls-tree HEAD | awk -F'\t' '$2 != "extended" && $2 != ".github" { print }' | git hash-object --stdin)"
         script="$(git rev-parse HEAD:extended/compose)"
         targets="$(echo '${{ inputs.targets }}' | tr ' ' '\n' | sort | paste -sd- -)"
+        [[ '${{ inputs.all-roots }}' != true ]] || targets="$targets-roots"
         echo "key=fork-compose-${{ runner.os }}-${{ runner.arch }}-$targets-$sources-$script" >> "$GITHUB_OUTPUT"
 
     - name: Restore this fork's Compose
@@ -79,9 +91,43 @@ runs:
     - name: Publish this fork's Compose
       if: steps.restore.outputs.cache-hit != 'true'
       shell: bash
+      env:
+        TARGETS: ${{ inputs.targets }}
+        ALL_ROOTS: ${{ inputs.all-roots }}
+        XWIN_VERSION: 0.6.5
       run: |
         set -euo pipefail
-        ANDROIDX_JDK21="$JAVA_HOME" ./extended/compose/publish-local.sh ${{ inputs.targets }}
+        export ANDROIDX_JDK21="$JAVA_HOME"
+        roots=()
+        [[ "$ALL_ROOTS" != true ]] || roots=(--all-roots)
+        others=()
+        mingw=0
+        for target in $TARGETS; do
+          if [[ "$target" == mingwX64 ]]; then mingw=1; else others+=("$target"); fi
+        done
+        if [[ ${#others[@]} -gt 0 ]]; then
+          ./extended/compose/publish-local.sh ${roots[@]+"${roots[@]}"} "${others[@]}"
+        fi
+        if [[ $mingw -eq 1 ]]; then
+          # skiko publishes no mingwX64 artifact. build-skiko-mingw.sh builds both halves, its
+          # C++ half against the MSVC runtime and Windows SDK headers xwin lays out; the
+          # Kotlin/Native toolchain it needs is there after the build above. The mingwX64
+          # publication goes last, so the roots it writes list the Windows target as well, and
+          # republish-skiko-mingw.py then points Compose's mingwX64 modules at skiko for it
+          # (extended/publish-local-all.sh does the same on a Mac).
+          [[ "$RUNNER_OS" == macOS ]] || { echo "::error::mingwX64 is published from macOS"; exit 1; }
+          case "$(uname -m)" in arm64) triple=aarch64-apple-darwin ;; *) triple=x86_64-apple-darwin ;; esac
+          curl -fsSL "https://github.com/Jake-Shadle/xwin/releases/download/$XWIN_VERSION/xwin-$XWIN_VERSION-$triple.tar.gz" |
+            tar xz -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/xwin-$XWIN_VERSION-$triple/xwin" --accept-license \
+            splat --output "$HOME/Library/Caches/cargo-xwin/xwin"
+          ./extended/skiko/build-skiko-mingw.sh "$RUNNER_TEMP/skiko-mingw"
+          ./extended/compose/publish-local.sh ${roots[@]+"${roots[@]}"} mingwX64
+          version="$(sed -n 's/^jetbrains.publication.version.COMPOSE=//p' gradle.properties)"
+          skiko_upstream="$(sed -n 's/^PUBLISHED_AS="\(.*\)"$/\1/p' extended/skiko/build-skiko-mingw.sh)"
+          python3 extended/skiko/republish-skiko-mingw.py "$HOME/.m2/repository" "$skiko_upstream" "$version" \
+            "$RUNNER_TEMP/skiko-mingw/out/windows-x64"
+        fi
 
     - name: Check what is in the local repository
       shell: bash
