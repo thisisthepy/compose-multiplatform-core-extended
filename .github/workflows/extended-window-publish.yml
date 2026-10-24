@@ -110,7 +110,7 @@ jobs:
           ./kotlin publish mavenLocal
           cp project.yaml.all project.yaml
 
-      - name: Publish native/linux, one architecture at a time
+      - name: Publish native/linux and native/linux-scene, one architecture at a time
         if: ${{ matrix.compose_linux }}
         shell: bash
         run: ./scripts/publish-native-linux.sh
@@ -121,23 +121,25 @@ jobs:
           find ~/.m2/repository/org/thisisthepy/compose/window -name '*.pom' -o -name '*.jar' -o -name '*.klib' -o -name '*.module' | sort
           test -n "$(find ~/.m2/repository/org/thisisthepy/compose/window -name '*.pom')"
 
-      - name: What a consumer resolves for native-linux
+      - name: What a consumer resolves for native-linux and native-linux-scene
         if: ${{ matrix.compose_linux }}
         shell: bash
         run: |
           set -euo pipefail
           base=~/.m2/repository/org/thisisthepy/compose/window
-          for arch in linuxx64 linuxarm64; do
-            dir="$base/native-linux-$arch/1.11.1-ext.1"
-            for file in "native-linux-$arch-1.11.1-ext.1.klib" "native-linux-$arch-1.11.1-ext.1.module" "native-linux-$arch-1.11.1-ext.1.pom"; do
-              test -s "$dir/$file" || { echo "missing $dir/$file" >&2; exit 1; }
+          for artifact in native-linux native-linux-scene; do
+            for arch in linuxx64 linuxarm64; do
+              dir="$base/$artifact-$arch/1.11.1-ext.1"
+              for file in "$artifact-$arch-1.11.1-ext.1.klib" "$artifact-$arch-1.11.1-ext.1.module" "$artifact-$arch-1.11.1-ext.1.pom"; do
+                test -s "$dir/$file" || { echo "missing $dir/$file" >&2; exit 1; }
+              done
+              echo "ok    $artifact-$arch is published as its own coordinate"
             done
-            echo "ok    native-linux-$arch is published as its own coordinate"
+            root="$base/$artifact/1.11.1-ext.1/$artifact-1.11.1-ext.1.module"
+            test -s "$root" || { echo "missing the root module $root" >&2; exit 1; }
+            cat "$root"
+            for arch in linuxx64 linuxarm64; do
+              grep -qi "$artifact-$arch" "$root" || { echo "the root module of $artifact does not list $arch" >&2; exit 1; }
+            done
+            echo "ok    the root module of $artifact lists both architectures"
           done
-          root="$base/native-linux/1.11.1-ext.1/native-linux-1.11.1-ext.1.module"
-          test -s "$root" || { echo "missing the root module $root" >&2; exit 1; }
-          cat "$root"
-          for arch in linuxx64 linuxarm64; do
-            grep -qi "native-linux-$arch" "$root" || { echo "the root module does not list $arch" >&2; exit 1; }
-          done
-          echo "ok    the root module lists both architectures"

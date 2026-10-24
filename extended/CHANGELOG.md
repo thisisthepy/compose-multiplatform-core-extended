@@ -27,3 +27,16 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   while any window is open. (#142, #143)
 - `graalvm-macos` and `graalvm-linux`: `appKitWindowSurface` and `x11WindowSurface`, the surfaces
   `runComposeWindow` draws into. (#138)
+- `native/linux` and `graalvm-linux`: the chrome API. Under `WindowChrome.Modern` (the default)
+  the window has no window manager frame, `decorated = true` included; `caption()` reports the
+  scene's strip (46 points for `Normal`, 32 for `Simple`); `startMove`, `startResize` and
+  `performCaptionAction` go through `_NET_WM_MOVERESIZE` and `_NET_WM_STATE`, and a double click
+  in the caption maximises or restores. `chrome = WindowChrome.System` keeps the window
+  manager's frame. (#149)
+- `native/linux` and `graalvm-linux`: AT-SPI is published from the scene's `AccessibleElement`
+  records. `AtspiSemanticsSource`, `NodeFacts`, `describeFacts` and graalvm-linux's
+  `X11Accessibility` are removed, and `AtspiActions` is `perform(id, action, argument)` and
+  `windowOrigin()`. (#149)
+- `native/linux-scene` (new, `org.thisisthepy.compose.window:native-linux-scene`): `x11WindowSurface`,
+  where `ComposeWindowHost` draws on the Kotlin/Native X11 window, through the window's new
+  `makeCurrent()` and `resizePainter`. (#149)

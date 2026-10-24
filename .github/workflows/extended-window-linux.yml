@@ -14,6 +14,7 @@ on:
     paths:
       - extended/window/common/**
       - extended/window/native/linux/**
+      - extended/window/native/linux-scene/**
       - extended/window/scene/**
       - extended/window/project.yaml
       - extended/window/scripts/**
@@ -26,6 +27,7 @@ on:
     paths:
       - extended/window/common/**
       - extended/window/native/linux/**
+      - extended/window/native/linux-scene/**
       - extended/window/scene/**
       - extended/window/project.yaml
       - extended/window/scripts/**
@@ -75,7 +77,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config libx11-dev libxext-dev libgl1-mesa-dev \
-            libfontconfig1-dev libfreetype6-dev xvfb openbox xdotool x11-utils
+            libfontconfig1-dev libfreetype6-dev xvfb openbox xdotool x11-utils \
+            dbus at-spi2-core libatspi2.0-dev
 
       - name: This fork's Compose for Kotlin/Native Linux
         uses: ./.github/actions/fork-compose
@@ -89,7 +92,7 @@ jobs:
       - name: The Linux modules, with the scene as a Linux module
         working-directory: extended/window
         run: |
-          printf 'modules:\n  - common\n  - scene\n  - native/linux\n' > project.yaml
+          printf 'modules:\n  - common\n  - scene\n  - native/linux\n  - native/linux-scene\n' > project.yaml
           cat project.yaml
           perl -0pi -e 's/^  platforms: \[.*\]$/  platforms: [ linuxX64, linuxArm64 ]/m' scene/module.yaml
           grep -q '^  platforms: \[ linuxX64, linuxArm64 \]$' scene/module.yaml
@@ -106,11 +109,21 @@ jobs:
       # executable cannot be linked on an x86-64 runner.
       - name: Compile arm64
         working-directory: extended/window
-        run: ./kotlin task :linux:compileLinuxArm64Debug
+        run: ./kotlin task :linux:compileLinuxArm64Debug :linux-scene:compileLinuxArm64Debug
 
-      - name: Test (x64, under a virtual display)
+      - name: The AT-SPI reader the tests read the tree back with
         working-directory: extended/window
-        # WmDragTest starts openbox for its own drag and stops it again (scripts/wm-drag.sh).
+        run: |
+          mkdir -p build
+          cc -O1 -Wall -o build/atspi-readback scripts/atspi-readback.c $(pkg-config --cflags --libs atspi-2 gobject-2.0)
+
+      # WmDragTest and ChromeTest start openbox for their own drags and stop it again
+      # (scripts/wm-drag.sh, scripts/wm-chrome.sh). The session bus is the tests' own, so
+      # AtspiReadbackTest publishes to a real at-spi2 registry and reads the tree back.
+      - name: Test (x64, under a virtual display and a session bus)
+        working-directory: extended/window
         env:
           WM_DRAG_SCRIPT: ${{ github.workspace }}/extended/window/scripts/wm-drag.sh
-        run: xvfb-run -a ./kotlin test -p linuxX64
+          WM_CHROME_SCRIPT: ${{ github.workspace }}/extended/window/scripts/wm-chrome.sh
+          ATSPI_READBACK: ${{ github.workspace }}/extended/window/build/atspi-readback
+        run: dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" ./kotlin test -p linuxX64

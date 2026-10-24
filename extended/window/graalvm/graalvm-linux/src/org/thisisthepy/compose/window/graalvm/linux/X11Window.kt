@@ -8,7 +8,13 @@ import org.graalvm.nativeimage.c.type.CTypeConversion
 import org.graalvm.word.Pointer
 import org.graalvm.word.WordFactory
 import org.thisisthepy.compose.window.AccessibleElement
+import org.thisisthepy.compose.window.CaptionAction
+import org.thisisthepy.compose.window.CaptionGesture
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.WindowCaption
+import org.thisisthepy.compose.window.WindowEdge
+import org.thisisthepy.compose.window.X11Chrome
+import org.thisisthepy.compose.window.atspi.AtspiWindow
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.ResizeStats
 import org.thisisthepy.compose.window.SystemTheme
@@ -71,13 +77,42 @@ class X11Window : WindowPlatform {
     /** Whether the window shows what is behind it, set before [open]. */
     var backdrop: Boolean = false
 
+    private var config: WindowConfig? = null
+    private var fullscreen = false
+    private var closed = false
+
+    // The last press of the primary button, in window pixels and on the monotonic clock, which
+    // is where a press in the caption the scene draws was made.
+    private var pressX = 0f
+    private var pressY = 0f
+    private var pressNanos = 0L
+    private val gesture = CaptionGesture()
+
+    /** Whether a frame has been presented, after which the window joins the accessibility bus. */
+    private var presented = false
+
+    /** This window on the AT-SPI bus, published from the records [setAccessibility] is given. */
+    private val accessibility = AtspiWindow(
+        openSession = { JvmBusConnection.open() },
+        openAccessibility = { address -> JvmBusConnection.open(address) },
+        userId = { JvmBusConnection.userId() },
+        applicationName = { JvmBusConnection.applicationName() },
+        windowOrigin = { originOnScreen() },
+        requestFrame = { requestFrame() },
+        disabled = System.getenv("NO_AT_BRIDGE") == "1",
+    )
+
     override fun open(config: WindowConfig, listener: WindowListener): Boolean {
         this.listener = listener
+        this.config = config
         // Either side may say no: the property set before open, or the config.
+        resizable = resizable && config.resizable
         X11Natives.windowConfigure(
-            if (resizable && config.resizable) 1 else 0, config.minWidth, config.minHeight,
-            if (config.decorated) 1 else 0, if (backdrop) 1 else 0,
+            if (resizable) 1 else 0, config.minWidth, config.minHeight,
+            if (X11Chrome.keepsFrame(config)) 1 else 0, if (backdrop) 1 else 0,
         )
+        accessibility.listener = listener
+        accessibility.setTitle(config.title)
         val title = CTypeConversion.toCString(config.title)
         val out = UnmanagedMemory.calloc<Pointer>(X11Layout.WINDOW_BYTES)
         try {
@@ -107,7 +142,27 @@ class X11Window : WindowPlatform {
                 takePaste()?.let { listener?.onEvent(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, it)) }
                 continue
             }
-            for (event in x11Events.heard(read(eventBuffer))) listener?.onEvent(event)
+            for (event in x11Events.heard(read(eventBuffer))) {
+                when (event.kind) {
+                    WindowEvent.POINTER_DOWN -> if (event.buttons and PRIMARY != 0 &&
+                        event.buttons and WindowEvent.SECONDARY_BUTTON == 0
+                    ) {
+                        pressX = event.x
+                        pressY = event.y
+                        pressNanos = System.nanoTime()
+                    }
+                    WindowEvent.POINTER_UP -> if (event.buttons and PRIMARY == 0) gesture.released()
+                    WindowEvent.POINTER_MOVE -> if (gesture.waiting) {
+                        if (event.buttons and PRIMARY == 0) {
+                            gesture.released()
+                        } else {
+                            val direction = gesture.moved(event.x, event.y)
+                            if (direction != CaptionGesture.NONE) X11Natives.windowBeginDragAt(dragEdgeOf(direction), pressX, pressY)
+                        }
+                    }
+                }
+                listener?.onEvent(event)
+            }
         }
         val scale = measure().scale
         if (scale != lastScale) {
@@ -121,7 +176,14 @@ class X11Window : WindowPlatform {
         }
         if (X11Natives.windowClosed() != 0 && listener?.onCloseRequested() != false) {
             close()
+            return
         }
+        // After the events, so that a reader's action lands after the input that came before
+        // it, and on this thread, which is the one the scene is on.
+        val size = measure()
+        accessibility.setGeometry(size.width, size.height, size.scale)
+        if (presented) accessibility.join()
+        accessibility.pump(isFocused)
     }
 
     /**
@@ -223,6 +285,7 @@ class X11Window : WindowPlatform {
      */
     override fun present(drawnWidth: Int, drawnHeight: Int): FramePresentRecord {
         frameWanted = false
+        presented = true
         X11Natives.frameEnd(WordFactory.pointer<Pointer>(queuePointer))
         val window = measure()
         countSizes(window)
@@ -297,36 +360,61 @@ class X11Window : WindowPlatform {
      */
     fun setCursor(shape: Int) = X11Natives.setCursor(shape)
 
+    // The chrome: what the scene draws instead of the window manager's frame, and the moves
+    // and resizes a press in it hands to the manager.
+
     /**
-     * Hands the window what it would tell a reader who cannot see it, as the records
-     * `x11_window.c` holds for an AT-SPI bridge to read. Capped at [X11Layout.MAX_ELEMENTS].
+     * The caption the scene draws, or none where the window manager draws its own frame. None
+     * while the window is full screen, which has no caption on any desktop.
      */
-    override fun setAccessibility(elements: List<AccessibleElement>) {
-        val capped = if (elements.size > X11Layout.MAX_ELEMENTS) elements.take(X11Layout.MAX_ELEMENTS) else elements
-        val records = UnmanagedMemory.calloc<Pointer>(X11Layout.MAX_ELEMENTS * X11Layout.ELEMENT_BYTES)
-        try {
-            for ((index, element) in capped.withIndex()) {
-                val at = index * X11Layout.ELEMENT_BYTES
-                records.writeInt(at, element.role)
-                records.writeFloat(at + 4, element.x)
-                records.writeFloat(at + 8, element.y)
-                records.writeFloat(at + 12, element.width)
-                records.writeFloat(at + 16, element.height)
-                val bytes = element.label.encodeToByteArray()
-                var length = 0
-                while (length < bytes.size && length < X11Layout.EVENT_TEXT_BYTES - 1) {
-                    records.writeByte(at + X11Layout.ELEMENT_LABEL_OFFSET + length, bytes[length])
-                    length++
-                }
-                records.writeByte(at + X11Layout.ELEMENT_LABEL_OFFSET + length, 0)
-            }
-            X11Natives.setAccessibility(records, capped.size, WordFactory.pointer<Pointer>(windowPointer))
-        } finally {
-            UnmanagedMemory.free(records)
-        }
+    override fun caption(): WindowCaption =
+        config?.let { X11Chrome.caption(it, fullscreen) } ?: WindowCaption.None
+
+    /**
+     * Hands the move to the window manager, from a press in an empty part of the caption, once
+     * the pointer has moved a few pixels with the button down ([CaptionGesture] says why). A
+     * second press close in time and place to the one before is a double click, which
+     * maximises or restores instead, as a double click on any title bar does.
+     */
+    override fun startMove(): Boolean {
+        if (windowPointer == 0L || closed) return false
+        if (gesture.move(pressNanos, pressX, pressY)) performCaptionAction(CaptionAction.ToggleMaximize)
+        return true
     }
 
+    /** Hands the resize from [edge] to the window manager, from a press at that edge, once the pointer goes. */
+    override fun startResize(edge: WindowEdge): Boolean {
+        if (windowPointer == 0L || closed || !resizable) return false
+        gesture.resize(X11Chrome.direction(edge), pressX, pressY)
+        return true
+    }
+
+    /**
+     * Minimises, maximises or restores (`_NET_WM_STATE`), or closes. Closing goes the way the
+     * manager's own close button does: the listener is asked at the next pump.
+     */
+    override fun performCaptionAction(action: CaptionAction) {
+        if (windowPointer == 0L || closed) return
+        X11Natives.windowAction(
+            when (action) {
+                CaptionAction.Minimize -> ACTION_MINIMIZE
+                CaptionAction.ToggleMaximize -> ACTION_TOGGLE_MAXIMIZE
+                CaptionAction.Close -> ACTION_CLOSE
+            },
+        )
+    }
+
+    // Accessibility: the scene's records, published on the AT-SPI bus.
+
+    override fun setAccessibility(elements: List<AccessibleElement>) = accessibility.setElements(elements)
+
+    override val accessibilityActive: Boolean get() = accessibility.readerListening
+
+    /** What this window is called on the accessibility bus; empty until it has joined. */
+    val accessibilityBusName: String get() = accessibility.busName
+
     override fun setTitle(title: String) {
+        accessibility.setTitle(title)
         val holder = CTypeConversion.toCString(title)
         try {
             X11Natives.setTitle(holder.get())
@@ -337,8 +425,14 @@ class X11Window : WindowPlatform {
 
     override fun setMinimumSize(width: Int, height: Int) = X11Natives.setMinSize(width, height)
 
-    override fun setVisibility(visibility: WindowVisibility) =
+    override fun setVisibility(visibility: WindowVisibility) {
+        when (visibility) {
+            WindowVisibility.Visible -> fullscreen = false
+            WindowVisibility.Fullscreen -> fullscreen = true
+            else -> {}
+        }
         X11Natives.setVisibility(X11Visibility.code(visibility))
+    }
 
     override fun readClipboardText(): String? {
         if (textBuffer == 0L) return null
@@ -382,6 +476,9 @@ class X11Window : WindowPlatform {
     }
 
     override fun close() {
+        if (closed) return
+        closed = true
+        accessibility.close()
         X11Upcalls.clearFramePainter()
         X11Natives.windowAction(ACTION_CLOSE)
         X11Natives.pump(0.0)
@@ -402,7 +499,31 @@ class X11Window : WindowPlatform {
     private companion object {
         // 4 MiB, the most one X11 property read returns: a longer clipboard answers empty.
         const val TEXT_CAPACITY = 4 * 1024 * 1024
+        // dxc_native_window_action's numbers.
+        const val ACTION_MINIMIZE = 0
+        const val ACTION_TOGGLE_MAXIMIZE = 1
         const val ACTION_CLOSE = 2
+
+        /** The primary button's bit in an event's buttons. */
+        const val PRIMARY = 1
+
+        /**
+         * dxc_native_window_begin_drag's number for a `_NET_WM_MOVERESIZE` direction: 0 moves,
+         * then the left, right, top and bottom edges, then the corners top left, top right,
+         * bottom left and bottom right.
+         */
+        fun dragEdgeOf(direction: Int): Int = when (direction) {
+            X11Chrome.MOVE -> 0
+            7 -> 1
+            3 -> 2
+            1 -> 3
+            5 -> 4
+            0 -> 5
+            2 -> 6
+            6 -> 7
+            4 -> 8
+            else -> 0
+        }
         const val DROPPED_PATHS_BYTES = 64 * 1024
         /** `DXC_EVENT_TEXT_PASTE`: not a shared event kind, so outside their numbers. */
         const val EVENT_TEXT_PASTE = 64

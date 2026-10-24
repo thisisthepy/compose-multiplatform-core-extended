@@ -1,5 +1,6 @@
 package org.thisisthepy.compose.window.atspi
 
+import org.thisisthepy.compose.window.AccessibleAction
 import org.thisisthepy.compose.window.appendPoint
 import org.thisisthepy.compose.window.codePointsOf
 
@@ -13,14 +14,15 @@ import org.thisisthepy.compose.window.codePointsOf
 //
 // The object paths are three kinds. The application is `.../root`, which is what the registry
 // is told about and where a reader starts. Its only child is the window, `.../window`, and the
-// window's children are the controls, `.../n<id>` under Compose's own id for each.
+// window's children are the controls, `.../n<id>` under the scene's own id for each.
 
 interface AtspiActions {
-    /** Presses the control. False where it is gone or cannot be pressed. */
-    fun click(id: Int): Boolean
-
-    /** Gives the control the keyboard. */
-    fun focus(id: Int): Boolean
+    /**
+     * Asks the scene to do [action] (an [AccessibleAction] value) to the control [id], with
+     * [argument] the new text or value for [AccessibleAction.SET_VALUE]. False where the
+     * control is gone or the scene did not do it.
+     */
+    fun perform(id: Int, action: Int, argument: String?): Boolean
 
     /** Where the window's top left corner is on the screen. */
     fun windowOrigin(): Pair<Int, Int>
@@ -66,6 +68,12 @@ class AtspiServer(
 
     fun nameChanged(serial: Int, id: Int, name: String): ByteArray =
         event(serial, id, EVENT_OBJECT, "PropertyChange", "accessible-name", 0, "s") { string(name) }
+
+    fun valueChanged(serial: Int, id: Int, value: Double): ByteArray =
+        event(serial, id, EVENT_OBJECT, "PropertyChange", "accessible-value", 0, "d") { double(value) }
+
+    fun descriptionChanged(serial: Int, id: Int, description: String): ByteArray =
+        event(serial, id, EVENT_OBJECT, "PropertyChange", "accessible-description", 0, "s") { string(description) }
 
     fun windowEvent(serial: Int, member: String): ByteArray =
         event(serial, FRAME, EVENT_WINDOW, member, "", 0, "i") { u32(0) }
@@ -142,6 +150,10 @@ class AtspiServer(
 
     private fun textOf(id: Int): String? = tree.nodes[id]?.text
 
+    private fun editable(id: Int): Boolean = tree.nodes[id]?.let { it.text != null && it.settable } == true
+
+    private fun rangeOf(id: Int): AtspiRange? = tree.nodes[id]?.range
+
     private fun interfacesOf(id: Int): List<String> = buildList {
         add(ACCESSIBLE)
         if (id == ROOT) {
@@ -150,6 +162,8 @@ class AtspiServer(
             add(COMPONENT)
             if (actionsOf(id).isNotEmpty()) add(ACTION)
             if (textOf(id) != null) add(TEXT)
+            if (editable(id)) add(EDITABLE_TEXT)
+            if (rangeOf(id) != null) add(VALUE)
         }
     }
 
@@ -220,6 +234,8 @@ class AtspiServer(
             COMPONENT -> if (id == ROOT) unknownInterface(serial, call) else component(call, id, serial)
             ACTION -> if (actionsOf(id).isEmpty()) unknownInterface(serial, call) else action(call, id, serial)
             TEXT -> if (textOf(id) == null) unknownInterface(serial, call) else text(call, id, serial)
+            EDITABLE_TEXT -> if (!editable(id)) unknownInterface(serial, call) else editableText(call, id, serial)
+            VALUE -> if (rangeOf(id) == null) unknownInterface(serial, call) else value(call, id, serial)
             APPLICATION -> if (id == ROOT) application(call, serial) else unknownInterface(serial, call)
             else -> unknownInterface(serial, call)
         }
@@ -242,12 +258,12 @@ class AtspiServer(
     private fun propertiesOf(id: Int, interfaceName: String): List<Property> = when (interfaceName) {
         ACCESSIBLE -> listOf(
             Property("Name", "s") { string(nameOf(id)) },
-            Property("Description", "s") { string("") },
+            Property("Description", "s") { string(tree.nodes[id]?.description ?: "") },
             Property("Parent", "(so)") { parentReference(id) },
             Property("ChildCount", "i") { u32(childrenOf(id).size.toLong()) },
             Property("Locale", "s") { string("") },
             Property("AccessibleId", "s") { string("") },
-            Property("HelpText", "s") { string("") },
+            Property("HelpText", "s") { string(tree.nodes[id]?.description ?: "") },
         )
         APPLICATION -> if (id != ROOT) emptyList() else listOf(
             Property("ToolkitName", "s") { string(TOOLKIT) },
@@ -260,6 +276,16 @@ class AtspiServer(
             Property("CharacterCount", "i") { u32(codePointsOf(textOf(id) ?: "").size.toLong()) },
             Property("CaretOffset", "i") { u32((tree.nodes[id]?.caret ?: 0).toLong()) },
         )
+        VALUE -> rangeOf(id)?.let { range ->
+            listOf(
+                Property("MinimumValue", "d") { double(range.minimum) },
+                Property("MaximumValue", "d") { double(range.maximum) },
+                Property("CurrentValue", "d") { double(range.current) },
+                // The scene says the range, not its step, so a reader is told it is continuous.
+                Property("MinimumIncrement", "d") { double(0.0) },
+                Property("Text", "s") { string(range.text) },
+            )
+        } ?: emptyList()
         else -> emptyList()
     }
 
@@ -279,7 +305,22 @@ class AtspiServer(
                     array(8) { for (property in list) entry(property.name, property.signature, property.write) }
                 }
             }
-            "Set" -> AtspiWire.error(serial(), call, PROPERTY_READ_ONLY, "nothing here can be set")
+            "Set" -> {
+                val interfaceName = arguments.string()
+                val name = arguments.string()
+                val signature = arguments.signature()
+                val node = tree.nodes[id]
+                if (interfaceName != VALUE || name != "CurrentValue" || signature != "d" ||
+                    node?.range == null || !node.settable
+                ) {
+                    return AtspiWire.error(serial(), call, PROPERTY_READ_ONLY, "$interfaceName.$name cannot be set here")
+                }
+                val wanted = arguments.double()
+                if (!actions.perform(id, AccessibleAction.SET_VALUE, wanted.toString())) {
+                    return AtspiWire.error(serial(), call, FAILED, "the control did not take the value $wanted")
+                }
+                AtspiWire.methodReturn(serial(), call, null) {}
+            }
             else -> unknownMethod(serial, call)
         }
     }
@@ -363,7 +404,8 @@ class AtspiServer(
             "GetMDIZOrder" -> AtspiWire.methodReturn(serial(), call, "n") { i16(0) }
             "GetAlpha" -> AtspiWire.methodReturn(serial(), call, "d") { double(1.0) }
             "GrabFocus" -> {
-                val taken = id != FRAME && actions.focus(id)
+                val taken = id != FRAME && tree.nodes[id]?.focusable == true &&
+                    actions.perform(id, AccessibleAction.FOCUS, null)
                 AtspiWire.methodReturn(serial(), call, "b") { boolean(taken) }
             }
             "SetExtents", "SetPosition", "SetSize", "ScrollTo" ->
@@ -397,7 +439,8 @@ class AtspiServer(
             }
             "DoAction" -> {
                 val name = available.getOrNull(arguments.i32())
-                val done = name == ACTION_CLICK && actions.click(id)
+                val action = name?.let { accessibleActionNamed(it) }
+                val done = action != null && actions.perform(id, action, null)
                 AtspiWire.methodReturn(serial(), call, "b") { boolean(done) }
             }
             else -> unknownMethod(serial, call)
@@ -449,6 +492,38 @@ class AtspiServer(
         }
     }
 
+    private fun editableText(call: IncomingCall, id: Int, serial: () -> Int): ByteArray {
+        val arguments = call.arguments()
+        val points = codePointsOf(textOf(id) ?: "")
+        fun text(from: Int, to: Int) = buildString { for (index in from until to) appendPoint(points[index]) }
+        // Every edit a reader asks for is said to the scene as the whole new text, because a
+        // field's text is the scene's and replacing it is the one edit every field takes.
+        fun replace(newText: String): ByteArray {
+            val done = actions.perform(id, AccessibleAction.SET_VALUE, newText)
+            return AtspiWire.methodReturn(serial(), call, "b") { boolean(done) }
+        }
+        return when (call.member) {
+            "SetTextContents" -> replace(arguments.string())
+            "InsertText" -> {
+                val at = arguments.i32().coerceIn(0, points.size)
+                val inserted = arguments.string()
+                val length = arguments.i32()
+                val insertedPoints = codePointsOf(inserted)
+                val taken = if (length in 0..insertedPoints.size) insertedPoints.subList(0, length) else insertedPoints
+                replace(text(0, at) + buildString { for (point in taken) appendPoint(point) } + text(at, points.size))
+            }
+            "DeleteText" -> {
+                val start = arguments.i32().coerceIn(0, points.size)
+                val end = arguments.i32().let { if (it < 0) points.size else it }.coerceIn(start, points.size)
+                replace(text(0, start) + text(end, points.size))
+            }
+            "CopyText", "CutText", "PasteText" -> AtspiWire.methodReturn(serial(), call, "b") { boolean(false) }
+            else -> unknownMethod(serial, call)
+        }
+    }
+
+    private fun value(call: IncomingCall, id: Int, serial: () -> Int): ByteArray = unknownMethod(serial, call)
+
     companion object {
         /** The ids the application and the window have, which no control can. */
         const val ROOT = -2
@@ -463,6 +538,8 @@ class AtspiServer(
         const val COMPONENT = "org.a11y.atspi.Component"
         const val ACTION = "org.a11y.atspi.Action"
         const val TEXT = "org.a11y.atspi.Text"
+        const val EDITABLE_TEXT = "org.a11y.atspi.EditableText"
+        const val VALUE = "org.a11y.atspi.Value"
         const val APPLICATION = "org.a11y.atspi.Application"
         const val EVENT_OBJECT = "org.a11y.atspi.Event.Object"
         const val EVENT_WINDOW = "org.a11y.atspi.Event.Window"
@@ -477,6 +554,7 @@ class AtspiServer(
         private const val UNKNOWN_PROPERTY = "org.freedesktop.DBus.Error.UnknownProperty"
         private const val PROPERTY_READ_ONLY = "org.freedesktop.DBus.Error.PropertyReadOnly"
         private const val INVALID_ARGS = "org.freedesktop.DBus.Error.InvalidArgs"
+        private const val FAILED = "org.freedesktop.DBus.Error.Failed"
 
         private const val TOOLKIT = "compose-rust"
         private const val TOOLKIT_VERSION = "1"
