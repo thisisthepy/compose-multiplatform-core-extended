@@ -135,6 +135,18 @@ private external fun windowFocused(): Int
 
 @CFunction("dxc_native_soak_state")
 private external fun soakState(): Int
+
+@CFunction("dxc_native_process_footprint_mb")
+private external fun nativeProcessFootprintMb(): Int
+
+@CFunction("dxc_native_process_resident_mb")
+private external fun nativeProcessResidentMb(): Int
+
+@CFunction("dxc_native_metal_allocated_mb")
+private external fun nativeMetalAllocatedMb(device: Pointer?): Int
+
+@CFunction("dxc_native_idle_soak_breakdown")
+private external fun nativeIdleSoakBreakdown(elapsedS: Int, isEnd: Int)
 /**
  * The four pointers a window is, once AppKit has made one.
  *
@@ -196,6 +208,9 @@ class NativeWindow internal constructor(
             from.first, from.second, to.first, to.second, steps, pauseMicros,
         )
     }
+
+    /** Current Metal allocated bytes on this window's device, rounded to megabytes. */
+    fun metalAllocatedMb(): Int = nativeMetalAllocatedMb(WordFactory.pointer(device))
 
 }
 
@@ -468,6 +483,13 @@ fun isWindowFocused(): Boolean = windowFocused() != 0
  * prints it while this is not 0.
  */
 fun resizeSoakState(): Int = soakState()
+
+internal fun processFootprintMb(): Int = nativeProcessFootprintMb()
+
+internal fun processResidentMb(): Int = nativeProcessResidentMb()
+
+internal fun idleSoakBreakdown(elapsedS: Int, isEnd: Boolean) =
+    nativeIdleSoakBreakdown(elapsedS, if (isEnd) 1 else 0)
 
 /**
  * Gives the application the menu bar every application on this platform has.

@@ -26,7 +26,9 @@ fun x11WindowSurface(platform: WindowPlatform): WindowSurface? =
 
 /** Skia over [window]'s GLX framebuffer. */
 class GlWindowSurface(private val window: X11Window) : WindowSurface {
-    private val context = DirectContext.makeGL()
+    private val context = DirectContext.makeGL().apply {
+        resourceCacheLimit = (System.getenv("DXC_SKIA_CACHE_MB")?.toLongOrNull()?.takeIf { it > 0L } ?: 16L) * 1048576L
+    }
 
     override fun begin(width: Int, height: Int): FrameTarget? {
         if (!window.beginFrame()) return null

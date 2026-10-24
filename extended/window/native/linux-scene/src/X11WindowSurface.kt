@@ -13,6 +13,8 @@ import org.jetbrains.skia.SurfaceProps
 import org.thisisthepy.compose.window.WindowPlatform
 import org.thisisthepy.compose.window.scene.FrameTarget
 import org.thisisthepy.compose.window.scene.WindowSurface
+import kotlinx.cinterop.toKString
+import platform.posix.getenv
 
 /** GL's sized internal format for 8-bit RGBA, which the window's GLX framebuffer is. */
 private const val GL_RGBA8_FORMAT = 0x8058
@@ -33,7 +35,9 @@ fun x11WindowSurface(platform: WindowPlatform): WindowSurface? =
 /** Skia over [window]'s GLX framebuffer. */
 class X11GlWindowSurface(private val window: X11Window) : WindowSurface {
     // Made once the window has made its context current, which it does when it opens.
-    private val context = DirectContext.makeGL()
+    private val context = DirectContext.makeGL().apply {
+        resourceCacheLimit = (getenv("DXC_SKIA_CACHE_MB")?.toKString()?.toLongOrNull()?.takeIf { it > 0L } ?: 16L) * 1048576L
+    }
 
     override fun begin(width: Int, height: Int): FrameTarget? {
         if (width <= 0 || height <= 0 || !window.makeCurrent()) return null

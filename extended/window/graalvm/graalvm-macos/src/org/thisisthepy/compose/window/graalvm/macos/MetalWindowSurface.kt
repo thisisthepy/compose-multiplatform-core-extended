@@ -26,7 +26,9 @@ fun appKitWindowSurface(platform: WindowPlatform): WindowSurface? {
 
 /** Skia over the Metal drawable of [window]'s layer. */
 class MetalWindowSurface(private val window: NativeWindow) : WindowSurface {
-    private val context = DirectContext.makeMetal(window.device, window.queue)
+    private val context = DirectContext.makeMetal(window.device, window.queue).apply {
+        resourceCacheLimit = defaultSkiaCacheLimitBytes()
+    }
 
     override fun begin(width: Int, height: Int): FrameTarget? {
         // Zero means the system had no drawable to give: frames are made faster than the
@@ -68,3 +70,10 @@ class MetalWindowSurface(private val window: NativeWindow) : WindowSurface {
 
     override fun close() = context.close()
 }
+
+/**
+ * Skia's default GPU resource cache limit is 256 MB. Capped at 16 MB unless `DXC_SKIA_CACHE_MB`
+ * asks for another size so offscreen scratch textures do not accumulate up to 256 MB.
+ */
+internal fun defaultSkiaCacheLimitBytes(env: String? = System.getenv("DXC_SKIA_CACHE_MB")): Long =
+    (env?.toLongOrNull()?.takeIf { it > 0L } ?: 16L) * 1048576L

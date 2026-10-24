@@ -168,12 +168,131 @@ internal object ResizeSoak {
     private fun mb(bytes: Long): Long = if (bytes < 0) -1 else (bytes + 524288) / 1048576
 
     /** Physical footprint and resident size of this process, in bytes. */
-    private fun processMemory(): Pair<Long, Long> = memScoped {
+    internal fun processMemory(): Pair<Long, Long> = memScoped {
         val info = alloc<platform.darwin.task_vm_info_data_t>()
         val count = alloc<platform.darwin.mach_msg_type_number_tVar>()
         count.value = (sizeOf<platform.darwin.task_vm_info_data_t>() / 4).toUInt()
         // TASK_VM_INFO
         platform.darwin.task_info(platform.darwin.mach_task_self_, 22u, info.ptr.reinterpret(), count.ptr)
         info.phys_footprint.toLong() to info.resident_size.toLong()
+    }
+
+    internal fun roundMb(bytes: Long): Long = mb(bytes)
+}
+
+internal class IdleSoak {
+    val seconds: Int =
+        platform.posix.getenv("DXC_IDLE_SOAK_SECONDS")?.toKString()?.toIntOrNull()?.takeIf { it > 0 } ?: 0
+    val enabled: Boolean get() = seconds > 0
+
+    private var openedAtNanos: Long = 0L
+    private var idleStartedAtNanos: Long = 0L
+    private var lastSampleElapsed: Int = -1
+    private var typed = false
+    private var done = false
+    var framesPresented: Long = 0L
+
+    fun reset() {
+        openedAtNanos = uptimeNanos()
+        idleStartedAtNanos = 0L
+        lastSampleElapsed = -1
+        typed = false
+        done = false
+        framesPresented = 0L
+    }
+
+    fun step(
+        window: MacosWindow,
+        listener: org.thisisthepy.compose.window.WindowListener,
+    ) {
+        if (!enabled || done) return
+        val now = uptimeNanos()
+        val sinceOpenMillis = (now - openedAtNanos) / 1_000_000L
+        if (!typed && sinceOpenMillis >= 1_500L && platform.posix.getenv("DXC_SYNTH")?.toKString() != "none") {
+            typed = true
+            val scale = window.measure().scale.coerceAtLeast(1f)
+            val x = 80f * scale
+            val y = 80f * scale
+            listener.onEvent(
+                org.thisisthepy.compose.window.WindowEvent(
+                    org.thisisthepy.compose.window.WindowEvent.POINTER_DOWN,
+                    x,
+                    y,
+                    1,
+                    0,
+                    0,
+                    0,
+                    "",
+                ),
+            )
+            listener.onEvent(
+                org.thisisthepy.compose.window.WindowEvent(
+                    org.thisisthepy.compose.window.WindowEvent.POINTER_UP,
+                    x,
+                    y,
+                    0,
+                    0,
+                    0,
+                    0,
+                    "",
+                ),
+            )
+            listener.onEvent(
+                org.thisisthepy.compose.window.WindowEvent(
+                    org.thisisthepy.compose.window.WindowEvent.TEXT_COMMIT,
+                    0f,
+                    0f,
+                    0,
+                    0,
+                    0,
+                    0,
+                    "abcde",
+                ),
+            )
+        }
+        if (sinceOpenMillis < 8_000L) return
+        if (idleStartedAtNanos == 0L) {
+            GC.collect()
+            idleStartedAtNanos = now
+            lastSampleElapsed = 0
+            read("start", 0, window.metal, breakdown = true)
+            return
+        }
+        val elapsed = ((now - idleStartedAtNanos) / 1_000_000_000L).toInt()
+        val step = (elapsed / 10) * 10
+        if (step > lastSampleElapsed && elapsed < seconds) {
+            lastSampleElapsed = step
+            read("sample", step, window.metal, breakdown = false)
+        }
+        if (elapsed >= seconds) {
+            done = true
+            GC.collect()
+            read("end", seconds, window.metal, breakdown = true)
+            printError("compose-rust: idle-soak done seconds=$seconds")
+            listener.onCloseRequested()
+        }
+    }
+
+    private fun read(phase: String, elapsedS: Int, metal: MetalSurface, breakdown: Boolean) {
+        val (footprint, resident) = ResizeSoak.processMemory()
+        val info = GC.lastGCInfo
+        val live = info?.memoryUsageAfter?.values?.sumOf { it.totalObjectsSizeBytes } ?: -1L
+        printError(
+            "compose-rust: idle-soak phase $phase elapsed_s=$elapsedS frames=$framesPresented " +
+                "footprint_mb=${ResizeSoak.roundMb(footprint)} resident_mb=${ResizeSoak.roundMb(resident)} " +
+                "metal_allocated_mb=${ResizeSoak.roundMb(metal.allocatedBytes)} " +
+                "skia_cache_limit_mb=${ResizeSoak.roundMb(metal.cacheLimitBytes)} " +
+                "skia_cpu_cache_mb=${ResizeSoak.roundMb(org.jetbrains.skia.Graphics.resourceCacheTotalUsed.toLong())} " +
+                "skia_font_cache_mb=${ResizeSoak.roundMb(org.jetbrains.skia.Graphics.fontCacheUsed.toLong())} " +
+                "heap_live_mb=${ResizeSoak.roundMb(live)} heap_target_mb=${ResizeSoak.roundMb(GC.targetHeapBytes)} " +
+                "gcs=${info?.epoch ?: 0}",
+        )
+        if (breakdown && platform.posix.getenv("DXC_METRICS_BREAKDOWN")?.toKString() == "1") {
+            platform.posix.fflush(null)
+            platform.posix.system(
+                "/usr/bin/footprint ${platform.posix.getpid()} 2>/dev/null | " +
+                    "sed 's/^/compose-rust: idle-soak breakdown elapsed_s=$elapsedS $phase /' 1>&2",
+            )
+        }
     }
 }

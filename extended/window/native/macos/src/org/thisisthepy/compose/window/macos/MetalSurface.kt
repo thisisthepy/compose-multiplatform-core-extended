@@ -11,6 +11,7 @@ import kotlinx.cinterop.invoke
 import kotlinx.cinterop.objcPtr
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.toCPointer
+import kotlinx.cinterop.toKString
 import kotlinx.cinterop.useContents
 import org.jetbrains.skia.BackendRenderTarget
 import org.jetbrains.skia.Canvas
@@ -53,7 +54,9 @@ class MetalSurface {
     internal val queue = requireNotNull(device.newCommandQueue()) {
         "the Metal device would not give a command queue"
     }
-    internal val context = DirectContext.makeMetal(device.objcPtr(), queue.objcPtr())
+    internal val context = DirectContext.makeMetal(device.objcPtr(), queue.objcPtr()).apply {
+        resourceCacheLimit = defaultSkiaCacheLimitBytes()
+    }
 
     /** What Metal has allocated for this device, in bytes, for measuring. */
     val allocatedBytes: Long get() = device.currentAllocatedSize.toLong()
@@ -308,5 +311,14 @@ class MetalSurface {
         internal fun startFrame(canvas: Canvas) {
             canvas.clear(0)
         }
+
+        /**
+         * Skia's default GPU resource cache limit is 256 MB. Capped at 16 MB unless
+         * `DXC_SKIA_CACHE_MB` asks for another size so offscreen scratch textures do not
+         * accumulate up to 256 MB.
+         */
+        internal fun defaultSkiaCacheLimitBytes(
+            env: String? = platform.posix.getenv("DXC_SKIA_CACHE_MB")?.toKString(),
+        ): Long = (env?.toLongOrNull()?.takeIf { it > 0L } ?: 16L) * 1048576L
     }
 }

@@ -157,4 +157,40 @@ static void dxc_soak_start(NSWindow *window, id<MTLDevice> device) {
     });
 }
 
+static int32_t dxc_idle_soak_footprint_mb(void) {
+    task_vm_info_data_t info;
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) != KERN_SUCCESS) {
+        return -1;
+    }
+    return (int32_t)dxc_soak_mb((long long)info.phys_footprint);
+}
+
+static int32_t dxc_idle_soak_resident_mb(void) {
+    task_vm_info_data_t info;
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) != KERN_SUCCESS) {
+        return -1;
+    }
+    return (int32_t)dxc_soak_mb((long long)info.resident_size);
+}
+
+static int32_t dxc_idle_soak_metal_allocated_mb(void *device_pointer) {
+    if (device_pointer == NULL) return -1;
+    id<MTLDevice> device = (__bridge id<MTLDevice>)device_pointer;
+    return (int32_t)dxc_soak_mb((long long)device.currentAllocatedSize);
+}
+
+static void dxc_idle_soak_breakdown(int32_t elapsed_s, int32_t is_end) {
+    const char *wanted = getenv("DXC_METRICS_BREAKDOWN");
+    if (wanted == NULL || strcmp(wanted, "1") != 0) return;
+    const char *phase = is_end ? "end" : "start";
+    char command[256];
+    snprintf(command, sizeof command,
+             "/usr/bin/footprint %d 2>/dev/null | sed 's/^/compose-rust: idle-soak breakdown elapsed_s=%d %s /' 1>&2",
+             (int)getpid(), (int)elapsed_s, phase);
+    fflush(stderr);
+    system(command);
+}
+
 #endif

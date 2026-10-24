@@ -116,6 +116,7 @@ static struct dxc_ax_element record(int32_t key, int32_t parent, const char *rol
 }
 
 static void check_accessibility(NSWindow *window, void *view_pointer) {
+    (void)window;
     NSView *view = (__bridge NSView *)view_pointer;
     struct dxc_ax_element elements[3];
     elements[0] = record(1, -1, "AXGroup", "Form", 0, 0, 0);

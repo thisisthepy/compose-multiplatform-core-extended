@@ -83,4 +83,11 @@ class UpcallTableTest {
         assertEquals(listOf(key), recorder.events)
         assertEquals(listOf(EditMenuId.COPY), recorder.chosen)
     }
+
+    @Test
+    fun skia_resource_cache_limit_defaults_to_16_mb_and_respects_override() {
+        assertEquals(16L * 1048576L, defaultSkiaCacheLimitBytes(null))
+        assertEquals(16L * 1048576L, defaultSkiaCacheLimitBytes(""))
+        assertEquals(32L * 1048576L, defaultSkiaCacheLimitBytes("32"))
+    }
 }

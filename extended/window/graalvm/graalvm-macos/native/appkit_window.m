@@ -1125,6 +1125,18 @@ void dxc_native_window_chrome(
  */
 int32_t dxc_native_soak_state(void) { return dxc_soak_state; }
 
+int32_t dxc_native_process_footprint_mb(void) { return dxc_idle_soak_footprint_mb(); }
+
+int32_t dxc_native_process_resident_mb(void) { return dxc_idle_soak_resident_mb(); }
+
+int32_t dxc_native_metal_allocated_mb(void *device_pointer) {
+    return dxc_idle_soak_metal_allocated_mb(device_pointer);
+}
+
+void dxc_native_idle_soak_breakdown(int32_t elapsed_s, int32_t is_end) {
+    dxc_idle_soak_breakdown(elapsed_s, is_end);
+}
+
 int32_t dxc_native_window_open(
     const char *title,
     int32_t width,
@@ -1186,7 +1198,10 @@ int32_t dxc_native_window_open(
             // content is drawn on, and to give the window the radius such a window has.
             // Everything in the bar is the renderer's, underneath.
             NSToolbar *toolbar = [[NSToolbar alloc] initWithIdentifier:@"compose-rust"];
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
             toolbar.showsBaselineSeparator = NO;
+#pragma clang diagnostic pop
             window.toolbar = toolbar;
             if (@available(macOS 11.0, *)) {
                 window.toolbarStyle = NSWindowToolbarStyleUnified;
@@ -1604,9 +1619,11 @@ void dxc_native_set_visibility(void *window_pointer, int32_t visibility) {
 int32_t dxc_native_system_dark(void) {
     __block int32_t dark = 0;
     dxc_on_main(^{
-        NSAppearanceName name = [NSApp.effectiveAppearance
-            bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]];
-        dark = [name isEqualToString:NSAppearanceNameDarkAqua] ? 1 : 0;
+        @autoreleasepool {
+            NSAppearanceName name = [NSApp.effectiveAppearance
+                bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]];
+            dark = [name isEqualToString:NSAppearanceNameDarkAqua] ? 1 : 0;
+        }
     });
     return dark;
 }
