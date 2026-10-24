@@ -40,7 +40,7 @@ jobs:
       - name: Setup.init reaches the look and feel only through the switch
         run: |
           set -euo pipefail
-          jar="$HOME/.m2/repository/org/thisisthepy/compose/skiko/skiko-awt/1.11.1-ext.1/skiko-awt-1.11.1-ext.1.jar"
+          jar="$HOME/.m2/repository/org/thisisthepy/compose/skiko/skiko-awt/1.11.1-ext.2/skiko-awt-1.11.1-ext.2.jar"
           init="$(javap -c -p -classpath "$jar" org.jetbrains.skiko.Setup)"
           grep -q 'AwtSwitch' <<< "$init" || { echo "Setup.init does not read AwtSwitch" >&2; exit 1; }
           javap -c -p -classpath "$jar" org.jetbrains.skiko.AwtSwitch | grep -q 'compose.awt'
@@ -52,14 +52,14 @@ jobs:
             echo "the patched skiko-awt was left at JetBrains' coordinates" >&2
             exit 1
           fi
-          base="$HOME/.m2/repository/org/thisisthepy/compose/skiko/skiko-awt/1.11.1-ext.1"
-          grep -q '<groupId>org.thisisthepy.compose.skiko</groupId>' "$base/skiko-awt-1.11.1-ext.1.pom"
-          grep -q 'Upstream version: 0.144.6' "$base/skiko-awt-1.11.1-ext.1.pom"
-          python3 -I - "$base/skiko-awt-1.11.1-ext.1.module" <<'PY'
+          base="$HOME/.m2/repository/org/thisisthepy/compose/skiko/skiko-awt/1.11.1-ext.2"
+          grep -q '<groupId>org.thisisthepy.compose.skiko</groupId>' "$base/skiko-awt-1.11.1-ext.2.pom"
+          grep -q 'Upstream version: 0.144.6' "$base/skiko-awt-1.11.1-ext.2.pom"
+          python3 -I - "$base/skiko-awt-1.11.1-ext.2.module" <<'PY'
           import json, sys
           metadata = json.load(open(sys.argv[1]))
           component = {k: metadata["component"][k] for k in ("group", "module", "version")}
-          assert component == {"group": "org.thisisthepy.compose.skiko", "module": "skiko-awt", "version": "1.11.1-ext.1"}, metadata["component"]
+          assert component == {"group": "org.thisisthepy.compose.skiko", "module": "skiko-awt", "version": "1.11.1-ext.2"}, metadata["component"]
           assert "url" not in metadata["component"], metadata["component"]
           for variant in metadata["variants"]:
               names = {(c["group"], c["name"]) for c in variant.get("capabilities", [])}

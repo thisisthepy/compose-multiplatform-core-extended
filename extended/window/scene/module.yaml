@@ -17,14 +17,14 @@ apply:
 
 dependencies:
   - ../common
-  - org.thisisthepy.compose.runtime:runtime:1.11.1-ext.1
+  - org.thisisthepy.compose.runtime:runtime:1.11.1-ext.2
   # This fork's Compose, not JetBrains': a consumer that links this module also links the
   # fork's foundation and UI, and two copies of the same classes under different groups are
   # not something a resolver can merge. Published to the local Maven repository first by
   # extended/compose/publish-local.sh. The runtime is the fork's too, a stub with no classes
   # that points at androidx.compose.runtime.
-  - org.thisisthepy.compose.foundation:foundation:1.11.1-ext.1
-  - org.thisisthepy.compose.ui:ui:1.11.1-ext.1
+  - org.thisisthepy.compose.foundation:foundation:1.11.1-ext.2
+  - org.thisisthepy.compose.ui:ui:1.11.1-ext.2
 
 test-dependencies:
   - $kotlin.test
@@ -47,7 +47,7 @@ settings:
     enabled: true
     group: org.thisisthepy.compose.window
     artifactId: scene
-    version: 1.11.1-ext.1
+    version: 1.11.1-ext.2
   kotlin:
     # The klib takes its Maven coordinates as its unique_name, like the other window modules.
     freeCompilerArgs:

@@ -117,7 +117,7 @@ Windows 에서 Skia 는 실행 파일 옆의 `icudtl.dat` 를 찾고, 없으면 
 | `graalvm/graalvm-macos` | `org.thisisthepy.compose.window:graalvm-macos` | JVM (native image) | native image 용 AppKit 창: `appkit_window.m` 과 그 Kotlin 쪽, 그리고 `scene`이 그리는 Metal 표면 `appKitWindowSurface` |
 | `graalvm/graalvm-linux` | `org.thisisthepy.compose.window:graalvm-linux` | JVM (native image) | native image 용 X11 창: `x11_window.c` 와 그 Kotlin 쪽, 그리고 `scene`이 그리는 GL 표면 `x11WindowSurface` |
 
-버전은 모두 포크의 한 버전 `1.11.1-ext.1` 입니다. "Extended window publish" 워크플로가 compose-rust 가 쓰는 방식대로 이를
+버전은 모두 포크의 한 버전 `1.11.1-ext.2` 입니다. "Extended window publish" 워크플로가 compose-rust 가 쓰는 방식대로 이를
 로컬 Maven 저장소에 배포합니다. `native/linux` 는 [#111](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/111) 에서 여기에 더해집니다.
 아직 공개 저장소에 올린 것은 없습니다. Windows 창 `windows-shared` 는 [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32) 에서
 열려 있습니다.
@@ -298,14 +298,14 @@ JetBrains 의 것 그대로이고 그룹과 버전만 다릅니다. 모든 좌�
 
 | 대상 | 좌표 |
 |---|---|
-| Compose 모듈 | `org.thisisthepy.compose.<group>:<artifact>:1.11.1-ext.1`. 예: `org.thisisthepy.compose.ui:ui:1.11.1-ext.1` 과 그 타깃 `ui-desktop`, `ui-linuxx64`, `ui-mingwx64`, `ui-macosarm64` |
-| Material 3 | `org.thisisthepy.compose.material3:material3:1.11.1-ext.1` |
-| JetBrains 가 `org.jetbrains.androidx.*` 로 내는 라이브러리 | `org.thisisthepy.compose.androidx.<library>`. 예: `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:1.11.1-ext.1` |
-| runtime, `runtime-saveable`, annotation, collection | `org.thisisthepy.compose.runtime:runtime:1.11.1-ext.1` 등. JetBrains 의 것과 같이 클래스 없이 `androidx.compose.runtime` 을 가리키는 스텁입니다 |
-| 창 모듈 | `org.thisisthepy.compose.window:<module>:1.11.1-ext.1` |
-| `mingwX64` 용 skiko | `org.thisisthepy.compose.skiko:skiko-mingwx64:1.11.1-ext.1`. C++ 쪽, Skia, ICU 데이터는 그 `msvc` zip 에 있고, Compose 의 mingwX64 모듈이 이것에 의존합니다 |
+| Compose 모듈 | `org.thisisthepy.compose.<group>:<artifact>:1.11.1-ext.2`. 예: `org.thisisthepy.compose.ui:ui:1.11.1-ext.2` 과 그 타깃 `ui-desktop`, `ui-linuxx64`, `ui-mingwx64`, `ui-macosarm64` |
+| Material 3 | `org.thisisthepy.compose.material3:material3:1.11.1-ext.2` |
+| JetBrains 가 `org.jetbrains.androidx.*` 로 내는 라이브러리 | `org.thisisthepy.compose.androidx.<library>`. 예: `org.thisisthepy.compose.androidx.lifecycle:lifecycle-runtime-compose:1.11.1-ext.2` |
+| runtime, `runtime-saveable`, annotation, collection | `org.thisisthepy.compose.runtime:runtime:1.11.1-ext.2` 등. JetBrains 의 것과 같이 클래스 없이 `androidx.compose.runtime` 을 가리키는 스텁입니다 |
+| 창 모듈 | `org.thisisthepy.compose.window:<module>:1.11.1-ext.2` |
+| `mingwX64` 용 skiko | `org.thisisthepy.compose.skiko:skiko-mingwx64:1.11.1-ext.2`. C++ 쪽, Skia, ICU 데이터는 그 `msvc` zip 에 있고, Compose 의 mingwX64 모듈이 이것에 의존합니다 |
 | 실제로 도는 Compose runtime | `androidx.compose.runtime:runtime` `1.11.2`(Google 의 것). JetBrains 의 Compose 1.11.1 과 같습니다 |
-| AWT 스위치를 단 skiko-awt | `org.thisisthepy.compose.skiko:skiko-awt:1.11.1-ext.1`. `extended/skiko/build-skiko-awt.sh` 가 만들고, `org.jetbrains.skiko:skiko-awt` 를 대신합니다 |
+| AWT 스위치를 단 skiko-awt | `org.thisisthepy.compose.skiko:skiko-awt:1.11.1-ext.2`. `extended/skiko/build-skiko-awt.sh` 가 만들고, `org.jetbrains.skiko:skiko-awt` 를 대신합니다 |
 
 runtime 의 클래스는 Google 의 것입니다. 이 포크는 시작한 JetBrains 릴리스에 비해 `compose/runtime` 아래를
 바꾸지 않았고, JetBrains 자신의 `org.jetbrains.compose.runtime:runtime:1.11.1` 도
@@ -315,7 +315,7 @@ runtime 의 클래스는 Google 의 것입니다. 이 포크는 시작한 JetBra
 runtime 은 그 버전의 `androidx.compose.runtime` 에서만 와야 하고, 포크나 JetBrains 그룹의 어떤 것에서도
 와서는 안 됩니다.
 
-모든 것이 한 버전 줄 `<Compose Multiplatform version>-ext.<N>`(`1.11.1-ext.1`)에 있습니다. Compose
+모든 것이 한 버전 줄 `<Compose Multiplatform version>-ext.<N>`(`1.11.1-ext.2`)에 있습니다. Compose
 라이브러리와 다른 라이브러리 줄, 창 모듈, skiko-awt, Gradle 플러그인이 모두 그렇습니다. 그래서 사용하는
 쪽은 한 벌만 고정합니다. `N` 은 그 Compose 에 대한 이 포크의 릴리스 횟수입니다. 각 아티팩트의 소스가
 어느 업스트림 버전인지는 POM 의 description 에 있습니다. 릴리스가 아닌 로컬 빌드는
@@ -345,8 +345,8 @@ dependencyResolutionManagement {
 kotlin {
     linuxX64()
     sourceSets.commonMain.dependencies {
-        implementation("org.thisisthepy.compose.foundation:foundation:1.11.1-ext.1")
-        implementation("org.thisisthepy.compose.material3:material3:1.11.1-ext.1")
+        implementation("org.thisisthepy.compose.foundation:foundation:1.11.1-ext.2")
+        implementation("org.thisisthepy.compose.material3:material3:1.11.1-ext.2")
     }
 }
 ```
@@ -362,7 +362,7 @@ kotlin {
 
 `extended` 에 병합할 때마다 위의 모든 것(Compose, 창 모듈, 그리고 `org.thisisthepy` 아래로 옮긴 뒤의
 skiko-awt)을 GitHub Packages 에 `<version>-dev.<commit>` 으로 배포합니다. `<commit>` 은 병합 커밋의
-앞 열 글자입니다. 예: `1.11.1-ext.1-dev.0123456789`. 릴리스에는 `-dev.` 가 붙지 않으므로 둘이 섞이지
+앞 열 글자입니다. 예: `1.11.1-ext.2-dev.0123456789`. 릴리스에는 `-dev.` 가 붙지 않으므로 둘이 섞이지
 않습니다. `.github/workflows/extended-publish.yml` 이 이 일을 합니다. 올리기 전에, 빌드 안의 어떤 POM
 이나 Gradle 모듈도 이 접미사 없는 포크 버전을 가리키지 않는지 확인하고, 작은 소비자
 (`extended/publish/consumer`)로 창 모듈과 그 아래 Compose 를 실제로 해석해 봅니다. 서명은 하지 않습니다.

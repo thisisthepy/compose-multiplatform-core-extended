@@ -3,7 +3,7 @@
 // classes comes with them: next to the fork's (org.thisisthepy.compose) it would be the same
 // classes twice, which no resolver merges because the groups differ.
 //
-// Usage: gradle -p extended/compose/consumer-check checkResolution [-PforkVersion=1.11.1-ext.1]
+// Usage: gradle -p extended/compose/consumer-check checkResolution [-PforkVersion=1.11.1-ext.2]
 //        [-Ptargets=jvm,macosArm64,linuxX64,linuxArm64,mingwX64] [-Pwindow=true]
 //
 // The Compose runtime that ships is Google's androidx.compose.runtime, at the version JetBrains'
@@ -22,7 +22,7 @@ plugins {
     kotlin("multiplatform") version "2.3.20"
 }
 
-val forkVersion = providers.gradleProperty("forkVersion").orNull ?: "1.11.1-ext.1"
+val forkVersion = providers.gradleProperty("forkVersion").orNull ?: "1.11.1-ext.2"
 val wantedTargets = (providers.gradleProperty("targets").orNull ?: "jvm,macosArm64,linuxX64,linuxArm64,mingwX64")
     .split(",").map { it.trim() }.filter { it.isNotEmpty() }
 val withWindow = providers.gradleProperty("window").orNull?.toBoolean() ?: true

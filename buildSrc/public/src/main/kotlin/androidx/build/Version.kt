@@ -39,7 +39,7 @@ data class Version(
     val forkRelease: String? = null,
     /**
      * What the fork publishes this version as, when that is not what the fields above spell. The
-     * fork ships every library line on one version (`1.11.1-ext.1`), while each line's sources
+     * fork ships every library line on one version (`1.11.1-ext.2`), while each line's sources
      * are an upstream version of their own (Material 3 is `1.11.0-alpha07`). The fields keep the
      * upstream version, so every check that asks whether a version is stable, alpha or final
      * API answers as it does upstream; [toString], which Gradle publishes, gives this.

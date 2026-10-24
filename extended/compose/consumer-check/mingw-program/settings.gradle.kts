@@ -5,7 +5,7 @@ pluginManagement {
     repositories { mavenLocal(); gradlePluginPortal(); mavenCentral() }
     plugins {
         // Published with the fork, at its one version.
-        id("org.thisisthepy.kotlin.native.desktop") version (providers.gradleProperty("forkVersion").orNull ?: "1.11.1-ext.1")
+        id("org.thisisthepy.kotlin.native.desktop") version (providers.gradleProperty("forkVersion").orNull ?: "1.11.1-ext.2")
     }
 }
 dependencyResolutionManagement {

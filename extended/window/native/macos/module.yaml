@@ -19,14 +19,14 @@ dependencies:
 
 test-dependencies:
   - $kotlin.test
-  - org.thisisthepy.compose.animation:animation:1.11.1-ext.1
+  - org.thisisthepy.compose.animation:animation:1.11.1-ext.2
 
 settings:
   publishing:
     enabled: true
     group: org.thisisthepy.compose.window
     artifactId: native-macos
-    version: 1.11.1-ext.1
+    version: 1.11.1-ext.2
   kotlin:
     # A klib's unique_name defaults to the Amper module name, which is the directory name
     # (`common`, `macos`, `linux`). The Kotlin/Native linker refuses two libraries with the
