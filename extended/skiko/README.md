@@ -9,6 +9,7 @@ will not need publishing for a long time, and a fork is a repository to keep ali
 |---|---|
 | `0001-mingw-x64-target.patch` | A `mingwX64` target that builds skiko's Kotlin half only |
 | `extend-skiko-root.py` | Adds the mingw_x64 variants to skiko's root module metadata |
+| `republish-skiko-mingw.py` | Writes it as `org.thisisthepy.compose.skiko:skiko-mingwx64` with the C++ half as its `msvc` zip, and points Compose's mingwX64 modules at it |
 | `build-skiko-mingw.sh` | Applies the patch, publishes to the local Maven repository, compiles the C++ half |
 | `build-skiko-static-jvm.sh` | skiko's JVM natives as a static archive, for a native image that links Skia in |
 | `static_jawt.c` | Replaces skiko's `jawt.o` in that archive: calls the linked-in `JAWT_GetAWT` instead of opening `<java.home>/lib/libjawt` by path |
@@ -27,16 +28,24 @@ Kotlin/Native's only Windows target is MinGW. JetBrains builds Skia for Windows 
 and skiko's C++ bridges call Skia's C++ classes, so they have to be MSVC too. The two halves
 meet only in C calls (`org_jetbrains_skia_*`), which both ABIs agree on.
 
-An application linking all of it into one MSVC executable has two more MinGW conventions to
-deal with: static constructors in `.ctors` that the MSVC runtime never runs, and
-per-function unwind data that an MSVC-mode linker discards. That belongs to whoever links
-the executable, not to skiko, and is not handled here.
+JetBrains' skiko klibs embed their C++ half and Skia, and Kotlin/Native's linker takes them
+from there. Here that linker is MinGW's and the C++ half is MSVC's, so the klib carries Kotlin
+only and the C++ half ships beside it as the `msvc` zip. A program is linked into one MSVC
+executable by `org.thisisthepy.kotlin.native.desktop` (thisisthepy/compose-multiplatform-extended),
+which adds that zip, and which deals with the two MinGW conventions that link meets: static
+constructors in `.ctors` that the MSVC runtime never runs, and per-function unwind data that
+an MSVC-mode linker discards. Skia's ICU data goes in as `embedded_icu.obj`, linked whole,
+so the program is one file with no `icudtl.dat` beside it.
+`.github/workflows/extended-publish-local.yml` links a small Compose program that way from the
+published repository alone, checks it is one file, and runs it alone on a runner with every
+`icudtl.dat` removed: it draws, and shapes 한 and 글 into distinct inked glyphs.
 
 ## Build order
 
 1. `build-skiko-mingw.sh <work-dir>`
 2. This fork's Compose modules for mingwX64, which read skiko from the local Maven
    repository before Maven Central (`buildSrc/repos.gradle`).
+3. `republish-skiko-mingw.py <repository> 0.144.6 <version> <work-dir>/out/windows-x64`.
 
 ## skiko linked into a native image (JVM, macOS arm64)
 

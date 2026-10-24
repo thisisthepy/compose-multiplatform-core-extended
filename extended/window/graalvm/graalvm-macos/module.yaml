@@ -30,7 +30,7 @@ settings:
     enabled: true
     group: org.thisisthepy.compose.window
     artifactId: graalvm-macos
-    version: 0.1.0
+    version: 1.11.1-ext.1
 
 repositories:
   - id: mavenLocal

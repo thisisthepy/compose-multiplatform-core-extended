@@ -238,6 +238,16 @@ set kotlin_cli_target_dir=%KOTLIN_CLI_BOOTSTRAP_CACHE_DIR%\kotlin-cli-%kotlin_cl
 call :download_and_extract "Kotlin Toolchain distribution v%kotlin_cli_version%" "%kotlin_cli_url%" "%kotlin_cli_target_dir%" "%kotlin_cli_sha256%" "256" "true"
 if errorlevel 1 goto fail
 
+REM Pre-fetch Adoptium JDK zip with curl to avoid Ktor line length overflow on GitHub CSP
+set "amper_download_cache=%LOCALAPPDATA%\JetBrains\Kotlin\download.cache"
+if not exist "%amper_download_cache%" mkdir "%amper_download_cache%"
+set "win_jdk_file1=%amper_download_cache%\c93db5a50c-OpenJDK25U-jdk_x64_windows_hotspot_25.0.4.1_1.zip"
+if not exist "%win_jdk_file1%" curl -fsSL -o "%win_jdk_file1%.tmp" "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.4.1%%2B1/OpenJDK25U-jdk_x64_windows_hotspot_25.0.4.1_1.zip" && move /y "%win_jdk_file1%.tmp" "%win_jdk_file1%"
+set "win_jdk_file2=%amper_download_cache%\3f354780d9-OpenJDK25U-jdk_x64_windows_hotspot_25.0.5_8.zip"
+if not exist "%win_jdk_file2%" curl -fsSL -o "%win_jdk_file2%.tmp" "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%%2B8/OpenJDK25U-jdk_x64_windows_hotspot_25.0.5_8.zip" && move /y "%win_jdk_file2%.tmp" "%win_jdk_file2%"
+set "win_konan_file=%amper_download_cache%\d191950bff-kotlin-native-prebuilt-2.4.10-windows-x86_64.zip"
+if not exist "%win_konan_file%" curl -fsSL -o "%win_konan_file%.tmp" "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/2.4.10/kotlin-native-prebuilt-2.4.10-windows-x86_64.zip" && move /y "%win_konan_file%.tmp" "%win_konan_file%"
+
 REM ********** Launch the Kotlin CLI **********
 
 rem Determine the correct busybox binary based on architecture
@@ -252,18 +262,6 @@ if "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
 
 rem We use busybox here because it doesn't reinterpret the user-passed command-line arguments (that we pass via %*).
 rem Also this way we can use the unified launcher script (.sh)
-set "download_cache_dir=%LOCALAPPDATA%\JetBrains\Kotlin\download.cache"
-if not exist "%download_cache_dir%" mkdir "%download_cache_dir%"
-set "native_target=%download_cache_dir%\d191950bff-kotlin-native-prebuilt-2.4.10-windows-x86_64.zip"
-if not exist "%native_target%" (
-    curl.exe -sSL --retry 3 -o "%native_target%.tmp" "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/2.4.10/kotlin-native-prebuilt-2.4.10-windows-x86_64.zip"
-    if exist "%native_target%.tmp" move /y "%native_target%.tmp" "%native_target%"
-)
-set "jdk_target=%download_cache_dir%\c93db5a50c-OpenJDK25U-jdk_x64_windows_hotspot_25.0.4.1_1.zip"
-if not exist "%jdk_target%" (
-    curl.exe -fsSL --retry 3 -o "%jdk_target%.tmp" "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.4.1+1/OpenJDK25U-jdk_x64_windows_hotspot_25.0.4.1_1.zip"
-    if exist "%jdk_target%.tmp" move /y "%jdk_target%.tmp" "%jdk_target%"
-)
 set KOTLIN_CLI_WRAPPER_PATH=%~f0
 
 rem The '& call' after the app run is to avoid the "Terminate batch job (Y/N)?" prompt

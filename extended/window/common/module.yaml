@@ -21,7 +21,7 @@ settings:
     enabled: true
     group: org.thisisthepy.compose.window
     artifactId: common
-    version: 0.1.0
+    version: 1.11.1-ext.1
   kotlin:
     # A klib's unique_name defaults to the Amper module name, which is the directory name
     # (`common`, `macos`, `linux`). The Kotlin/Native linker refuses two libraries with the
