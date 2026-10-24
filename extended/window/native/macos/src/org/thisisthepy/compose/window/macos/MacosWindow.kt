@@ -492,9 +492,13 @@ class MacosWindow(
             addTrackingArea(area)
         }
 
-        private fun postPointer(event: NSEvent, kind: Int, secondary: Boolean = false) {
+        // Whether the primary button's press went to the scene as a secondary one (control was
+        // held), so that its release is marked the same, whatever is held by then.
+        private var controlClick = false
+
+        private fun postPointer(event: NSEvent, kind: Int, eventButton: Int = 0) {
             val position = event.offsetInView
-            val buttons = WindowEvent.pointerButtons(NSEvent.pressedMouseButtons.toInt(), secondary)
+            val buttons = WindowEvent.pointerButtons(NSEvent.pressedMouseButtons.toInt(), eventButton)
             onEvent?.invoke(
                 WindowEvent(
                     kind = kind,
@@ -512,22 +516,38 @@ class MacosWindow(
         override fun mouseDown(event: NSEvent) {
             if (hasMarkedText()) inputContext?.discardMarkedText()
             val control = event.modifierFlags and NSEventModifierFlagControl != 0uL
-            postPointer(event, WindowEvent.POINTER_DOWN, secondary = control)
+            controlClick = control
+            postPointer(event, WindowEvent.POINTER_DOWN, if (control) WindowEvent.SECONDARY_BUTTON else 0)
         }
 
-        override fun mouseUp(event: NSEvent) =
-            postPointer(event, WindowEvent.POINTER_UP)
+        override fun mouseUp(event: NSEvent) {
+            val was = controlClick
+            controlClick = false
+            postPointer(event, WindowEvent.POINTER_UP, if (was) WindowEvent.SECONDARY_BUTTON else 0)
+        }
 
         override fun rightMouseDown(event: NSEvent) =
-            postPointer(event, WindowEvent.POINTER_DOWN, secondary = true)
+            postPointer(event, WindowEvent.POINTER_DOWN, WindowEvent.SECONDARY_BUTTON)
 
         override fun rightMouseUp(event: NSEvent) =
-            postPointer(event, WindowEvent.POINTER_UP, secondary = true)
+            postPointer(event, WindowEvent.POINTER_UP, WindowEvent.SECONDARY_BUTTON)
+
+        override fun otherMouseDown(event: NSEvent) =
+            postPointer(event, WindowEvent.POINTER_DOWN, eventButtonOfMacButton(event.buttonNumber.toInt()))
+
+        override fun otherMouseUp(event: NSEvent) =
+            postPointer(event, WindowEvent.POINTER_UP, eventButtonOfMacButton(event.buttonNumber.toInt()))
 
         override fun mouseMoved(event: NSEvent) =
             postPointer(event, WindowEvent.POINTER_MOVE)
 
         override fun mouseDragged(event: NSEvent) =
+            postPointer(event, WindowEvent.POINTER_MOVE)
+
+        override fun rightMouseDragged(event: NSEvent) =
+            postPointer(event, WindowEvent.POINTER_MOVE)
+
+        override fun otherMouseDragged(event: NSEvent) =
             postPointer(event, WindowEvent.POINTER_MOVE)
 
         override fun scrollWheel(event: NSEvent) {
@@ -905,3 +925,15 @@ internal fun applyChrome(window: NSWindow, chrome: MacosWindowChrome) {
  * Rust's `Instant` reads on macOS.
  */
 internal fun uptimeNanos(): Long = (NSProcessInfo.processInfo.systemUptime * 1_000_000_000.0).toLong()
+
+/**
+ * The [WindowEvent] button flag of the button AppKit numbers [buttonNumber] in an `otherMouse`
+ * event: 2 is the middle button, 3 and 4 the back and forward ones. The left and right buttons
+ * have their own event types and are not numbered here, so any other number has no flag.
+ */
+internal fun eventButtonOfMacButton(buttonNumber: Int): Int = when (buttonNumber) {
+    2 -> WindowEvent.MIDDLE_BUTTON
+    3 -> WindowEvent.BACK_BUTTON
+    4 -> WindowEvent.FORWARD_BUTTON
+    else -> 0
+}
