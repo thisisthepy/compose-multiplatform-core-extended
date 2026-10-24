@@ -44,7 +44,7 @@ settings:
     enabled: true
     group: org.thisisthepy.compose.window
     artifactId: scene
-    version: 0.1.0
+    version: 1.11.1-ext.1
   kotlin:
     # The klib takes its Maven coordinates as its unique_name, like the other window modules.
     freeCompilerArgs:

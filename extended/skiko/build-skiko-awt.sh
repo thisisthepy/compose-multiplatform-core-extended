@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Builds skiko's JVM library (skiko-awt) with the AWT switch, and publishes it to the local
-# Maven repository as 0.144.6.1: a version of its own, one above the 0.144.6 Compose 1.11 asks
-# for.
+# Maven repository as org.thisisthepy.compose.skiko:skiko-awt at this fork's version.
 #
 # The switch is awt/0001-awt-switch.patch: `Setup.init` sets a Swing look and feel when the
 # run-time property `skiko.rendering.laf.global` is true, and a GraalVM image analysis walks
@@ -11,25 +10,30 @@
 #
 # Only the Kotlin half is built: the natives come from JetBrains' skiko-awt-runtime-* jars at
 # 0.144.6, which this does not touch, and the published metadata names them at that version.
+# The package names are skiko's own; only the coordinate is this fork's.
 #
-# Why a version of its own. Published as 0.144.6 it would sit at JetBrains' coordinates, and a
-# resolver that already holds JetBrains' 0.144.6 (the Kotlin toolchain's cache does) never
-# looks at the local repository for it: the build links, and the image carries an unpatched
-# skiko-awt and keeps the Java toolkit. skiko stays in JetBrains' group, because every Compose
-# module asks for it there, so the version is what tells the two apart. A suffix would not do:
-# a tag sorts below the release in Gradle and above it in Maven. 0.144.6.1 sorts above 0.144.6
-# in both, so a consumer that names it also wins over the 0.144.6 that Compose brings in.
+# Why this fork's group. Everything this fork ships goes out under org.thisisthepy, the
+# namespace it can publish to, on one version line (gradle.properties), with the upstream
+# version in the POM's description. Compose still asks for JetBrains' org.jetbrains.skiko:skiko-awt,
+# so the Gradle module metadata declares that coordinate as a capability of this one: Gradle
+# then sees the two as one library and keeps one, and the capability's version (0.144.6.1,
+# above JetBrains' 0.144.6) makes this one the higher, which is the one a build that resolves
+# the conflict by version keeps (the fork's Gradle plugin does).
 #
 # Usage: build-skiko-awt.sh <work-dir> [--clean]
 #
-# Needs: git, a JDK 17 or 21 in JAVA_HOME.
+# Needs: git, python3, a JDK 17 or 21 in JAVA_HOME.
 set -euo pipefail
 
 UPSTREAM="https://github.com/JetBrains/skiko.git"
 REVISION="9a5b398bb2044fff7e7a84fbfd6f4b803e4427c0"
-# The skiko version the sources are, and the version this build publishes as.
+# The skiko version the sources are, the coordinate and version this build publishes as (the
+# fork's one version line, gradle.properties), and the version of JetBrains' coordinate it
+# declares as a capability.
 UPSTREAM_VERSION="0.144.6"
-PUBLISHED_AS="0.144.6.1"
+PUBLISHED_GROUP="org.thisisthepy.compose.skiko"
+PUBLISHED_AS="1.11.1-ext.1"
+CAPABILITY_VERSION="0.144.6.1"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -73,26 +77,11 @@ rm -rf "$staging"
 
 from="$staging/org/jetbrains/skiko/skiko-awt/$UPSTREAM_VERSION"
 [[ -d "$from" ]] || die "no $from after the build"
-base="$HOME/.m2/repository/org/jetbrains/skiko/skiko-awt"
+base="$HOME/.m2/repository/$(tr . / <<< "$PUBLISHED_GROUP")/skiko-awt"
 rm -rf "${base:?}/$PUBLISHED_AS"
 mkdir -p "$base/$PUBLISHED_AS"
-for file in "$from"/*; do
-    name="$(basename "$file")"
-    target="$base/$PUBLISHED_AS/${name/skiko-awt-$UPSTREAM_VERSION/skiko-awt-$PUBLISHED_AS}"
-    case "$name" in
-        # Checksums of the files before renaming. Gradle and Maven check them when present.
-        *.md5|*.sha1|*.sha256|*.sha512) ;;
-        *.pom|*.module)
-            # Its own name and version only. The first version in each file is its own; the
-            # runtime dependencies that follow keep the upstream version.
-            FROM="$UPSTREAM_VERSION" TO="$PUBLISHED_AS" perl -0777 -pe '
-                s/(skiko-awt)-\Q$ENV{FROM}\E/$1-$ENV{TO}/g;
-                s/(<version>)\Q$ENV{FROM}\E(<\/version>)/$1$ENV{TO}$2/;
-                s/("version":\s*")\Q$ENV{FROM}\E(")/$1$ENV{TO}$2/;
-            ' "$file" > "$target" ;;
-        *) cp "$file" "$target" ;;
-    esac
-done
+python3 "$HERE/republish-skiko-awt.py" "$from" "$base/$PUBLISHED_AS" \
+    "$UPSTREAM_VERSION" "$PUBLISHED_GROUP" "$PUBLISHED_AS" "$CAPABILITY_VERSION"
 rm -rf "$staging"
 
 jar="$base/$PUBLISHED_AS/skiko-awt-$PUBLISHED_AS.jar"
