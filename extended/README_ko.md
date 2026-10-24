@@ -357,3 +357,55 @@ kotlin {
 치르는 값: 서드파티 Compose 라이브러리는 `org.jetbrains.compose` 에 맞춰 빌드되어 있습니다. 이 포크와
 함께 쓰면 JetBrains 의 Compose UI 가 한 벌 더 들어오고, 그룹이 달라 어떤 리졸버도 둘을 합치지
 못합니다. 이 포크와 함께 쓰는 것은 이 포크에 맞춰 빌드해야 합니다.
+
+## GitHub Packages 의 개발 빌드
+
+`extended` 에 병합할 때마다 위의 모든 것(Compose, 창 모듈, 그리고 `org.thisisthepy` 아래로 옮긴 뒤의
+skiko-awt)을 GitHub Packages 에 `<version>-dev.<commit>` 으로 배포합니다. `<commit>` 은 병합 커밋의
+앞 열 글자입니다. 예: `1.11.1-ext.1-dev.0123456789`. 릴리스에는 `-dev.` 가 붙지 않으므로 둘이 섞이지
+않습니다. `.github/workflows/extended-publish.yml` 이 이 일을 합니다. 올리기 전에, 빌드 안의 어떤 POM
+이나 Gradle 모듈도 이 접미사 없는 포크 버전을 가리키지 않는지 확인하고, 작은 소비자
+(`extended/publish/consumer`)로 창 모듈과 그 아래 Compose 를 실제로 해석해 봅니다. 서명은 하지 않습니다.
+
+저장소는 `https://maven.pkg.github.com/thisisthepy/compose-multiplatform-core-extended` 입니다.
+GitHub Packages 는 공개 패키지라도 Maven 다운로드마다 인증을 요구합니다.
+
+- 이 저장소의 워크플로에서는 `packages: read` 를 준 `GITHUB_TOKEN` 으로 됩니다.
+- 다른 저장소의 워크플로를 포함해 그 밖의 곳에서는 `read:packages` 범위의 개인 액세스 토큰
+  (classic)을 씁니다. Maven 레지스트리는 배포한 저장소의 권한을 그대로 따르므로, 다른 저장소의
+  `GITHUB_TOKEN` 을 들여보내는 패키지별 접근 설정이 없습니다.
+
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositories {
+        maven("https://maven.pkg.github.com/thisisthepy/compose-multiplatform-core-extended") {
+            credentials {
+                username = providers.environmentVariable("GITHUB_ACTOR").orNull ?: "token"
+                password = providers.environmentVariable("GITHUB_PACKAGES_TOKEN").get()
+            }
+            content { includeGroupByRegex("org\\.thisisthepy(\\..*)?") }
+        }
+        mavenCentral()
+        google()
+    }
+}
+```
+
+```yaml
+# 소비하는 쪽 워크플로
+env:
+  GITHUB_PACKAGES_TOKEN: ${{ secrets.THISISTHEPY_PACKAGES_TOKEN }}  # read:packages 를 준 PAT
+```
+
+포크 아티팩트는 모두 같은 `-dev.<commit>` 버전으로 지정합니다. 두 커밋의 빌드를 한 앱에 섞은 조합은
+아무도 시험하지 않았습니다. 패키지 목록은
+<https://github.com/orgs/thisisthepy/packages?repo_name=compose-multiplatform-core-extended> 에 있습니다.
+
+## Maven Central 릴리스
+
+릴리스는 같은 워크플로가 Maven Central 로 냅니다. 릴리스가 되는 병합 커밋에 태그 `v<version>` 을
+달면, 서명해서 Sonatype Central Portal 로 올립니다. 아직 Central 에 올린 것은 없습니다
+([#124](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/124)). 배포 대상을
+건드리는 풀 리퀘스트는 릴리스 전체를 시험 삼아 돌립니다. 그 실행만을 위해 만든 키로 서명하고, 번들을
+Central 과 같은 기준으로 검사합니다.
