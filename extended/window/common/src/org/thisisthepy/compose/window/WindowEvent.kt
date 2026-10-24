@@ -58,5 +58,21 @@ data class WindowEvent(
         // chosen; `keyCode` is its [EditMenuId]. Platform layers hand it to
         // [WindowListener.onContextMenuChosen] and do not pass it on as an event.
         const val MENU_COMMAND = 17
+
+        /** The operating system's text size changed; the new multiplier is in `x`. */
+        const val TEXT_SCALE_CHANGED = 18
+
+        /** The event a platform layer queues when the text size becomes [scale]. */
+        @Suppress("FunctionName")
+        fun TextScaleChanged(scale: Float): WindowEvent = WindowEvent(
+            kind = TEXT_SCALE_CHANGED, x = scale, y = 0f, buttons = 0, modifiers = 0,
+            keyCode = 0, codePoint = 0, text = "",
+        )
     }
+
+    /** True for [TEXT_SCALE_CHANGED]. */
+    val isTextScaleChanged: Boolean get() = kind == TEXT_SCALE_CHANGED
+
+    /** The multiplier a [TEXT_SCALE_CHANGED] event carries. */
+    val textScale: Float get() = x
 }

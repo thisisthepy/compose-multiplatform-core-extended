@@ -16,6 +16,9 @@ interface WindowListener {
     /** The window moved to a display with another scale, or the scale changed. */
     fun onScaleChanged(scale: Float) {}
 
+    /** The operating system's text size changed to [scale] times the default. */
+    fun onTextScaleChanged(scale: Float) {}
+
     /** The user chose [id] from a menu opened by [WindowPlatform.showContextMenu]; -1 if dismissed. */
     fun onContextMenuChosen(id: Int) {}
 
@@ -93,6 +96,13 @@ interface WindowPlatform {
 
     /** The system's current appearance. */
     fun systemTheme(): SystemTheme
+
+    /**
+     * The operating system's text size as a multiplier, 1 when unchanged (see [TextScale]).
+     * A platform with no such setting answers 1, as macOS does. A change is reported through
+     * [WindowListener.onTextScaleChanged].
+     */
+    fun textScale(): Float = TextScale.DEFAULT
 
     fun setTitle(title: String)
 

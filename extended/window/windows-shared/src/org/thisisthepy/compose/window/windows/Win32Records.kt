@@ -6,6 +6,7 @@ import kotlinx.cinterop.get
 import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.set
 import org.thisisthepy.compose.window.AccessibleElement
+import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.windows.c.DXC_TEXT_BYTES
 import org.thisisthepy.compose.window.windows.c.dxc_element
@@ -27,7 +28,14 @@ object Win32Records {
     const val MAX_ELEMENTS: Int = 256
 
     /** One event as the window wrote it down. */
-    fun readEvent(record: dxc_event): WindowEvent = WindowEvent(
+    fun readEvent(record: dxc_event): WindowEvent =
+        if (record.kind == WindowEvent.TEXT_SCALE_CHANGED) {
+            WindowEvent.TextScaleChanged(TextScale.fromWindowsPercent(record.x.toInt()))
+        } else {
+            readPlainEvent(record)
+        }
+
+    private fun readPlainEvent(record: dxc_event): WindowEvent = WindowEvent(
         kind = record.kind,
         x = record.x,
         y = record.y,

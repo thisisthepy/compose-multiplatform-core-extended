@@ -43,6 +43,14 @@ class Win32RecordsTest {
     }
 
     @Test
+    fun textScaleEventTurnsThePercentIntoAMultiplier() = memScoped {
+        val record = alloc<dxc_event>()
+        record.kind = WindowEvent.TEXT_SCALE_CHANGED
+        record.x = 150f
+        assertEquals(WindowEvent.TextScaleChanged(1.5f), Win32Records.readEvent(record))
+    }
+
+    @Test
     fun textWithNoZeroStopsAtTheEndOfTheField() = memScoped {
         val record = alloc<dxc_event>()
         for (index in 0 until Win32Records.TEXT_BYTES) record.text[index] = 'x'.code.toByte()
