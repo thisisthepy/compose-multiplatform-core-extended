@@ -162,6 +162,7 @@ jobs:
       # the JVM and Linux x64 module it is built and tested as; the checkout is this job's own.
       - name: The scene for this runner's platforms
         run: |
+          sed -i '/native\/macos/d' project.yaml
           sed -i 's/^  platforms: \[.*\]$/  platforms: [ jvm, linuxX64 ]/' scene/module.yaml
           grep -qx '  platforms: \[ jvm, linuxX64 \]' scene/module.yaml
 

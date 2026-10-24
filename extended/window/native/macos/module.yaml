@@ -6,7 +6,7 @@
 # common window module and reached from here.
 product:
   type: lib
-  platforms: [ macosArm64, macosX64 ]
+  platforms: [ macosArm64 ]
 
 # Compose's compiler plugin through the template rather than `compose: enabled`, which would add
 # JetBrains' runtime and components-resources and with them JetBrains' Compose next to the fork's.
