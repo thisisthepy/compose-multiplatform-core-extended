@@ -60,7 +60,7 @@ test-settings:
       - -module-name
       - org.thisisthepy.compose.window:scene-test
 
-# Link fontconfig and freetype for Linux tests
+# Link GL, fontconfig and freetype for Linux tests
 test-settings@linuxX64:
   kotlin:
     freeCompilerArgs:
@@ -70,6 +70,8 @@ test-settings@linuxX64:
       - -L/usr/lib/x86_64-linux-gnu
       - -linker-option
       - -L/usr/lib64
+      - -linker-option
+      - -lGL
       - -linker-option
       - -lfontconfig
       - -linker-option
@@ -82,6 +84,10 @@ test-settings@linuxArm64:
       - org.thisisthepy.compose.window:scene-test
       - -linker-option
       - -L/usr/lib/aarch64-linux-gnu
+      - -linker-option
+      - -lGL
+      - -linker-option
+      - -lEGL
       - -linker-option
       - -lfontconfig
       - -linker-option
