@@ -38,6 +38,8 @@ enum {
     DXC_EVENT_FILES_ENTERED = 10,
     DXC_EVENT_FILES_DROPPED = 11,
     DXC_EVENT_FILES_EXITED = 12,
+    // The Text size setting moved; `x` is the new percent (100 means unchanged, 0 unset).
+    DXC_EVENT_TEXT_SCALE_CHANGED = 18,
 };
 
 // Room for what an input method is composing, which is a syllable or a word and never a
@@ -141,6 +143,9 @@ void dxc_native_window_server_size(int32_t *width, int32_t *height);
 void dxc_native_pump(double seconds);
 int32_t dxc_native_window_closed(void);
 int32_t dxc_native_poll_event(struct dxc_event *out);
+
+// The Text size slider as a percent (100 to 225), or 0 when it was never set.
+int32_t dxc_native_text_scale_percent(void);
 
 // Input, text and the system's own services.
 void dxc_native_set_cursor(int32_t shape);

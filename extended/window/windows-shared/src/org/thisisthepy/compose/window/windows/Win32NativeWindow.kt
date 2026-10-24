@@ -13,6 +13,7 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.value
 import org.thisisthepy.compose.window.AccessibleElement
+import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.windows.c.dxc_element
@@ -31,6 +32,7 @@ import org.thisisthepy.compose.window.windows.c.dxc_native_set_accessibility
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_cursor
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_draw_callback
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_raster_resize
+import org.thisisthepy.compose.window.windows.c.dxc_native_text_scale_percent
 import org.thisisthepy.compose.window.windows.c.dxc_native_window
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_action
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_closed
@@ -186,6 +188,9 @@ object Win32Loop {
         }
         return events
     }
+
+    /** The operating system's text size as a multiplier, 1 when unchanged. */
+    fun textScale(): Float = TextScale.fromWindowsPercent(dxc_native_text_scale_percent())
 
     /** The pointer's shape: [Win32Cursor.ARROW], [Win32Cursor.HAND], [Win32Cursor.TEXT] or [Win32Cursor.CROSSHAIR]. */
     fun setCursor(shape: Int) = dxc_native_set_cursor(shape)
