@@ -41,8 +41,11 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: X11 and GL headers
-        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxext-dev libgl-dev libgl1-mesa-dri libglx-mesa0 xvfb
+      - name: X11 and GL headers, and at-spi2 with a session bus
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxext-dev libgl-dev libgl1-mesa-dri libglx-mesa0 xvfb \
+            openbox xdotool x11-utils dbus at-spi2-core libatspi2.0-dev pkg-config
 
       - name: Compile the C
         working-directory: extended/window/graalvm/graalvm-linux
@@ -95,14 +98,20 @@ jobs:
           cc -O1 -Wall -pthread -o build/wm_resize_test test/c/wm_resize_test.c -lX11 -lXext -lGL
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/wm_resize_test | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: The semantics reader is the Kotlin/Native window's, unchanged
+      - name: The caption drag, every edge and the double click, then the System frame (openbox, under a virtual display)
+        working-directory: extended/window/graalvm/graalvm-linux
+        env:
+          WM_CHROME_SCRIPT: ${{ github.workspace }}/extended/window/scripts/wm-chrome.sh
+        run: |
+          cc -O1 -Wall -pthread -o build/chrome_test test/c/chrome_test.c -lX11 -lXext -lGL -lm
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/chrome_test modern | tee -a "$GITHUB_STEP_SUMMARY"
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/chrome_test system | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: The AT-SPI reader the tests read the tree back with
         working-directory: extended/window
         run: |
-          cmp native/linux/src/AtspiSemantics.kt \
-            graalvm/graalvm-linux/src/org/thisisthepy/compose/window/atspi/AtspiSemantics.kt || {
-            echo "graalvm-linux's AtspiSemantics.kt differs from native/linux's; change both together" >&2
-            exit 1
-          }
+          mkdir -p build
+          cc -O1 -Wall -o build/atspi-readback scripts/atspi-readback.c $(pkg-config --cflags --libs atspi-2 gobject-2.0)
 
       - name: The Kotlin module has no java.awt
         working-directory: extended/window/graalvm/graalvm-linux
@@ -126,11 +135,44 @@ jobs:
         working-directory: extended/window
         shell: bash
         run: |
-          perl -0pi -e 's/^  platforms: \[ jvm, macosArm64 \]$/  platforms: [ jvm ]/m' scene/module.yaml
+          perl -0pi -e 's/^  platforms: \[.*\]$/  platforms: [ jvm ]/m' scene/module.yaml
           grep -q '^  platforms: \[ jvm \]$' scene/module.yaml
 
+      # On a session bus of its own, so AtspiReadbackTest publishes to a real at-spi2 registry and
+      # reads the tree back with libatspi.
       - name: Compile and test the Kotlin
         working-directory: extended/window
+        env:
+          ATSPI_READBACK: ${{ github.workspace }}/extended/window/build/atspi-readback
         run: |
           ./kotlin build -m graalvm-linux -p jvm
-          ./kotlin test -m graalvm-linux -p jvm
+          dbus-run-session -- xvfb-run -a ./kotlin test -m graalvm-linux -p jvm
+
+  # The C layer on arm64, which is where a GraalVM image for arm64 Linux links it: the same
+  # chrome checks under openbox. The Kotlin above is the same bytes on either architecture.
+  chrome-arm64:
+    name: C chrome under openbox (Linux arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            extended/window
+          filter: blob:none
+
+      - name: X11 and GL headers, openbox and xdotool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxext-dev libgl-dev libgl1-mesa-dri libglx-mesa0 xvfb \
+            openbox xdotool x11-utils
+
+      - name: The caption drag, every edge and the double click, then the System frame
+        working-directory: extended/window/graalvm/graalvm-linux
+        env:
+          WM_CHROME_SCRIPT: ${{ github.workspace }}/extended/window/scripts/wm-chrome.sh
+        run: |
+          mkdir -p build
+          cc -O1 -Wall -pthread -o build/chrome_test test/c/chrome_test.c -lX11 -lXext -lGL -lm
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/chrome_test modern | tee -a "$GITHUB_STEP_SUMMARY"
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/chrome_test system | tee -a "$GITHUB_STEP_SUMMARY"

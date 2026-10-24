@@ -187,3 +187,11 @@ fun DBusWriter.entry(key: String, signature: String, value: DBusWriter.() -> Uni
 
 /** Reads a 32-bit signed integer. */
 fun DBusReader.i32(): Int = u32().toInt()
+
+/** Reads an IEEE double, eight bytes aligned to eight. */
+fun DBusReader.double(): Double {
+    align(8)
+    var bits = 0L
+    for (shift in 0 until 8) bits = bits or (byte().toLong() shl (8 * shift))
+    return Double.fromBits(bits)
+}

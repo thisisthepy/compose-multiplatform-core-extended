@@ -78,6 +78,7 @@ settings:
     freeCompilerArgs:
       - -module-name
       - org.thisisthepy.compose.window:native-linux
+      - -Xklib-duplicated-unique-name-strategy=allow-first-with-warning
     optIns:
       - kotlinx.cinterop.ExperimentalForeignApi
       - kotlinx.cinterop.BetaInteropApi
@@ -89,3 +90,4 @@ test-settings:
     freeCompilerArgs:
       - -module-name
       - org.thisisthepy.compose.window:native-linux-test
+      - -Xklib-duplicated-unique-name-strategy=allow-first-with-warning

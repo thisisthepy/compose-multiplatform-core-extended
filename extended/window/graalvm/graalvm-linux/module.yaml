@@ -12,16 +12,14 @@ dependencies:
   # Skia's classes, which a compile-only module does not pass on. The application's own
   # skiko-awt is the one it runs with.
   - org.jetbrains.skiko:skiko-awt:0.144.6: compile-only
-  # The semantics reader for AT-SPI reads Compose's semantics tree. The renderer that hosts
-  # the window brings Compose UI itself, at the version it is built with, so this module only
-  # compiles against it and does not choose one for it. No @Composable is declared here, so
-  # the Compose compiler is not needed either.
-  - org.jetbrains.compose.ui:ui-desktop:1.11.1: compile-only
 
 test-dependencies:
   - $kotlin.test
 
 settings:
+  jvm:
+    jdk:
+      version: 21
   publishing:
     enabled: true
     group: org.thisisthepy.compose.window

@@ -45,6 +45,11 @@ jobs:
             .github/actions
           filter: blob:none
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
       - name: The module names no java.awt
         run: |
           if grep -rEn 'java\.awt|javax\.swing|sun\.awt' graalvm/graalvm-macos/src graalvm/graalvm-macos/module.yaml; then
@@ -126,7 +131,7 @@ jobs:
         working-directory: extended/window
         shell: bash
         run: |
-          perl -0pi -e 's/^  platforms: \[ jvm, macosArm64 \]$/  platforms: [ jvm ]/m' scene/module.yaml
+          perl -0pi -e 's/^  platforms: \[.*\]$/  platforms: [ jvm ]/m' scene/module.yaml
           grep -q '^  platforms: \[ jvm \]$' scene/module.yaml
 
       - name: Compile the Kotlin wrapper

@@ -110,9 +110,10 @@ Windows 에서 Skia 는 실행 파일 옆의 `icudtl.dat` 를 찾고, 없으면 
 | 모듈 | 아티팩트 | 플랫폼 | 내용 |
 |---|---|---|---|
 | `common` | `org.thisisthepy.compose.window:common` | JVM, `macosArm64`, `linuxX64`, `linuxArm64`, `mingwX64` | `WindowPlatform`, 이벤트와 상태와 정책 타입, 모든 플랫폼 계층이 함께 쓰는 규칙. 툴킷도 Compose 도 없습니다 |
-| `scene` | `org.thisisthepy.compose.window:scene` | JVM, `macosArm64` | `WindowPlatform` 으로 연 창에 Compose 장면을 올립니다. 프레임 루프, 그리고 Compose 의 플랫폼 텍스트 입력을 거치는 포인터, 키, IME 텍스트 |
+| `scene` | `org.thisisthepy.compose.window:scene` | JVM, `macosArm64`, `linuxX64`, `linuxArm64` | `WindowPlatform` 으로 연 창에 Compose 장면을 올립니다. 프레임 루프, Compose 의 플랫폼 텍스트 입력을 거치는 포인터, 키, IME 텍스트, 캡션(`LocalWindowCaption`, 플랫폼이 창 버튼을 그리지 않을 때 그리는 버튼, 그 버튼과 가장자리로 하는 이동과 크기 조절), 그리고 읽는 프로그램이 들을 때 플랫폼의 접근성 다리로 넘기는 semantics 와 그 프로그램이 요청한 동작의 실행 |
 | `native/macos` | `org.thisisthepy.compose.window:native-macos` | `macosArm64` | Kotlin/Native 창: AppKit, Metal, 네이티브 텍스트 메뉴와 편집 메뉴, 창 크롬 |
 | `native/linux` | `org.thisisthepy.compose.window:native-linux` | `linuxX64`, `linuxArm64` | Kotlin/Native 창: Xlib, GLX, XIM, D-Bus 위의 AT-SPI |
+| `native/linux-scene` | `org.thisisthepy.compose.window:native-linux-scene` | `linuxX64`, `linuxArm64` | Kotlin/Native X11 창에서 `scene`이 그리는 GL 표면 `x11WindowSurface`. 창이 장면을 링크하지 않도록 `native/linux` 와 따로 둡니다 |
 | `graalvm/graalvm-macos` | `org.thisisthepy.compose.window:graalvm-macos` | JVM (native image) | native image 용 AppKit 창: `appkit_window.m` 과 그 Kotlin 쪽, 그리고 `scene`이 그리는 Metal 표면 `appKitWindowSurface` |
 | `graalvm/graalvm-linux` | `org.thisisthepy.compose.window:graalvm-linux` | JVM (native image) | native image 용 X11 창: `x11_window.c` 와 그 Kotlin 쪽, 그리고 `scene`이 그리는 GL 표면 `x11WindowSurface` |
 
@@ -121,7 +122,7 @@ Windows 에서 Skia 는 실행 파일 옆의 `icudtl.dat` 를 찾고, 없으면 
 아직 공개 저장소에 올린 것은 없습니다. Windows 창 `windows-shared` 는 [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32) 에서
 열려 있습니다.
 
-#### macOS 제목 표시줄과 접근성
+### macOS 제목 표시줄과 접근성
 
 두 macOS 창, `native/macos` 와 `graalvm/graalvm-macos` 는 같은 두 `WindowConfig` 옵션으로
 `common` 의 한 규칙(`MacosTitleBar.of`)에 따라 제목 표시줄을 만듭니다. 그래서 같은 설정이면 어느
@@ -146,6 +147,53 @@ false 입니다. AppKit 에는 창 모서리 반지름을 알려 주는 공개 A
 펌프하는 스레드에서 `WindowListener.onAccessibilityAction(id, action, argument)` 으로 옵니다.
 `accessibilityActive` 는 읽기 프로그램이 창에 무엇이든 물었거나 VoiceOver 가 켜져 있으면 true 가
 되므로, 듣는 이가 없는 동안 장면은 자신을 설명하는 일을 건너뛸 수 있습니다.
+
+### Linux 창 크롬과 접근성
+
+두 Linux 창, `native/linux` 와 `graalvm/graalvm-linux` 는 `common` 의 `WindowConfig` 에서 크롬
+옵션을 받고, `WindowPlatform` 의 크롬과 접근성 부분에 같은 방식으로 답합니다. 둘이 따르는 규칙은
+`common` 에 있으므로(`X11Chrome`, `CaptionGesture`) 두 창은 똑같이 뜹니다.
+
+| `WindowConfig` | Linux 에서 창이 하는 일 |
+|---|---|
+| `chrome = WindowChrome.Modern` (기본값) | 창 관리자의 프레임이 없습니다. 창은 `_MOTIF_WM_HINTS` 로 장식을 두지 말라고 요청합니다. `caption()` 은 장면이 캡션과 버튼을 그리는 띠를 알려 주며, `buttonsDrawnByScene = true` 이고 버튼은 끝쪽에 있습니다. |
+| `chrome = WindowChrome.System` | 창 관리자 자신의 프레임과 제목 표시줄이 있고, 내용은 그 아래에 놓입니다. `caption()` 은 `WindowCaption.None` 입니다. |
+| `titleBar = TitleBarStyle.Normal` (기본값) | 46 포인트 캡션입니다. GNOME 헤더 바의 높이입니다. |
+| `titleBar = TitleBarStyle.Simple` | 32 포인트 캡션입니다. Linux 에서 두 스타일은 높이만 다릅니다. |
+| `decorated = false` | 어느 크롬에서도 창 관리자의 프레임이 없습니다. |
+
+이전과 달라진 점입니다. Linux 창은 장식을 두지 말라고 하지 않는 한 창 관리자의 프레임을 가졌습니다.
+이제는 `decorated = true` 여도 기본으로 장식이 없고, 캡션은 장면이 그립니다. 창 관리자의 프레임을
+쓰려면 `chrome = WindowChrome.System` 을 넘깁니다. [CHANGELOG_ko.md](CHANGELOG_ko.md) 를 보십시오.
+
+창을 옮기고 크기를 바꾸는 일은 계속 창 관리자가 맡으므로, 관리자의 스냅과 키보드 이동도 그대로
+적용됩니다. 장면은 캡션의 빈 곳을 누르면 `startMove()` 를, 가장자리를 누르면 `startResize(edge)`
+를 부릅니다. 창은 버튼을 누른 채 포인터가 4 픽셀 움직이면 `_NET_WM_MOVERESIZE` 로 끌기를 관리자에게
+넘깁니다. 누르는 순간에 넘기면, 빠른 클릭에서 관리자가 이미 지나간 놓기를 기다리게 됩니다. 캡션을
+처음 누른 뒤 400 ms 와 5 픽셀 안에 다시 누르면 최대화하거나 되돌립니다. GTK 의 기본값과 같습니다.
+`performCaptionAction` 은 최소화하거나, `_NET_WM_STATE_MAXIMIZED_*` 를 바꾸거나, 관리자의 닫기
+버튼처럼 닫아도 되는지 리스너에게 묻습니다. 전체 화면 창에는 캡션이 없습니다.
+
+`setAccessibility(elements)` 는 장면의 `AccessibleElement` 레코드를 AT-SPI 버스에 올립니다. 그래서
+Orca 와 다른 모든 libatspi 클라이언트가 창을 읽습니다. 역할, 이름, 설명으로 쓰이는 힌트, 상태, 동작,
+입력란의 텍스트(Text, EditableText), 범위의 숫자(Value) 를 알려 줍니다. 읽기 도구가 요청한 동작은
+창의 스레드에서 `pump` 안에 `WindowListener.onAccessibilityAction` 으로 돌아옵니다. 창은 첫 프레임
+뒤에 버스에 들어가므로, 접근성 버스가 느린 데스크톱에서도 창이 늦게 뜨지 않습니다.
+`accessibilityActive` 는 데스크톱이 보조 기술이 켜졌다고 알리거나(`org.a11y.Status`) 읽기 도구가
+무언가를 물으면 참이 됩니다. `NO_AT_BRIDGE=1` 은 다른 모든 툴킷의 브리지처럼 창을 버스에 넣지
+않습니다.
+
+CI 는 두 창을 Xvfb 와 openbox 에서 확인합니다. 프레임, 캡션 끌기, 각 가장자리와 모서리 끌기(낡거나
+늘어난 프레임 없이), 더블 클릭입니다(`scripts/wm-chrome.sh`). 트리는 실제 at-spi2 레지스트리에서
+libatspi 로 다시 읽습니다(`scripts/atspi-readback.c`). Orca 가 이를 잘 읽어 주는지는 데스크톱에서
+사람이 확인합니다.
+
+**바뀐 기본값.** `WindowConfig` 는 아무것도 말하지 않으면 `chrome = WindowChrome.Modern`,
+`titleBar = TitleBarStyle.Normal` 을 씁니다. 콘텐츠가 창 맨 위까지 올라갑니다. macOS 에서는 시스템의
+창 버튼이 투명한 타이틀바 위에 그대로 남습니다. Linux 에서는 시스템 타이틀바가 없고, 장면이 캡션과 그
+버튼을 그리며 그것으로 창을 옮기고 크기를 바꿉니다. 플랫폼의 타이틀바를 그대로 두려면
+`chrome = WindowChrome.System` 을 넘깁니다. 캡션에 맞춰 스스로 자리를 잡는 콘텐츠는 `LocalWindowCaption` 을
+읽고 `padContentForCaption = false` 로 올리며, 그 밖의 콘텐츠는 호스트가 캡션 아래로 내려 줍니다.
 
 ### Windows 창 크롬 (계획)
 

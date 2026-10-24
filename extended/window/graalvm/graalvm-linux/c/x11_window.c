@@ -805,19 +805,13 @@ void dxc_native_window_action(int32_t action) {
     XFlush(dxc_display);
 }
 
-/**
- * Hands the move or the resize to the window manager: 0 moves, and 1 to 8 pull the left,
- * right, top and bottom edges and the four corners in that order.
+/*
+ * Sends _NET_WM_MOVERESIZE for [edge] from ([root_x], [root_y]) on the screen, and tells the
+ * scene the press is over. [x], [y] is the same point in the window, for that release.
  */
-void dxc_native_window_begin_drag(int32_t edge) {
-    if (dxc_display == NULL || dxc_window == None) return;
-    // The directions _NET_WM_MOVERESIZE names, indexed by the edge numbers above.
+static void dxc_move_resize(int32_t edge, int root_x, int root_y, float x, float y) {
+    // The directions _NET_WM_MOVERESIZE names, indexed by the edge numbers below.
     static const long direction[9] = { 8, 7, 3, 1, 5, 0, 2, 6, 4 };
-    if (edge < 0 || edge > 8) return;
-    Window root, child;
-    int root_x = 0, root_y = 0, x = 0, y = 0;
-    unsigned int mask = 0;
-    XQueryPointer(dxc_display, dxc_window, &root, &child, &root_x, &root_y, &x, &y, &mask);
     XUngrabPointer(dxc_display, CurrentTime);
     XEvent message;
     memset(&message, 0, sizeof message);
@@ -839,9 +833,39 @@ void dxc_native_window_begin_drag(int32_t edge) {
     struct dxc_event record;
     memset(&record, 0, sizeof record);
     record.kind = DXC_EVENT_POINTER_UP;
-    record.x = (float)x;
-    record.y = (float)y;
+    record.x = x;
+    record.y = y;
     dxc_push_event(record);
+}
+
+/**
+ * Hands the move or the resize to the window manager: 0 moves, and 1 to 8 pull the left,
+ * right, top and bottom edges and the four corners in that order. From where the pointer is.
+ */
+void dxc_native_window_begin_drag(int32_t edge) {
+    if (dxc_display == NULL || dxc_window == None) return;
+    if (edge < 0 || edge > 8) return;
+    Window root, child;
+    int root_x = 0, root_y = 0, x = 0, y = 0;
+    unsigned int mask = 0;
+    XQueryPointer(dxc_display, dxc_window, &root, &child, &root_x, &root_y, &x, &y, &mask);
+    dxc_move_resize(edge, root_x, root_y, (float)x, (float)y);
+}
+
+/**
+ * [dxc_native_window_begin_drag] from the point ([x], [y]) in the window, in pixels: where the
+ * button was pressed. A drag handed over once the pointer has gone a few pixels is given the
+ * press, because the manager moves the window by how far the pointer is from the position it
+ * is told, and the pointer's position now would lose the pixels it has already gone.
+ */
+void dxc_native_window_begin_drag_at(int32_t edge, float x, float y) {
+    if (dxc_display == NULL || dxc_window == None) return;
+    if (edge < 0 || edge > 8) return;
+    int root_x = 0, root_y = 0;
+    Window child;
+    XTranslateCoordinates(dxc_display, dxc_window, DefaultRootWindow(dxc_display), (int)x, (int)y,
+                          &root_x, &root_y, &child);
+    dxc_move_resize(edge, root_x, root_y, x, y);
 }
 
 /** Reads how many pixels go to a point: the toolkit-independent settings desktops write. */
