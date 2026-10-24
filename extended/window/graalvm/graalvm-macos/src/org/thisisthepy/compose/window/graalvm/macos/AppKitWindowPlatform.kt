@@ -47,6 +47,13 @@ class AppKitWindowPlatform : WindowPlatform {
     private var titleBar: MacosTitleBar = MacosTitleBar.Normal
     private var lastCaption: WindowCaption = WindowCaption.None
     private var readerWasListening = false
+    private val idleSoakSeconds: Int =
+        System.getenv("DXC_IDLE_SOAK_SECONDS")?.toIntOrNull()?.takeIf { it > 0 } ?: 0
+    private var openedAtMillis: Long = 0L
+    private var idleStartedAtMillis: Long = 0L
+    private var lastIdleSampleElapsed: Int = -1
+    private var idleTyped = false
+    private var framesPresented: Long = 0L
 
     /** The window the platform opened, for the surface that draws into it. */
     val nativeWindow: NativeWindow? get() = window
@@ -75,6 +82,11 @@ class AppKitWindowPlatform : WindowPlatform {
         this.listener = listener
         lastTheme = systemTheme()
         lastScale = opened.measure().scale
+        openedAtMillis = System.currentTimeMillis()
+        idleStartedAtMillis = 0L
+        lastIdleSampleElapsed = -1
+        idleTyped = false
+        framesPresented = 0L
         return true
     }
 
@@ -103,6 +115,9 @@ class AppKitWindowPlatform : WindowPlatform {
             closeAnswered = true
             sink.onCloseRequested()
         }
+        if (idleSoakSeconds > 0 && !closeAnswered) {
+            stepIdleSoak(current, sink)
+        }
     }
 
     override fun measure(): WindowMeasurement =
@@ -125,8 +140,65 @@ class AppKitWindowPlatform : WindowPlatform {
     override fun present(drawnWidth: Int, drawnHeight: Int): FramePresentRecord {
         val current = checkNotNull(window) { "the window is not open" }
         current.endFrame()
+        framesPresented++
         val now = current.measure()
         return FramePresentRecord(drawnWidth, drawnHeight, now.width, now.height)
+    }
+
+    private fun stepIdleSoak(current: NativeWindow, sink: WindowListener) {
+        val now = System.currentTimeMillis()
+        val sinceOpen = now - openedAtMillis
+        if (!idleTyped && sinceOpen >= 1_500L && System.getenv("DXC_SYNTH") != "none") {
+            idleTyped = true
+            val scale = current.measure().scale.coerceAtLeast(1f)
+            val x = 80f * scale
+            val y = 80f * scale
+            sink.onEvent(WindowEvent(WindowEvent.POINTER_DOWN, x, y, 1, 0, 0, 0, ""))
+            sink.onEvent(WindowEvent(WindowEvent.POINTER_UP, x, y, 0, 0, 0, 0, ""))
+            sink.onEvent(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "abcde"))
+        }
+        if (sinceOpen < 8_000L) return
+        if (idleStartedAtMillis == 0L) {
+            System.gc()
+            idleStartedAtMillis = now
+            lastIdleSampleElapsed = 0
+            logIdleSoak("start", 0, current)
+            idleSoakBreakdown(0, isEnd = false)
+            return
+        }
+        val elapsed = ((now - idleStartedAtMillis) / 1000L).toInt()
+        val step = (elapsed / 10) * 10
+        if (step > lastIdleSampleElapsed && elapsed < idleSoakSeconds) {
+            lastIdleSampleElapsed = step
+            logIdleSoak("sample", step, current)
+        }
+        if (elapsed >= idleSoakSeconds) {
+            System.gc()
+            logIdleSoak("end", idleSoakSeconds, current)
+            idleSoakBreakdown(idleSoakSeconds, isEnd = true)
+            System.err.println("compose-rust: idle-soak done seconds=$idleSoakSeconds")
+            closeAnswered = true
+            sink.onCloseRequested()
+        }
+    }
+
+    private fun logIdleSoak(phase: String, elapsedS: Int, current: NativeWindow) {
+        val runtime = Runtime.getRuntime()
+        val usedMb = ((runtime.totalMemory() - runtime.freeMemory()) + 524_288L) / 1_048_576L
+        val maxMb = (runtime.maxMemory() + 524_288L) / 1_048_576L
+        val gcs = java.lang.management.ManagementFactory.getGarbageCollectorMXBeans().sumOf {
+            it.collectionCount.coerceAtLeast(0L)
+        }
+        val skiaLimitMb = (defaultSkiaCacheLimitBytes() + 524_288L) / 1_048_576L
+        val skiaCpuMb = (org.jetbrains.skia.Graphics.resourceCacheTotalUsed.toLong() + 524_288L) / 1_048_576L
+        val skiaFontMb = (org.jetbrains.skia.Graphics.fontCacheUsed.toLong() + 524_288L) / 1_048_576L
+        System.err.println(
+            "compose-rust: idle-soak phase $phase elapsed_s=$elapsedS frames=$framesPresented " +
+                "footprint_mb=${processFootprintMb()} resident_mb=${processResidentMb()} " +
+                "metal_allocated_mb=${current.metalAllocatedMb()} " +
+                "skia_cache_limit_mb=$skiaLimitMb skia_cpu_cache_mb=$skiaCpuMb " +
+                "skia_font_cache_mb=$skiaFontMb heap_used_mb=$usedMb heap_max_mb=$maxMb gcs=$gcs",
+        )
     }
 
     override fun systemTheme(): SystemTheme = if (isSystemDark()) SystemTheme.Dark else SystemTheme.Light

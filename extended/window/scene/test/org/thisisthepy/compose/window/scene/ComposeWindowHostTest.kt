@@ -18,6 +18,8 @@ import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalCursorBlinkEnabled
+import androidx.compose.runtime.CompositionLocalProvider
 import org.thisisthepy.compose.window.EditMenuId
 import androidx.compose.ui.unit.dp
 import kotlin.test.Test
@@ -198,11 +200,13 @@ class ComposeWindowHostTest {
         val surface = FakeSurface()
         var typed by mutableStateOf("")
         val host = host(platform, surface) {
-            BasicTextField(
-                value = typed,
-                onValueChange = { typed = it },
-                modifier = Modifier.size(180.dp, 40.dp),
-            )
+            CompositionLocalProvider(LocalCursorBlinkEnabled provides false) {
+                BasicTextField(
+                    value = typed,
+                    onValueChange = { typed = it },
+                    modifier = Modifier.size(180.dp, 40.dp),
+                )
+            }
         }
         assertTrue(host.open())
         host.turn(0)
@@ -283,6 +287,34 @@ class ComposeWindowHostTest {
         platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 30f, 20f, 2, 0, 0, 0, ""))
         host.turn(0)
         assertEquals(null, host.editMenuAt)
+        host.close()
+    }
+
+    @Test
+    fun idle_turns_after_text_commit_do_not_redraw_when_nothing_changed() {
+        val platform = FakePlatform()
+        val surface = FakeSurface()
+        var typed by mutableStateOf("")
+        val host = host(platform, surface) {
+            CompositionLocalProvider(LocalCursorBlinkEnabled provides false) {
+                BasicTextField(
+                    value = typed,
+                    onValueChange = { typed = it },
+                    modifier = Modifier.size(180.dp, 40.dp),
+                )
+            }
+        }
+        assertTrue(host.open())
+        host.turn(0)
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, 1, 0, 0, 0, ""))
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_UP, 10f, 10f, 0, 0, 0, 0, ""))
+        repeat(4) { host.turn(0) }
+        platform.queued.add(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "hello"))
+        repeat(4) { host.turn(0) }
+        assertEquals("hello", typed)
+        val settledFrames = host.presentLog.frames
+        repeat(60) { host.turn(0) }
+        assertEquals(settledFrames, host.presentLog.frames, "idle turns must not redraw")
         host.close()
     }
 }

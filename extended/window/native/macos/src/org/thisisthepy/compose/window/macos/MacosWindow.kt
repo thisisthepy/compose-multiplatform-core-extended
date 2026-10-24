@@ -432,7 +432,20 @@ class MacosWindow(
             val scale = window?.backingScaleFactor ?: 1.0
             bounds.useContents { metal.resize(size.width, size.height, scale) }
             ResizeMetrics.frameBegin()
-            val drew = metal.draw(::paintFrame)
+            val drew = if (host != null) {
+                metal.draw(::paintFrame)
+            } else {
+                val painted = resizePainter?.invoke() == true
+                if (painted) {
+                    frame.useContents {
+                        val w = (this.size.width * scale).toInt()
+                        val h = (this.size.height * scale).toInt()
+                        measured = IntSize(w, h)
+                        resizeStats.presentAgainst(w, h, w, h)
+                    }
+                }
+                painted
+            }
             bounds.useContents {
                 ResizeMetrics.frameEnd((size.width * scale).toInt(), (size.height * scale).toInt())
             }

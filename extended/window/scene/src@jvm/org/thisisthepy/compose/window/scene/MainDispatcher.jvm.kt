@@ -15,3 +15,6 @@ internal actual fun useAsComposeMainDispatcher(dispatcher: CoroutineDispatcher) 
     // An embedder that set one itself keeps its own.
     if (ExtendedMainDispatcher.override == null) ExtendedMainDispatcher.override = dispatcher
 }
+
+internal actual fun isIdleSoakEnabled(): Boolean =
+    (System.getenv("DXC_IDLE_SOAK_SECONDS")?.toIntOrNull() ?: 0) > 0

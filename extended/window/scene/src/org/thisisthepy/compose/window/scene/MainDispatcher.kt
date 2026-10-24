@@ -11,6 +11,9 @@ import kotlinx.coroutines.CoroutineDispatcher
  */
 internal expect fun useAsComposeMainDispatcher(dispatcher: CoroutineDispatcher)
 
+/** Whether `DXC_IDLE_SOAK_SECONDS` is set to a positive integer, disabling cursor blink during idle soak. */
+internal expect fun isIdleSoakEnabled(): Boolean
+
 /**
  * Compose's main-thread work for every host in the process, run by whichever host turns next.
  *

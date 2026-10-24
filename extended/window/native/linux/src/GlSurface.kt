@@ -3,6 +3,7 @@
 package org.thisisthepy.compose.window.linux
 
 import kotlinx.cinterop.CPointer
+import kotlinx.cinterop.toKString
 import org.jetbrains.skia.BackendRenderTarget
 import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.ColorSpace
@@ -40,7 +41,9 @@ class GlSurface(
     private val context: GLXContext,
 ) {
 
-    private val skia = DirectContext.makeGL()
+    private val skia = DirectContext.makeGL().apply {
+        resourceCacheLimit = (platform.posix.getenv("DXC_SKIA_CACHE_MB")?.toKString()?.toLongOrNull()?.takeIf { it > 0L } ?: 16L) * 1048576L
+    }
 
     /**
      * Draws one frame at [width] by [height] pixels, and answers whether it drew one.

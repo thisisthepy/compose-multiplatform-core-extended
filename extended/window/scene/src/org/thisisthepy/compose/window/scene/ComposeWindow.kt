@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.asComposeCanvas
+import androidx.compose.ui.platform.LocalCursorBlinkEnabled
 import androidx.compose.ui.scene.CanvasLayersComposeScene
 import androidx.compose.ui.scene.ComposeScene
 import androidx.compose.ui.unit.Density
@@ -195,8 +196,13 @@ class ComposeWindowHost(
             coroutineContext = work,
             platformContext = ScenePlatformContext({ size }, textInput, semantics),
         )
+        val cursorBlink = !isIdleSoakEnabled()
         created.setContent {
-            CompositionLocalProvider(LocalSystemTheme provides theme, LocalWindowCaption provides caption) {
+            CompositionLocalProvider(
+                LocalCursorBlinkEnabled provides cursorBlink,
+                LocalSystemTheme provides theme,
+                LocalWindowCaption provides caption,
+            ) {
                 WindowFrame(platform, caption, theme, config.resizable, padContentForCaption) { content() }
                 DrawnEditMenu(editMenuAt, onChosen = { listener.onContextMenuChosen(it) }, onDismiss = { editMenuAt = null })
             }
@@ -222,8 +228,13 @@ class ComposeWindowHost(
         // read it again, or the rest of the drag is taken out of the queue unhandled.
         log.read { platform.pump(timeoutMillis) }
         if (closed) return
-        work.runPending()
-        sceneMainWork.runPending()
+        // Drain in bounded passes so a coroutine resumed through FlushCoroutineDispatcher
+        // drains both the outer launcher and its inner continuation in this turn rather
+        // than leaving hasImmediateTasks() true at current.hasInvalidations().
+        repeat(4) {
+            work.runPending()
+            sceneMainWork.runPending()
+        }
         heard.clear()
         log.drain(heard)
         for (event in heard) {

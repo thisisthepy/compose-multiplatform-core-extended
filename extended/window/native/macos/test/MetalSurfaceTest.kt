@@ -165,6 +165,8 @@ class MetalSurfaceTest {
                 surface.layer.framebufferOnly,
                 "a framebuffer-only texture cannot be read back, and Skia reads one back",
             )
+            assertEquals(16L * 1048576L, surface.cacheLimitBytes, "Skia resource cache is capped at 16 MB by default")
+            assertEquals(8L * 1048576L, MetalSurface.defaultSkiaCacheLimitBytes("8"))
         } finally {
             surface.close()
         }

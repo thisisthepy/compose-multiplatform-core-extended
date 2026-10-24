@@ -53,6 +53,7 @@ class MacosWindowPlatform(
     private var internalHost: ComposeWindowHost? = null
     private var inPump = false
     private val pasteboard = GeneralPasteboard()
+    private val idleSoak = IdleSoak()
 
     /** Where the input method was last told the caret is, in points from the content's top left. */
     var imeSpot: Pair<Int, Int> = 0 to 0
@@ -88,6 +89,7 @@ class MacosWindowPlatform(
         created.onClose = {
             this.listener?.onCloseRequested()
         }
+        idleSoak.reset()
 
         if (content !== EMPTY_CONTENT && internalHost == null) {
             val host = ComposeWindowHost(
@@ -118,6 +120,11 @@ class MacosWindowPlatform(
                 NSDefaultRunLoopMode,
                 beforeDate = NSDate.dateWithTimeIntervalSinceNow(timeoutMillis / 1000.0),
             )
+            val current = window
+            val sink = listener
+            if (current != null && sink != null) {
+                idleSoak.step(current, sink)
+            }
         }
     }
 
@@ -134,6 +141,7 @@ class MacosWindowPlatform(
 
     /** Reads the window's size now, not when the frame was started, so a resize in between shows. */
     override fun present(drawnWidth: Int, drawnHeight: Int): FramePresentRecord {
+        idleSoak.framesPresented++
         val now = measure()
         val record = FramePresentRecord(drawnWidth, drawnHeight, now.width, now.height)
         presentLog.record(record)
