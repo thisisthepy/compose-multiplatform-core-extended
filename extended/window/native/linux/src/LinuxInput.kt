@@ -56,19 +56,30 @@ fun buttonsOf(state: UInt): Int {
 
 /**
  * The `buttons` of a press or release of [button] (the server's number: 1 primary, 2 middle,
- * 3 secondary) when the server said [state] was held before it. The server reports the
- * state before the event, so the button itself is added on a press and removed on a
- * release, and the secondary button's own events carry [WindowEvent.SECONDARY_BUTTON].
+ * 3 secondary, 8 back, 9 forward) when the server said [state] was held before it. The
+ * server reports the state before the event, so the button itself is added on a press and
+ * removed on a release, and every button but the primary carries its own flag, because the
+ * held bits alone cannot say which one was let go. The server's state has no bits for back
+ * and forward, so those are held only for their own press.
  */
 fun pointerButtonsOf(state: UInt, button: Int, press: Boolean): Int {
     val bit = when (button) {
         1 -> WindowEvent.PRIMARY_HELD
         3 -> WindowEvent.SECONDARY_HELD
         2 -> WindowEvent.MIDDLE_HELD
+        8 -> WindowEvent.BACK_HELD
+        9 -> WindowEvent.FORWARD_HELD
+        else -> 0
+    }
+    val own = when (button) {
+        3 -> WindowEvent.SECONDARY_BUTTON
+        2 -> WindowEvent.MIDDLE_BUTTON
+        8 -> WindowEvent.BACK_BUTTON
+        9 -> WindowEvent.FORWARD_BUTTON
         else -> 0
     }
     val held = buttonsOf(state)
-    return WindowEvent.pointerButtons(if (press) held or bit else held and bit.inv(), button == 3)
+    return WindowEvent.pointerButtons(if (press) held or bit else held and bit.inv(), own)
 }
 
 /**

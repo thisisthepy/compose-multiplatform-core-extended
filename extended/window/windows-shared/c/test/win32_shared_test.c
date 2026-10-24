@@ -54,9 +54,13 @@ static void resize_decisions(void) {
 // The values Kotlin's WindowEvent names, and a right-button press carrying its own flag.
 static void pointer_buttons(void) {
     CHECK(DXC_PRIMARY_HELD == 1 && DXC_SECONDARY_HELD == 2 && DXC_MIDDLE_HELD == 4);
-    CHECK(DXC_SECONDARY_BUTTON == (1 << 16));
-    CHECK(dxc_pointer_buttons(DXC_SECONDARY_HELD, 1) == (DXC_SECONDARY_HELD | DXC_SECONDARY_BUTTON));
-    CHECK(dxc_pointer_buttons(DXC_PRIMARY_HELD, 1) == (DXC_PRIMARY_HELD | DXC_SECONDARY_BUTTON));
+    CHECK(DXC_BACK_HELD == 8 && DXC_FORWARD_HELD == 16);
+    CHECK(DXC_SECONDARY_BUTTON == (1 << 16) && DXC_MIDDLE_BUTTON == (1 << 17));
+    CHECK(DXC_BACK_BUTTON == (1 << 18) && DXC_FORWARD_BUTTON == (1 << 19));
+    CHECK(dxc_pointer_buttons(DXC_SECONDARY_HELD, DXC_SECONDARY_BUTTON) == (DXC_SECONDARY_HELD | DXC_SECONDARY_BUTTON));
+    CHECK(dxc_pointer_buttons(DXC_PRIMARY_HELD, DXC_SECONDARY_BUTTON) == (DXC_PRIMARY_HELD | DXC_SECONDARY_BUTTON));
+    CHECK(dxc_pointer_buttons(DXC_MIDDLE_HELD, DXC_MIDDLE_BUTTON) == (DXC_MIDDLE_HELD | DXC_MIDDLE_BUTTON));
+    CHECK(dxc_pointer_buttons(0, DXC_BACK_BUTTON) == DXC_BACK_BUTTON);
     CHECK(dxc_pointer_buttons(DXC_PRIMARY_HELD, 0) == DXC_PRIMARY_HELD);
 }
 

@@ -46,21 +46,24 @@ internal fun ComposeScene.receive(event: WindowEvent, keyOf: (Int) -> Key = ::co
         WindowEvent.POINTER_MOVE -> sendPointerEvent(
             eventType = PointerEventType.Move,
             position = Offset(event.x, event.y),
-            buttons = PointerButtons(isPrimaryPressed = event.buttons and WindowEvent.PRIMARY_HELD != 0),
+            buttons = pointerButtonsOf(event.buttons and WindowEvent.ALL_HELD),
         )
 
+        // The button that changed is the one the event names, and it counts as held for its
+        // own press and as let go for its own release, whatever the platform had in the held
+        // bits at that instant. A control-click on macOS, for one, carries only the primary.
         WindowEvent.POINTER_DOWN -> sendPointerEvent(
             eventType = PointerEventType.Press,
             position = Offset(event.x, event.y),
-            button = PointerButton.Primary,
-            buttons = PointerButtons(isPrimaryPressed = true),
+            button = pointerButtonOf(event.changedHeldBit),
+            buttons = pointerButtonsOf((event.buttons and WindowEvent.ALL_HELD) or event.changedHeldBit),
         )
 
         WindowEvent.POINTER_UP -> sendPointerEvent(
             eventType = PointerEventType.Release,
             position = Offset(event.x, event.y),
-            button = PointerButton.Primary,
-            buttons = PointerButtons(isPrimaryPressed = false),
+            button = pointerButtonOf(event.changedHeldBit),
+            buttons = pointerButtonsOf((event.buttons and WindowEvent.ALL_HELD) and event.changedHeldBit.inv()),
         )
 
         // The wheel's travel arrives where a position usually is, because a scroll happens
@@ -72,3 +75,21 @@ internal fun ComposeScene.receive(event: WindowEvent, keyOf: (Int) -> Key = ::co
         )
     }
 }
+
+/** The Compose button a held bit stands for. */
+internal fun pointerButtonOf(heldBit: Int): PointerButton = when (heldBit) {
+    WindowEvent.SECONDARY_HELD -> PointerButton.Secondary
+    WindowEvent.MIDDLE_HELD -> PointerButton.Tertiary
+    WindowEvent.BACK_HELD -> PointerButton.Back
+    WindowEvent.FORWARD_HELD -> PointerButton.Forward
+    else -> PointerButton.Primary
+}
+
+/** The buttons Compose sees held, from the held bits of a window event. */
+internal fun pointerButtonsOf(held: Int): PointerButtons = PointerButtons(
+    isPrimaryPressed = held and WindowEvent.PRIMARY_HELD != 0,
+    isSecondaryPressed = held and WindowEvent.SECONDARY_HELD != 0,
+    isTertiaryPressed = held and WindowEvent.MIDDLE_HELD != 0,
+    isBackPressed = held and WindowEvent.BACK_HELD != 0,
+    isForwardPressed = held and WindowEvent.FORWARD_HELD != 0,
+)

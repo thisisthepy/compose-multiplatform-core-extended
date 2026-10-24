@@ -71,9 +71,13 @@ enum {
     DXC_EVENT_MENU_COMMAND = 17,
 };
 
-// Set in `buttons` on a press or release of the secondary button. The buttons held down
-// cannot say which one was let go. The same value as WindowEvent.SECONDARY_BUTTON.
+// Set in `buttons` on a press or release of a button other than the primary. The buttons
+// held down cannot say which one was let go. The same values as WindowEvent.SECONDARY_BUTTON,
+// MIDDLE_BUTTON, BACK_BUTTON and FORWARD_BUTTON.
 #define DXC_SECONDARY_BUTTON (1 << 16)
+#define DXC_MIDDLE_BUTTON (1 << 17)
+#define DXC_BACK_BUTTON (1 << 18)
+#define DXC_FORWARD_BUTTON (1 << 19)
 
 // Room for what an input method is composing, which is a syllable or a word and never a
 // document. Text longer than this arrives as several commits, which reads the same in a
@@ -681,6 +685,11 @@ void dxc_native_set_cursor(int32_t shape) {
                (event.type == NSEventTypeRightMouseUp || event.type == NSEventTypeLeftMouseUp)) {
         secondary_held = NO;
         record.buttons |= DXC_SECONDARY_BUTTON;
+    } else if (event.type == NSEventTypeOtherMouseDown || event.type == NSEventTypeOtherMouseUp) {
+        // AppKit numbers the buttons past the right one: 2 middle, 3 back, 4 forward.
+        record.buttons |= event.buttonNumber == 2 ? DXC_MIDDLE_BUTTON
+                        : event.buttonNumber == 3 ? DXC_BACK_BUTTON
+                        : event.buttonNumber == 4 ? DXC_FORWARD_BUTTON : 0;
     }
     record.modifiers = (int32_t)event.modifierFlags;
     if (kind == DXC_EVENT_SCROLL) {
@@ -702,6 +711,10 @@ void dxc_native_set_cursor(int32_t shape) {
 - (void)mouseDragged:(NSEvent *)event { [self dxcSend:DXC_EVENT_POINTER_MOVE event:event]; }
 - (void)mouseDown:(NSEvent *)event { [self dxcSend:DXC_EVENT_POINTER_DOWN event:event]; }
 - (void)mouseUp:(NSEvent *)event { [self dxcSend:DXC_EVENT_POINTER_UP event:event]; }
+- (void)rightMouseDragged:(NSEvent *)event { [self dxcSend:DXC_EVENT_POINTER_MOVE event:event]; }
+- (void)otherMouseDown:(NSEvent *)event { [self dxcSend:DXC_EVENT_POINTER_DOWN event:event]; }
+- (void)otherMouseUp:(NSEvent *)event { [self dxcSend:DXC_EVENT_POINTER_UP event:event]; }
+- (void)otherMouseDragged:(NSEvent *)event { [self dxcSend:DXC_EVENT_POINTER_MOVE event:event]; }
 // The press goes to the scene first, so the field under the pointer takes focus and a word
 // under it can be selected the way a click would, and then the menu comes up under the
 // pointer. The menu's tracking swallows the release, so it is sent once the menu has gone,

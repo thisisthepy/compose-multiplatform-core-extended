@@ -269,7 +269,7 @@ class ComposeWindowHostTest {
         val host = host(platform, FakeSurface()) { Box(Modifier.fillMaxSize()) }
         assertTrue(host.open())
         host.turn(0)
-        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 30f, 20f, 2, 0, 0, 0, ""))
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 30f, 20f, WindowEvent.pointerButtons(WindowEvent.SECONDARY_HELD, secondaryEvent = true), 0, 0, 0, ""))
         host.turn(0)
         assertEquals(androidx.compose.ui.unit.IntOffset(30, 20), host.editMenuAt)
         platform.chosen.add(EditMenuId.SELECT_ALL)
@@ -284,7 +284,7 @@ class ComposeWindowHostTest {
         val host = host(platform, FakeSurface()) { Box(Modifier.fillMaxSize()) }
         assertTrue(host.open())
         host.turn(0)
-        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 30f, 20f, 2, 0, 0, 0, ""))
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 30f, 20f, WindowEvent.pointerButtons(WindowEvent.SECONDARY_HELD, secondaryEvent = true), 0, 0, 0, ""))
         host.turn(0)
         assertEquals(null, host.editMenuAt)
         host.close()
