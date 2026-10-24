@@ -106,7 +106,7 @@ case "$os" in
                 "'xwin --accept-license splat --output $xwin' (or set XWIN_DIR), or pass --targets" \
                 "without mingwX64 for a local build of fewer targets."
         fi
-        window_modules=(common graalvm/graalvm-macos graalvm/graalvm-linux native/macos scene) ;;
+        window_modules=(common graalvm/graalvm-macos graalvm/graalvm-linux graalvm/graalvm-windows native/macos scene) ;;
     Linux)
         [[ "$arch" == x86_64 ]] || die "native/linux is built on Linux x86-64; Kotlin/Native has no arm64 Linux host"
         native_linux=1

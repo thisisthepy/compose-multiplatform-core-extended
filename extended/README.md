@@ -114,6 +114,7 @@ says so), so any Compose application can open a window through it.
 | `native/linux-scene` | `org.thisisthepy.compose.window:native-linux-scene` | `linuxX64`, `linuxArm64` | `x11WindowSurface`, the GL surface a `scene` draws into on the Kotlin/Native X11 window. Apart from `native/linux` so the window links no scene |
 | `graalvm/graalvm-macos` | `org.thisisthepy.compose.window:graalvm-macos` | JVM (native image) | The AppKit window for a native image: `appkit_window.m` and its Kotlin side, and `appKitWindowSurface`, the Metal surface a `scene` draws into |
 | `graalvm/graalvm-linux` | `org.thisisthepy.compose.window:graalvm-linux` | JVM (native image) | The X11 window for a native image: `x11_window.c` and its Kotlin side, and `x11WindowSurface`, the GL surface a `scene` draws into |
+| `graalvm/graalvm-windows` | `org.thisisthepy.compose.window:graalvm-windows` | JVM (native image) | The Win32 window for a native image: the `@CFunction` calls into `windows-shared`'s `win32_window.c`, the window object, the frame door and the upcall a resize draws through. It times its own frames from a monotonic `FrameClock` |
 
 Each is at the fork's one version, `1.11.1-ext.2`. The "Extended window publish" workflow publishes them to the local
 Maven repository the way compose-rust consumes them; `native/linux` joins it in
