@@ -631,7 +631,13 @@ class MacosWindow(
         val platform = MacosWindowPlatform()
         platform.attachWindow(this)
         val config = WindowConfig(name, width, height)
-        val createdHost = ComposeWindowHost(platform, config, ::macosWindowSurface, content = content)
+        val createdHost = ComposeWindowHost(
+            platform = platform,
+            config = config,
+            surfaceFor = ::macosWindowSurface,
+            padContentForCaption = false,
+            content = content,
+        )
         this.host = createdHost
         createdHost.open()
 

@@ -90,7 +90,13 @@ class MacosWindowPlatform(
         }
 
         if (content !== EMPTY_CONTENT && internalHost == null) {
-            val host = ComposeWindowHost(this, config, ::macosWindowSurface, content = content)
+            val host = ComposeWindowHost(
+                platform = this,
+                config = config,
+                surfaceFor = ::macosWindowSurface,
+                padContentForCaption = false,
+                content = content,
+            )
             internalHost = host
             created.host = host
             host.open()
@@ -251,7 +257,7 @@ class MacosWindowPlatform(
  */
 fun runMacosWindow(
     config: WindowConfig,
-    padContentForCaption: Boolean = true,
+    padContentForCaption: Boolean = false,
     content: @Composable () -> Unit,
 ): Boolean {
     val platform = MacosWindowPlatform()
