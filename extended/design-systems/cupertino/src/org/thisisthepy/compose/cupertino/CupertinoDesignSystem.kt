@@ -341,6 +341,16 @@ class CupertinoDesignSystem private constructor(
         ringWidth = 0.dp,
     )
 
+    /** Xcode: numbers on the page itself, a faint accent wash on the current line, a straight underline. */
+    override fun codeEditor(): org.thisisthepy.compose.designsystem.CodeEditorStyle = super.codeEditor().copy(
+        container = color(ColorRole.Background),
+        gutter = color(ColorRole.Background),
+        currentLine = color(ColorRole.Primary).copy(alpha = 0.08f),
+        underline = org.thisisthepy.compose.designsystem.UnderlineShape.Straight,
+        underlineWidth = 1.5.dp,
+        ghostTextAlpha = 0.45f,
+    )
+
     companion object {
         val Light: CupertinoDesignSystem =
             CupertinoDesignSystem(CupertinoPalette.Light, isDark = false)

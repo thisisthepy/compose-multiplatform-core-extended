@@ -456,4 +456,23 @@ class LayeringIsVisibleTest {
         assertTrue(looks.size >= 2, "every system draws the same divider: $looks")
         assertTrue(medium.size >= 2, "every system answers a medium width the same way")
     }
+
+    /**
+     * Every system draws a code editor whose numbers and text can be told from the page,
+     * and the six do not all draw it the same way.
+     */
+    @Test
+    fun fr38_every_system_draws_its_own_code_editor() {
+        for (dark in listOf(false, true)) {
+            val styles = systems(dark).map { (_, system) ->
+                val editor = system.codeEditor()
+                assertNotEquals(editor.container, editor.text, "${system.id} hides its code")
+                assertNotEquals(editor.gutter, editor.lineNumber, "${system.id} hides its line numbers")
+                assertTrue(editor.tabWidth > 0, "${system.id} has no tab width")
+                assertEquals(system.color(ColorRole.Error), editor.errorColor, "${system.id}")
+                editor
+            }
+            assertTrue(styles.toSet().size >= 2, "every system drew its editor alike")
+        }
+    }
 }
