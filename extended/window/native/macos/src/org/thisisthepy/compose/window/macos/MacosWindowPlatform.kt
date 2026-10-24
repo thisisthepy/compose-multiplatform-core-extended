@@ -93,18 +93,26 @@ class MacosWindowPlatform(
             val host = ComposeWindowHost(this, config, ::macosWindowSurface, content = content)
             internalHost = host
             created.host = host
-            created.startLoopTimer()
             host.open()
         }
         return true
     }
 
     override fun pump(timeoutMillis: Long) {
-        NSRunLoop.currentRunLoop.runMode(
-            NSDefaultRunLoopMode,
-            beforeDate = NSDate.dateWithTimeIntervalSinceNow(timeoutMillis / 1000.0),
-        )
-        window?.pumpHost(0)
+        val host = internalHost
+        if (host != null && !inPump) {
+            inPump = true
+            try {
+                host.turn(timeoutMillis)
+            } finally {
+                inPump = false
+            }
+        } else {
+            NSRunLoop.currentRunLoop.runMode(
+                NSDefaultRunLoopMode,
+                beforeDate = NSDate.dateWithTimeIntervalSinceNow(timeoutMillis / 1000.0),
+            )
+        }
     }
 
     override fun measure(): WindowMeasurement {
@@ -142,19 +150,12 @@ class MacosWindowPlatform(
     override fun setVisibility(visibility: WindowVisibility) {
         val w = window?.window ?: return
         when (visibility) {
-            WindowVisibility.Hidden -> {
-                window?.stopLoopTimer()
-                w.orderOut(null)
-            }
+            WindowVisibility.Hidden -> w.orderOut(null)
             WindowVisibility.Visible -> {
                 if (w.miniaturized) w.deminiaturize(null)
                 w.makeKeyAndOrderFront(null)
-                window?.startLoopTimer()
             }
-            WindowVisibility.Minimized -> {
-                window?.stopLoopTimer()
-                w.miniaturize(null)
-            }
+            WindowVisibility.Minimized -> w.miniaturize(null)
             WindowVisibility.Fullscreen -> w.toggleFullScreen(null)
         }
     }
@@ -237,7 +238,6 @@ class MacosWindowPlatform(
     val accessibilityTree: AppKitAccessibilityTree? get() = window?.reader
 
     override fun close() {
-        window?.stopLoopTimer()
         internalHost?.close()
         internalHost = null
         window?.window?.close()

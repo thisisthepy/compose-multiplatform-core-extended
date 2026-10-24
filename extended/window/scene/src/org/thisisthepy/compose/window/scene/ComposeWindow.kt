@@ -102,7 +102,12 @@ class ComposeWindowHost(
     private val requests = FrameRequestCoalescer()
     private val log = WindowEventLog()
     private val textInput = SceneTextInput()
-    private val work = FrameDispatcher()
+    private val work = FrameDispatcher().also {
+        it.onDispatched = {
+            requests.requestFrame()
+            platform.requestFrame()
+        }
+    }
     // The platform's account of when each frame reaches the screen, so an animation moves at
     // the speed of the wall clock whatever the display's refresh rate and however late a frame.
     private val clock = FrameClock(platform::frameTimeNanos)
@@ -297,9 +302,13 @@ class ComposeWindowHost(
     /** Renders directly to [canvas] at the given pixel dimensions, using the host's clock and scene. */
     fun renderTo(canvas: org.jetbrains.skia.Canvas, widthInPixels: Int, heightInPixels: Int) {
         val current = scene ?: return
+        work.runPending()
+        sceneMainWork.runPending()
         val fitted = IntSize(widthInPixels, heightInPixels)
         if (current.size != fitted) current.size = fitted
         current.render(canvas.asComposeCanvas(), clock.frameNanos())
+        work.runPending()
+        sceneMainWork.runPending()
     }
 
     /**
@@ -314,9 +323,17 @@ class ComposeWindowHost(
             readerWasListening = false
             return
         }
+        work.runPending()
+        sceneMainWork.runPending()
         val first = !readerWasListening
         readerWasListening = true
         if (first || drew || semantics.changed) accessibility.pushIfChanged(afterDrawing = true)
+    }
+
+    /** Runs pending coroutines on the host's dispatchers. */
+    fun runPendingWork() {
+        work.runPending()
+        sceneMainWork.runPending()
     }
 
     /** Does what a reader asked of control [id]. */
