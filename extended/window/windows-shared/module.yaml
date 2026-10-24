@@ -29,7 +29,7 @@ settings:
     enabled: true
     group: org.thisisthepy.compose.window
     artifactId: windows-shared
-    version: 1.11.1-ext.1
+    version: 1.11.1-ext.2
   kotlin:
     # A klib's unique_name defaults to the Amper module name. The Kotlin/Native linker
     # refuses two libraries with the same unique_name, so the klib takes its Maven

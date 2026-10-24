@@ -46,7 +46,7 @@ private fun Project.parseJetBrainsVersions(): JetBrainsVersions {
                 require(Version(declared).forkRelease != null) {
                     "$propertyName is $declared, which is a version JetBrains could publish too. " +
                         "This fork publishes as <upstream version>-ext.<N>, for example " +
-                        "1.11.1-ext.1, or -ext.<N>-dev for a local build (extended/COORDINATES.md)."
+                        "1.11.1-ext.2, or -ext.<N>-dev for a local build (extended/COORDINATES.md)."
                 }
                 val version =
                     if (development && !Version(declared).isForkDevelopmentBuild()) "$declared-dev"
