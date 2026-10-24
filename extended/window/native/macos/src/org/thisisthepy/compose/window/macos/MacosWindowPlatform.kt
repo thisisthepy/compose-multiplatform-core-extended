@@ -3,6 +3,10 @@
 package org.thisisthepy.compose.window.macos
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalClipboardManager
+import org.thisisthepy.compose.window.scene.PlatformCompositionLocals
 import kotlinx.cinterop.useContents
 import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.ContextMenuItem
@@ -41,7 +45,7 @@ private val EMPTY_CONTENT: @Composable () -> Unit = {}
  */
 class MacosWindowPlatform(
     private val content: @Composable () -> Unit = EMPTY_CONTENT,
-) : WindowPlatform {
+) : WindowPlatform, PlatformCompositionLocals {
     override val name: String = "macos-kotlin-native"
 
     /** One record per [present], so a test can ask whether any frame was drawn at the wrong size. */
@@ -53,6 +57,10 @@ class MacosWindowPlatform(
     private var internalHost: ComposeWindowHost? = null
     private var inPump = false
     private val pasteboard = GeneralPasteboard()
+    private val clipboard = MacosClipboard(pasteboard)
+    @Suppress("DEPRECATION")
+    private val clipboardManager = MacosClipboardManager(pasteboard)
+    private var watchingAppearance = false
     private val idleSoak = IdleSoak()
 
     /** Where the input method was last told the caret is, in points from the content's top left. */
@@ -81,7 +89,12 @@ class MacosWindowPlatform(
             )
             created.initWindow()
             window = created
-            observeSystemAppearance { listener.onThemeChanged(systemTheme()) }
+        }
+        // Once per platform, whichever way the window came: made here or attached by the
+        // application. A change in System Settings reaches the content as it happens.
+        if (!watchingAppearance) {
+            watchingAppearance = true
+            observeSystemAppearance { this.listener?.onThemeChanged(systemTheme()) }
         }
         created.onEvent = { event ->
             this.listener?.onEvent(event)
@@ -104,6 +117,20 @@ class MacosWindowPlatform(
             host.open()
         }
         return true
+    }
+
+    /**
+     * The clipboard and the clipboard manager Compose's text fields use, backed by the
+     * general pasteboard. Provided explicitly, so whether copy, cut and paste work is this
+     * window's own doing and not a default's.
+     */
+    @Composable
+    @Suppress("DEPRECATION")
+    override fun Provide(content: @Composable () -> Unit) {
+        CompositionLocalProvider(
+            LocalClipboard provides clipboard,
+            LocalClipboardManager provides clipboardManager,
+        ) { content() }
     }
 
     override fun pump(timeoutMillis: Long) {

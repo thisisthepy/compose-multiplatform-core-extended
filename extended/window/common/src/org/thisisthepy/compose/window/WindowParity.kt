@@ -21,6 +21,14 @@ fun contentMinimum(minWidth: Int, minHeight: Int): Pair<Double, Double>? =
     }
 
 /**
+ * True when [size] bytes are a [width] by [height] picture of eight bits each of red, green,
+ * blue and alpha, row after row with no padding: the form a window layer's
+ * `setApplicationIcon` takes.
+ */
+fun isIconBuffer(size: Int, width: Int, height: Int): Boolean =
+    width > 0 && height > 0 && size.toLong() == width.toLong() * height.toLong() * 4L
+
+/**
  * Puts the application's picture on the Dock or the task bar, once the asset it named has
  * arrived.
  *
