@@ -200,9 +200,6 @@ class MacosWindow(
     fun requestFrame() {
         view.needsDisplay = true
         host?.requestFrame()
-        dispatch_async(dispatch_get_main_queue()) {
-            host?.runPendingWork()
-        }
     }
 
     var onFrameDrawn: ((widthInPixels: Int, heightInPixels: Int) -> Unit)? = null
@@ -427,8 +424,8 @@ class MacosWindow(
 
         override fun displayLayer(layer: CALayer) {
             VerticalResizeProbe.via = "display"
-            if (resizePainter != null) {
-                resizePainter?.invoke()
+            if (host != null) {
+                host?.turn(0)
             } else {
                 updateLayer()
             }
@@ -458,6 +455,8 @@ class MacosWindow(
                 VerticalResizeProbe.via = "set-frame"
                 if (resizePainter != null) {
                     resizePainter?.invoke()
+                } else if (host != null) {
+                    host?.turn(0)
                 } else {
                     updateLayer()
                 }
