@@ -141,19 +141,10 @@ internal val MAC_KEY_CODES: Map<Key, Int> = mapOf(
 )
 
 /**
- * What of an input method's text goes into a field.
- *
- * Everything but the control characters. A Control letter has a character of its own,
- * Control A is U+0001, and an input method that has no binding for it can hand that over
- * as text. It is never text anybody meant to type: a field that took it drew a box where
- * the caret was. Line breaks and tabs are keys, and arrive as keys, so nothing is lost.
+ * What of an input method's text goes into a field: everything but the control characters.
+ * The rule is shared with the GraalVM window, see [org.thisisthepy.compose.window.printableText].
  */
-internal fun insertableText(text: String): String {
-    if (text.none { it.isMacControl() }) return text
-    return text.filterNot { it.isMacControl() }
-}
-
-private fun Char.isMacControl(): Boolean = code < 0x20 || code == 0x7F
+internal fun insertableText(text: String): String = org.thisisthepy.compose.window.printableText(text)
 
 /**
  * A line per key on standard error, behind `COMPOSE_WINDOW_KEY_LOG=1`, so that what a window heard and what Compose
