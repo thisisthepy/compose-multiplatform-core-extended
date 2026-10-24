@@ -89,7 +89,7 @@ class MacosWindowPlatform(
             this.listener?.onCloseRequested()
         }
 
-        if (content !== EMPTY_CONTENT && internalHost == null && listener !is ComposeWindowHost) {
+        if (content !== EMPTY_CONTENT && internalHost == null) {
             val host = ComposeWindowHost(this, config, ::macosWindowSurface, content = content)
             internalHost = host
             host.open()

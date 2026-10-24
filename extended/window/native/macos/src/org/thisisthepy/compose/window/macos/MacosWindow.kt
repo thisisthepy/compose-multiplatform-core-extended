@@ -11,6 +11,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import kotlinx.cinterop.CPointed
@@ -23,6 +29,7 @@ import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.readValue
 import kotlinx.cinterop.useContents
 import kotlinx.cinterop.usePinned
+import kotlinx.cinterop.value
 import kotlinx.cinterop.addressOf
 import org.jetbrains.skia.Canvas
 import org.thisisthepy.compose.window.AccessibleElement
@@ -74,6 +81,7 @@ import platform.AppKit.NSWindowTitleVisible
 import platform.AppKit.NSWindowToolbarStyle
 import platform.AppKit.NSWindowZoomButton
 import platform.AppKit.NSWorkspace
+import platform.AppKit.postEvent
 import platform.AppKit.voiceOverEnabled
 import platform.CoreGraphics.CGPoint
 import platform.CoreGraphics.CGRect
@@ -82,6 +90,7 @@ import platform.CoreGraphics.CGSize
 import platform.Foundation.NSAttributedString
 import platform.Foundation.NSDate
 import platform.Foundation.NSMakeRange
+import platform.Foundation.NSMakeRect
 import platform.Foundation.NSMakeSize
 import platform.Foundation.NSNotFound
 import platform.Foundation.NSPointInRect
@@ -676,7 +685,7 @@ class MacosWindow(
             timestamp = NSProcessInfo.processInfo.systemUptime,
             windowNumber = window.windowNumber,
             context = null,
-            eventNumber = 0,
+            eventNumber = 0L,
             clickCount = 1,
             pressure = 1f,
         ) ?: return
@@ -702,7 +711,7 @@ class MacosWindow(
                     timestamp = NSProcessInfo.processInfo.systemUptime,
                     windowNumber = window.windowNumber,
                     context = null,
-                    eventNumber = eventIndex,
+                    eventNumber = eventIndex.toLong(),
                     clickCount = 1,
                     pressure = 1f,
                 )
@@ -718,7 +727,7 @@ class MacosWindow(
                     timestamp = NSProcessInfo.processInfo.systemUptime,
                     windowNumber = window.windowNumber,
                     context = null,
-                    eventNumber = eventIndex,
+                    eventNumber = eventIndex.toLong(),
                     clickCount = 1,
                     pressure = 0f,
                 )
@@ -771,7 +780,7 @@ class MacosWindow(
                     timestamp = NSProcessInfo.processInfo.systemUptime,
                     windowNumber = window.windowNumber,
                     context = null,
-                    eventNumber = 0,
+                    eventNumber = 0L,
                     clickCount = 1,
                     pressure = if (event.kind == WindowEvent.POINTER_DOWN) 1f else 0f,
                 ) ?: return

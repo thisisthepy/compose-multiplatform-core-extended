@@ -166,7 +166,7 @@ class MetalSurface {
      * by nothing in Kotlin. The pool [draw] wraps the frame in is its only owner, and it
      * goes back to the layer the moment the frame ends, on the thread that drew it.
      */
-    private fun nextDrawable(): COpaquePointer? =
+    internal fun nextDrawable(): COpaquePointer? =
         sendForObject(interpretCPointer<CPointed>(layer.objcPtr()), NEXT_DRAWABLE)
 
     private fun drawFrame(paint: (Canvas, Int, Int) -> Unit): Boolean {
