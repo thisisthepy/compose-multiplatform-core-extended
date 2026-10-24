@@ -364,7 +364,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          required=()
+          req_args=()
           for coordinate in $REQUIRED; do
             # skiko-awt reaches org.thisisthepy with the one-version-line change; until then a
             # dev build goes out without it rather than not at all.
@@ -372,10 +372,10 @@ jobs:
               echo "::warning::skiko-awt is not under org.thisisthepy yet; this dev build leaves it out"
               continue
             fi
-            required+=(--require "$coordinate")
+            req_args+=(--require "$coordinate")
           done
           python3 -I extended/publish/central_bundle.py validate "$RUNNER_TEMP/dev" \
-            --dev="$SUFFIX" --unsigned "${required[@]}"
+            --dev="$SUFFIX" --unsigned "${req_args[@]}"
 
       - name: Resolve the dev build from a consumer
         if: env.DEV == 'true'
@@ -426,10 +426,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          required=()
-          for coordinate in $REQUIRED; do required+=(--require "$coordinate"); done
+          req_args=()
+          for coordinate in $REQUIRED; do req_args+=(--require "$coordinate"); done
           python3 -I extended/publish/central_bundle.py validate "$RUNNER_TEMP/staging" \
-            --version "$VERSION" --verify-signatures "${required[@]}"
+            --version "$VERSION" --verify-signatures "${req_args[@]}"
 
       - name: Resolve the Central bundle from a consumer
         if: env.CENTRAL == 'true'
