@@ -85,6 +85,15 @@ class MacosWindowPlatformChromeTest {
     }
 
     @Test
+    fun fr33_6_the_platform_provides_the_pasteboard_clipboard_to_the_content_explicitly() {
+        val platform = MacosWindowPlatform {}
+        assertTrue(
+            platform is org.thisisthepy.compose.window.scene.PlatformCompositionLocals,
+            "copy, cut and paste in a field must not rest on a default",
+        )
+    }
+
+    @Test
     fun fr19_4_the_modern_window_keeps_the_traffic_lights_runs_content_under_the_bar_and_draws_no_title() =
         opened(WindowConfig("modern", 480, 320)) { platform, window ->
             assertNotNull(window.standardWindowButton(NSWindowCloseButton), "close button")

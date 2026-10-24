@@ -31,6 +31,15 @@ import org.thisisthepy.compose.window.WindowListener
 import org.thisisthepy.compose.window.WindowPlatform
 import org.thisisthepy.compose.window.candidateSpot
 
+/**
+ * Implemented by a [WindowPlatform] that provides composition locals of its own to the
+ * content, such as the system's clipboard, rather than leaving them to Compose's default.
+ */
+interface PlatformCompositionLocals {
+    @Composable
+    fun Provide(content: @Composable () -> Unit)
+}
+
 /** The system appearance the window reported, for content that follows it. */
 val LocalSystemTheme = staticCompositionLocalOf { SystemTheme.Light }
 
@@ -203,8 +212,12 @@ class ComposeWindowHost(
                 LocalSystemTheme provides theme,
                 LocalWindowCaption provides caption,
             ) {
-                WindowFrame(platform, caption, theme, config.resizable, padContentForCaption) { content() }
-                DrawnEditMenu(editMenuAt, onChosen = { listener.onContextMenuChosen(it) }, onDismiss = { editMenuAt = null })
+                val body: @Composable () -> Unit = {
+                    WindowFrame(platform, caption, theme, config.resizable, padContentForCaption) { content() }
+                    DrawnEditMenu(editMenuAt, onChosen = { listener.onContextMenuChosen(it) }, onDismiss = { editMenuAt = null })
+                }
+                val locals = platform as? PlatformCompositionLocals
+                if (locals != null) locals.Provide(body) else body()
             }
         }
         scene = created
