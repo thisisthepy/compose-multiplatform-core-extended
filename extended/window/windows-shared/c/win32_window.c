@@ -2606,12 +2606,15 @@ static void dxc_read_dragged_files(IDataObject *data) {
         wchar_t wide[MAX_PATH * 4];
         UINT units = DragQueryFileW(drop, index, wide, (UINT)(sizeof wide / sizeof *wide));
         if (units == 0) continue;
-        int bytes = WideCharToMultiByte(CP_UTF8, 0, wide, (int)units, NULL, 0, NULL, NULL);
+        // A name with an unpaired surrogate has no UTF-8 form. The file is left out and the
+        // others are kept, instead of being handed on with a replacement character that
+        // names a file that does not exist.
+        int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide, (int)units, NULL, 0, NULL, NULL);
         // Room for the separator as well, and a path that does not fit is left out rather
         // than cut in half.
         if (bytes <= 0 || used + bytes + 1 > DXC_DROPPED_BYTES) continue;
         if (used > 0) dxc_dropped_paths[used++] = '\0';
-        WideCharToMultiByte(CP_UTF8, 0, wide, (int)units, dxc_dropped_paths + used, bytes, NULL, NULL);
+        WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide, (int)units, dxc_dropped_paths + used, bytes, NULL, NULL);
         used += bytes;
     }
     dxc_dropped_length = used;
