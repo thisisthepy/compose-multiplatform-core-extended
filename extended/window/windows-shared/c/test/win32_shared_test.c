@@ -9,6 +9,7 @@
 #include "win32_resize.h"
 #include "win32_ime_text.h"
 #include "win32_wheel.h"
+#include "win32_caption.h"
 #include "win32_window.h"
 
 // The records the Kotlin side reads and writes by offset. A field added on one side only is
@@ -101,10 +102,35 @@ static void x11_names(void) {
     CHECK(dxc_native_resize_serial() == 0);
 }
 
+// The caption hit test at 100%, 150% and 200%: maximise answers as the maximise button so
+// Snap Layouts shows, minimise and close stay client area, the rest drags the window.
+static void caption_zones(void) {
+    const int32_t dpis[] = {96, 144, 192};
+    for (int i = 0; i < 3; i++) {
+        int32_t dpi = dpis[i];
+        int32_t button = dxc_caption_scale(46, dpi);
+        int32_t height = dxc_caption_scale(32, dpi);
+        int32_t width = 1200;
+        int32_t mid = height / 2;
+        CHECK(button == 46 * dpi / 96 && height == 32 * dpi / 96);
+        CHECK(dxc_caption_zone_at(width - button / 2, mid, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_CLOSE);
+        CHECK(dxc_caption_zone_at(width - button * 3 / 2, mid, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_MAXIMISE);
+        CHECK(dxc_caption_zone_at(width - button * 5 / 2, mid, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_MINIMISE);
+        CHECK(dxc_caption_zone_at(width - button * 3 - 1, mid, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_CAPTION);
+        CHECK(dxc_caption_zone_at(width / 2, mid, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_CAPTION);
+        CHECK(dxc_caption_zone_at(width - button * 3 / 2, height, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_CLIENT);
+        CHECK(dxc_caption_zone_at(width / 2, 2, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_TOP);
+        // Maximised or fixed size: no top band, the buttons reach the top edge.
+        CHECK(dxc_caption_zone_at(width - button * 3 / 2, 2, width, dpi, 8, 1, 1) == DXC_CAPTION_ZONE_MAXIMISE);
+        CHECK(dxc_caption_zone_at(width / 2, 2, width, dpi, 8, 0, 0) == DXC_CAPTION_ZONE_CAPTION);
+    }
+}
+
 int main(int argc, char **argv) {
     resize_decisions();
     wheel_direction();
     utf8_conversion();
+    caption_zones();
     frame_time();
     x11_names();
     // Never true. It only makes the linker resolve the window and the toasts, so a symbol
@@ -116,6 +142,7 @@ int main(int argc, char **argv) {
         dxc_native_poll_event(NULL);
         dxc_native_clipboard_write(argv[0]);
         dxc_native_set_raster_resize(1);
+        (void)dxc_native_window_is_zoomed();
         void *pixels = NULL;
         int32_t row_bytes = 0, width = 0, height = 0;
         if (dxc_native_frame_mode() != 0 &&

@@ -105,6 +105,9 @@ void dxc_native_window_chrome(int32_t full_size_content, int32_t transparent_tit
 void dxc_native_window_caption(void *view_pointer, float *height, float *buttons_width);
 void dxc_native_window_title_bar(void *view_pointer, float *out);
 void dxc_native_window_action(int32_t action);
+
+/** 1 while the window is maximised, so the renderer draws restore rather than maximise. */
+int32_t dxc_native_window_is_zoomed(void);
 void dxc_native_window_begin_drag(int32_t edge);
 void dxc_native_set_icon(const uint8_t *rgba, int32_t width, int32_t height);
 void dxc_native_install_menu(const char *application_name);
