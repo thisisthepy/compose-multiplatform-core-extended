@@ -392,6 +392,9 @@ jobs:
             --out "$RUNNER_TEMP/dev" \
             --project thisisthepy/compose-multiplatform-core-extended \
             --dev-suffix="$SUFFIX"
+          # Compose's desktop modules ask for JetBrains' skiko, which brings JetBrains' skiko-awt;
+          # point them at this fork's, so a consumer gets one.
+          python3 -I extended/skiko/repoint-desktop-skiko.py "$RUNNER_TEMP/dev" --require
           python3 -I extended/publish/central_bundle.py sign "$RUNNER_TEMP/dev" --checksums-only
 
       - name: Check the dev build
@@ -442,6 +445,7 @@ jobs:
             --from "$RUNNER_TEMP/repos/repo-skiko-awt" \
             --out "$RUNNER_TEMP/staging" \
             --project thisisthepy/compose-multiplatform-core-extended
+          python3 -I extended/skiko/repoint-desktop-skiko.py "$RUNNER_TEMP/staging" --require
 
       - name: A signing key for this run only
         if: env.CENTRAL == 'true' && env.RELEASE != 'true'

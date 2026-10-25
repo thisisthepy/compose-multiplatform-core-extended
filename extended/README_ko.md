@@ -323,9 +323,9 @@ runtime 은 그 버전의 `androidx.compose.runtime` 에서만 와야 하고, �
 거부합니다. `extended/publish-local-all.sh` 가 이 모두를 로컬에 배포합니다.
 
 skiko 는 JetBrains 그룹을 유지합니다. 모든 Compose 모듈이 skiko 를 그 그룹으로 찾기 때문입니다. 다만
-패치한 skiko-awt 는 이 포크의 `org.thisisthepy.compose.skiko:skiko-awt` 입니다. 그 메타데이터가
-`org.jetbrains.skiko:skiko-awt` 를 JetBrains 의 `0.144.6` 보다 높은 `0.144.6.1` capability 로 선언하므로,
-Gradle 빌드는 둘을 한 라이브러리로 보고 이것을 남깁니다. 네이티브는 JetBrains 의 `0.144.6` 런타임 jar 입니다.
+패치한 skiko-awt 는 이 포크의 `org.thisisthepy.compose.skiko:skiko-awt` 입니다. 그 메타데이터의 각 variant 는
+자기 좌표만 capability 로 선언합니다(Amper 는 그 외를 받지 않습니다). 포크의 데스크톱 모듈은 JetBrains 의
+skiko 대신 이것에 의존하므로, 클래스패스에는 skiko-awt 가 하나만 올라옵니다. 네이티브는 JetBrains 의 `0.144.6` 런타임 jar 입니다.
 
 아직 공개 저장소에 올린 것은 없습니다. 사용하는 쪽은 `mavenLocal()` 을 맨 앞에 둡니다.
 
