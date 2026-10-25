@@ -8,6 +8,7 @@
 
 #include "win32_resize.h"
 #include "win32_ime_text.h"
+#include "win32_wheel.h"
 #include "win32_window.h"
 
 // The records the Kotlin side reads and writes by offset. A field added on one side only is
@@ -50,6 +51,23 @@ static void resize_decisions(void) {
     CHECK(dxc_resize_draw_here(&resize) == 0);
 }
 
+static void wheel_direction(void) {
+    float x = 1.0f, y = 1.0f;
+    // A notch away from the reader is a scroll up, which Compose reads as a negative y.
+    dxc_wheel_to_scroll(120, 0, 3.0f, &x, &y);
+    CHECK(x == 0.0f && y == -3.0f);
+    dxc_wheel_to_scroll(-120, 0, 3.0f, &x, &y);
+    CHECK(x == 0.0f && y == 3.0f);
+    // A tilt to the right is a positive x on both sides.
+    dxc_wheel_to_scroll(120, 1, 3.0f, &x, &y);
+    CHECK(x == 3.0f && y == 0.0f);
+    // A touchpad step of a quarter notch stays a quarter, not zero.
+    dxc_wheel_to_scroll(30, 0, 1.0f, &x, &y);
+    CHECK(x == 0.0f && y == -0.25f);
+    dxc_wheel_to_scroll(30, 1, 1.0f, &x, &y);
+    CHECK(x == 0.25f && y == 0.0f);
+}
+
 static void utf8_conversion(void) {
     const uint16_t pair[] = { 0xd83d, 0xde00 };
     char out[16];
@@ -85,6 +103,7 @@ static void x11_names(void) {
 
 int main(int argc, char **argv) {
     resize_decisions();
+    wheel_direction();
     utf8_conversion();
     frame_time();
     x11_names();
