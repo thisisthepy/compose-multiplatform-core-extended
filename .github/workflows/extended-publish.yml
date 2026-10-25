@@ -344,6 +344,7 @@ jobs:
           # Cone mode: extended/COORDINATES.md comes with the files beside extended/publish.
           sparse-checkout: |
             extended/publish
+            extended/skiko
             buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build
 
       - uses: actions/download-artifact@v4
