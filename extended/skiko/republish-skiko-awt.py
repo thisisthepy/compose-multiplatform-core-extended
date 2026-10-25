@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Writes skiko's skiko-awt publication under this fork's coordinate.
 
-Usage: republish-skiko-awt.py <from-dir> <to-dir> <upstream-version> <group> <version> <capability-version>
+Usage: republish-skiko-awt.py <from-dir> <to-dir> <upstream-version> <group> <version>
 
 <from-dir> holds what skiko's build published as org.jetbrains.skiko:skiko-awt:<upstream-version>.
 <to-dir> gets the same files as <group>:skiko-awt:<version>:
@@ -10,10 +10,10 @@ Usage: republish-skiko-awt.py <from-dir> <to-dir> <upstream-version> <group> <ve
 - the .pom with its own group and version, the upstream version in its description, and the
   dependencies (the natives, skiko-awt-runtime-*) as they were;
 - the .module with its own component (no longer pointing at JetBrains' skiko root), the files
-  renamed, and every variant declaring two
-  capabilities: its own coordinate, and JetBrains' org.jetbrains.skiko:skiko-awt at
-  <capability-version>, so Gradle treats the two as one library and a build that resolves the
-  conflict by version keeps this one.
+  renamed, and every variant declaring one capability: its own coordinate. Amper accepts a
+  variant only when its capabilities are empty or exactly the module's own coordinate, so a
+  second (JetBrains') capability left it with no usable variant. What keeps JetBrains' skiko-awt
+  off a class path is repoint-desktop-skiko.py, which points this fork's desktop modules here.
 
 Checksum sidecars are left out: they are of the files before renaming.
 """
@@ -29,7 +29,7 @@ UPSTREAM_GROUP = "org.jetbrains.skiko"
 
 
 def main(argv):
-    source, target, upstream, group, version, capability = argv
+    source, target, upstream, group, version = argv
     old_prefix = f"{ARTIFACT}-{upstream}"
     new_prefix = f"{ARTIFACT}-{version}"
     os.makedirs(target, exist_ok=True)
@@ -64,10 +64,7 @@ def main(argv):
                     for key in ("name", "url"):
                         if key in entry:
                             entry[key] = entry[key].replace(old_prefix, new_prefix)
-                variant["capabilities"] = [
-                    {"group": group, "name": ARTIFACT, "version": version},
-                    {"group": UPSTREAM_GROUP, "name": ARTIFACT, "version": capability},
-                ]
+                variant["capabilities"] = [{"group": group, "name": ARTIFACT, "version": version}]
             json.dump(metadata, open(out, "w", encoding="utf-8"), indent=2)
         else:
             shutil.copyfile(path, out)
@@ -75,7 +72,7 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 7:
+    if len(sys.argv) != 6:
         print(__doc__.strip().splitlines()[2], file=sys.stderr)
         sys.exit(2)
     sys.exit(main(sys.argv[1:]))

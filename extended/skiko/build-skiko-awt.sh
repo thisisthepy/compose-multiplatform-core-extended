@@ -14,11 +14,10 @@
 #
 # Why this fork's group. Everything this fork ships goes out under org.thisisthepy, the
 # namespace it can publish to, on one version line (gradle.properties), with the upstream
-# version in the POM's description. Compose still asks for JetBrains' org.jetbrains.skiko:skiko-awt,
-# so the Gradle module metadata declares that coordinate as a capability of this one: Gradle
-# then sees the two as one library and keeps one, and the capability's version (0.144.6.1,
-# above JetBrains' 0.144.6) makes this one the higher, which is the one a build that resolves
-# the conflict by version keeps (the fork's Gradle plugin does).
+# version in the POM's description. Compose's desktop modules ask for org.jetbrains.skiko:skiko, which brings JetBrains'
+# skiko-awt, so repoint-desktop-skiko.py points them at this one and a consumer gets one
+# skiko-awt. The metadata carries no capability of JetBrains' coordinate: Amper accepts a
+# variant only when its capabilities are exactly the module's own.
 #
 # Usage: build-skiko-awt.sh <work-dir> [--clean]
 #
@@ -28,12 +27,10 @@ set -euo pipefail
 UPSTREAM="https://github.com/JetBrains/skiko.git"
 REVISION="9a5b398bb2044fff7e7a84fbfd6f4b803e4427c0"
 # The skiko version the sources are, the coordinate and version this build publishes as (the
-# fork's one version line, gradle.properties), and the version of JetBrains' coordinate it
-# declares as a capability.
+# fork's one version line, gradle.properties).
 UPSTREAM_VERSION="0.144.6"
 PUBLISHED_GROUP="org.thisisthepy.compose.skiko"
 PUBLISHED_AS="1.11.1-ext.2"
-CAPABILITY_VERSION="0.144.6.1"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -81,7 +78,9 @@ base="$HOME/.m2/repository/$(tr . / <<< "$PUBLISHED_GROUP")/skiko-awt"
 rm -rf "${base:?}/$PUBLISHED_AS"
 mkdir -p "$base/$PUBLISHED_AS"
 python3 "$HERE/republish-skiko-awt.py" "$from" "$base/$PUBLISHED_AS" \
-    "$UPSTREAM_VERSION" "$PUBLISHED_GROUP" "$PUBLISHED_AS" "$CAPABILITY_VERSION"
+    "$UPSTREAM_VERSION" "$PUBLISHED_GROUP" "$PUBLISHED_AS"
+# The desktop modules were published before this, in step 1 of publish-local-all.sh.
+python3 "$HERE/repoint-desktop-skiko.py" "$HOME/.m2/repository"
 rm -rf "$staging"
 
 jar="$base/$PUBLISHED_AS/skiko-awt-$PUBLISHED_AS.jar"

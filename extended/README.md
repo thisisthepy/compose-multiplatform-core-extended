@@ -332,10 +332,10 @@ not a release passes `-Pextended.publication.dev=true` and publishes `-ext.<N>-d
 without the suffix is refused. `extended/publish-local-all.sh` publishes all of it locally.
 
 skiko keeps JetBrains' group, because every Compose module asks for it there, except for the
-patched skiko-awt, which is this fork's `org.thisisthepy.compose.skiko:skiko-awt`. Its metadata
-declares `org.jetbrains.skiko:skiko-awt` as a capability at `0.144.6.1`, above JetBrains'
-`0.144.6`, so a Gradle build sees the two as one library and keeps this one; its natives are
-JetBrains' runtime jars at `0.144.6`.
+patched skiko-awt, which is this fork's `org.thisisthepy.compose.skiko:skiko-awt`. Each variant of
+its metadata declares only its own coordinate (Amper accepts nothing else). The fork's desktop
+modules depend on it instead of on JetBrains' skiko, so only one skiko-awt reaches a class path;
+its natives are JetBrains' runtime jars at `0.144.6`.
 
 Nothing is on a public repository yet. A consumer puts `mavenLocal()` first:
 
