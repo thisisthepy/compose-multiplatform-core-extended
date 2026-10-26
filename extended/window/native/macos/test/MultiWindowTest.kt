@@ -9,7 +9,6 @@ import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowListener
 import platform.AppKit.NSApplication
 import platform.Foundation.NSDate
-import platform.Foundation.timeIntervalSince1970
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
