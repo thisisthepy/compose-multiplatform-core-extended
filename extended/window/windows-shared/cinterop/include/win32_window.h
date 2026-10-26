@@ -111,6 +111,9 @@ int32_t dxc_native_take_accessibility_argument(char *out, int32_t capacity);
 int32_t dxc_native_accessibility_snapshot(char *out, int32_t capacity);
 int32_t dxc_native_ax_api_probe(int32_t *trusted, int32_t *windows);
 void dxc_native_window_action(int32_t action);
+
+/** 1 while the window is maximised, so the renderer draws restore rather than maximise. */
+int32_t dxc_native_window_is_zoomed(void);
 void dxc_native_window_begin_drag(int32_t edge);
 void dxc_native_set_icon(const uint8_t *rgba, int32_t width, int32_t height);
 void dxc_native_install_menu(const char *application_name);

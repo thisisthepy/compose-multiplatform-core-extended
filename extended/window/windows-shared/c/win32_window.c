@@ -65,6 +65,7 @@
 
 #include "win32_resize.h"
 #include "win32_ime_text.h"
+#include "win32_caption.h"
 
 // What happened in the window, waiting to be read.
 //
@@ -1389,13 +1390,16 @@ static struct {
     int32_t min_height;
     int32_t system_chrome;
     int32_t backdrop;
-} dxc_options = {1, 0, 0, 0, 0};
+} dxc_options = {1, 0, 0, 1, 0};
 
 /**
  * Says how the next window should be made. Called once, before it is opened.
  *
  * `system_chrome` keeps the system's caption. Without it the caption strip becomes part of
- * the client area and the renderer draws the title and the three buttons in it. `backdrop`
+ * the client area and the renderer draws the title and the three buttons in it. A window
+ * nobody configured keeps the system's caption: taking the strip away is only safe for a
+ * caller that has said it draws the buttons, and a caller that never said so would
+ * otherwise get a window with no way to close it (thisisthepy/compose-multiplatform-core-extended#171). `backdrop`
  * means nothing here: this window has no material to put behind the page.
  */
 void dxc_native_window_configure(
@@ -1494,10 +1498,8 @@ static DWORD dxc_window_style(void) {
  * scripts/tests/windows-caption-metrics.test.sh fails if the two stop agreeing.
  */
 
-// Windows 11 caption metrics, in device independent pixels.
-#define DXC_CAPTION_HEIGHT_DIP 32
-#define DXC_CAPTION_BUTTON_WIDTH_DIP 46
-#define DXC_CAPTION_BUTTON_COUNT 3
+// Windows 11 caption metrics, in device independent pixels, are in win32_caption.h with
+// the hit test arithmetic, so the shared test can check them without a window.
 
 static int dxc_scaled(HWND window, int dip) {
     UINT dpi = GetDpiForWindow(window);
@@ -1526,28 +1528,45 @@ static LRESULT dxc_caption_hit_test(HWND window, LPARAM lparam) {
         return where;
     }
     POINT point = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-    RECT frame;
-    if (!GetWindowRect(window, &frame)) {
+    RECT client;
+    if (!ScreenToClient(window, &point) || !GetClientRect(window, &client)) {
         return where;
     }
-    // The top resize band was in the non-client area this window gave up, so nothing else
-    // will answer for it. A window that cannot be resized has no such band.
-    int band = dxc_maximised_overhang(window);
-    if (dxc_options.resizable && !IsZoomed(window) && point.y < frame.top + band) {
+    // Measured in the client area: a maximised window's top edge hangs off the monitor and
+    // the client area is inset from it, which is where the renderer draws the buttons.
+    switch (dxc_caption_zone_at(point.x, point.y, client.right, (int32_t)GetDpiForWindow(window),
+                                dxc_maximised_overhang(window), dxc_options.resizable,
+                                IsZoomed(window) ? 1 : 0)) {
+    case DXC_CAPTION_ZONE_TOP:
         return HTTOP;
-    }
-    if (point.y >= frame.top + dxc_scaled(window, DXC_CAPTION_HEIGHT_DIP)) {
+    case DXC_CAPTION_ZONE_CAPTION:
+        // Drags the window, and brings back double click to maximise and the system menu
+        // on right click.
+        return HTCAPTION;
+    case DXC_CAPTION_ZONE_MAXIMISE:
+        // Snap Layouts appears only over a window's HTMAXBUTTON. The press and the moves
+        // that land here are non-client messages, forwarded to the scene below so the
+        // renderer's button still hovers, presses and toggles.
+        return HTMAXBUTTON;
+    default:
+        // Minimise and close are drawn by the renderer and take ordinary mouse input.
         return HTCLIENT;
     }
-    // The buttons are drawn by Kotlin and have to receive ordinary mouse input, so the
-    // strip they occupy stays client area. Everything else in the caption drags the
-    // window, which also brings back double click to maximise and the system menu on
-    // right click.
-    int buttons = dxc_scaled(window, DXC_CAPTION_BUTTON_WIDTH_DIP * DXC_CAPTION_BUTTON_COUNT);
-    if (point.x >= frame.right - buttons) {
-        return HTCLIENT;
-    }
-    return HTCAPTION;
+}
+
+/**
+ * Hands a non-client mouse message over the maximise button to the scene as the client
+ * pointer event it would have been, with the point moved into client coordinates.
+ */
+static void dxc_push_caption_pointer(HWND window, int32_t kind, LPARAM screen) {
+    POINT point = {GET_X_LPARAM(screen), GET_Y_LPARAM(screen)};
+    ScreenToClient(window, &point);
+    dxc_push_pointer(kind, MAKELPARAM(point.x, point.y));
+}
+
+/** True while the window is maximised, for the renderer's maximise or restore glyph. */
+int32_t dxc_native_window_is_zoomed(void) {
+    return dxc_window != NULL && IsZoomed(dxc_window) ? 1 : 0;
 }
 
 // Named apart from the one in `renderer_entry.c`, which subclasses the toolkit's frame
@@ -2070,6 +2089,36 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
             break;
         }
         return dxc_caption_hit_test(window, lparam);
+    case WM_NCMOUSEMOVE:
+        if (!dxc_options.system_chrome && wparam == HTMAXBUTTON) {
+            // Asked for, because a pointer leaving a non-client button sends nothing else.
+            TRACKMOUSEEVENT track = {sizeof track, TME_LEAVE | TME_NONCLIENT, window, 0};
+            TrackMouseEvent(&track);
+            dxc_push_caption_pointer(window, DXC_EVENT_POINTER_MOVE, lparam);
+            return 0;
+        }
+        break;
+    case WM_NCMOUSELEAVE:
+        if (!dxc_options.system_chrome) {
+            // Off every button, so the scene drops the hover it was shown.
+            dxc_push_pointer(DXC_EVENT_POINTER_MOVE, MAKELPARAM(-1, -1));
+        }
+        break;
+    case WM_NCLBUTTONDOWN:
+    case WM_NCLBUTTONDBLCLK:
+        if (!dxc_options.system_chrome && wparam == HTMAXBUTTON) {
+            // Swallowed, or the default handler runs its own button loop and toggles the
+            // window itself; the renderer's button is the one that acts on the release.
+            dxc_push_caption_pointer(window, DXC_EVENT_POINTER_DOWN, lparam);
+            return 0;
+        }
+        break;
+    case WM_NCLBUTTONUP:
+        if (!dxc_options.system_chrome && wparam == HTMAXBUTTON) {
+            dxc_push_caption_pointer(window, DXC_EVENT_POINTER_UP, lparam);
+            return 0;
+        }
+        break;
     case WM_GETMINMAXINFO:
         if (dxc_options.min_width > 0 || dxc_options.min_height > 0) {
             UINT dpi = GetDpiForWindow(window);
@@ -3016,7 +3065,7 @@ void dxc_native_debug_hit_test(void *window_pointer) {
     struct { const char *where; int x; int y; LRESULT expected; } points[] = {
         {"caption", (outer.left + outer.right) / 2, caption_middle, HTCAPTION},
         {"close", outer.right - button / 2 - 8, caption_middle, dxc_options.system_chrome ? HTCLOSE : HTCLIENT},
-        {"maximise", outer.right - button * 3 / 2 - 8, caption_middle, dxc_options.system_chrome ? HTMAXBUTTON : HTCLIENT},
+        {"maximise", outer.right - button * 3 / 2 - 8, caption_middle, HTMAXBUTTON},
         {"minimise", outer.right - button * 5 / 2 - 8, caption_middle, dxc_options.system_chrome ? HTMINBUTTON : HTCLIENT},
         {"client", origin.x + client.right / 2, origin.y + client.bottom / 2, HTCLIENT},
         {"left edge", outer.left + 2, (outer.top + outer.bottom) / 2, HTLEFT},
