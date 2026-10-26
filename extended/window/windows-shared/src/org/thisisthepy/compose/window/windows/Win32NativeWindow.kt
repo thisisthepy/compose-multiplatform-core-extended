@@ -13,6 +13,7 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.value
 import org.thisisthepy.compose.window.AccessibleElement
+import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.windows.c.dxc_element
@@ -36,6 +37,8 @@ import org.thisisthepy.compose.window.windows.c.dxc_native_window_action
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_is_zoomed
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_closed
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_configure
+import org.thisisthepy.compose.window.windows.c.dxc_native_window_configure_position
+import org.thisisthepy.compose.window.windows.c.dxc_native_window_set_close_deferred
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_open
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_size
 
@@ -137,6 +140,33 @@ class Win32NativeWindow private constructor(
             if (systemChrome) 1 else 0,
             backdrop,
         )
+
+        /**
+         * Opens the window [config] describes, at its position when it names one, and holds
+         * the system's requests to close it for [Win32Windows] to put to the application.
+         *
+         * The window keeps the system's caption: the caption the scene draws moves here with
+         * the renderer's own window. Sizes and the position are in points.
+         */
+        fun open(config: WindowConfig): Win32NativeWindow? {
+            configure(
+                resizable = config.resizable,
+                minWidth = config.minWidth,
+                minHeight = config.minHeight,
+                systemChrome = true,
+            )
+            val x = config.x
+            val y = config.y
+            if (x != null && y != null) {
+                dxc_native_window_configure_position(1, x, y)
+            } else {
+                dxc_native_window_configure_position(0, 0, 0)
+            }
+            val opened = open(config.title, config.width, config.height) ?: return null
+            // The window just opened is the selected one.
+            dxc_native_window_set_close_deferred(1)
+            return opened
+        }
 
         /**
          * Opens the window on this thread, which is then the thread its messages arrive on.
