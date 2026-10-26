@@ -64,6 +64,7 @@
 #include <stddef.h>
 
 #include "win32_resize.h"
+#include "win32_wheel.h"
 #include "win32_ime_text.h"
 #include "win32_caption.h"
 
@@ -2164,14 +2165,14 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
         dxc_push_pointer(DXC_EVENT_POINTER_UP, lparam);
         return 0;
     case WM_MOUSEWHEEL:
-        dxc_push_scroll(0.0f,
-            (float)GET_WHEEL_DELTA_WPARAM(wparam) / (float)WHEEL_DELTA * dxc_wheel_lines());
+    case WM_MOUSEHWHEEL: {
+        // The sign of each axis is decided in win32_wheel.h, where it is tested.
+        float scroll_x = 0.0f, scroll_y = 0.0f;
+        dxc_wheel_to_scroll(GET_WHEEL_DELTA_WPARAM(wparam), message == WM_MOUSEHWHEEL,
+            dxc_wheel_lines(), &scroll_x, &scroll_y);
+        dxc_push_scroll(scroll_x, scroll_y);
         return 0;
-    case WM_MOUSEHWHEEL:
-        dxc_push_scroll(
-            (float)GET_WHEEL_DELTA_WPARAM(wparam) / (float)WHEEL_DELTA * dxc_wheel_lines(),
-            0.0f);
-        return 0;
+    }
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
         // Anything held with alt, and F10, arrive as a system key. Answered here rather
