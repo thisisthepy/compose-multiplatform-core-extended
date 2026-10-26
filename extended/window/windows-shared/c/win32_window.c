@@ -2247,6 +2247,10 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
         // written down and taken by the next frame.
         dxc_resize_end_drag(&dxc_sizing);
         dxc_mode("size-move", "on", "off", "WM_EXITSIZEMOVE");
+        if (dxc_sync_active) {
+            fprintf(stderr, "compose-rust: resize-sync: drag done steps=%ld tokens=%ld failures=%ld\n", dxc_sync_steps,
+                    dxc_sync_tokens, dxc_sync_failures);
+        }
         if (dxc_external_drag) {
             // The window's side of an external drag: how many sizes it drew. None is a
             // failure of the drag, not a pass.
