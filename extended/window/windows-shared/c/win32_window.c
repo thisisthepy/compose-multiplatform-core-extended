@@ -67,6 +67,7 @@
 #include "win32_wheel.h"
 #include "win32_ime_text.h"
 #include "win32_caption.h"
+#include "win32_resize_sync.h"
 
 // What happened in the window, waiting to be read.
 //
@@ -2010,6 +2011,20 @@ void dxc_native_raster_end(void) {
     }
 }
 
+/**
+ * The resize synchronization stopped (a step of it failed, and said why): the swapchain shows
+ * again. Its buffers were left at the size they had while composition showed the window, so
+ * the next frame refits them, and the window is asked to draw it.
+ */
+static void dxc_sync_resume_swapchain(void) {
+    if (dxc_surface != NULL) ShowWindow(dxc_surface, SW_SHOWNA);
+    int32_t width = dxc_sizing.fitted_width;
+    int32_t height = dxc_sizing.fitted_height;
+    dxc_resize_fitted(&dxc_sizing, 0, 0);
+    dxc_resize_note(&dxc_sizing, width, height);
+    if (dxc_window != NULL) InvalidateRect(dxc_window, NULL, FALSE);
+}
+
 static void dxc_draw_resize(int32_t width, int32_t height) {
     if (width == dxc_presented_width && height == dxc_presented_height) {
         return;
@@ -2022,7 +2037,7 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
         fprintf(stderr, "compose-rust: resize-mode: skipped present %dx%d because a frame was already being drawn\n",
                 (int)width, (int)height);
     }
-    if (dxc_raster_enabled && dxc_draw_frame != NULL && !dxc_drawing) {
+    if (dxc_raster_enabled && !dxc_sync_active && dxc_draw_frame != NULL && !dxc_drawing) {
         dxc_switch_frames(1, width, height, dxc_sizing.dragging ? "the edge is being dragged" : "the size changed");
     }
     dxc_resizing = 1;
@@ -2054,7 +2069,7 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
     double drawn_ms = dxc_elapsed_ms(started);
     // Not on the CPU path: its copy is in the window's own GDI surface, which DWM composes
     // with the new window size, so there is no present to wait for.
-    int flushed = presented && !dxc_cpu_mode ? dxc_dwm_flush() : 0;
+    int flushed = presented && !dxc_cpu_mode && !dxc_sync_active ? dxc_dwm_flush() : 0;
     double total_ms = dxc_elapsed_ms(started);
     if (total_ms >= DXC_RESIZE_STEP_CAP_MS) {
         fprintf(stderr, "compose-rust: resize step %dx%d hit the %.0f ms cap (%.2f ms)\n",
@@ -2074,6 +2089,30 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
 static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     if (dxc_trace_state >= 0 && dxc_trace_on()) dxc_trace_message(window, message, wparam, lparam);
     switch (message) {
+    case WM_WINDOWPOSCHANGED:
+        // With the resize synchronization on, the token of a new size is taken here and the
+        // frame is drawn from a posted message once this returns (win32_resize_sync.h).
+        // DefWindowProc then sends WM_SIZE, which only writes the size down.
+        if (dxc_sync_active && !(((const WINDOWPOS *)lparam)->flags & SWP_NOSIZE)) {
+            dxc_sync_on_size_change(window);
+        }
+        break;
+    case DXC_WM_SYNC_RENDER: {
+        HANDLE token = dxc_sync_take_token();
+        if (!dxc_sync_active) {
+            if (token != NULL) CloseHandle(token);
+            return 0;
+        }
+        RECT client;
+        GetClientRect(window, &client);
+        if (!IsIconic(window) && !dxc_drawing && client.right > 0 && client.bottom > 0 && dxc_swapchain != NULL) {
+            dxc_resize_note(&dxc_sizing, (int32_t)client.right, (int32_t)client.bottom);
+            dxc_draw_resize((int32_t)client.right, (int32_t)client.bottom);
+        }
+        dxc_sync_finish(window, token);
+        if (!dxc_sync_active) dxc_sync_resume_swapchain();
+        return 0;
+    }
     case WM_NCCALCSIZE: {
         if (dxc_options.system_chrome || wparam != TRUE) {
             break;
@@ -2208,6 +2247,10 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
         // written down and taken by the next frame.
         dxc_resize_end_drag(&dxc_sizing);
         dxc_mode("size-move", "on", "off", "WM_EXITSIZEMOVE");
+        if (dxc_sync_active) {
+            fprintf(stderr, "compose-rust: resize-sync: drag done steps=%ld tokens=%ld failures=%ld\n", dxc_sync_steps,
+                    dxc_sync_tokens, dxc_sync_failures);
+        }
         if (dxc_external_drag) {
             // The window's side of an external drag: how many sizes it drew. None is a
             // failure of the drag, not a pass.
@@ -2333,8 +2376,11 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
             dxc_resize_note(&dxc_sizing, (int32_t)LOWORD(lparam), (int32_t)HIWORD(lparam));
             // Drawn here, inside the SetWindowPos that resized the window, whether or not
             // a drag is on: during one there is no other place that runs, and outside one
-            // the same ordering keeps the frame ahead of the next size.
-            dxc_draw_resize((int32_t)LOWORD(lparam), (int32_t)HIWORD(lparam));
+            // the same ordering keeps the frame ahead of the next size. With the resize
+            // synchronization on it is drawn from the message WM_WINDOWPOSCHANGED posted.
+            if (!dxc_sync_active) {
+                dxc_draw_resize((int32_t)LOWORD(lparam), (int32_t)HIWORD(lparam));
+            }
         }
         if (dxc_trace_state > 0) dxc_trace_event(DXC_TRACE_WM_SIZE_RET, (int)LOWORD(lparam), (int)HIWORD(lparam));
         if (dxc_external_drag && dxc_sizing.dragging) dxc_external_drag_steps++;
@@ -2349,7 +2395,7 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
         PAINTSTRUCT paint;
         BeginPaint(window, &paint);
         EndPaint(window, &paint);
-        if (!dxc_resizing && !dxc_sizing.dragging) {
+        if (!dxc_resizing && !dxc_sizing.dragging && !dxc_sync_queued) {
             dxc_draw_one_frame();
         }
         return 0;
@@ -2362,6 +2408,7 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
         DestroyWindow(window);
         return 0;
     case WM_DESTROY:
+        dxc_sync_shutdown();
         if (dxc_root_provider != NULL && dxc_root_provider->window == window) {
             dxc_release_children(dxc_root_provider);
             dxc_root_provider->window = NULL;
@@ -3919,6 +3966,11 @@ int32_t dxc_native_window_open(
     }
 
     dxc_accept_files(window);
+    // Opt in (DXC_RESIZE_SYNC=1): the window waits for its frames during a live resize. A
+    // refusal anywhere leaves the window exactly as it was.
+    if (dxc_sync_start(window, d3d11, (int)pixel_width, (int)pixel_height) && dxc_surface != NULL) {
+        ShowWindow(dxc_surface, SW_HIDE);
+    }
     ShowWindow(window, SW_SHOW);
     SetForegroundWindow(window);
     SetFocus(window);
@@ -3998,7 +4050,9 @@ int32_t dxc_native_frame_begin(void *swapchain_pointer, void **texture_out) {
         dxc_wait_for_gpu();
         dxc_step_gpu_idle_ms = dxc_elapsed_ms(refit_started);
         dxc_release_buffers();
-        HRESULT resized = IDXGISwapChain1_ResizeBuffers(
+        // With the resize synchronization on nothing is presented to the swapchain, so its
+        // buffers are left alone: the picture reaches the screen through composition.
+        HRESULT resized = dxc_sync_active ? S_OK : IDXGISwapChain1_ResizeBuffers(
             swapchain, DXC_BUFFER_COUNT, (UINT)wanted_width, (UINT)wanted_height,
             DXC_SWAPCHAIN_FORMAT, dxc_swapchain_flags);
         // A refusal leaves the swapchain the size it was, so the old buffers are taken
@@ -4098,6 +4152,36 @@ void dxc_native_frame_end(void *queue_pointer) {
     // through Direct3D 11. One GPU copy of the frame per present.
     LARGE_INTEGER copy_started;
     QueryPerformanceCounter(&copy_started);
+    if (dxc_sync_active) {
+        // The same copy, into the composition surface's texture instead. The picture reaches
+        // the screen with the next SynchronizedCommit: the message that drew a resize makes
+        // it with the resize's token, any other frame makes it here, unless a resize is
+        // queued, whose commit is the one that must come next.
+        ID3D11Texture2D *surface_texture = NULL;
+        POINT surface_offset = {0, 0};
+        if (dxc_sync_begin_draw(dxc_sizing.fitted_width, dxc_sizing.fitted_height, &surface_texture, &surface_offset)) {
+            ID3D11On12Device_AcquireWrappedResources(dxc_on12, &dxc_wrapped, 1);
+            D3D11_BOX drawn_here = {0, 0, 0, (UINT)dxc_sizing.fitted_width, (UINT)dxc_sizing.fitted_height, 1};
+            ID3D11DeviceContext_CopySubresourceRegion(dxc_d3d11_context, (ID3D11Resource *)surface_texture, 0,
+                                                      (UINT)surface_offset.x, (UINT)surface_offset.y, 0, dxc_wrapped, 0, &drawn_here);
+            ID3D11On12Device_ReleaseWrappedResources(dxc_on12, &dxc_wrapped, 1);
+            ID3D11DeviceContext_Flush(dxc_d3d11_context);
+            // The copy has to have run before the surface is handed back.
+            dxc_wait_for_gpu();
+            ID3D11Texture2D_Release(surface_texture);
+            if (dxc_sync_end_draw()) {
+                if (!dxc_resizing && !dxc_sync_queued) dxc_sync_commit(NULL);
+                dxc_presented_width = dxc_sizing.fitted_width;
+                dxc_presented_height = dxc_sizing.fitted_height;
+                dxc_step_copy_ms = dxc_elapsed_ms(copy_started);
+                return;
+            }
+        }
+        // Composition refused the frame: back to the swapchain, which shows again.
+        dxc_sync_deactivate("the composition surface refused a frame");
+        dxc_sync_resume_swapchain();
+        return;
+    }
     ID3D11Resource *back = NULL;
     HRESULT got = IDXGISwapChain1_GetBuffer(dxc_swapchain, 0, &IID_ID3D11Resource, (void **)&back);
     if (FAILED(got)) {
