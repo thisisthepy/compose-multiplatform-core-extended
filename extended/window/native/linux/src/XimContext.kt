@@ -316,7 +316,7 @@ class XimContext private constructor(
         var failure: String = ""
             private set
 
-        private fun fails(reason: String): XimContext? {
+        private fun <T : Any> fails(reason: String): T? {
             failure = reason
             return null
         }
