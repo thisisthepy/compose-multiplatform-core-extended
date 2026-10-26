@@ -33,6 +33,7 @@ import org.thisisthepy.compose.window.windows.c.dxc_native_set_draw_callback
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_raster_resize
 import org.thisisthepy.compose.window.windows.c.dxc_native_window
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_action
+import org.thisisthepy.compose.window.windows.c.dxc_native_window_is_zoomed
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_closed
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_configure
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_open
@@ -192,6 +193,9 @@ object Win32Loop {
 
     /** What a caption button asks of the window: 0 minimises, 1 maximises or restores, 2 closes. */
     fun action(which: Int) = dxc_native_window_action(which)
+
+    /** True while the window is maximised, for the caption's maximise or restore glyph. */
+    fun isZoomed(): Boolean = dxc_native_window_is_zoomed() != 0
 
     /** Whether frames during a resize are drawn on the CPU (the default) or on the GPU. */
     fun setRasterResize(enabled: Boolean) = dxc_native_set_raster_resize(if (enabled) 1 else 0)
