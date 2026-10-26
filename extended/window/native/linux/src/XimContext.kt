@@ -92,7 +92,6 @@ import x11.Window
  */
 class XimContext private constructor(
     private val display: CPointer<Display>,
-    private val method: XIM,
     private val context: XIC,
     private val state: StableRef<ImeSession>,
     private val callbacks: List<CPointer<XIMCallback>>,
@@ -177,27 +176,24 @@ class XimContext private constructor(
         }
     }
 
+    /** Destroys this window's context. The input method it came from is the connection's and stays open. */
     fun close() {
         XDestroyIC(context)
-        XCloseIM(method)
         for (callback in callbacks) nativeHeap.free(callback.rawValue)
         state.dispose()
     }
 
     companion object {
         /**
-         * Opens the input method, or answers null where there is none to talk to.
+         * Opens the process's one input method, or answers null where there is none to talk to.
+         * Every window makes its own context from it with [open].
          *
          * The locale is what decides it. XIM converts text into the encoding the process's
          * locale names, so a process in the C locale gets ASCII from an input method that
          * was asked for Hangul. A UTF-8 locale is asked for, and a machine that has none is
          * not offered an input method that would hand back the wrong bytes.
          */
-        fun open(
-            display: CPointer<Display>,
-            window: Window,
-            session: ImeSession,
-        ): XimContext? {
+        internal fun openMethod(display: CPointer<Display>): XimMethod? {
             failure = ""
             if (!chooseUtf8Locale()) return fails("no UTF-8 locale")
             if (XSupportsLocale() == 0) return fails("Xlib does not support this locale")
@@ -228,7 +224,19 @@ class XimContext private constructor(
                 XCloseIM(method)
                 return fails("the input method offers no usable input style")
             }
-            val inline = style and XIMPreeditCallbacks.toLong() != 0L
+            return XimMethod(method, style, style and XIMPreeditCallbacks.toLong() != 0L)
+        }
+
+        /** Makes the input context of [window] from the shared [shared] method, or null where it is refused. */
+        internal fun open(
+            display: CPointer<Display>,
+            window: Window,
+            session: ImeSession,
+            shared: XimMethod,
+        ): XimContext? {
+            val method = shared.handle
+            val style = shared.style
+            val inline = shared.inline
             val state = StableRef.create(session)
             val callbacks = ArrayList<CPointer<XIMCallback>>()
             fun callback(function: COpaquePointer): CPointer<XIMCallback> {
@@ -273,7 +281,6 @@ class XimContext private constructor(
                 created
             }
             if (context == null) {
-                XCloseIM(method)
                 for (callback in callbacks) nativeHeap.free(callback.rawValue)
                 state.dispose()
                 return fails("XCreateIC failed")
@@ -286,7 +293,7 @@ class XimContext private constructor(
                 XGetICValues(context, XNFilterEvents.cstr.ptr, value.ptr, null)
                 value.value.toLong()
             }
-            return XimContext(display, method, context, state, callbacks, mask, inline)
+            return XimContext(display, context, state, callbacks, mask, inline)
         }
 
         /**
@@ -375,4 +382,11 @@ private fun wideString(characters: CPointer<IntVar>?, length: Int): String {
     val points = ArrayList<Int>(length)
     for (index in 0 until length) points += characters[index]
     return buildString { for (point in points) appendPoint(point) }
+}
+
+/** The input method of the process: opened once with the display connection, closed with it. */
+internal class XimMethod(val handle: XIM, val style: Long, val inline: Boolean) {
+    fun close() {
+        XCloseIM(handle)
+    }
 }
