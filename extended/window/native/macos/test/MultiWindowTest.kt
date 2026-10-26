@@ -8,7 +8,6 @@ import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowListener
 import platform.AppKit.NSApplication
-import platform.Foundation.NSDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -274,10 +273,10 @@ class MultiWindowTest {
         try {
             a.pump(10)
             b.pump(10)
-            val start = NSDate().timeIntervalSince1970
+            val start = uptimeNanos()
             a.pump(250)
             b.pump(250)
-            val elapsedMillis = (NSDate().timeIntervalSince1970 - start) * 1000.0
+            val elapsedMillis = (uptimeNanos() - start) / 1_000_000.0
             assertTrue(elapsedMillis < 450.0, "two pumps in one turn took ${elapsedMillis}ms; one wait is 250")
         } finally {
             a.close()
