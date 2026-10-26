@@ -32,6 +32,13 @@ import platform.Foundation.NSRunLoop
 import platform.Foundation.dateWithTimeIntervalSinceNow
 import platform.Foundation.runMode
 
+/** Where [WindowConfig] asks the window to open, when it gives both coordinates. */
+private fun WindowConfig.topLeft(): Pair<Int, Int>? {
+    val left = x ?: return null
+    val top = y ?: return null
+    return left to top
+}
+
 /** The virtual key code of Escape. */
 private const val KEY_ESCAPE = 53
 
@@ -90,7 +97,7 @@ class MacosWindowPlatform(
                 height = config.height,
                 minimumSize = minimum,
                 chrome = MacosWindowChrome.of(config.chrome, config.titleBar).also { macosTitleBar = it.toTitleBar() },
-                topLeft = if (config.x != null && config.y != null) config.x to config.y else null,
+                topLeft = config.topLeft(),
             )
             created.initWindow()
             window = created

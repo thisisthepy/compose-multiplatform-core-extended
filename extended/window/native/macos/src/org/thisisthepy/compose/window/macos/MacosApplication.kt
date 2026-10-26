@@ -4,7 +4,7 @@ package org.thisisthepy.compose.window.macos
 
 import org.thisisthepy.compose.window.WindowApplication
 import platform.AppKit.NSApplication
-import platform.AppKit.NSApplicationActivationPolicyRegular
+import platform.AppKit.NSApplicationActivationPolicy
 import platform.AppKit.NSApplicationDelegateProtocol
 import platform.Foundation.NSNotification
 import platform.AppKit.NSWindow
@@ -32,7 +32,7 @@ internal object MacosProcess {
         val app = NSApplication.sharedApplication()
         // A process that is not a bundled application starts with a policy under which none of
         // its windows can become key. The windows are the application's face, so it is regular.
-        app.setActivationPolicy(NSApplicationActivationPolicyRegular)
+        app.setActivationPolicy(NSApplicationActivationPolicy.NSApplicationActivationPolicyRegular)
         if (app.delegate == null) {
             val delegate = MacosAppDelegate()
             appDelegate = delegate
