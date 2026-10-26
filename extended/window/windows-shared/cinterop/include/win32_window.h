@@ -164,6 +164,46 @@ void dxc_native_debug_resize(void *window_pointer, void *view_pointer, int32_t f
 void dxc_native_debug_hit_test(void *window_pointer);
 void dxc_native_debug_key(void *window_pointer, int32_t key_code, const char *characters);
 
+// Several windows in one process (FR-53). Every call above that names no window runs for the
+// selected one: the window opened last, or the one dxc_native_window_select named. A caller
+// with several windows selects before it calls. Positions and sizes are screen points at the
+// DPI of the window the call is about; the pump serves the whole process, so a caller pumps
+// once per turn on any one window.
+void dxc_native_window_select(void *window);
+// The handle of the window whose message is being handled, so a draw callback finds its window.
+int64_t dxc_native_current_window(void);
+int32_t dxc_native_window_count(void);
+// Where the next window opens; without a call the system chooses.
+void dxc_native_window_configure_position(int32_t has_position, int32_t x, int32_t y);
+// Closing. Deferred, the system's request to close is kept for take_close_request and the window
+// stays until destroy; not deferred, a request closes it, as it always has. Destroying one window
+// never ends the process: whether to quit is the application's, through post_quit.
+void dxc_native_window_set_close_deferred(int32_t deferred);
+int32_t dxc_native_take_close_request(void);
+void dxc_native_window_destroy(void *window);
+void dxc_native_window_release(void *window);
+void dxc_native_post_quit(int32_t code);
+int32_t dxc_native_quit_posted(int32_t *code);
+// Placement.
+void dxc_native_window_set_position(int32_t x, int32_t y);
+void dxc_native_window_set_content_size(int32_t width, int32_t height);
+int32_t dxc_native_window_bounds(int32_t *x, int32_t *y, int32_t *width, int32_t *height);
+void dxc_native_window_set_title(const char *title);
+void dxc_native_window_set_min_size(int32_t width, int32_t height);
+void dxc_native_window_set_visibility(int32_t visibility);
+int32_t dxc_native_system_dark(void);
+// Focus. Focus returns 0 when the foreground lock refused and the window flashed instead.
+int32_t dxc_native_window_focus(void);
+int32_t dxc_native_window_is_active(void);
+// What happened since the last call, each reported once: an activation change with the state now,
+// a move or resize with the outer frame, and the end of a follow.
+int32_t dxc_native_take_activation(int32_t *active);
+int32_t dxc_native_take_moved(int32_t *x, int32_t *y, int32_t *width, int32_t *height);
+// The pointer and moving a window under it.
+int32_t dxc_native_pointer_on_screen(float *x, float *y, int32_t *primary_down);
+int32_t dxc_native_follow_start(float anchor_x, float anchor_y);
+int32_t dxc_native_take_follow_end(int32_t *cancelled);
+
 // The toasts, win32_notifications.c. The application defines
 // compose_rust_renderer_request_frame(void), which the toasts call when an answer arrives.
 int32_t dxc_notify_start(void);
