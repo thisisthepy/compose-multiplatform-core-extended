@@ -41,6 +41,22 @@ such step prints one
 `DXC_METRICS` adds the memory lines (`metrics memory ...`), and `DXC_CAPTURE_CHECK` compares
 what DWM composed, read back through Desktop Duplication, with the frame drawn for each step.
 
+### Waiting for the app (opt in)
+
+`DXC_RESIZE_SYNC=1` makes the frame wait for the app, as Windows 11's Settings app does: during
+a drag the window frame stays where it was until the frame for the new size has been drawn. It
+uses the private resize synchronization (user32 ordinals 2615, 2614 and 2538 and
+`IDCompositionDesktopDevicePartner6::SynchronizedCommit`), all of it in `c/win32_resize_sync.h`
+and looked up at run time, so nothing is linked. With it on, the window's frames reach the
+screen through a Windows.UI.Composition surface (each frame is copied into it from the draw
+texture, where the swapchain's buffer was) and a resize is drawn from a message posted by
+`WM_WINDOWPOSCHANGED`, which commits it with the resize's token. A swapchain's present does not
+belong to that commit, which is why the swapchain is not used. It needs Windows 11 (build
+22000); `DXC_RESIZE_SYNC=force` skips that floor. Where an ordinal, an interface or a call is
+missing or refuses, the window says why on standard error (`resize-sync`, `resize-mode:
+resize-sync ...`) and carries on with the CPU resize frames above. The probe in compose-rust
+(`resize-sync-control`, issue #364) measures it.
+
 The swapchain is created in one function, so changing how the pixels reach the screen touches
 one place.
 

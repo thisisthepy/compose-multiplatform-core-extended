@@ -10,6 +10,7 @@
 #include "win32_ime_text.h"
 #include "win32_wheel.h"
 #include "win32_caption.h"
+#include "win32_resize_sync.h"
 #include "win32_window.h"
 
 // The records the Kotlin side reads and writes by offset. A field added on one side only is
@@ -126,8 +127,27 @@ static void caption_zones(void) {
     }
 }
 
+// The resize synchronization is opt in: nothing asks for it unless DXC_RESIZE_SYNC says so, and
+// "force" is the only value that skips the Windows 11 build floor.
+static void resize_sync_opt_in(void) {
+    int force = -1;
+    _putenv_s("DXC_RESIZE_SYNC", "");
+    CHECK(dxc_sync_requested(&force) == 0 && force == 0);
+    _putenv_s("DXC_RESIZE_SYNC", "0");
+    CHECK(dxc_sync_requested(&force) == 0 && force == 0);
+    _putenv_s("DXC_RESIZE_SYNC", "1");
+    CHECK(dxc_sync_requested(&force) == 1 && force == 0);
+    _putenv_s("DXC_RESIZE_SYNC", "force");
+    CHECK(dxc_sync_requested(&force) == 1 && force == 1);
+    _putenv_s("DXC_RESIZE_SYNC", "");
+    CHECK(dxc_sync_os_build() > 0);
+    // Not asked for, so not started, and nothing was touched.
+    CHECK(dxc_sync_start(NULL, NULL, 1, 1) == 0 && dxc_sync_active == 0);
+}
+
 int main(int argc, char **argv) {
     resize_decisions();
+    resize_sync_opt_in();
     wheel_direction();
     utf8_conversion();
     caption_zones();
