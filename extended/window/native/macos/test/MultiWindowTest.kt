@@ -124,9 +124,11 @@ class MultiWindowTest {
             assertTrue(a.nativeWindow !== b.nativeWindow, "each platform has its own NSWindow")
             assertTrue(visible(a))
             assertTrue(visible(b))
-            assertEquals(2, MacosProcess.platforms.size)
+            // Other tests of this process may leave platforms open, so membership is what is checked.
+            assertTrue(a in MacosProcess.platforms && b in MacosProcess.platforms)
             a.close()
-            assertEquals(1, MacosProcess.platforms.size)
+            assertFalse(a in MacosProcess.platforms)
+            assertTrue(b in MacosProcess.platforms)
             assertTrue(visible(b))
             assertNotNull(b.bounds())
             b.pump(10)
@@ -135,7 +137,7 @@ class MultiWindowTest {
             a.close()
             b.close()
         }
-        assertEquals(0, MacosProcess.platforms.size)
+        assertFalse(b in MacosProcess.platforms)
     }
 
     @Test
