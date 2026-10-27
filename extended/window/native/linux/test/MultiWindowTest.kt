@@ -19,12 +19,17 @@ import org.thisisthepy.compose.window.WindowBounds
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowListener
+import platform.posix.F_GETFD
+import platform.posix.fcntl
 import platform.posix.getenv
+import platform.posix.setenv
+import platform.posix.unsetenv
 import platform.posix.system
 import x11.ClientMessage
 import x11.MotionNotify
 import x11.PointerMotionMask
 import x11.XCloseDisplay
+import x11.XConnectionNumber
 import x11.XEvent
 import x11.XFlush
 import x11.XInternAtom
@@ -231,6 +236,43 @@ class MultiWindowTest {
             peer.close()
             first.close()
             second.close()
+        }
+    }
+
+    @Test
+    fun fr53_last_window_closes_the_connection_and_its_descriptor() {
+        if (!hasDisplay()) return
+        X11Connection.forgetShared()
+        val window = open(Recorder())
+        val shared = assertNotNull(window.sharedConnection)
+        val descriptor = XConnectionNumber(shared.display)
+        assertTrue(fcntl(descriptor, F_GETFD) >= 0, "the connection's descriptor is not open while a window uses it")
+        window.close()
+        assertNull(window.sharedConnection)
+        assertEquals(-1, fcntl(descriptor, F_GETFD), "the last window closed and the connection's descriptor leaked")
+    }
+
+    @Test
+    fun nfr1_a_window_opened_after_the_last_one_closed_reconnects_and_fails_cleanly_without_a_display() {
+        if (!hasDisplay()) return
+        X11Connection.forgetShared()
+        val first = open(Recorder())
+        first.close()
+        val display = getenv("DISPLAY")?.toKString()
+        unsetenv("DISPLAY")
+        try {
+            // Nothing is shared any more, so this goes to the server again and finds none, and
+            // answers false instead of reusing a closed connection or throwing.
+            assertFalse(X11Window().open(WindowConfig("no display", 200, 150), Recorder()))
+        } finally {
+            if (display != null) setenv("DISPLAY", display, 1)
+        }
+        // With the display back, the next window connects again.
+        val again = open(Recorder())
+        try {
+            assertEquals(1, assertNotNull(again.sharedConnection).users)
+        } finally {
+            again.close()
         }
     }
 
