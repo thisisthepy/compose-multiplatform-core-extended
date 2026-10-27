@@ -30,6 +30,21 @@ interface WindowListener {
      * to the system where it asks.
      */
     fun onAccessibilityAction(id: Int, action: Int, argument: String? = null): Boolean = false
+
+    /** The window became the key window (receives keyboard input) or lost that place. */
+    fun onFocusChanged(focused: Boolean) {}
+
+    /**
+     * The window's outer frame moved or changed size, by the user or by [WindowPlatform.setPosition],
+     * in screen points. At most once per [WindowPlatform.pump] turn however many steps the move took.
+     */
+    fun onMoved(bounds: WindowBounds) {}
+
+    /**
+     * A [WindowPlatform.followPointer] ended: the primary button was released ([cancelled] false),
+     * or the system took the press away or the user pressed Escape ([cancelled] true).
+     */
+    fun onFollowEnded(cancelled: Boolean) {}
 }
 
 /**
@@ -148,6 +163,46 @@ interface WindowPlatform {
 
     /** Does what a caption button the scene drew asks: minimise, maximise or restore, close. */
     fun performCaptionAction(action: CaptionAction) {}
+
+    // ---- several windows in one process --------------------------------------------------------
+    //
+    // Each window is its own WindowPlatform. What the operating system gives the process once
+    // (the run loop, the display connection, the message queue) is shared by every instance, and
+    // [pump] on any one of them services all of them: events reach the listener of the window
+    // they belong to. A caller with several windows pumps once per turn, on one of them.
+
+    /** Whether this platform can have more than one window open at a time. */
+    val supportsMultipleWindows: Boolean get() = false
+
+    /** Moves the window's outer frame so its top left corner is at ([x], [y]) screen points. */
+    fun setPosition(x: Int, y: Int) {}
+
+    /** Sets the size of the window's content to [width] by [height] points, keeping its top left corner. */
+    fun setContentSize(width: Int, height: Int) {}
+
+    /** The window's outer frame in screen points, or null where the platform cannot say. */
+    fun bounds(): WindowBounds? = null
+
+    /**
+     * Brings the window to the front and makes it the key window. A platform that refuses to let
+     * a process take focus (Windows' foreground lock, some X11 window managers) flashes the window
+     * instead and reports no [WindowListener.onFocusChanged].
+     */
+    fun focus() {}
+
+    /** Whether the window is the key window now. */
+    val isKey: Boolean get() = false
+
+    /** Where the pointer is on the screen and whether its primary button is held, or null where unknown. */
+    fun pointerOnScreen(): ScreenPointer? = null
+
+    /**
+     * Moves the window under the pointer on every [pump] turn until the primary button is
+     * released, keeping the point ([anchorX], [anchorY]) of the window's content, in points from
+     * its top left, under the pointer. Ends with [WindowListener.onFollowEnded]. Returns false
+     * where the platform cannot do it or the button is not held now, and then nothing follows.
+     */
+    fun followPointer(anchorX: Float, anchorY: Float): Boolean = false
 
     /** Destroys the window and everything the layer holds for it. */
     fun close()

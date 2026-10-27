@@ -21,7 +21,34 @@ data class WindowConfig(
     val chrome: WindowChrome = WindowChrome.Modern,
     /** Which caption a [WindowChrome.Modern] window has. */
     val titleBar: TitleBarStyle = TitleBarStyle.Normal,
+    /**
+     * Where the window's outer frame opens, in screen points: the top left corner, measured from
+     * the top left of the primary screen with y growing downward. Null on both lets the platform
+     * place it (a cascade on macOS, the default position on Windows, the window manager on X11).
+     * Both are given or neither is.
+     */
+    val x: Int? = null,
+    val y: Int? = null,
 )
+
+/** A point on the screen, in points from the top left of the primary screen, y growing downward. */
+data class ScreenPoint(val x: Float, val y: Float)
+
+/** Where the pointer is on the screen and whether its primary button is held. */
+data class ScreenPointer(val x: Float, val y: Float, val primaryDown: Boolean)
+
+/**
+ * Process-wide hooks of the application, as distinct from one window's [WindowListener].
+ *
+ * Set from the thread that pumps. A platform that has no such event never calls them.
+ */
+object WindowApplication {
+    /**
+     * The user activated the application while it has no window: a click on its Dock icon on
+     * macOS. The application opens a window in answer.
+     */
+    var onReopen: (() -> Unit)? = null
+}
 
 /** The system's light or dark setting. */
 enum class SystemTheme { Light, Dark }

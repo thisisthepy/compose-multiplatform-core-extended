@@ -85,6 +85,7 @@ import platform.AppKit.NSWorkspace
 import platform.AppKit.postEvent
 import platform.AppKit.voiceOverEnabled
 import platform.CoreGraphics.CGPoint
+import platform.CoreGraphics.CGPointMake
 import platform.CoreGraphics.CGRect
 import platform.CoreGraphics.CGRectMake
 import platform.CoreGraphics.CGSize
@@ -128,6 +129,11 @@ class MacosWindow(
      * the two have the same corners and their content starts at the same height.
      */
     val chrome: MacosWindowChrome = MacosWindowChrome.Modern,
+    /**
+     * Where the outer frame opens: its top left corner in screen points from the top left of
+     * the primary screen, y down. Null centres the first window and cascades the ones after it.
+     */
+    val topLeft: Pair<Int, Int>? = null,
 ) {
     private var measured = IntSize(width, height)
     private var isTheKeyWindow by mutableStateOf(true)
@@ -138,7 +144,16 @@ class MacosWindow(
     internal var frameTime: () -> Long = ::uptimeNanos
 
     var onEvent: ((WindowEvent) -> Unit)? = null
-    var onClose: (() -> Unit)? = null
+    /** The close button was pressed. Returns true to let the window close, false to keep it. */
+    var onClose: (() -> Boolean)? = null
+
+    /** The window became or stopped being the key window. */
+    var onFocus: ((Boolean) -> Unit)? = null
+
+    /** The frame moved or changed size since the platform last reported it. Set by the delegate. */
+    internal var movedPending = false
+
+    private val windowDelegate = MacosWindowDelegate(this)
     var resizePainter: (() -> Boolean)? = null
     var host: ComposeWindowHost? = null
 
@@ -618,7 +633,12 @@ class MacosWindow(
         minimumSize?.let { (minWidth, minHeight) ->
             window.contentMinSize = NSMakeSize(minWidth, minHeight)
         }
-        window.center()
+        // The delegate is weak on the AppKit side; windowDelegate holds it for the window's life.
+        window.delegate = windowDelegate
+        // The window is released by whoever created it, never by AppKit on close, so one window
+        // closing cannot free memory another reference still uses.
+        window.releasedWhenClosed = false
+        placeWindow()
         window.makeKeyAndOrderFront(null)
         window.makeFirstResponder(view)
         dispatch_async(dispatch_get_main_queue()) {
@@ -626,6 +646,26 @@ class MacosWindow(
         }
         view.registerForDraggedTypes(listOf(NSFilenamesPboardType))
         measureCaption()
+    }
+
+    private fun placeWindow() {
+        MacosCascade.alive++
+        val at = topLeft
+        if (at != null) {
+            window.setFrameTopLeftPoint(topLeftToAppKit(at.first.toDouble(), at.second.toDouble()))
+            return
+        }
+        window.center()
+        val next = MacosCascade.next
+        MacosCascade.next = if (next == null) {
+            window.frame.useContents { CGPointMake(origin.x, origin.y + size.height) }
+        } else {
+            window.cascadeTopLeftFromPoint(next)
+        }
+    }
+
+    internal fun windowClosed() {
+        MacosCascade.closed()
     }
 
     fun setContent(content: @Composable () -> Unit) {
