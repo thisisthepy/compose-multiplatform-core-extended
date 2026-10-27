@@ -745,81 +745,173 @@ class MacosWindow(
         val distance = 450.0
         val pause = 15
         val checkAt = setOf(100, 200, 300)
-        val startFrame = window.frame.useContents { size.width to size.height }
-        val rightEdgeX = window.frame.useContents { origin.x + size.width }
-        val midY = window.frame.useContents { origin.y + size.height / 2 }
+        val startWidth = window.frame.useContents { size.width }
+        val y = window.frame.useContents { size.height } / 2
+        // Two points inside the edge, which AppKit counts as the edge.
+        val x0 = startWidth - 2
+        var sent = 0
+        var paused = 0
 
-        val startEvent = NSEvent.mouseEventWithType(
-            type = platform.AppKit.NSEventTypeLeftMouseDown,
-            location = platform.CoreGraphics.CGPointMake(rightEdgeX, midY),
-            modifierFlags = 0u,
-            timestamp = NSProcessInfo.processInfo.systemUptime,
-            windowNumber = window.windowNumber,
-            context = null,
-            eventNumber = 0L,
-            clickCount = 1,
-            pressure = 1f,
-        ) ?: return
-        NSApplication.sharedApplication().postEvent(startEvent, atStart = false)
+        fun post(type: platform.AppKit.NSEventType, x: Double, pressure: Float) {
+            val event = NSEvent.mouseEventWithType(
+                type = type,
+                location = platform.CoreGraphics.CGPointMake(x, y),
+                modifierFlags = 0u,
+                timestamp = NSProcessInfo.processInfo.systemUptime,
+                windowNumber = window.windowNumber,
+                context = null,
+                eventNumber = sent.toLong(),
+                clickCount = 1,
+                pressure = pressure,
+            ) ?: return
+            NSApplication.sharedApplication().postEvent(event, atStart = false)
+        }
 
-        var eventIndex = 0
-        var timer: platform.Foundation.NSTimer? = null
-        timer = platform.Foundation.NSTimer.scheduledTimerWithTimeInterval(
+        post(platform.AppKit.NSEventTypeLeftMouseDown, x0, 1f)
+        // In the common modes, so the events arrive inside the tracking loop AppKit runs for
+        // a live resize, as a hand's would.
+        val timer = platform.Foundation.NSTimer.timerWithTimeInterval(
             interval = 1.0 / 60.0,
             repeats = true,
-        ) { _: platform.Foundation.NSTimer? ->
-            eventIndex++
-            if (eventIndex in checkAt) {
-                checkOnScreen(eventIndex)
+        ) { timer: platform.Foundation.NSTimer? ->
+            when {
+                paused > 0 -> {
+                    paused--
+                    if (paused == 0) {
+                        checkOnScreen(sent)
+                        metal.overlay = null
+                    }
+                }
+                sent < events -> {
+                    sent++
+                    post(platform.AppKit.NSEventTypeLeftMouseDragged, x0 + distance * sent / events, 1f)
+                    if (sent in checkAt) {
+                        // Drawn now with the pattern over it, and looked at once the window
+                        // server has had a few refreshes to show it.
+                        metal.overlay = ::drawCheckPattern
+                        view.needsDisplay = true
+                        view.displayIfNeeded()
+                        platform.QuartzCore.CATransaction.flush()
+                        paused = pause
+                    }
+                }
+                else -> {
+                    timer?.invalidate()
+                    val widened = DragMetrics.widenedBy(startWidth, window.frame.useContents { size.width })
+                    printError(DragMetrics.eventDragLine(widened, events))
+                    phase("event-drag")
+                    post(platform.AppKit.NSEventTypeLeftMouseUp, x0 + distance, 0f)
+                    dispatch_after(
+                        dispatch_time(DISPATCH_TIME_NOW, 2_000_000_000L),
+                        dispatch_get_main_queue(),
+                    ) {
+                        phase("event-settled")
+                        printError("compose-rust: metrics done")
+                    }
+                }
             }
-            if (eventIndex <= events) {
-                val t = eventIndex.toDouble() / events
-                val currentX = rightEdgeX + distance * t
-                val moveEvent = NSEvent.mouseEventWithType(
-                    type = platform.AppKit.NSEventTypeLeftMouseDragged,
-                    location = platform.CoreGraphics.CGPointMake(currentX, midY),
-                    modifierFlags = 0u,
-                    timestamp = NSProcessInfo.processInfo.systemUptime,
-                    windowNumber = window.windowNumber,
-                    context = null,
-                    eventNumber = eventIndex.toLong(),
-                    clickCount = 1,
-                    pressure = 1f,
-                )
-                if (moveEvent != null) {
-                    NSApplication.sharedApplication().postEvent(moveEvent, atStart = false)
+        }
+        platform.Foundation.NSRunLoop.currentRunLoop.addTimer(timer, forMode = platform.Foundation.NSRunLoopCommonModes)
+    }
+
+    /** Black and white blocks four pixels square over the whole frame, each block's colour a function of where it is. */
+    private fun drawCheckPattern(canvas: Canvas, width: Int, height: Int) {
+        val black = org.jetbrains.skia.Paint().apply { color = 0xFF000000.toInt() }
+        val white = org.jetbrains.skia.Paint().apply { color = 0xFFFFFFFF.toInt() }
+        canvas.drawRect(org.jetbrains.skia.Rect.makeWH(width.toFloat(), height.toFloat()), black)
+        for (by in 0 until (height + 3) / 4) {
+            for (bx in 0 until (width + 3) / 4) {
+                if (DragMetrics.blockIsWhite(bx, by)) {
+                    canvas.drawRect(org.jetbrains.skia.Rect.makeXYWH(bx * 4f, by * 4f, 4f, 4f), white)
                 }
-            } else {
-                timer?.invalidate()
-                val upEvent = NSEvent.mouseEventWithType(
-                    type = platform.AppKit.NSEventTypeLeftMouseUp,
-                    location = platform.CoreGraphics.CGPointMake(rightEdgeX + distance, midY),
-                    modifierFlags = 0u,
-                    timestamp = NSProcessInfo.processInfo.systemUptime,
-                    windowNumber = window.windowNumber,
-                    context = null,
-                    eventNumber = eventIndex.toLong(),
-                    clickCount = 1,
-                    pressure = 0f,
-                )
-                if (upEvent != null) {
-                    NSApplication.sharedApplication().postEvent(upEvent, atStart = false)
-                }
-                phase("dragged")
             }
         }
     }
 
+    /**
+     * Takes the window's own image through CGWindowListCreateImage, which captures a
+     * process's own windows without permission, and compares it pixel for pixel with the
+     * pattern the last frame was drawn with, inside the view and clear of the title bar and
+     * the rounded corners.
+     */
     private fun checkOnScreen(atEvent: Int) {
         val scale = window.backingScaleFactor
+        // kCGWindowListOptionIncludingWindow; kCGWindowImageBoundsIgnoreFraming and
+        // kCGWindowImageBestResolution, so one image pixel is one backing pixel.
         @Suppress("DEPRECATION")
         val image = platform.CoreGraphics.CGWindowListCreateImage(
             platform.CoreGraphics.CGRectNull.readValue(),
             1u shl 3,
             window.windowNumber.toUInt(),
             (1u shl 0) or (1u shl 3),
-        ) ?: return
+        )
+        if (image == null) {
+            printError("compose-rust: metrics capture at=$atEvent error=no-image")
+            return
+        }
+        val imageWidth = platform.CoreGraphics.CGImageGetWidth(image).toInt()
+        val imageHeight = platform.CoreGraphics.CGImageGetHeight(image).toInt()
+        val pixels = ByteArray(imageWidth * imageHeight * 4)
+        pixels.usePinned { pinned ->
+            val space = platform.CoreGraphics.CGColorSpaceCreateDeviceRGB()
+            val context = platform.CoreGraphics.CGBitmapContextCreate(
+                pinned.addressOf(0),
+                imageWidth.toULong(),
+                imageHeight.toULong(),
+                8u,
+                (imageWidth * 4).toULong(),
+                space,
+                platform.CoreGraphics.CGImageAlphaInfo.kCGImageAlphaPremultipliedLast.value,
+            )
+            platform.CoreGraphics.CGContextDrawImage(
+                context,
+                platform.CoreGraphics.CGRectMake(0.0, 0.0, imageWidth.toDouble(), imageHeight.toDouble()),
+                image,
+            )
+            platform.CoreGraphics.CGContextRelease(context)
+            platform.CoreGraphics.CGColorSpaceRelease(space)
+        }
         platform.CoreGraphics.CGImageRelease(image)
+
+        val windowWidth = window.frame.useContents { size.width }
+        val windowHeight = window.frame.useContents { size.height }
+        val imageScale = imageWidth / windowWidth
+        // Where the view is in the window, counted from the window's top left in pixels.
+        val viewRect = view.convertRect(view.bounds, toView = null)
+        val viewLeft = viewRect.useContents { origin.x } * scale
+        val viewTop = viewRect.useContents { (windowHeight - (origin.y + size.height)) } * scale
+        val viewWidth = viewRect.useContents { size.width } * scale
+        val viewHeight = viewRect.useContents { size.height } * scale
+        val barBottom = window.contentLayoutRect.useContents { windowHeight - (origin.y + size.height) } * scale
+        val margin = (32 * scale).toInt()
+        val fromX = margin
+        val toX = (viewWidth - margin).toInt()
+        val fromY = maxOf(margin / 4, (barBottom - viewTop).toInt() + margin / 4)
+        val toY = (viewHeight - margin).toInt()
+
+        var same = 0L
+        var total = 0L
+        if (kotlin.math.abs(imageScale - scale) < 0.01) {
+            for (py in fromY until toY) {
+                val iy = (viewTop + py).toInt()
+                if (iy < 0 || iy >= imageHeight) continue
+                for (px in fromX until toX) {
+                    val ix = (viewLeft + px).toInt()
+                    if (ix < 0 || ix >= imageWidth) continue
+                    val at = (iy * imageWidth + ix) * 4
+                    val luminance = (pixels[at].toInt() and 0xFF) + (pixels[at + 1].toInt() and 0xFF) +
+                        (pixels[at + 2].toInt() and 0xFF)
+                    if ((luminance > 3 * 128) == DragMetrics.blockIsWhite(px / 4, py / 4)) same++
+                    total++
+                }
+            }
+        }
+        printError(
+            DragMetrics.captureLine(
+                atEvent, metal.widthInPixels, metal.heightInPixels, imageScale, scale,
+                DragMetrics.matchFraction(same, total),
+            ),
+        )
     }
 
     private fun processMemory(): Pair<Long, Long> = memScoped {
