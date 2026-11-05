@@ -518,12 +518,22 @@ class X11Window : WindowPlatform {
         applySizeHints()
     }
 
-    /** Tells the window manager the sizes [sizeHintsFor] decides on, when there are any. */
+    /** Changes the window manager's resize policy without reopening the window. */
+    fun setResizable(value: Boolean) {
+        if (resizable == value) return
+        resizable = value
+        if (!value) {
+            openedWidth = measured.width
+            openedHeight = measured.height
+        }
+        applySizeHints()
+    }
+
+    /** Replaces the window manager's size hints, including clearing old constraints. */
     private fun applySizeHints() {
         val display = display ?: return
         val decided = sizeHintsFor(minWidth, minHeight, resizable, openedWidth, openedHeight, DENSITY)
         val placed = openedAt
-        if (decided == null && placed == null) return
         val hints = XAllocSizeHints() ?: return
         placed?.let { (x, y) ->
             hints.pointed.flags = hints.pointed.flags or US_POSITION
