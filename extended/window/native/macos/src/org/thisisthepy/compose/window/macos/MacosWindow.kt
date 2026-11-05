@@ -247,7 +247,10 @@ class MacosWindow(
     // happen (contentLayoutRect equals the frame, so the height is 0), and a window that
     // never resizes would keep that 0. Measure again after the window is shown, a bounded
     // number of times, until a non-zero height arrives.
+    private var closed = false
+
     private fun remeasureCaption(attempt: Int) {
+        if (closed) return
         measureCaption()
         if (!shouldRetryCaptionMeasure(attempt, caption.value.height.value, chrome.fullSizeContentView)) return
         dispatch_after(
@@ -272,7 +275,7 @@ class MacosWindow(
         override fun becomeKeyWindow() {
             super.becomeKeyWindow()
             isTheKeyWindow = true
-            if (caption.value.height.value <= 0f) measureCaption()
+            if (chrome.fullSizeContentView && caption.value.height.value <= 0f) measureCaption()
             view.needsDisplay = true
         }
 
@@ -681,6 +684,7 @@ class MacosWindow(
     }
 
     internal fun windowClosed() {
+        closed = true
         MacosCascade.closed()
     }
 
