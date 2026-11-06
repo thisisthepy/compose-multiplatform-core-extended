@@ -230,17 +230,29 @@ class MacosWindow(
 
     val caption = mutableStateOf(WindowCaption.None)
 
-    private fun measureCaption() {
+    private fun measureCaption(tag: String) {
         val close = window.standardWindowButton(NSWindowCloseButton)
         val zoom = window.standardWindowButton(NSWindowZoomButton)
-        caption.value = macosWindowCaption(
+        val windowHeight = window.frame.useContents { size.height }
+        val contentLayoutHeight = window.contentLayoutRect.useContents { size.height }
+        val closeMinX = close?.frame?.useContents { origin.x }
+        val zoomMaxX = zoom?.frame?.useContents { origin.x + size.width }
+        val measured = macosWindowCaption(
             chrome = chrome,
-            windowHeight = window.frame.useContents { size.height },
-            contentLayoutHeight = window.contentLayoutRect.useContents { size.height },
-            closeMinX = close?.frame?.useContents { origin.x },
-            zoomMaxX = zoom?.frame?.useContents { origin.x + size.width },
+            windowHeight = windowHeight,
+            contentLayoutHeight = contentLayoutHeight,
+            closeMinX = closeMinX,
+            zoomMaxX = zoomMaxX,
             cornerRadius = systemCornerRadius(chrome),
-        ) ?: return
+        )
+        println(
+            "CAPTION468 t=${(NSProcessInfo.processInfo.systemUptime * 1000).toLong()}ms tag=$tag " +
+                "windowH=$windowHeight contentLayoutH=$contentLayoutHeight closeMinX=$closeMinX " +
+                "zoomMaxX=$zoomMaxX key=${window.isKeyWindow()} visible=${window.isVisible()} " +
+                "fullSize=${chrome.fullSizeContentView} captionH=${measured?.height?.value} " +
+                "buttonsW=${measured?.buttonsWidth?.value} null=${measured == null}",
+        )
+        caption.value = measured ?: return
     }
 
     // With a full size content view the title bar is not laid out yet when the first reads
@@ -251,12 +263,16 @@ class MacosWindow(
 
     private fun remeasureCaption(attempt: Int) {
         if (closed) return
-        measureCaption()
-        if (!shouldRetryCaptionMeasure(attempt, caption.value.height.value, chrome.fullSizeContentView)) return
+        measureCaption("retry attempt $attempt")
+        if (!shouldRetryCaptionMeasure(attempt, caption.value.height.value, chrome.fullSizeContentView)) {
+            println("CAPTION468 retry attempt=$attempt stops, no further retry height=${caption.value.height.value}")
+            return
+        }
         dispatch_after(
             dispatch_time(DISPATCH_TIME_NOW, CAPTION_RETRY_DELAYS_NANOS[attempt]),
             dispatch_get_main_queue(),
         ) {
+            println("CAPTION468 retry attempt=$attempt scheduled next=${attempt + 1} height=${caption.value.height.value}")
             remeasureCaption(attempt + 1)
         }
     }
@@ -275,7 +291,7 @@ class MacosWindow(
         override fun becomeKeyWindow() {
             super.becomeKeyWindow()
             isTheKeyWindow = true
-            if (chrome.fullSizeContentView && caption.value.height.value <= 0f) measureCaption()
+            if (chrome.fullSizeContentView && caption.value.height.value <= 0f) measureCaption("becomeKey")
             view.needsDisplay = true
         }
 
@@ -289,7 +305,7 @@ class MacosWindow(
     private val backdrop = object : NSVisualEffectView(contentBounds(width, height)) {
         override fun setFrameSize(newSize: CValue<CGSize>) {
             super.setFrameSize(newSize)
-            measureCaption()
+            measureCaption("setFrameSize backdrop")
         }
 
         override fun accessibilityRole(): String? = MacosAx.GROUP
@@ -493,7 +509,7 @@ class MacosWindow(
             VerticalResizeProbe.setFrame(oldSize, size)
             val scale = window?.backingScaleFactor ?: 1.0
             resizeStats.step((size.first * scale).toInt(), (size.second * scale).toInt())
-            measureCaption()
+            measureCaption("setFrameSize content view")
             if (window != null) {
                 VerticalResizeProbe.via = "set-frame"
                 updateLayer()
@@ -661,10 +677,11 @@ class MacosWindow(
         window.makeKeyAndOrderFront(null)
         window.makeFirstResponder(view)
         dispatch_async(dispatch_get_main_queue()) {
+            println("CAPTION468 post-show dispatch")
             remeasureCaption(0)
         }
         view.registerForDraggedTypes(listOf(NSFilenamesPboardType))
-        measureCaption()
+        measureCaption("init end")
     }
 
     private fun placeWindow() {
