@@ -65,17 +65,23 @@ const val FILE_DIALOG_MAX_EXTENSIONS = 32
  *
  * Too many filters or extensions are cut rather than refused, an out-of-range default
  * filter becomes the first, extensions lose a leading dot or `*.` and are lower-cased, and
- * a name keeps only what follows its last path separator.
+ * a name keeps only what follows its last path separator. A filter whose extensions are all
+ * empty after cleaning is dropped; a filter given with no extensions at all means every file.
  */
 fun normalizeFileDialogRequest(request: FileDialogRequest): FileDialogRequest {
-    val filters = request.filters.take(FILE_DIALOG_MAX_FILTERS).map { filter ->
+    val kept = ArrayList<FileDialogFilter>()
+    var defaultFilter = 0
+    request.filters.take(FILE_DIALOG_MAX_FILTERS).forEachIndexed { index, filter ->
         val extensions = filter.extensions
             .map { it.trim().removePrefix("*.").trimStart('.').lowercase() }
             .filter { it.isNotEmpty() }
             .take(FILE_DIALOG_MAX_EXTENSIONS)
-        FileDialogFilter(filter.label, extensions)
+        // A filter that named extensions but kept none would turn into "all files"; drop it.
+        if (extensions.isEmpty() && filter.extensions.isNotEmpty()) return@forEachIndexed
+        if (index == request.defaultFilter) defaultFilter = kept.size
+        kept.add(FileDialogFilter(filter.label, extensions))
     }
-    val defaultFilter = if (request.defaultFilter in filters.indices) request.defaultFilter else 0
+    val filters: List<FileDialogFilter> = kept
     val name = request.name.substring(maxOf(request.name.lastIndexOf('/'), request.name.lastIndexOf('\\')) + 1)
     return FileDialogRequest(
         kind = request.kind,
@@ -206,9 +212,14 @@ class FileDialogLanes<W : Any>(
     private fun completed(lane: Lane<W>, entry: Entry, outcome: FileDialogOutcome) {
         if (entry.done) return
         if (lane.active === entry) lane.active = null
-        deliver(entry, outcome)
+        // Release first: the callback may call show() again and start a new sheet on this
+        // presenter, which the release of the finished one must not touch.
         lane.presenter.release()
-        if (!lane.closed) startNext(lane)
+        try {
+            deliver(entry, outcome)
+        } finally {
+            if (!lane.closed) startNext(lane)
+        }
     }
 
     private fun deliver(entry: Entry, outcome: FileDialogOutcome) {

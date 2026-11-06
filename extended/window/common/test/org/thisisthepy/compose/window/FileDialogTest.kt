@@ -56,6 +56,37 @@ class FileDialogTest {
         assertEquals(0, normalizeFileDialogRequest(request(filters, defaultFilter = 18)).defaultFilter)
     }
 
+    @Test
+    fun fileDialogNormalizeDropsAFilterWhoseExtensionsAllCleanToNothing() {
+        val filters = listOf(
+            FileDialogFilter("junk", listOf(".", "*.", " ")),
+            FileDialogFilter("png", listOf("png")),
+        )
+        val result = normalizeFileDialogRequest(request(filters, defaultFilter = 1))
+        assertEquals(listOf("png"), result.filters.map { it.label })
+        assertEquals(0, result.defaultFilter)
+    }
+
+    @Test
+    fun fileDialogNormalizeKeepsTheDefaultFilterOnTheSameFilterAfterADrop() {
+        val filters = listOf(
+            FileDialogFilter("junk", listOf(".")),
+            FileDialogFilter("a", listOf("a")),
+            FileDialogFilter("b", listOf("b")),
+        )
+        val result = normalizeFileDialogRequest(request(filters, defaultFilter = 2))
+        assertEquals(listOf("a", "b"), result.filters.map { it.label })
+        assertEquals(1, result.defaultFilter)
+        assertEquals(0, normalizeFileDialogRequest(request(filters, defaultFilter = 0)).defaultFilter)
+    }
+
+    @Test
+    fun fileDialogNormalizeKeepsAFilterGivenWithNoExtensionsAsAllFiles() {
+        val result = normalizeFileDialogRequest(request(listOf(FileDialogFilter("all", emptyList()))))
+        assertEquals(1, result.filters.size)
+        assertTrue(result.filters[0].extensions.isEmpty())
+    }
+
     // Lanes and outcome rules
 
     private class FakePresenter : SheetPresenter {
@@ -194,6 +225,37 @@ class FileDialogTest {
         s.window = null
         s.presenters.getValue("a").completion!!(FileDialogOutcome.Cancelled)
         assertIs<FileDialogOutcome.Unavailable>(second)
+    }
+
+    @Test
+    fun fileDialogLanesReleaseBeforeTheCallbackAndKeepARetryAlive() {
+        val s = Setup()
+        var releasedAtCallback = -1
+        var retryResult: FileDialogOutcome? = null
+        s.lanes.show(open("1")) {
+            releasedAtCallback = s.presenters.getValue("a").released
+            s.lanes.show(open("retry")) { retryResult = it }
+        }
+        val p = s.presenters.getValue("a")
+        p.completion!!(FileDialogOutcome.Cancelled)
+        assertEquals(1, releasedAtCallback)
+        assertEquals(listOf("1", "retry"), p.presented.map { it.title })
+        // The old completion must not have released the retry's presenter state.
+        assertEquals(1, p.released)
+        p.completion!!(FileDialogOutcome.Chosen(listOf("/x"), -1))
+        assertIs<FileDialogOutcome.Chosen>(retryResult)
+    }
+
+    @Test
+    fun fileDialogLanesRunRequestsQueuedBeforeARetryFirst() {
+        val s = Setup()
+        s.lanes.show(open("1")) { s.lanes.show(open("retry")) {} }
+        s.lanes.show(open("2")) {}
+        val p = s.presenters.getValue("a")
+        p.completion!!(FileDialogOutcome.Cancelled)
+        assertEquals(listOf("1", "2"), p.presented.map { it.title })
+        p.completion!!(FileDialogOutcome.Cancelled)
+        assertEquals(listOf("1", "2", "retry"), p.presented.map { it.title })
     }
 
     @Test

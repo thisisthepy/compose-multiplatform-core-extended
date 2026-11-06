@@ -1,4 +1,4 @@
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class, kotlin.experimental.ExperimentalNativeApi::class)
 
 package org.thisisthepy.compose.window.macos
 
@@ -26,8 +26,12 @@ import platform.AppKit.NSSavePanel
 import platform.AppKit.NSView
 import platform.AppKit.NSWindow
 import platform.AppKit.NSWindowDelegateProtocol
+import platform.AppKit.NSWindowWillCloseNotification
+import platform.AppKit.NSWorkspace
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSFileManager
+import platform.Foundation.NSNotificationCenter
+import platform.Foundation.NSOperationQueue
 import platform.Foundation.NSSelectorFromString
 import platform.Foundation.NSProcessInfo
 import platform.Foundation.NSThread
@@ -36,6 +40,7 @@ import platform.UniformTypeIdentifiers.UTType
 import platform.darwin.NSObject
 import platform.darwin.dispatch_async
 import platform.darwin.dispatch_get_main_queue
+import kotlin.native.ref.WeakReference
 
 /** Target of the filter pop-up. The button holds its target weakly, so the presenter keeps this alive. */
 private class FilterPicker(private val onPicked: () -> Unit) : NSObject() {
@@ -46,17 +51,23 @@ private class FilterPicker(private val onPicked: () -> Unit) : NSObject() {
 /**
  * Restricts an open panel to the extensions of the selected filter. It matches the end of the
  * file name case-insensitively, so it works for extensions the system has no type for.
- * Directories always stay enabled so the reader can move through them.
+ * Plain directories stay enabled so the reader can move through them; packages such as .app
+ * count as files.
  */
+// NSWindowDelegateProtocol is kept only because the Kotlin binding types panel.delegate as the window delegate.
 private class ExtensionDelegate(var extensions: List<String>) : NSObject(), NSOpenSavePanelDelegateProtocol, NSWindowDelegateProtocol {
     override fun panel(sender: Any, shouldEnableURL: NSURL): Boolean {
         if (extensions.isEmpty()) return true
         val path = shouldEnableURL.path ?: return false
-        if (isDirectory(path)) return true
         val name = path.substringAfterLast('/').lowercase()
-        return extensions.any { name.endsWith(".$it") }
+        // The name test is cheap; stat only when it does not already match (slow on network volumes).
+        if (extensions.any { name.endsWith(".$it") }) return true
+        return isPlainDirectory(path)
     }
 }
+
+private fun isPlainDirectory(path: String): Boolean =
+    isDirectory(path) && !NSWorkspace.sharedWorkspace.isFilePackageAtPath(path)
 
 private fun isDirectory(path: String): Boolean = memScoped {
     val flag = alloc<BooleanVar>()
@@ -70,7 +81,10 @@ private fun isFolderKind(kind: FileDialogKind) =
     kind == FileDialogKind.OpenFolder || kind == FileDialogKind.OpenFolders
 
 /** Shows one sheet on one window and owns every AppKit object it creates until [release]. */
-private class MacosSheetPresenter(private val window: NSWindow) : SheetPresenter {
+private class MacosSheetPresenter(window: NSWindow) : SheetPresenter {
+    // Weak, so a presenter that outlives its sheet never keeps the window alive.
+    private val windowRef = WeakReference(window)
+    private var dismissed = false
     private var panel: NSSavePanel? = null
     private var picker: FilterPicker? = null
     private var popUp: NSPopUpButton? = null
@@ -78,19 +92,29 @@ private class MacosSheetPresenter(private val window: NSWindow) : SheetPresenter
 
     override fun present(request: FileDialogRequest, completion: (FileDialogOutcome) -> Unit) {
         release()
+        dismissed = false
+        val window = windowRef.get()
+        if (window == null) {
+            completion(FileDialogOutcome.Unavailable)
+            return
+        }
         val panel = buildPanel(request)
         this.panel = panel
         val previousResponder = window.firstResponder
         panel.beginSheetModalForWindow(window) { response ->
+            // Stale: released or dismissed since, so focus must stay where it is.
+            val live = this.panel === panel && !dismissed
             // The outcome is read while the pop-up and the panel still exist.
             val outcome = outcomeOf(request, panel, response)
-            restoreFocus(previousResponder)
+            if (live) restoreFocus(window, previousResponder)
             completion(outcome)
         }
     }
 
     override fun dismiss() {
-        panel?.let { window.endSheet(it, NSModalResponseCancel) }
+        dismissed = true
+        val panel = panel ?: return
+        windowRef.get()?.endSheet(panel, NSModalResponseCancel)
     }
 
     override fun release() {
@@ -190,7 +214,7 @@ private class MacosSheetPresenter(private val window: NSWindow) : SheetPresenter
         return fileDialogOutcome(paths, filterIndex)
     }
 
-    private fun restoreFocus(previous: Any?) {
+    private fun restoreFocus(window: NSWindow, previous: Any?) {
         val view = previous as? NSView ?: return
         if (view.window === window && window.firstResponder !== view) window.makeFirstResponder(view)
     }
@@ -205,15 +229,33 @@ private class MacosSheetPresenter(private val window: NSWindow) : SheetPresenter
  * or null when that window is gone.
  */
 class MacosFileDialogs(owner: () -> NSWindow?) : FileDialogs {
+    private val owner = owner
     private val lanes = FileDialogLanes(owner) { window: NSWindow -> MacosSheetPresenter(window) }
+    private var closeObserver: Any? = null
 
     override fun show(request: FileDialogRequest, onResult: (FileDialogOutcome) -> Unit) {
         val normalized = normalizeFileDialogRequest(request)
         if (NSThread.isMainThread) {
-            lanes.show(normalized, onResult)
+            showOnMain(normalized, onResult)
         } else {
-            dispatch_async(dispatch_get_main_queue()) { lanes.show(normalized, onResult) }
+            dispatch_async(dispatch_get_main_queue()) { showOnMain(normalized, onResult) }
         }
+    }
+
+    private fun showOnMain(request: FileDialogRequest, onResult: (FileDialogOutcome) -> Unit) {
+        observeClose()
+        lanes.show(request, onResult)
+    }
+
+    /** A window that closes without cancelAll must still end its requests, so watch for it. */
+    private fun observeClose() {
+        if (closeObserver != null) return
+        val window = owner() ?: return
+        closeObserver = NSNotificationCenter.defaultCenter.addObserverForName(
+            name = NSWindowWillCloseNotification,
+            `object` = window,
+            queue = NSOperationQueue.mainQueue,
+        ) { _ -> cancelAll() }
     }
 
     /**
@@ -221,5 +263,9 @@ class MacosFileDialogs(owner: () -> NSWindow?) : FileDialogs {
      * answers Unavailable to anything shown afterwards. Call it on the main thread when the
      * window is being destroyed.
      */
-    fun cancelAll() = lanes.cancelAll()
+    fun cancelAll() {
+        closeObserver?.let { NSNotificationCenter.defaultCenter.removeObserver(it) }
+        closeObserver = null
+        lanes.cancelAll()
+    }
 }
