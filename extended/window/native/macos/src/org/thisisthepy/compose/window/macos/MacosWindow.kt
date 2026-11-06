@@ -243,6 +243,24 @@ class MacosWindow(
         ) ?: return
     }
 
+    // With a full size content view the title bar is not laid out yet when the first reads
+    // happen (contentLayoutRect equals the frame, so the height is 0), and a window that
+    // never resizes would keep that 0. Measure again after the window is shown, a bounded
+    // number of times, until a non-zero height arrives.
+    private var closed = false
+
+    private fun remeasureCaption(attempt: Int) {
+        if (closed) return
+        measureCaption()
+        if (!shouldRetryCaptionMeasure(attempt, caption.value.height.value, chrome.fullSizeContentView)) return
+        dispatch_after(
+            dispatch_time(DISPATCH_TIME_NOW, CAPTION_RETRY_DELAYS_NANOS[attempt]),
+            dispatch_get_main_queue(),
+        ) {
+            remeasureCaption(attempt + 1)
+        }
+    }
+
     val window = object : NSWindow(
         contentRect = NSMakeRect(0.0, 0.0, width.toDouble(), height.toDouble()),
         styleMask = NSWindowStyleMaskTitled or NSWindowStyleMaskMiniaturizable or
@@ -257,6 +275,7 @@ class MacosWindow(
         override fun becomeKeyWindow() {
             super.becomeKeyWindow()
             isTheKeyWindow = true
+            if (chrome.fullSizeContentView && caption.value.height.value <= 0f) measureCaption()
             view.needsDisplay = true
         }
 
@@ -642,7 +661,7 @@ class MacosWindow(
         window.makeKeyAndOrderFront(null)
         window.makeFirstResponder(view)
         dispatch_async(dispatch_get_main_queue()) {
-            measureCaption()
+            remeasureCaption(0)
         }
         view.registerForDraggedTypes(listOf(NSFilenamesPboardType))
         measureCaption()
@@ -665,6 +684,7 @@ class MacosWindow(
     }
 
     internal fun windowClosed() {
+        closed = true
         MacosCascade.closed()
     }
 
@@ -1038,3 +1058,13 @@ internal fun applyChrome(window: NSWindow, chrome: MacosWindowChrome) {
  * Rust's `Instant` reads on macOS.
  */
 internal fun uptimeNanos(): Long = (NSProcessInfo.processInfo.systemUptime * 1_000_000_000.0).toLong()
+
+private val CAPTION_RETRY_DELAYS_NANOS = longArrayOf(50_000_000L, 150_000_000L, 300_000_000L)
+
+/**
+ * Whether the caption is measured again after [attempt] (0 is the first measure after the
+ * window is shown). Only a full size chrome that still reads a zero height retries, and at most
+ * once per entry of [CAPTION_RETRY_DELAYS_NANOS].
+ */
+internal fun shouldRetryCaptionMeasure(attempt: Int, height: Float, fullSize: Boolean): Boolean =
+    fullSize && height <= 0f && attempt < CAPTION_RETRY_DELAYS_NANOS.size
