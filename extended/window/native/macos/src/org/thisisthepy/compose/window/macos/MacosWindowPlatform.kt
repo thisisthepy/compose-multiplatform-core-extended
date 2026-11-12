@@ -17,6 +17,7 @@ import org.thisisthepy.compose.window.WindowListener
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.WindowPlatform
 import org.thisisthepy.compose.window.WindowVisibility
+import org.thisisthepy.compose.window.systemEditMenu
 import org.thisisthepy.compose.window.scene.ComposeWindowHost
 import org.thisisthepy.compose.window.scene.runComposeWindow
 import platform.AppKit.NSApplication
@@ -67,6 +68,13 @@ class MacosWindowPlatform(
     private var internalHost: ComposeWindowHost? = null
     private var inPump = false
     private val pasteboard = GeneralPasteboard()
+
+    /**
+     * Whether a right click puts up the system's edit menu. The choice is turned into the
+     * shortcut it is named after by the scene, so the field that has focus receives it as it
+     * would from the keyboard and an input method's composition is left where it was.
+     */
+    var nativeEditMenu: Boolean = true
     private val idleSoak = IdleSoak()
 
     /** Where the input method was last told the caret is, in points from the content's top left. */
@@ -106,6 +114,11 @@ class MacosWindowPlatform(
         created.onEvent = { event ->
             if (event.kind == WindowEvent.KEY_DOWN && event.keyCode == KEY_ESCAPE) MacosProcess.escapePressed = true
             this.listener?.onEvent(event)
+        }
+        created.onContextMenu = if (nativeEditMenu) {
+            { showContextMenu(systemEditMenu(clipboardHasText = pasteboard.hasText())) }
+        } else {
+            null
         }
         created.onClose = {
             this.listener?.onCloseRequested() ?: true

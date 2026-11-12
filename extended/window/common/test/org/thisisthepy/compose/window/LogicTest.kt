@@ -95,6 +95,26 @@ class LogicTest {
     }
 
     @Test
+    fun fr33_6_the_system_edit_menu_greys_paste_while_the_clipboard_holds_no_text() {
+        val empty = systemEditMenu(clipboardHasText = false)
+        assertEquals(listOf("Cut", "Copy", "Paste", "Select All"), empty.map { it.label })
+        assertEquals(listOf(true, true, false, true), empty.map { it.enabled })
+        assertTrue(systemEditMenu(clipboardHasText = true).all { it.enabled })
+        assertTrue(empty[2].separatorAfter, "Select All sits in a group of its own")
+    }
+
+    @Test
+    fun fr5_printable_text_never_carries_a_control_character() {
+        assertEquals("", printableText("\u0001"), "Control A typed a box into the field")
+        assertEquals("", printableText("\u001b"))
+        assertEquals("", printableText("\u007f"))
+        assertEquals("ab", printableText("a\u0001b"))
+        assertEquals("a b", printableText("a b"), "a space is text")
+        assertEquals("한글", printableText("한글"), "composed text is untouched")
+        assertEquals("é", printableText("é"), "accented letters are not control")
+    }
+
+    @Test
     fun a_platform_clipboard_reads_as_a_pasteboard() {
         var stored: String? = null
         val platform = object : WindowPlatform by unsupported() {

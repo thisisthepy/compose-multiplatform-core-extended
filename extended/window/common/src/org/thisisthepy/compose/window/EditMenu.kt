@@ -32,3 +32,14 @@ fun editMenuItems(
     }
     return items
 }
+
+/**
+ * The menu a window that draws or pops up its own edit menu offers on a right click: all four
+ * entries, in the usual order. Paste is greyed while [clipboardHasText] is false, because it
+ * would do nothing. Cut and Copy cannot be judged from outside the field, which owns the
+ * selection, and a Copy with nothing selected is ignored by the field.
+ */
+fun systemEditMenu(clipboardHasText: Boolean): List<ContextMenuItem> =
+    editMenuItems(canCut = true, canCopy = true, canPaste = true, canSelectAll = true).map {
+        if (it.id == EditMenuId.PASTE) it.copy(enabled = clipboardHasText) else it
+    }
