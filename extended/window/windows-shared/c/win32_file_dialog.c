@@ -273,7 +273,9 @@ static void CALLBACK dxc_file_dialog_timer(HWND window, UINT message, UINT_PTR i
         if (SUCCEEDED(IOleWindow_GetWindow(as_window, &shown)) && shown != NULL && !IsWindowEnabled(shown)) {
             HWND question = GetWindow(shown, GW_ENABLEDPOPUP);
             if (question != NULL && question != shown) {
+                // As a message box takes it, and as a task dialog does (TDM_CLICK_BUTTON).
                 PostMessageW(question, WM_COMMAND, MAKEWPARAM(IDNO, BN_CLICKED), 0);
+                PostMessageW(question, WM_USER + 102, IDNO, 0);
                 PostMessageW(question, WM_COMMAND, MAKEWPARAM(IDCANCEL, BN_CLICKED), 0);
             }
         }
