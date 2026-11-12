@@ -224,6 +224,9 @@ struct DxcWin {
     LPCWSTR cursor;
     LONG ime_spot_x;
     LONG ime_spot_y;
+    // The text size percent this window last reported (read when it opened), plus one.
+    // Per window, because the settings broadcast reaches every window and each reports it.
+    int32_t text_scale_seen;
 
     struct dxc_element a11y_elements[DXC_MAX_ELEMENTS];
     int32_t a11y_count;
@@ -1514,19 +1517,14 @@ int32_t dxc_native_text_scale_percent(void) {
     return status == ERROR_SUCCESS ? (int32_t)value : 0;
 }
 
-static int32_t dxc_last_text_scale_percent = -1;
-
-/* Queues a text scale event when the slider moved since the last look. */
+/* Queues a text scale event for the current window when the slider moved since its last look. */
 static void dxc_check_text_scale(void) {
     int32_t percent = dxc_native_text_scale_percent();
-    if (dxc_last_text_scale_percent < 0) {
-        dxc_last_text_scale_percent = percent;
+    int32_t seen = dxc_w->text_scale_seen;
+    dxc_w->text_scale_seen = percent + 1;
+    if (seen == percent + 1) {
         return;
     }
-    if (percent == dxc_last_text_scale_percent) {
-        return;
-    }
-    dxc_last_text_scale_percent = percent;
     struct dxc_event record;
     memset(&record, 0, sizeof record);
     record.kind = DXC_EVENT_TEXT_SCALE_CHANGED;
@@ -4328,6 +4326,8 @@ int32_t dxc_native_window_open(
     }
     win->options = dxc_next_options;
     win->cursor = IDC_ARROW;
+    // The size the window opens with, so the first move of the slider is reported.
+    win->text_scale_seen = dxc_native_text_scale_percent() + 1;
     win->has_position = dxc_next_position.has;
     win->position_x = dxc_next_position.x;
     win->position_y = dxc_next_position.y;

@@ -5,6 +5,7 @@ import org.thisisthepy.compose.window.ContextMenuItem
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.ScreenPointer
 import org.thisisthepy.compose.window.SystemTheme
+import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowBounds
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
@@ -38,6 +39,9 @@ interface Win32WindowBackend {
     fun showContextMenu(items: List<ContextMenuItem>): Int
     fun performCaptionAction(action: CaptionAction)
     fun systemDark(): Boolean
+
+    /** The system's text size as a multiplier, 1 when unchanged (see [TextScale]). */
+    fun textScale(): Float = TextScale.DEFAULT
 
     fun setPosition(x: Int, y: Int)
     fun setContentSize(width: Int, height: Int)
@@ -211,6 +215,8 @@ class Win32WindowPlatform internal constructor(
 
     override fun systemTheme(): SystemTheme =
         if (window?.systemDark() == true) SystemTheme.Dark else SystemTheme.Light
+
+    override fun textScale(): Float = window?.textScale() ?: TextScale.DEFAULT
 
     override fun setTitle(title: String) {
         window?.setTitle(title)
