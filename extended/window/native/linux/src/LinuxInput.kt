@@ -33,7 +33,6 @@ import x11.XK_Return
 import x11.XK_Right
 import x11.XK_Tab
 import x11.XK_Up
-import org.thisisthepy.compose.window.WindowEvent
 import x11.XK_space
 
 // What this display server calls a thing, turned into what the shared reader calls it.
