@@ -91,6 +91,8 @@ class JvmBusConnection private constructor(
         }
     }
 
+    override val isOpen: Boolean get() = open
+
     override fun close() {
         if (!open) return
         open = false

@@ -330,8 +330,8 @@ class X11Window : WindowPlatform {
      * [timeoutMillis], and hands each event to the listener of the window it belongs to.
      *
      * A caller with several windows pumps once per turn, on any one of them: the wait is for the
-     * shared connection (and the wake pipe of every open window), so pumping each window in turn
-     * would multiply it. Pumping a window that is closed does nothing.
+     * shared connection (and the wake pipe of every open window, and the bus socket of an open
+     * file dialog), so pumping each window in turn would multiply it. Pumping a window that is closed does nothing.
      */
     override fun pump(timeoutMillis: Long) {
         connection?.pump(timeoutMillis)
@@ -361,7 +361,18 @@ class X11Window : WindowPlatform {
         accessibility.setGeometry(measured.width, measured.height, measured.scale)
         if (presented && !isClosed) accessibility.join()
         accessibility.pump(isFocused)
+        for (client in busClients.toList()) client.pump()
     }
+
+    /** What reads a bus of its own on this window's turns, such as an open file dialog. */
+    private val busClients = ArrayList<WindowBusClient>()
+
+    internal fun attach(client: WindowBusClient) {
+        if (client !in busClients) busClients.add(client)
+    }
+
+    /** The sockets of the attached clients, for the connection's wait. */
+    internal fun busDescriptors(): List<Int> = busClients.flatMap { it.descriptors() }
 
     /**
      * Ends the wait in [pump] early, so the loop turns now rather than at the end of the
@@ -992,6 +1003,9 @@ class X11Window : WindowPlatform {
 
     override fun close() {
         accessibility.close()
+        val clients = busClients.toList()
+        busClients.clear()
+        for (client in clients) client.windowClosing()
         val display = display ?: return
         isClosed = true
         xim?.close()
