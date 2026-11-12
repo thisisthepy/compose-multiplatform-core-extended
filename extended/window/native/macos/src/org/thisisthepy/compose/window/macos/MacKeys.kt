@@ -146,6 +146,8 @@ internal val MAC_KEY_CODES: Map<Key, Int> = mapOf(
  */
 internal fun insertableText(text: String): String = org.thisisthepy.compose.window.printableText(text)
 
+private fun Char.isMacControl(): Boolean = code < 0x20 || code == 0x7F
+
 /**
  * A line per key on standard error, behind `COMPOSE_WINDOW_KEY_LOG=1`, so that what a window heard and what Compose
  * was given can be read side by side on the machine that showed the problem.
