@@ -36,14 +36,14 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            modules: "common scene native/macos graalvm/graalvm-macos graalvm/graalvm-linux"
+            modules: "common scene native/macos graalvm/graalvm-macos graalvm/graalvm-linux graalvm/graalvm-windows"
             compose: "desktop macosArm64"
           # The scene is published from macOS only: it compiles against this fork's Compose
           # for macosArm64 as well as the JVM, and only a Mac builds the former. The GraalVM
           # modules compile their window surfaces against it, so on Linux it is in the project
           # as a JVM module (scene_jvm_only) with its Linux targets, and what it publishes stays on this runner.
           - os: ubuntu-24.04
-            modules: "common scene graalvm/graalvm-macos graalvm/graalvm-linux"
+            modules: "common scene graalvm/graalvm-macos graalvm/graalvm-linux graalvm/graalvm-windows"
             compose: "desktop linuxX64 linuxArm64"
             compose_linux: true
             scene_jvm_only: true

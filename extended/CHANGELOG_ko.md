@@ -7,6 +7,9 @@
 
 ### 바뀐 것
 
+- `graalvm/graalvm-windows` 모듈이 새로 생겼습니다. 네이티브 이미지의 Win32 창(`Win32GraalWindow`,
+  `Win32Frames`, 크기 조절 중 그리는 업콜)을 compose-rust 에서 옮겨 왔습니다. `frameTimeNanos()` 는
+  단조 시계의 `FrameClock` 을 읽으므로, 프레임 시각은 16 ms 씩 세지 않고 실제 시계를 따릅니다.
 - **Windows 마우스 휠이 반대로 스크롤되던 문제를 고쳤습니다.** GraalVM과 Kotlin/Native 두 경로 모두입니다.
   Win32는 휠을 사용자 반대쪽으로 굴리면 양수로 세고 Compose는 양수 `scrollDelta.y` 를 아래로 읽으므로,
   이제 `WM_MOUSEWHEEL` 의 값을 뒤집습니다. (#169)

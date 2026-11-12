@@ -210,7 +210,7 @@ class ComposeWindowHostTest {
         }
         assertTrue(host.open())
         host.turn(0)
-        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, 1, 0, 0, 0, ""))
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, WindowEvent.PRIMARY_HELD, 0, 0, 0, ""))
         platform.queued.add(WindowEvent(WindowEvent.POINTER_UP, 10f, 10f, 0, 0, 0, 0, ""))
         repeat(6) { host.turn(0) }
         platform.queued.add(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "가"))
@@ -252,7 +252,7 @@ class ComposeWindowHostTest {
         }
         assertTrue(host.open())
         host.turn(0)
-        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, 1, 0, 0, 0, ""))
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, WindowEvent.PRIMARY_HELD, 0, 0, 0, ""))
         platform.queued.add(WindowEvent(WindowEvent.POINTER_UP, 10f, 10f, 0, 0, 0, 0, ""))
         repeat(6) { host.turn(0) }
         heard.clear()
@@ -269,7 +269,7 @@ class ComposeWindowHostTest {
         val host = host(platform, FakeSurface()) { Box(Modifier.fillMaxSize()) }
         assertTrue(host.open())
         host.turn(0)
-        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 30f, 20f, 2, 0, 0, 0, ""))
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 30f, 20f, WindowEvent.pointerButtons(WindowEvent.SECONDARY_HELD, secondaryEvent = true), 0, 0, 0, ""))
         host.turn(0)
         assertEquals(androidx.compose.ui.unit.IntOffset(30, 20), host.editMenuAt)
         platform.chosen.add(EditMenuId.SELECT_ALL)
@@ -284,7 +284,7 @@ class ComposeWindowHostTest {
         val host = host(platform, FakeSurface()) { Box(Modifier.fillMaxSize()) }
         assertTrue(host.open())
         host.turn(0)
-        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 30f, 20f, 2, 0, 0, 0, ""))
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 30f, 20f, WindowEvent.pointerButtons(WindowEvent.SECONDARY_HELD, secondaryEvent = true), 0, 0, 0, ""))
         host.turn(0)
         assertEquals(null, host.editMenuAt)
         host.close()
@@ -306,7 +306,7 @@ class ComposeWindowHostTest {
         }
         assertTrue(host.open())
         host.turn(0)
-        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, 1, 0, 0, 0, ""))
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, WindowEvent.PRIMARY_HELD, 0, 0, 0, ""))
         platform.queued.add(WindowEvent(WindowEvent.POINTER_UP, 10f, 10f, 0, 0, 0, 0, ""))
         repeat(4) { host.turn(0) }
         platform.queued.add(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "hello"))

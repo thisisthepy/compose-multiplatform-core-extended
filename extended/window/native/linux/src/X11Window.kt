@@ -32,6 +32,7 @@ import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.CaptionAction
 import org.thisisthepy.compose.window.CaptionGesture
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowCaption
 import org.thisisthepy.compose.window.WindowEdge
 import org.thisisthepy.compose.window.X11Chrome
@@ -87,6 +88,8 @@ class X11Window : WindowPlatform {
     override val name: String = "x11"
 
     private var display: CPointer<Display>? = null
+    private var lastTextScale = TextScale.DEFAULT
+    private var nextTextScaleCheck = 0L
     private var window: Window = 0uL
     private var context: GLXContext? = null
     private var colormap: Colormap = 0uL
@@ -356,6 +359,7 @@ class X11Window : WindowPlatform {
                 listener?.onMoved(now)
             }
         }
+        checkTextScale()
         // After the events, so that a reader's action lands after the input that came before
         // it, and on this thread, which is the one the scene is on.
         accessibility.setGeometry(measured.width, measured.height, measured.scale)
@@ -510,6 +514,24 @@ class X11Window : WindowPlatform {
         presentedSinceEvent = true
     }
 
+    override fun textScale(): Float = LinuxTextScale.read()
+
+    /**
+     * Neither GNOME's nor KDE's setting is announced on the X connection, so it is read again
+     * every few seconds, which is cheap enough (one `gsettings` run) and quick enough for a
+     * slider in a settings panel.
+     */
+    private fun checkTextScale() {
+        val now = monotonicClockNanos()
+        if (now < nextTextScaleCheck) return
+        nextTextScaleCheck = now + TEXT_SCALE_POLL_NANOS
+        val scale = LinuxTextScale.read()
+        if (scale != lastTextScale) {
+            lastTextScale = scale
+            listener?.onTextScaleChanged(scale)
+        }
+    }
+
     override fun systemTheme(): SystemTheme {
         val gtk = getenv("GTK_THEME")?.toKString().orEmpty().lowercase()
         return if (gtk.endsWith(":dark") || gtk.endsWith("-dark")) SystemTheme.Dark else SystemTheme.Light
@@ -529,12 +551,22 @@ class X11Window : WindowPlatform {
         applySizeHints()
     }
 
-    /** Tells the window manager the sizes [sizeHintsFor] decides on, when there are any. */
+    /** Changes the window manager's resize policy without reopening the window. */
+    fun setResizable(value: Boolean) {
+        if (resizable == value) return
+        resizable = value
+        if (!value) {
+            openedWidth = measured.width
+            openedHeight = measured.height
+        }
+        applySizeHints()
+    }
+
+    /** Replaces the window manager's size hints, including clearing old constraints. */
     private fun applySizeHints() {
         val display = display ?: return
         val decided = sizeHintsFor(minWidth, minHeight, resizable, openedWidth, openedHeight, DENSITY)
         val placed = openedAt
-        if (decided == null && placed == null) return
         val hints = XAllocSizeHints() ?: return
         placed?.let { (x, y) ->
             hints.pointed.flags = hints.pointed.flags or US_POSITION
@@ -1117,19 +1149,12 @@ class X11Window : WindowPlatform {
                         pressNanos = monotonicClockNanos()
                     }
                     if (event.type == ButtonRelease && button == 1) gesture.released()
-                    val bit = when (button) {
-                        1 -> 1
-                        3 -> 2
-                        2 -> 4
-                        else -> 0
-                    }
-                    val held = buttonsOf(event.xbutton.state)
                     log.heard(
                         event(
                             if (event.type == ButtonPress) WindowEvent.POINTER_DOWN else WindowEvent.POINTER_UP,
                             event.xbutton.x.toFloat(),
                             event.xbutton.y.toFloat(),
-                            if (event.type == ButtonPress) held or bit else held and bit.inv(),
+                            pointerButtonsOf(event.xbutton.state, button, event.type == ButtonPress),
                             modifiersOf(event.xbutton.state),
                         ),
                     )
@@ -1252,6 +1277,7 @@ class X11Window : WindowPlatform {
     }
 
     private companion object {
+        const val TEXT_SCALE_POLL_NANOS = 3_000_000_000L
         const val EVENT_MASK = ExposureMask or StructureNotifyMask or PointerMotionMask or
             ButtonPressMask or ButtonReleaseMask or KeyPressMask or KeyReleaseMask or FocusChangeMask or
             0L

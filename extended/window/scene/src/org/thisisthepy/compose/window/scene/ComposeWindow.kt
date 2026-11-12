@@ -133,6 +133,8 @@ class ComposeWindowHost(
     internal var editMenuAt by mutableStateOf<IntOffset?>(null)
         private set
     private var size = IntSize.Zero
+    /** The operating system's text size, handed to Compose as `Density.fontScale`. */
+    private var textScale = 1f
     private var painted = false
 
     private val listener = object : WindowListener {
@@ -142,11 +144,11 @@ class ComposeWindowHost(
                 WindowEvent.PREEDIT_DRAW -> ime.preeditDraw(event.keyCode, event.codePoint, event.text, event.x.toInt())
                 WindowEvent.PREEDIT_DONE -> ime.preeditDone()
                 WindowEvent.TEXT_COMMIT -> ime.commit(event.text)
+                WindowEvent.TEXT_SCALE_CHANGED -> textScale = event.textScale
                 else -> {
                     // A platform with no menu of its own (showContextMenu answers -1) gets
                     // the scene's: a secondary press opens it at the pointer.
-                    if (event.kind == WindowEvent.POINTER_DOWN && event.buttons and 2 != 0 &&
-                        !platform.hasNativeEditMenu()
+                    if (event.isSecondaryPress && !platform.hasNativeEditMenu()
                     ) {
                         editMenuAt = IntOffset(event.x.toInt(), event.y.toInt())
                     } else if (event.kind == WindowEvent.POINTER_DOWN) {
@@ -161,6 +163,10 @@ class ComposeWindowHost(
             editMenuAt = null
             val chord = editChord(id, usesCommandKey(platform.name)) ?: return
             for (press in chord) scene?.sendKeyEvent(press)
+        }
+
+        override fun onTextScaleChanged(scale: Float) {
+            textScale = scale
         }
 
         override fun onThemeChanged(theme: SystemTheme) {
@@ -192,6 +198,7 @@ class ComposeWindowHost(
         }
         surface = drawable
         theme = platform.systemTheme()
+        textScale = platform.textScale()
         caption = platform.caption()
         val measured = platform.measure()
         density = measured.scale
@@ -200,7 +207,7 @@ class ComposeWindowHost(
         // main dispatcher, which Compose asks for once.
         useAsComposeMainDispatcher(sceneMainWork)
         val created = CanvasLayersComposeScene(
-            density = Density(measured.scale),
+            density = Density(measured.scale, textScale),
             size = size,
             coroutineContext = work,
             platformContext = ScenePlatformContext({ size }, textInput, semantics),
@@ -302,7 +309,9 @@ class ComposeWindowHost(
         // into a corner of its new one.
         val fitted = IntSize(width, height)
         if (current.size != fitted) current.size = fitted
-        if (current.density.density != scale) current.density = Density(scale)
+        if (current.density.density != scale || current.density.fontScale != textScale) {
+            current.density = Density(scale, textScale)
+        }
         size = fitted
         density = scale
         try {

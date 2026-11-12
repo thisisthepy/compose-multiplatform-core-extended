@@ -1,5 +1,6 @@
 package org.thisisthepy.compose.window.windows
 
+import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.COpaquePointerVar
 import kotlinx.cinterop.CFunction
@@ -11,14 +12,17 @@ import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
+import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.value
 import org.thisisthepy.compose.window.AccessibleElement
+import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.windows.c.dxc_element
 import org.thisisthepy.compose.window.windows.c.dxc_event
 import org.thisisthepy.compose.window.windows.c.dxc_native_debug_hit_test
+import org.thisisthepy.compose.window.windows.c.dxc_native_dropped_paths
 import org.thisisthepy.compose.window.windows.c.dxc_native_debug_resize
 import org.thisisthepy.compose.window.windows.c.dxc_native_frame_begin
 import org.thisisthepy.compose.window.windows.c.dxc_native_frame_end
@@ -32,6 +36,7 @@ import org.thisisthepy.compose.window.windows.c.dxc_native_set_accessibility
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_cursor
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_draw_callback
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_raster_resize
+import org.thisisthepy.compose.window.windows.c.dxc_native_text_scale_percent
 import org.thisisthepy.compose.window.windows.c.dxc_native_window
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_action
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_is_zoomed
@@ -219,10 +224,30 @@ object Win32Loop {
         val events = ArrayList<WindowEvent>()
         memScoped {
             val record = alloc<dxc_event>()
-            while (dxc_native_poll_event(record.ptr) != 0) events.add(Win32Records.readEvent(record))
+            while (dxc_native_poll_event(record.ptr) != 0) {
+                val event = Win32Records.readEvent(record)
+                // The record's text field is 96 bytes, too small for a list of paths, so the
+                // drop is read from its own buffer. The window reports it like the macOS and
+                // Linux windows do: the paths in `text`, NUL between them.
+                events.add(
+                    if (event.kind == WindowEvent.FILES_DROPPED) event.copy(text = readDroppedPaths()) else event,
+                )
+            }
         }
         return events
     }
+
+    /** The operating system's text size as a multiplier, 1 when unchanged. */
+    fun textScale(): Float = TextScale.fromWindowsPercent(dxc_native_text_scale_percent())
+
+    /** The paths of the files last dragged over the window, NUL between them. Empty when none. */
+    fun readDroppedPaths(): String = memScoped {
+        val buffer = allocArray<ByteVar>(DROPPED_PATHS_BYTES)
+        val length = dxc_native_dropped_paths(buffer, DROPPED_PATHS_BYTES)
+        if (length <= 0) "" else buffer.readBytes(length).decodeToString()
+    }
+
+    private const val DROPPED_PATHS_BYTES = 64 * 1024
 
     /** The pointer's shape: [Win32Cursor.ARROW], [Win32Cursor.HAND], [Win32Cursor.TEXT] or [Win32Cursor.CROSSHAIR]. */
     fun setCursor(shape: Int) = dxc_native_set_cursor(shape)
