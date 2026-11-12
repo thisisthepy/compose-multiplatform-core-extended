@@ -6,8 +6,8 @@ application for Windows without a JVM.
 - `c/win32_window.c`: Win32, a Direct3D 12 swapchain, IMM32 composition, UI Automation, the
   clipboard, file drops and the live resize. `c/win32_file_dialog.c`: the file open and save
   dialogs. `c/win32_notifications.c`: toasts.
-  `c/win32_resize.h`, `c/win32_ime_text.h`, `c/win32_wheel.h` (the wheel's scroll direction) and
-  `c/win32_file_dialog_spec.h` (a dialog's type list) are header-only logic that compiles without
+  `c/win32_resize.h`, `c/win32_ime_text.h`, `c/win32_buttons.h`, `c/win32_wheel.h` (the wheel's scroll
+  direction) and `c/win32_file_dialog_spec.h` (a dialog's type list) are header-only logic that compiles without
   Windows.
 - `cinterop/include/win32_window.h`: the whole surface, functions and records. It includes
   no Windows header, so cinterop and any C compiler read it.

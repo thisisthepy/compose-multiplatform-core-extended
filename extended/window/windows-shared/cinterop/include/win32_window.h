@@ -38,6 +38,8 @@ enum {
     DXC_EVENT_FILES_ENTERED = 10,
     DXC_EVENT_FILES_DROPPED = 11,
     DXC_EVENT_FILES_EXITED = 12,
+    // The Text size setting moved; `x` is the new percent (100 means unchanged, 0 unset).
+    DXC_EVENT_TEXT_SCALE_CHANGED = 18,
 };
 
 // Room for what an input method is composing, which is a syllable or a word and never a
@@ -145,6 +147,9 @@ void dxc_native_pump(double seconds);
 int32_t dxc_native_window_closed(void);
 int32_t dxc_native_poll_event(struct dxc_event *out);
 
+// The Text size slider as a percent (100 to 225), or 0 when it was never set.
+int32_t dxc_native_text_scale_percent(void);
+
 // Input, text and the system's own services.
 void dxc_native_set_cursor(int32_t shape);
 void dxc_native_set_ime_spot(float x, float y);
@@ -192,6 +197,12 @@ void dxc_native_window_set_title(const char *title);
 void dxc_native_window_set_min_size(int32_t width, int32_t height);
 void dxc_native_window_set_visibility(int32_t visibility);
 int32_t dxc_native_system_dark(void);
+// Changing the selected window after it opened (FR-53). set_resizable returns 0 with no window;
+// set_color_scheme takes 0 follow the system, 1 light, 2 dark and returns 1 when DWM took it;
+// caption_dark writes what the caption was last told and returns 1 once a scheme was applied.
+int32_t dxc_native_window_set_resizable(int32_t resizable);
+int32_t dxc_native_window_set_color_scheme(int32_t scheme);
+int32_t dxc_native_window_caption_dark(int32_t *dark);
 // Focus. Focus returns 0 when the foreground lock refused and the window flashed instead.
 int32_t dxc_native_window_focus(void);
 int32_t dxc_native_window_is_active(void);

@@ -1,0 +1,69 @@
+# The GraalVM Win32 window layer under extended/window/graalvm/graalvm-windows: compile and
+# test the Kotlin and the upcall. It is a JVM module that needs neither Windows nor a native
+# library to be tested, so it runs on Linux and on Windows. The C it calls is windows-shared's,
+# built by that module's own workflow.
+name: Extended window graalvm windows
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window-graalvm-windows.yml
+  push:
+    branches: [ extended ]
+    paths:
+      - extended/window/**
+      - .github/workflows/extended-window-graalvm-windows.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-24.04, windows-2022 ]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: extended/window
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: The Kotlin module has no java.awt
+        shell: bash
+        working-directory: extended/window/graalvm/graalvm-windows
+        run: |
+          if grep -rn "java\.awt\|javax\.swing" src test; then
+            echo "java.awt is not allowed in this module" >&2
+            exit 1
+          fi
+
+      - name: Compile and test
+        if: runner.os != 'Windows'
+        working-directory: extended/window
+        run: |
+          ./kotlin build -m graalvm-windows -p jvm
+          ./kotlin test -m graalvm-windows -p jvm
+
+      # From PowerShell on Windows: the toolchain's wrapper there is kotlin.bat.
+      - name: Compile and test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: extended/window
+        run: |
+          .\kotlin.bat build -m graalvm-windows -p jvm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\kotlin.bat test -m graalvm-windows -p jvm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
