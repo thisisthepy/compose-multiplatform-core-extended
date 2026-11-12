@@ -30,10 +30,6 @@ static int failures;
 // The toasts ask the renderer for a frame; the renderer is not part of this check.
 void compose_rust_renderer_request_frame(void) {}
 
-// For what the test cannot yet hold a runner to: said in the log, not counted as a failure.
-#define NOTE(condition) \
-    do { if (!(condition)) printf("note: not as expected: %s (line %d)\n", #condition, __LINE__); } while (0)
-
 #define CHECK(condition) \
     do { if (!(condition)) { printf("fail: %s (line %d)\n", #condition, __LINE__); failures++; } } while (0)
 
@@ -550,7 +546,7 @@ struct played_dialog {
 
 // Pumps until the dialog of [request] answers. Once the dialog is up and has settled, types
 // [text] into its name field and presses its default button, again every second until it
-// answers. With [stop_when_asked], a question over the dialog (replace this file?) ends the
+// answers ([type_once] types only before the first press). With [stop_when_asked], a question over the dialog (replace this file?) ends the
 // play instead, by cancelling the dialog.
 static void play_dialog_typing(HWND owner, int64_t request, const WCHAR *text, int stop_when_asked,
                                int type_once, struct played_dialog *played) {
@@ -590,8 +586,9 @@ static void play_dialog_typing(HWND owner, int64_t request, const WCHAR *text, i
         if (field == NULL) continue;
         DWORD_PTR ignored = 0;
         // A folder picker opens the folder named on the first press and chooses the folder it
-        // is in on the next, so there the name is typed once.
-        if (pressed_at == 0 || !type_once) {
+        // is in on the next, so there the name is typed once. No text is the name the dialog
+        // came up with, accepted as it stands.
+        if (text != NULL && (pressed_at == 0 || !type_once)) {
             SendMessageTimeoutW(field, WM_SETTEXT, 0, (LPARAM)text, SMTO_ABORTIFHUNG, 2000, &ignored);
         }
         PostMessageW(dialog, WM_COMMAND, MAKEWPARAM(IDOK, BN_CLICKED), (LPARAM)GetDlgItem(dialog, IDOK));
@@ -692,32 +689,29 @@ static void fr72_dialogs_answer_what_the_reader_chose(void) {
               (_stricmp(second, expected) == 0 && strcmp(first, second_expected) == 0));
     }
 
-    // What follows is said, not failed (NOTE): the first run of these three on a runner did
-    // not go as written, and how this thread plays the reader there has not been settled.
-    // Each prints what it got, so a run shows it. They are checked by hand until then.
-
-    // A folder.
+    // A folder. The picker opens the folder named on the first press and chooses it on the next.
     CHECK(dxc_native_file_dialog_show(a.window, 53, DXC_FILE_DIALOG_OPEN_FOLDER, "", directory_utf8, "",
                                       filters, 0) == 0);
     play_dialog_typing((HWND)a.window, 53, sub, 0, 1, &played);
     snprintf(expected, sizeof expected, "%s\\sub one", directory_utf8);
     printf("fr72 folder: answered=%d status=%d count=%d filter=%d paths=%s\n", played.answered, played.status,
            played.count, played.filter, played.paths);
-    NOTE(played.answered == 1 && played.status == DXC_FILE_DIALOG_CHOSEN && played.count == 1);
+    CHECK(played.answered == 1 && played.status == DXC_FILE_DIALOG_CHOSEN && played.count == 1);
     // A folder picker has no type list.
-    NOTE(played.filter == -1);
-    NOTE(_stricmp(played.paths, expected) == 0);
+    CHECK(played.filter == -1);
+    CHECK(_stricmp(played.paths, expected) == 0);
 
-    // A save: a name typed without an extension takes the selected type's first one.
-    CHECK(dxc_native_file_dialog_show(a.window, 54, DXC_FILE_DIALOG_SAVE, "", directory_utf8, "suggested",
+    // A save: the suggested name is in the name field, and accepted as it stands, without an
+    // extension, it takes the selected type's first one.
+    CHECK(dxc_native_file_dialog_show(a.window, 54, DXC_FILE_DIALOG_SAVE, "", directory_utf8, "report",
                                       "All files\nMarkdown\tmd,markdown", 1) == 0);
-    play_dialog((HWND)a.window, 54, L"report", 0, &played);
+    play_dialog_typing((HWND)a.window, 54, NULL, 0, 0, &played);
     snprintf(expected, sizeof expected, "%s\\report.md", directory_utf8);
     printf("fr72 save: answered=%d status=%d count=%d filter=%d paths=%s\n", played.answered, played.status,
            played.count, played.filter, played.paths);
-    NOTE(played.answered == 1 && played.status == DXC_FILE_DIALOG_CHOSEN && played.count == 1);
-    NOTE(played.filter == 1);
-    NOTE(_stricmp(played.paths, expected) == 0);
+    CHECK(played.answered == 1 && played.status == DXC_FILE_DIALOG_CHOSEN && played.count == 1);
+    CHECK(played.filter == 1);
+    CHECK(_stricmp(played.paths, expected) == 0);
     // Only the path is answered: nothing was written.
     {
         WCHAR made[MAX_PATH];
@@ -726,13 +720,18 @@ static void fr72_dialogs_answer_what_the_reader_chose(void) {
     }
 
     // A save over a file that is there: the system asks first, and no answer comes until the
-    // reader has said yes. Here nobody says yes; the dialog is told to close.
+    // reader has said yes. Here nobody says yes; the dialog is told to close while the
+    // question is up, and it closes, answers cancelled and gives the window back its input.
+    _putenv("DXC_FILE_DIALOG_TRACE=1");
     CHECK(dxc_native_file_dialog_show(a.window, 55, DXC_FILE_DIALOG_SAVE, "", directory_utf8, "", filters, 0) == 0);
     play_dialog((HWND)a.window, 55, L"alpha.txt", 1, &played);
-    printf("fr72 save over a file: asked=%d answered=%d status=%d count=%d\n", played.asked, played.answered,
-           played.status, played.count);
-    NOTE(played.asked == 1);
-    NOTE(played.answered == 1 && played.status == DXC_FILE_DIALOG_CANCELLED && played.count == 0);
+    printf("fr72 save over a file: asked=%d answered=%d status=%d count=%d owner_enabled=%d\n", played.asked,
+           played.answered, played.status, played.count, IsWindowEnabled((HWND)a.window));
+    CHECK(played.asked == 1);
+    CHECK(played.answered == 1 && played.status == DXC_FILE_DIALOG_CANCELLED && played.count == 0);
+    CHECK(IsWindowEnabled((HWND)a.window));
+    CHECK(owned_dialog((HWND)a.window) == NULL);
+    fflush(stdout);
 
     // Whatever is still open goes with its owner, and its answer is taken.
     dxc_native_window_destroy(a.window);

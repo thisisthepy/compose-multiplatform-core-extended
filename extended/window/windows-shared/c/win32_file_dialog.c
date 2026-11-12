@@ -44,6 +44,7 @@
 #include <objbase.h>
 #include <shobjidl.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -101,6 +102,8 @@ struct dxc_file_dialog {
     UINT default_filter;
     // Set by dxc_native_file_dialog_cancel on the asker's thread, read on the dialog's.
     volatile LONG cancel;
+    // How many turns of the dialog's timer have tried to close it. The dialog's thread only.
+    int close_turns;
     // The answer.
     int32_t status;
     int32_t filter_index;
@@ -255,7 +258,21 @@ static int dxc_file_dialog_should_end(const struct dxc_file_dialog *dialog) {
     return dialog->cancel != 0 || !IsWindow(dialog->owner);
 }
 
-/** Runs on the dialog's thread, from the dialog's own loop, while the dialog is open. */
+/** Says what ending a dialog early is doing, to standard error, when DXC_FILE_DIALOG_TRACE is set. */
+static void dxc_file_dialog_trace(const char *what, HWND window) {
+    static int on = -1;
+    if (on < 0) on = GetEnvironmentVariableA("DXC_FILE_DIALOG_TRACE", NULL, 0) > 0 ? 1 : 0;
+    if (!on) return;
+    char name[64] = "";
+    if (window != NULL) GetClassNameA(window, name, (int)sizeof name);
+    fprintf(stderr, "compose-rust: file-dialog: %s window=%p class=%s\n", what, (void *)window, name);
+}
+
+/**
+ * Runs on the dialog's thread, from whichever loop that thread is in, while the dialog is
+ * open. Once the dialog is to end it closes it, a step at a time, coming round again until
+ * Show has returned.
+ */
 static void CALLBACK dxc_file_dialog_timer(HWND window, UINT message, UINT_PTR id, DWORD time) {
     (void)window;
     (void)message;
@@ -264,24 +281,37 @@ static void CALLBACK dxc_file_dialog_timer(HWND window, UINT message, UINT_PTR i
     struct dxc_file_dialog *dialog = dxc_file_dialog_shown;
     IFileDialog *object = dxc_file_dialog_shown_object;
     if (dialog == NULL || object == NULL || !dxc_file_dialog_should_end(dialog)) return;
-    // A question of the dialog's own may be standing over it (replace this file?), and the
-    // dialog does not close under one. It is answered no first; this timer comes round again.
+    HWND shown = NULL;
     IOleWindow *as_window = NULL;
     if (SUCCEEDED(IFileDialog_QueryInterface(object, &DXC_IID_IOleWindow, (void **)&as_window)) &&
         as_window != NULL) {
-        HWND shown = NULL;
-        if (SUCCEEDED(IOleWindow_GetWindow(as_window, &shown)) && shown != NULL && !IsWindowEnabled(shown)) {
-            HWND question = GetWindow(shown, GW_ENABLEDPOPUP);
-            if (question != NULL && question != shown) {
-                // As a message box takes it, and as a task dialog does (TDM_CLICK_BUTTON).
-                PostMessageW(question, WM_COMMAND, MAKEWPARAM(IDNO, BN_CLICKED), 0);
-                PostMessageW(question, WM_USER + 102, IDNO, 0);
-                PostMessageW(question, WM_COMMAND, MAKEWPARAM(IDCANCEL, BN_CLICKED), 0);
-            }
-        }
+        if (FAILED(IOleWindow_GetWindow(as_window, &shown))) shown = NULL;
         IOleWindow_Release(as_window);
     }
-    IFileDialog_Close(object, HRESULT_FROM_WIN32(ERROR_CANCELLED));
+    if (shown != NULL) shown = GetAncestor(shown, GA_ROOT);
+    // A question of the dialog's own may be standing over it (replace this file?), and the
+    // dialog does not close under one. The question is answered no, as a message box takes
+    // it and as a task dialog does (TDM_CLICK_BUTTON), and the dialog is closed on a later
+    // turn, when the question is gone.
+    if (shown != NULL && !IsWindowEnabled(shown)) {
+        HWND question = GetWindow(shown, GW_ENABLEDPOPUP);
+        if (question != NULL && question != shown) {
+            dxc_file_dialog_trace("answering the question over the dialog", question);
+            PostMessageW(question, WM_USER + 102, IDNO, 0);
+            PostMessageW(question, WM_COMMAND, MAKEWPARAM(IDNO, BN_CLICKED), 0);
+            PostMessageW(question, WM_COMMAND, MAKEWPARAM(IDCANCEL, BN_CLICKED), 0);
+            return;
+        }
+    }
+    dialog->close_turns++;
+    if (dialog->close_turns == 1) {
+        dxc_file_dialog_trace("closing the dialog", shown);
+        IFileDialog_Close(object, HRESULT_FROM_WIN32(ERROR_CANCELLED));
+    } else if (dialog->close_turns > 5 && shown != NULL) {
+        // Still open a quarter of a second on: its own Cancel button, pressed.
+        dxc_file_dialog_trace("pressing the dialog's cancel", shown);
+        PostMessageW(shown, WM_COMMAND, MAKEWPARAM(IDCANCEL, BN_CLICKED), 0);
+    }
 }
 
 static int dxc_file_dialog_is_directory(const WCHAR *path) {
