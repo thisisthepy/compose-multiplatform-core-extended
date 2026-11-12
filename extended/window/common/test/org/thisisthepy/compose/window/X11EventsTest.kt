@@ -89,4 +89,33 @@ class X11EventsTest {
         val heard = events().heard(record(WindowEvent.POINTER_MOVE, modifiers = X11_CONTROL_MASK))
         assertEquals(1 shl 18, heard[0].modifiers)
     }
+
+    @Test
+    fun ending_a_composition_resets_the_method_and_says_nothing() {
+        var resets = 0
+        val x11 = events(reset = { resets++; "한" })
+        x11.heard(record(WindowEvent.PREEDIT_START))
+        x11.heard(record(WindowEvent.PREEDIT_DRAW, keyCode = 0, codePoint = 0, x = 1f, text = "한"))
+        x11.endComposition()
+        assertEquals(1, resets, "the input method is reset once")
+        // The method saying it is done, from inside the reset or after it, ends nothing:
+        // the field kept the syllable, and neither a commit nor an empty composition follows.
+        assertTrue(x11.heard(record(WindowEvent.PREEDIT_DONE)).isEmpty())
+        // A click after that finds nothing being composed and does not reset again.
+        val click = x11.heard(record(WindowEvent.POINTER_DOWN))
+        assertEquals(listOf(WindowEvent.POINTER_DOWN), click.map { it.kind })
+        assertEquals(1, resets)
+        // The next composition starts from nothing.
+        x11.heard(record(WindowEvent.PREEDIT_START))
+        val next = x11.heard(record(WindowEvent.PREEDIT_DRAW, keyCode = 0, codePoint = 0, x = 1f, text = "ㅌ"))
+        assertEquals(listOf(WindowEvent.TEXT_COMPOSE to "ㅌ"), next.map { it.kind to it.text })
+    }
+
+    @Test
+    fun ending_a_composition_with_nothing_composed_does_not_touch_the_method() {
+        var resets = 0
+        val x11 = events(reset = { resets++; "" })
+        x11.endComposition()
+        assertEquals(0, resets)
+    }
 }

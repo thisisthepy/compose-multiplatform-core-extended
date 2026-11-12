@@ -40,6 +40,9 @@ interface Win32WindowBackend {
     fun writeClipboardText(text: String)
     fun setImeSpot(x: Int, y: Int)
 
+    /** Makes the input method let go of what it is composing, sending nothing. */
+    fun endComposition()
+
     /** Shows the menu and waits for the answer: the index in [items] chosen, or -1. */
     fun showContextMenu(items: List<ContextMenuItem>): Int
     fun performCaptionAction(action: CaptionAction)
@@ -265,6 +268,10 @@ class Win32WindowPlatform internal constructor(
 
     override fun setImeSpot(x: Int, y: Int) {
         window?.setImeSpot(x, y)
+    }
+
+    override fun endComposition() {
+        window?.endComposition()
     }
 
     override fun showContextMenu(items: List<ContextMenuItem>) {

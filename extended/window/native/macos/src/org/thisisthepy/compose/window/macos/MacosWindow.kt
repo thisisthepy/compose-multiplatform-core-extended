@@ -359,8 +359,6 @@ class MacosWindow(
             return true
         }
 
-        private var marked: String = ""
-
         override fun insertText(string: Any, replacementRange: CValue<NSRange>) {
             marked = ""
             val text = string.asText()
@@ -422,8 +420,13 @@ class MacosWindow(
             range: CValue<NSRange>,
             actualRange: NSRangePointer?,
         ): CValue<CGRect> {
-            val origin = window?.frame?.useContents { CGRectMake(origin.x, origin.y, 0.0, 0.0) }
-            return origin ?: CGRectMake(0.0, 0.0, 0.0, 0.0)
+            // Where the caret is, so the candidate window opens beside what is being typed
+            // and follows the caret when a key moves it. The scene reports it in pixels from
+            // the top left; the view is flipped, so only the scale is taken out.
+            val w = window ?: return CGRectMake(0.0, 0.0, 0.0, 0.0)
+            val scale = if (w.backingScaleFactor > 0.0) w.backingScaleFactor else 1.0
+            val local = CGRectMake(imeSpot.first / scale, imeSpot.second / scale, 1.0, IME_LINE_POINTS)
+            return w.convertRectToScreen(convertRect(local, toView = null))
         }
 
         override fun characterIndexForPoint(point: CValue<CGPoint>): ULong =
@@ -433,6 +436,7 @@ class MacosWindow(
             val name = NSStringFromSelector(selector)
             if (inKeyDown) {
                 KeyLog.line("doCommandBySelector $name during-key=1")
+                commandDuringKey = true
                 return
             }
             if (name == null) return
@@ -476,6 +480,10 @@ class MacosWindow(
         }
 
         private var inKeyDown = false
+
+        // Whether the input method handed the key being handled back as a command, which is
+        // how it says the key was not part of what it is composing.
+        private var commandDuringKey = false
 
         private fun Any.asText(): String = when (this) {
             is NSAttributedString -> string
@@ -650,19 +658,39 @@ class MacosWindow(
         override fun keyDown(event: NSEvent) {
             KeyLog.platform(event.keyCode.toInt(), event.modifierFlags.toLong(), event.characters, down = true)
             val codePoint = event.charactersIgnoringModifiers?.firstOrNull()?.code ?: 0
-            onEvent?.invoke(
-                WindowEvent(
-                    kind = WindowEvent.KEY_DOWN,
-                    x = 0f,
-                    y = 0f,
-                    buttons = 0,
-                    modifiers = event.modifierFlags.toInt(),
-                    keyCode = event.keyCode.toInt(),
-                    codePoint = codePoint,
-                    text = "",
-                ),
+            val key = WindowEvent(
+                kind = WindowEvent.KEY_DOWN,
+                x = 0f,
+                y = 0f,
+                buttons = 0,
+                modifiers = event.modifierFlags.toInt(),
+                keyCode = event.keyCode.toInt(),
+                codePoint = codePoint,
+                text = "",
             )
-            if (!reachesInputMethod(event.modifierFlags.toLong())) return
+            val toInputMethod = reachesInputMethod(event.modifierFlags.toLong())
+            if (toInputMethod && marked.isNotEmpty()) {
+                // Something is being composed, so the key is the input method's first. An
+                // arrow with a Korean syllable marked makes it commit the syllable and hand
+                // the arrow back as a command; the scene then reads the commit before the
+                // key, and the caret moves from the end of the finished syllable. Read the
+                // other way round, the key moved the caret under an open composition and the
+                // commit that followed pulled it back. A key the input method keeps (the next
+                // letter, or an arrow inside a Japanese conversion) is not the scene's at all.
+                commandDuringKey = false
+                var handled = false
+                inKeyDown = true
+                try {
+                    handled = inputContext?.handleEvent(event) == true
+                } finally {
+                    inKeyDown = false
+                }
+                KeyLog.line("composing key handled=$handled command=$commandDuringKey")
+                if (keyIsLeftForScene(handled, commandDuringKey)) onEvent?.invoke(key)
+                return
+            }
+            onEvent?.invoke(key)
+            if (!toInputMethod) return
             inKeyDown = true
             try {
                 inputContext?.handleEvent(event)
@@ -697,6 +725,23 @@ class MacosWindow(
             keyUp(event)
             return true
         }
+    }
+
+    // What the input method is composing, as it last said. Held here and not in the field,
+    // which is on the scene's side.
+    private var marked: String = ""
+
+    /** Where the focused field's caret is, in pixels from the content's top left. */
+    var imeSpot: Pair<Int, Int> = 0 to 0
+
+    /**
+     * Makes the input method let go of what it is composing, sending nothing. The field has
+     * kept the text; see [org.thisisthepy.compose.window.WindowPlatform.endComposition].
+     */
+    fun endComposition() {
+        if (marked.isEmpty()) return
+        marked = ""
+        view.inputContext?.discardMarkedText()
     }
 
     private var windowInitialized = false
@@ -1123,6 +1168,9 @@ internal fun applyChrome(window: NSWindow, chrome: MacosWindowChrome) {
  * Rust's `Instant` reads on macOS.
  */
 internal fun uptimeNanos(): Long = (NSProcessInfo.processInfo.systemUptime * 1_000_000_000.0).toLong()
+
+/** The height the input method is told a line has, in points: enough to clear the caret. */
+private const val IME_LINE_POINTS = 20.0
 
 /**
  * The [WindowEvent] button flag of the button AppKit numbers [buttonNumber] in an `otherMouse`

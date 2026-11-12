@@ -222,6 +222,8 @@ struct DxcWin {
     WPARAM last_size_kind;
 
     int ime_composing;
+    // Set while a cancel this window asked of the input method is being answered.
+    int ime_cancelling;
     WCHAR pending_high_surrogate;
     LPCWSTR cursor;
     LONG ime_spot_x;
@@ -325,6 +327,7 @@ struct DxcWin {
 #define dxc_last_monitor (dxc_w->last_monitor)
 #define dxc_last_size_kind (dxc_w->last_size_kind)
 #define dxc_ime_composing (dxc_w->ime_composing)
+#define dxc_ime_cancelling (dxc_w->ime_cancelling)
 #define dxc_pending_high_surrogate (dxc_w->pending_high_surrogate)
 #define dxc_cursor (dxc_w->cursor)
 #define dxc_ime_spot_x (dxc_w->ime_spot_x)
@@ -1706,9 +1709,35 @@ int32_t dxc_native_window_focused(void) {
     return 0;
 }
 
+/*
+ * Not a stub like its neighbours: ends what the input method is composing where it stands,
+ * sending nothing, and copies what it was composing into out as UTF-8. Answers how many bytes
+ * that is, zero where there was nothing. Asked when a key moved the caret away from a syllable
+ * the field has already kept, so the input method must not go on composing it at the new
+ * caret. Cancelled rather than completed: completing would send the syllable as a result, and
+ * the field would hold it twice. The messages the cancel sends back find the composition
+ * already closed here and push nothing.
+ */
 int32_t dxc_native_ime_reset(char *out, int32_t capacity) {
     if (out != NULL && capacity > 0) out[0] = 0;
-    return 0;
+    if (dxc_window == NULL || !dxc_ime_composing) return 0;
+    HIMC context = ImmGetContext(dxc_window);
+    if (context == NULL) return 0;
+    int32_t written = 0;
+    if (out != NULL && capacity > 0) {
+        WCHAR wide[256];
+        LONG bytes = ImmGetCompositionStringW(context, GCS_COMPSTR, wide, (DWORD)sizeof wide);
+        if (bytes > 0 && bytes % sizeof(WCHAR) == 0) {
+            written = (int32_t)dxc_utf16_to_utf8((const uint16_t *)wide, (size_t)bytes / sizeof(WCHAR),
+                                                 out, (size_t)capacity);
+        }
+    }
+    dxc_ime_composing = 0;
+    dxc_ime_cancelling = 1;
+    ImmNotifyIME(context, NI_COMPOSITIONSTR, CPS_CANCEL, 0);
+    dxc_ime_cancelling = 0;
+    ImmReleaseContext(dxc_window, context);
+    return written;
 }
 
 int64_t dxc_native_resize_serial(void) {
@@ -2550,6 +2579,9 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         dxc_position_ime(window);
         return 0;
     case WM_IME_COMPOSITION: {
+        // The cancel dxc_native_ime_reset asked for, coming back: the field kept the text,
+        // so nothing is said about it.
+        if (dxc_ime_cancelling) return 0;
         if (lparam == 0) {
             dxc_push_text(DXC_EVENT_TEXT_COMPOSE, NULL, 0);
             return 0;
