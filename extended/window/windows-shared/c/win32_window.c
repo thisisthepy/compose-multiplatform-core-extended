@@ -64,12 +64,14 @@
 #include <stdlib.h>
 #include <stddef.h>
 
+#include "win32_buttons.h"
 #include "win32_resize.h"
 #include "win32_wheel.h"
 #include "win32_ime_text.h"
 #include "win32_caption.h"
 #include "win32_multi.h"
 #include "win32_placement.h"
+#include "win32_scheme.h"
 
 // What happened in the window, waiting to be read.
 //
@@ -277,6 +279,13 @@ struct DxcWin {
     float follow_anchor_y;
     int follow_ended;      // 0 running or idle, 1 released, 2 cancelled; read once
     int follow_end_pending;
+
+    // The color scheme the application asked of this window's caption (FR-53): 0 follows the
+    // system, 1 light, 2 dark. scheme_applied is set once DWM took one; caption_dark is what
+    // it was told last.
+    int32_t color_scheme;
+    int32_t caption_dark;
+    int scheme_applied;
 };
 
 #define dxc_events (dxc_w->events)
@@ -1451,12 +1460,14 @@ void dxc_native_set_accessibility(const struct dxc_element *elements,
     }
 }
 
-/** Which mouse buttons are down, as bit zero for the left one and bit one for the right. */
+/** Which mouse buttons are down, in the bits win32_buttons.h names. */
 static int32_t dxc_pressed_buttons(void) {
     int32_t buttons = 0;
-    if (GetKeyState(VK_LBUTTON) < 0) buttons |= 1;
-    if (GetKeyState(VK_RBUTTON) < 0) buttons |= 2;
-    if (GetKeyState(VK_MBUTTON) < 0) buttons |= 4;
+    if (GetKeyState(VK_LBUTTON) < 0) buttons |= DXC_PRIMARY_HELD;
+    if (GetKeyState(VK_RBUTTON) < 0) buttons |= DXC_SECONDARY_HELD;
+    if (GetKeyState(VK_MBUTTON) < 0) buttons |= DXC_MIDDLE_HELD;
+    if (GetKeyState(VK_XBUTTON1) < 0) buttons |= DXC_BACK_HELD;
+    if (GetKeyState(VK_XBUTTON2) < 0) buttons |= DXC_FORWARD_HELD;
     return buttons;
 }
 
@@ -1532,13 +1543,30 @@ static void dxc_check_text_scale(void) {
     dxc_push_event(record);
 }
 
-static void dxc_push_pointer(int32_t kind, LPARAM where) {
+/** The DXC_*_BUTTON flag of the button a WM_*BUTTONDOWN or WM_*BUTTONUP message is about. */
+static int32_t dxc_event_button(UINT message, WPARAM wparam) {
+    switch (message) {
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONUP:
+        return DXC_SECONDARY_BUTTON;
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONUP:
+        return DXC_MIDDLE_BUTTON;
+    case WM_XBUTTONDOWN:
+    case WM_XBUTTONUP:
+        return GET_XBUTTON_WPARAM(wparam) == XBUTTON1 ? DXC_BACK_BUTTON : DXC_FORWARD_BUTTON;
+    default:
+        return 0;
+    }
+}
+
+static void dxc_push_pointer(int32_t kind, LPARAM where, int32_t event_button) {
     struct dxc_event record;
     memset(&record, 0, sizeof record);
     record.kind = kind;
     record.x = (float)GET_X_LPARAM(where);
     record.y = (float)GET_Y_LPARAM(where);
-    record.buttons = dxc_pressed_buttons();
+    record.buttons = dxc_pointer_buttons(dxc_pressed_buttons(), event_button);
     record.modifiers = dxc_held_modifiers();
     dxc_push_event(record);
 }
@@ -1701,6 +1729,72 @@ static DWORD dxc_window_style(void) {
     return style;
 }
 
+int32_t dxc_native_system_dark(void);
+
+typedef HRESULT(WINAPI *dxc_dwm_set_attribute_fn)(HWND, DWORD, LPCVOID, DWORD);
+
+/**
+ * Tells DWM whether the selected window's caption is dark, from its color scheme. Looked up
+ * at run time like DwmFlush. Tries DWMWA_USE_IMMERSIVE_DARK_MODE and then the number it had
+ * before Windows 10 2004. 1 when DWM took it.
+ */
+static int dxc_apply_color_scheme(HWND window) {
+    static int looked_up;
+    static dxc_dwm_set_attribute_fn set_attribute;
+    if (!looked_up) {
+        looked_up = 1;
+        HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
+        if (dwm != NULL) {
+            set_attribute = (dxc_dwm_set_attribute_fn)(void *)GetProcAddress(dwm, "DwmSetWindowAttribute");
+        }
+    }
+    if (set_attribute == NULL || window == NULL) return 0;
+    BOOL dark = dxc_scheme_caption_dark(dxc_w->color_scheme, dxc_native_system_dark()) ? TRUE : FALSE;
+    if (FAILED(set_attribute(window, DXC_SCHEME_DARK_ATTRIBUTE, &dark, sizeof dark)) &&
+        FAILED(set_attribute(window, DXC_SCHEME_DARK_ATTRIBUTE_OLD, &dark, sizeof dark))) {
+        return 0;
+    }
+    dxc_w->caption_dark = dark ? 1 : 0;
+    dxc_w->scheme_applied = 1;
+    SetWindowPos(window, NULL, 0, 0, 0, 0,
+                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    return 1;
+}
+
+/**
+ * Makes the selected window resizable or not after it opened. The style and the caption's
+ * hit test both read the option, so the frame and the top resize band change together.
+ * 0 when no window is selected.
+ */
+int32_t dxc_native_window_set_resizable(int32_t resizable) {
+    if (dxc_window == NULL) return 0;
+    dxc_options.resizable = resizable ? 1 : 0;
+    LONG_PTR style = GetWindowLongPtrW(dxc_window, GWL_STYLE);
+    style = (LONG_PTR)dxc_scheme_style((uint32_t)style, dxc_options.resizable);
+    SetWindowLongPtrW(dxc_window, GWL_STYLE, style);
+    SetWindowPos(dxc_window, NULL, 0, 0, 0, 0,
+                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    return 1;
+}
+
+/**
+ * Sets the selected window's caption to follow the system (0), stay light (1) or stay
+ * dark (2). A window that follows the system follows it on WM_SETTINGCHANGE. 1 when DWM
+ * took it; 0 with no window, a scheme it does not know, or a DWM that refused.
+ */
+int32_t dxc_native_window_set_color_scheme(int32_t scheme) {
+    if (dxc_window == NULL || !dxc_scheme_valid(scheme)) return 0;
+    dxc_w->color_scheme = scheme;
+    return dxc_apply_color_scheme(dxc_window);
+}
+
+/** What the selected window's caption was last told, for tests. 0 until a scheme was applied. */
+int32_t dxc_native_window_caption_dark(int32_t *dark) {
+    if (!dxc_w->scheme_applied) return 0;
+    if (dark != NULL) *dark = dxc_w->caption_dark;
+    return 1;
+}
+
 /*
  * Taking the caption strip into the client area while the frame stays whole.
  *
@@ -1790,7 +1884,7 @@ static LRESULT dxc_caption_hit_test(HWND window, LPARAM lparam) {
 static void dxc_push_caption_pointer(HWND window, int32_t kind, LPARAM screen) {
     POINT point = {GET_X_LPARAM(screen), GET_Y_LPARAM(screen)};
     ScreenToClient(window, &point);
-    dxc_push_pointer(kind, MAKELPARAM(point.x, point.y));
+    dxc_push_pointer(kind, MAKELPARAM(point.x, point.y), 0);
 }
 
 /** True while the window is maximised, for the renderer's maximise or restore glyph. */
@@ -2314,7 +2408,7 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
     case WM_NCMOUSELEAVE:
         if (!dxc_options.system_chrome) {
             // Off every button, so the scene drops the hover it was shown.
-            dxc_push_pointer(DXC_EVENT_POINTER_MOVE, MAKELPARAM(-1, -1));
+            dxc_push_pointer(DXC_EVENT_POINTER_MOVE, MAKELPARAM(-1, -1), 0);
         }
         break;
     case WM_NCLBUTTONDOWN:
@@ -2354,7 +2448,7 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         // No tracking area. Windows delivers a move whenever the pointer is over the
         // client area, so hover, which is half of what a desktop control does, arrives
         // without having to be asked for.
-        dxc_push_pointer(DXC_EVENT_POINTER_MOVE, lparam);
+        dxc_push_pointer(DXC_EVENT_POINTER_MOVE, lparam, 0);
         return 0;
     case WM_SETCURSOR:
         if (LOWORD(lparam) == HTCLIENT) {
@@ -2365,17 +2459,20 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
     case WM_LBUTTONDOWN:
     case WM_RBUTTONDOWN:
     case WM_MBUTTONDOWN:
+    case WM_XBUTTONDOWN:
         // Held so that a drag leaving the window still reports where it went, and so the
         // release that ends it is heard at all.
         SetCapture(window);
-        dxc_push_pointer(DXC_EVENT_POINTER_DOWN, lparam);
-        return 0;
+        dxc_push_pointer(DXC_EVENT_POINTER_DOWN, lparam, dxc_event_button(message, wparam));
+        // WM_XBUTTONDOWN asks for TRUE, where the other button messages ask for zero.
+        return message == WM_XBUTTONDOWN ? TRUE : 0;
     case WM_LBUTTONUP:
     case WM_RBUTTONUP:
     case WM_MBUTTONUP:
+    case WM_XBUTTONUP:
         ReleaseCapture();
-        dxc_push_pointer(DXC_EVENT_POINTER_UP, lparam);
-        return 0;
+        dxc_push_pointer(DXC_EVENT_POINTER_UP, lparam, dxc_event_button(message, wparam));
+        return message == WM_XBUTTONUP ? TRUE : 0;
     case WM_MOUSEWHEEL:
     case WM_MOUSEHWHEEL: {
         // The sign of each axis is decided in win32_wheel.h, where it is tested.
@@ -2587,6 +2684,13 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         // Answered so the window is never painted white between frames. Every pixel of
         // the client area comes from the swapchain.
         return 1;
+    case WM_SETTINGCHANGE:
+        // A window that follows the system's scheme follows it when the user changes it.
+        if (dxc_w->scheme_applied && dxc_w->color_scheme == DXC_SCHEME_SYSTEM &&
+            dxc_scheme_is_theme_change((const uint16_t *)lparam)) {
+            dxc_apply_color_scheme(window);
+        }
+        break;
     case WM_CLOSE:
         // The application decides when a window goes where it has asked to be told: it hears
         // the request, and closes the window itself or leaves it open. A window nobody asked
@@ -2931,12 +3035,15 @@ static void dxc_read_dragged_files(IDataObject *data) {
         wchar_t wide[MAX_PATH * 4];
         UINT units = DragQueryFileW(drop, index, wide, (UINT)(sizeof wide / sizeof *wide));
         if (units == 0) continue;
-        int bytes = WideCharToMultiByte(CP_UTF8, 0, wide, (int)units, NULL, 0, NULL, NULL);
+        // A name with an unpaired surrogate has no UTF-8 form. The file is left out and the
+        // others are kept, instead of being handed on with a replacement character that
+        // names a file that does not exist.
+        int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide, (int)units, NULL, 0, NULL, NULL);
         // Room for the separator as well, and a path that does not fit is left out rather
         // than cut in half.
         if (bytes <= 0 || used + bytes + 1 > DXC_DROPPED_BYTES) continue;
         if (used > 0) dxc_dropped_paths[used++] = '\0';
-        WideCharToMultiByte(CP_UTF8, 0, wide, (int)units, dxc_dropped_paths + used, bytes, NULL, NULL);
+        WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide, (int)units, dxc_dropped_paths + used, bytes, NULL, NULL);
         used += bytes;
     }
     dxc_dropped_length = used;

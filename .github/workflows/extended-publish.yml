@@ -89,6 +89,7 @@ env:
     org.thisisthepy.compose.window:native-linux
     org.thisisthepy.compose.window:graalvm-macos
     org.thisisthepy.compose.window:graalvm-linux
+    org.thisisthepy.compose.window:graalvm-windows
     org.thisisthepy.compose.skiko:skiko-awt
 
 jobs:
@@ -186,7 +187,7 @@ jobs:
           # Windows target in them.
           - os: macos-latest
             name: macos
-            modules: "common scene native/macos graalvm/graalvm-macos graalvm/graalvm-linux"
+            modules: "common scene native/macos graalvm/graalvm-macos graalvm/graalvm-linux graalvm/graalvm-windows"
             compose: "desktop macosArm64 iosArm64 iosSimulatorArm64 tvosArm64 tvosSimulatorArm64 watchosArm64 watchosArm32 watchosSimulatorArm64 mingwX64"
             all-roots: true
             timeout: 360

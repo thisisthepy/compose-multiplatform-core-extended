@@ -55,7 +55,7 @@ class MeasuringRunTest {
             // Neither may throw: with no field focused committed text goes nowhere, and a
             // press goes into the window's own queue.
             window.inject(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "a"))
-            window.inject(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, 1, 0, 0, 0, ""))
+            window.inject(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, WindowEvent.PRIMARY_HELD, 0, 0, 0, ""))
             window.inject(WindowEvent(WindowEvent.POINTER_UP, 10f, 10f, 0, 0, 0, 0, ""))
             repeat(5) { turn(0.02) }
         } finally {
