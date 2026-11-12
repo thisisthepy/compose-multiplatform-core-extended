@@ -13,6 +13,7 @@ import org.graalvm.word.Pointer
 import org.graalvm.word.WordFactory
 import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.FrameClock
+import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.monotonicNanos
@@ -79,6 +80,9 @@ private external fun windowClosed(): Int
 
 @CFunction("dxc_native_set_cursor")
 private external fun setCursorShape(shape: Int)
+
+@CFunction("dxc_native_text_scale_percent")
+private external fun textScalePercent(): Int
 
 @CFunction("dxc_native_set_accessibility")
 private external fun setAccessibility(elements: Pointer?, count: Int, window: Pointer?)
@@ -167,6 +171,14 @@ class Win32GraalWindow internal constructor(
 
     /** Sets the mouse cursor to [shape], one of the cursor numbers the C side defines. */
     fun setCursor(shape: Int) = setCursorShape(shape)
+
+    /**
+     * The system's text size as a multiplier, 1 when unchanged.
+     *
+     * The C side reads the Accessibility "Text size" slider as a percent; the conversion is
+     * the one windows-shared makes, so both Windows windows answer the same number.
+     */
+    fun textScale(): Float = TextScale.fromWindowsPercent(textScalePercent())
 
     /** True once the window has been closed. */
     fun closed(): Boolean = windowClosed() != 0
@@ -280,20 +292,35 @@ private fun drainWindowEvents(): List<WindowEvent> {
             length++
         }
         events.add(
-            WindowEvent(
-                kind = record.readInt(0),
-                x = record.readFloat(4),
-                y = record.readFloat(8),
-                buttons = record.readInt(12),
-                modifiers = record.readInt(16),
-                keyCode = record.readInt(20),
-                codePoint = record.readInt(24),
-                text = if (length == 0) "" else String(bytes, 0, length, Charsets.UTF_8),
+            win32Event(
+                WindowEvent(
+                    kind = record.readInt(0),
+                    x = record.readFloat(4),
+                    y = record.readFloat(8),
+                    buttons = record.readInt(12),
+                    modifiers = record.readInt(16),
+                    keyCode = record.readInt(20),
+                    codePoint = record.readInt(24),
+                    text = if (length == 0) "" else String(bytes, 0, length, Charsets.UTF_8),
+                ),
             ),
         )
     }
     return events
 }
+
+/**
+ * The event as the rest of the window reads it.
+ *
+ * The C side writes a text size change with the slider's percent in `x`; everything past
+ * here expects the multiplier, as windows-shared's `Win32Records.readEvent` gives it.
+ */
+internal fun win32Event(raw: WindowEvent): WindowEvent =
+    if (raw.kind == WindowEvent.TEXT_SCALE_CHANGED) {
+        WindowEvent.TextScaleChanged(TextScale.fromWindowsPercent(raw.x.toInt()))
+    } else {
+        raw
+    }
 
 private const val EVENT_TEXT_OFFSET = 28
 private const val EVENT_STRUCT_BYTES = 124
