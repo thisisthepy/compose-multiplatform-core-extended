@@ -151,16 +151,20 @@ internal class X11Connection private constructor(val display: CPointer<Display>)
     }
 
     private fun wait(timeoutMillis: Long) {
-        val open = openWindows().map { it.wakeDescriptor }.filter { it >= 0 }
+        val windows = openWindows()
+        // The wake pipes, and the bus sockets of open file dialogs: a dialog's answer ends
+        // the wait the way an event does, so it is not held until the next one.
+        val others = windows.map { it.wakeDescriptor }.filter { it >= 0 } +
+            windows.flatMap { it.busDescriptors() }.filter { it >= 0 }
         memScoped {
-            val watched = allocArray<pollfd>(1 + open.size)
+            val watched = allocArray<pollfd>(1 + others.size)
             watched[0].fd = XConnectionNumber(display)
             watched[0].events = POLLIN.toShort()
-            for ((index, descriptor) in open.withIndex()) {
+            for ((index, descriptor) in others.withIndex()) {
                 watched[index + 1].fd = descriptor
                 watched[index + 1].events = POLLIN.toShort()
             }
-            poll(watched, (1 + open.size).convert(), timeoutMillis.toInt())
+            poll(watched, (1 + others.size).convert(), timeoutMillis.toInt())
         }
     }
 
