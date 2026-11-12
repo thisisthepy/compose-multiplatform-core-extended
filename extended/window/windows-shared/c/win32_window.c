@@ -69,6 +69,7 @@
 #include "win32_ime_text.h"
 #include "win32_caption.h"
 #include "win32_multi.h"
+#include "win32_placement.h"
 
 // What happened in the window, waiting to be read.
 //
@@ -3963,22 +3964,52 @@ static int32_t dxc_open_window(
     // Without the system caption the content starts at the top of the window, so the
     // frame above it is not part of the outside.
     int outer_height = dxc_options.system_chrome ? wanted.bottom - wanted.top : wanted.bottom;
-    // Centred on the part of the screen a window is meant to sit in. Where that cannot be
-    // asked for, the window keeps the place Windows chose for it rather than being moved
-    // to a corner that was never a position.
-    RECT work;
+    // The outside is never larger than the work area of the monitor the window is on, and
+    // never reaches past it, so the caption stays where it can be grabbed. Without a
+    // position it is centred there. Where that monitor cannot be asked about, the window
+    // keeps the place Windows chose for it rather than being moved to a corner that was
+    // never a position.
+    int min_outer_width = 0;
+    int min_outer_height = 0;
+    if (dxc_options.min_width > 0 || dxc_options.min_height > 0) {
+        RECT least = {0, 0, MulDiv(dxc_options.min_width, (int)dpi, USER_DEFAULT_SCREEN_DPI),
+            MulDiv(dxc_options.min_height, (int)dpi, USER_DEFAULT_SCREEN_DPI)};
+        AdjustWindowRectExForDpi(&least, dxc_window_style(), FALSE, 0, dpi);
+        min_outer_width = least.right - least.left;
+        min_outer_height = dxc_options.system_chrome ? least.bottom - least.top : least.bottom;
+    }
     UINT placement = SWP_NOZORDER | SWP_NOMOVE;
     int left = 0;
     int top = 0;
-    if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
-        left = work.left + ((work.right - work.left) - outer_width) / 2;
-        top = work.top + ((work.bottom - work.top) - outer_height) / 2;
-        placement = SWP_NOZORDER;
-    }
+    // Where the application said, in points converted at the DPI the window was created at
+    // (the DPI of the monitor Windows first put it on), so a position on a monitor with a
+    // different scale can be off by that ratio until the window is moved there.
+    int wanted_x = dxc_w->has_position ? dxc_points_to_pixels(dxc_w->position_x, dpi) : 0;
+    int wanted_y = dxc_w->has_position ? dxc_points_to_pixels(dxc_w->position_y, dpi) : 0;
+    // With a position, the monitor is the one at that position, not the one Windows first
+    // placed the new window on, so a window asked for on a secondary monitor stays there.
+    HMONITOR monitor;
     if (dxc_w->has_position) {
-        // Where the application said, in points of the monitor the window is on.
-        left = dxc_points_to_pixels(dxc_w->position_x, dpi);
-        top = dxc_points_to_pixels(dxc_w->position_y, dpi);
+        RECT asked = {wanted_x, wanted_y, wanted_x + outer_width, wanted_y + outer_height};
+        monitor = MonitorFromRect(&asked, MONITOR_DEFAULTTONEAREST);
+    } else {
+        monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    }
+    MONITORINFO monitor_info;
+    monitor_info.cbSize = sizeof monitor_info;
+    if (monitor != NULL && GetMonitorInfoW(monitor, &monitor_info)) {
+        struct dxc_placement_rect work = {monitor_info.rcWork.left, monitor_info.rcWork.top,
+            monitor_info.rcWork.right, monitor_info.rcWork.bottom};
+        struct dxc_placement_rect outer = dxc_placement_fit(work, outer_width, outer_height,
+            min_outer_width, min_outer_height, dxc_w->has_position, wanted_x, wanted_y);
+        left = outer.left;
+        top = outer.top;
+        outer_width = outer.right - outer.left;
+        outer_height = outer.bottom - outer.top;
+        placement = SWP_NOZORDER;
+    } else if (dxc_w->has_position) {
+        left = wanted_x;
+        top = wanted_y;
         placement = SWP_NOZORDER;
     }
     SetWindowPos(window, NULL, left, top, outer_width, outer_height, placement | SWP_FRAMECHANGED);

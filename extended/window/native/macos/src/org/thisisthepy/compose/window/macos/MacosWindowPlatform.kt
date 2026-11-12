@@ -340,11 +340,19 @@ class MacosWindowPlatform(
     }
 
     /**
-     * The strip the system's buttons sit in and the radius of the window's corners, as the
-     * window last measured them.
+     * The strip the system's buttons sit in and the radius of the window's corners, measured
+     * from the window now, as the native image's window answers.
+     *
+     * The host asks once a turn, after the pump and outside any change of the window's frame,
+     * which is when the title bar is where the frame says it is. The window used to measure
+     * inside `setFrameSize` instead, against a layout rect still at the old size, and kept
+     * what it read there.
      */
-    override fun caption(): org.thisisthepy.compose.window.WindowCaption =
-        window?.caption?.value?.toCommon() ?: org.thisisthepy.compose.window.WindowCaption.None
+    override fun caption(): org.thisisthepy.compose.window.WindowCaption {
+        val current = window ?: return org.thisisthepy.compose.window.WindowCaption.None
+        current.measureCaption()
+        return current.caption.value.toCommon()
+    }
 
     /**
      * Gives the reader [elements] in place of what the window's own scene says, and hands
