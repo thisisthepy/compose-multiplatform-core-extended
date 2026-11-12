@@ -1,6 +1,6 @@
 # The window modules, one standalone Amper project like extended/design-systems.
 # Module names are the directory names and must be unique, so the GraalVM layers are
-# graalvm-macos and graalvm-linux. native/linux is added by its own PR (#28).
+# graalvm-macos, graalvm-linux and graalvm-windows. native/linux is added by its own PR (#28).
 # Nothing here may depend on the renderer, its wire protocol or its node table.
 #
 # native/linux-scene is not listed: it depends on the scene's Linux targets, and the workflows
@@ -11,6 +11,7 @@ modules:
   - native/macos
   - graalvm/graalvm-macos
   - graalvm/graalvm-linux
+  - graalvm/graalvm-windows
   - native/linux
   - scene
   - windows-shared
