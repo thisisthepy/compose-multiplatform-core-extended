@@ -46,3 +46,7 @@ object Win32Frames {
         }
         return true
     }
+}
+
+/** Where a CPU frame is drawn: the C side's bitmap, [width] x [height] of it. */
+class RasterTarget(val address: Long, val rowBytes: Int, val width: Int, val height: Int)
