@@ -205,6 +205,12 @@ object Win32Loop {
     /** Dispatches the window's messages, waiting up to [seconds] for the first one. */
     fun pump(seconds: Double) = dxc_native_pump(seconds)
 
+    /**
+     * Delivers the result of every file dialog that has ended ([WindowsFileDialogs]) on this
+     * thread. Call it after [pump], which a dialog that ends wakes.
+     */
+    fun deliverFileDialogs() = Win32System.windows.fileDialogs.deliver()
+
     /** True once the window has been closed. */
     val closed: Boolean get() = dxc_native_window_closed() != 0
 
