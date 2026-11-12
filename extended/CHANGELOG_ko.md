@@ -7,6 +7,9 @@
 
 ### 바뀐 것
 
+- **Windows 마우스 휠이 반대로 스크롤되던 문제를 고쳤습니다.** GraalVM과 Kotlin/Native 두 경로 모두입니다.
+  Win32는 휠을 사용자 반대쪽으로 굴리면 양수로 세고 Compose는 양수 `scrollDelta.y` 를 아래로 읽으므로,
+  이제 `WM_MOUSEWHEEL` 의 값을 뒤집습니다. (#169)
 - **Linux 창은 이제 기본으로 장식이 없습니다.** `native/linux` 와 `graalvm/graalvm-linux` 는 이제
   `WindowConfig.chrome` 을 읽으며, 기본값은 `WindowChrome.Modern` 입니다. 창 관리자의 프레임을 떼고,
   장면이 캡션과 버튼을 그립니다(`caption()` 이 그 띠를 알려 주며 `buttonsDrawnByScene = true` 입니다).

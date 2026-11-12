@@ -59,6 +59,9 @@ class X11WindowTest {
         // no X server actually has is this one.
         // Put back afterwards, because the tests that need a display run in this process too.
         val display = getenv("DISPLAY")?.toKString()
+        // A window another test left open keeps the process's connection alive, and a window
+        // opens on that one; this test is about opening on none.
+        X11Connection.forgetShared()
         unsetenv("DISPLAY")
         try {
             assertNull(
