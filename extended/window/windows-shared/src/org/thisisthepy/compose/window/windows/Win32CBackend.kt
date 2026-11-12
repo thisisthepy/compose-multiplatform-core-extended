@@ -3,14 +3,18 @@ package org.thisisthepy.compose.window.windows
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.FloatVar
 import kotlinx.cinterop.IntVar
+import kotlinx.cinterop.LongVar
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readBytes
+import kotlinx.cinterop.toCPointer
+import kotlinx.cinterop.toLong
 import kotlinx.cinterop.value
 import org.thisisthepy.compose.window.CaptionAction
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.FileDialogRequest
 import org.thisisthepy.compose.window.ScreenPointer
 import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowBounds
@@ -21,6 +25,10 @@ import org.thisisthepy.compose.window.WindowVisibility
 import org.thisisthepy.compose.window.windows.c.dxc_native_clipboard_read
 import org.thisisthepy.compose.window.windows.c.dxc_native_clipboard_write
 import org.thisisthepy.compose.window.windows.c.dxc_native_context_menu
+import org.thisisthepy.compose.window.windows.c.dxc_native_file_dialog_cancel
+import org.thisisthepy.compose.window.windows.c.dxc_native_file_dialog_next
+import org.thisisthepy.compose.window.windows.c.dxc_native_file_dialog_show
+import org.thisisthepy.compose.window.windows.c.dxc_native_file_dialog_take
 import org.thisisthepy.compose.window.windows.c.dxc_native_follow_start
 import org.thisisthepy.compose.window.windows.c.dxc_native_pointer_on_screen
 import org.thisisthepy.compose.window.windows.c.dxc_native_post_quit
@@ -61,6 +69,8 @@ internal class Win32CWindowBackend(private val native: Win32NativeWindow) : Win3
     }
 
     override val closed: Boolean get() = on(true) { dxc_native_window_closed() != 0 }
+
+    override val handle: Long get() = if (released) 0L else native.window.toLong()
 
     override fun measure(): WindowMeasurement = on(WindowMeasurement(0, 0, 1f)) { native.measure() }
 
@@ -191,6 +201,43 @@ internal class Win32CWindowBackend(private val native: Win32NativeWindow) : Win3
     }
 }
 
+/** The file dialogs of the shared C (`c/win32_file_dialog.c`), each on a thread of its own. */
+internal object Win32CFileDialogBackend : Win32FileDialogBackend {
+    override fun start(window: Long, id: Long, request: FileDialogRequest): Boolean =
+        dxc_native_file_dialog_show(
+            window.toCPointer<ByteVar>(),
+            id,
+            fileDialogKindCode(request.kind),
+            request.title,
+            request.directory,
+            request.name,
+            encodeFileDialogFilters(request),
+            request.defaultFilter,
+        ) == 0
+
+    override fun cancel(id: Long) = dxc_native_file_dialog_cancel(id)
+
+    override fun poll(): Win32FileDialogAnswer? = memScoped {
+        val id = alloc<LongVar>()
+        val status = alloc<IntVar>()
+        val filter = alloc<IntVar>()
+        val count = alloc<IntVar>()
+        val bytes = alloc<IntVar>()
+        if (dxc_native_file_dialog_next(id.ptr, status.ptr, filter.ptr, count.ptr, bytes.ptr) == 0) return null
+        val buffer = allocArray<ByteVar>(bytes.value + 1)
+        val written = dxc_native_file_dialog_take(id.value, buffer, bytes.value)
+        val paths = if (written > 0) buffer.readBytes(written).decodeToString().split('\u0000') else emptyList()
+        // A count that disagrees with what was read is an answer that cannot be trusted whole.
+        val whole = written >= 0 && paths.size == count.value
+        Win32FileDialogAnswer(
+            id = id.value,
+            status = if (whole) status.value else Win32FileDialogAnswer.UNAVAILABLE,
+            filterIndex = filter.value,
+            paths = if (whole) paths else emptyList(),
+        )
+    }
+}
+
 /** [Win32ProcessBackend] over the shared C window. */
 internal object Win32CProcessBackend : Win32ProcessBackend {
     override fun openWindow(config: WindowConfig): Win32WindowBackend? =
@@ -204,6 +251,8 @@ internal object Win32CProcessBackend : Win32ProcessBackend {
         val code = alloc<IntVar>()
         if (dxc_native_quit_posted(code.ptr) != 0) code.value else null
     }
+
+    override val fileDialogs: Win32FileDialogBackend get() = Win32CFileDialogBackend
 }
 
 /** The windows of this process, over the shared C window. Created on first use. */

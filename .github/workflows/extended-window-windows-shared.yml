@@ -60,7 +60,7 @@ jobs:
         run: |
           set -euo pipefail
           exported() {
-            grep -hoE '^(int32_t|int64_t|void) (dxc_native|dxc_notify)_[a-z0-9_]+\(' c/win32_window.c c/win32_notifications.c |
+            grep -hoE '^(int32_t|int64_t|void) (dxc_native|dxc_notify)_[a-z0-9_]+\(' c/win32_window.c c/win32_file_dialog.c c/win32_notifications.c |
               sed -E 's/^[a-z0-9_]+ //; s/\($//' | sort -u
           }
           declared() {
@@ -82,14 +82,15 @@ jobs:
           count=$(grep -c 'CreateSwapChainForHwnd(' c/win32_window.c)
           test "$count" = 1 || { echo "expected one CreateSwapChainForHwnd call, found $count" >&2; exit 1; }
 
-      - name: Compile the window and the toasts
+      - name: Compile the window, the file dialogs and the toasts
         run: |
           mkdir out
           cl /nologo /c /O2 /std:c11 /W3 /Foout\win32_window.obj c\win32_window.c || exit /b 1
+          cl /nologo /c /O2 /std:c11 /W3 /Foout\win32_file_dialog.obj c\win32_file_dialog.c || exit /b 1
           cl /nologo /c /O2 /std:c11 /W3 /Foout\win32_notifications.obj c\win32_notifications.c || exit /b 1
 
       - name: Package the static library
-        run: lib /nologo /OUT:out\dxc_win32_window.lib out\win32_window.obj out\win32_notifications.obj
+        run: lib /nologo /OUT:out\dxc_win32_window.lib out\win32_window.obj out\win32_file_dialog.obj out\win32_notifications.obj
 
       # The renderer's one native image carries the X11 window's calls on every desktop and
       # links every C function its reachable code names, so the Windows library defines them
