@@ -218,7 +218,7 @@ internal class IdleSoak {
                     org.thisisthepy.compose.window.WindowEvent.POINTER_DOWN,
                     x,
                     y,
-                    1,
+                    org.thisisthepy.compose.window.WindowEvent.PRIMARY_HELD,
                     0,
                     0,
                     0,

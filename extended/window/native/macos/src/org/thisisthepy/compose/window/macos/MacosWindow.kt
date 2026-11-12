@@ -155,6 +155,22 @@ class MacosWindow(
     internal var movedPending = false
 
     private val windowDelegate = MacosWindowDelegate(this)
+
+    /**
+     * Put up when the secondary button is pressed, after the press has reached the scene so the
+     * field under the pointer has taken focus. The menu tracks the pointer until it is chosen
+     * from or dismissed, and takes the release with it, so the release is sent once it returns.
+     * Null puts up nothing, which is what an application that draws the menu itself wants.
+     */
+    var onContextMenu: (() -> Unit)? = null
+
+    /**
+     * True to have the platform put up the system's edit menu (Cut, Copy, Paste, Select All) on
+     * a right click. Off by default: an application whose Compose answers a text field's menu
+     * with an `NSMenu` of its own would show two.
+     */
+    var editMenuOnRightClick: Boolean = false
+
     var resizePainter: (() -> Boolean)? = null
     var host: ComposeWindowHost? = null
 
@@ -553,10 +569,13 @@ class MacosWindow(
             addTrackingArea(area)
         }
 
-        private fun postPointer(event: NSEvent, kind: Int, secondary: Boolean = false) {
+        // Whether the primary button's press went to the scene as a secondary one (control was
+        // held), so that its release is marked the same, whatever is held by then.
+        private var controlClick = false
+
+        private fun postPointer(event: NSEvent, kind: Int, eventButton: Int = 0) {
             val position = event.offsetInView
-            var buttons = NSEvent.pressedMouseButtons.toInt()
-            if (secondary) buttons = buttons or WindowEvent.SECONDARY_BUTTON
+            val buttons = WindowEvent.pointerButtons(NSEvent.pressedMouseButtons.toInt(), eventButton)
             onEvent?.invoke(
                 WindowEvent(
                     kind = kind,
@@ -574,22 +593,48 @@ class MacosWindow(
         override fun mouseDown(event: NSEvent) {
             if (hasMarkedText()) inputContext?.discardMarkedText()
             val control = event.modifierFlags and NSEventModifierFlagControl != 0uL
-            postPointer(event, WindowEvent.POINTER_DOWN, secondary = control)
+            // Control with the primary button is the secondary button on this platform.
+            if (control && onContextMenu != null) return rightMouseDown(event)
+            controlClick = control
+            postPointer(event, WindowEvent.POINTER_DOWN, if (control) WindowEvent.SECONDARY_BUTTON else 0)
         }
 
-        override fun mouseUp(event: NSEvent) =
-            postPointer(event, WindowEvent.POINTER_UP)
+        override fun mouseUp(event: NSEvent) {
+            val was = controlClick
+            controlClick = false
+            postPointer(event, WindowEvent.POINTER_UP, if (was) WindowEvent.SECONDARY_BUTTON else 0)
+        }
 
-        override fun rightMouseDown(event: NSEvent) =
-            postPointer(event, WindowEvent.POINTER_DOWN, secondary = true)
+        override fun rightMouseDown(event: NSEvent) {
+            postPointer(event, WindowEvent.POINTER_DOWN, WindowEvent.SECONDARY_BUTTON)
+            val menu = onContextMenu ?: return
+            menu()
+            // The menu's tracking swallowed the release; without this the scene would go on
+            // believing a button is held down.
+            postPointer(event, WindowEvent.POINTER_UP, WindowEvent.SECONDARY_BUTTON)
+        }
 
-        override fun rightMouseUp(event: NSEvent) =
-            postPointer(event, WindowEvent.POINTER_UP, secondary = true)
+        override fun rightMouseUp(event: NSEvent) {
+            if (onContextMenu != null) return
+            postPointer(event, WindowEvent.POINTER_UP, WindowEvent.SECONDARY_BUTTON)
+        }
+
+        override fun otherMouseDown(event: NSEvent) =
+            postPointer(event, WindowEvent.POINTER_DOWN, eventButtonOfMacButton(event.buttonNumber.toInt()))
+
+        override fun otherMouseUp(event: NSEvent) =
+            postPointer(event, WindowEvent.POINTER_UP, eventButtonOfMacButton(event.buttonNumber.toInt()))
 
         override fun mouseMoved(event: NSEvent) =
             postPointer(event, WindowEvent.POINTER_MOVE)
 
         override fun mouseDragged(event: NSEvent) =
+            postPointer(event, WindowEvent.POINTER_MOVE)
+
+        override fun rightMouseDragged(event: NSEvent) =
+            postPointer(event, WindowEvent.POINTER_MOVE)
+
+        override fun otherMouseDragged(event: NSEvent) =
             postPointer(event, WindowEvent.POINTER_MOVE)
 
         override fun scrollWheel(event: NSEvent) {
@@ -755,6 +800,7 @@ class MacosWindow(
     fun setContent(content: @Composable () -> Unit) {
         initWindow()
         val platform = MacosWindowPlatform()
+        platform.nativeEditMenu = editMenuOnRightClick
         platform.attachWindow(this)
         val config = WindowConfig(name, width, height)
         val createdHost = ComposeWindowHost(
@@ -1125,6 +1171,18 @@ internal fun uptimeNanos(): Long = (NSProcessInfo.processInfo.systemUptime * 1_0
 
 /** The height the input method is told a line has, in points: enough to clear the caret. */
 private const val IME_LINE_POINTS = 20.0
+
+/**
+ * The [WindowEvent] button flag of the button AppKit numbers [buttonNumber] in an `otherMouse`
+ * event: 2 is the middle button, 3 and 4 the back and forward ones. The left and right buttons
+ * have their own event types and are not numbered here, so any other number has no flag.
+ */
+internal fun eventButtonOfMacButton(buttonNumber: Int): Int = when (buttonNumber) {
+    2 -> WindowEvent.MIDDLE_BUTTON
+    3 -> WindowEvent.BACK_BUTTON
+    4 -> WindowEvent.FORWARD_BUTTON
+    else -> 0
+}
 
 private val CAPTION_RETRY_DELAYS_NANOS = longArrayOf(50_000_000L, 150_000_000L, 300_000_000L)
 

@@ -2,9 +2,12 @@ package org.thisisthepy.compose.window.windows
 
 import org.thisisthepy.compose.window.CaptionAction
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.FileDialogOutcome
+import org.thisisthepy.compose.window.FileDialogs
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.ScreenPointer
 import org.thisisthepy.compose.window.SystemTheme
+import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowBounds
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
@@ -25,6 +28,9 @@ interface Win32WindowBackend {
     /** True once the window has been destroyed. */
     val closed: Boolean
 
+    /** The window's handle (the HWND) as a number, which a file dialog takes as its owner; 0 for none. */
+    val handle: Long get() = 0L
+
     fun measure(): WindowMeasurement
     fun drainEvents(): List<WindowEvent>
     fun setTitle(title: String)
@@ -41,6 +47,9 @@ interface Win32WindowBackend {
     fun showContextMenu(items: List<ContextMenuItem>): Int
     fun performCaptionAction(action: CaptionAction)
     fun systemDark(): Boolean
+
+    /** The system's text size as a multiplier, 1 when unchanged (see [TextScale]). */
+    fun textScale(): Float = TextScale.DEFAULT
 
     fun setPosition(x: Int, y: Int)
     fun setContentSize(width: Int, height: Int)
@@ -82,6 +91,9 @@ interface Win32ProcessBackend {
 
     /** The code of a quit the application posted, once it has come through the queue; null before. */
     fun quitPosted(): Int?
+
+    /** The file dialogs of the process. A backend with none starts no dialog. */
+    val fileDialogs: Win32FileDialogBackend get() = Win32NoFileDialogs
 }
 
 /**
@@ -97,6 +109,9 @@ interface Win32ProcessBackend {
 class Win32Windows(private val process: Win32ProcessBackend) {
     private val platforms = ArrayList<Win32WindowPlatform>()
 
+    /** The file dialogs open in this process. Their results are delivered by [pump]. */
+    val fileDialogs: Win32FileDialogCenter = Win32FileDialogCenter(process.fileDialogs)
+
     /** A platform for a window that is not open yet. */
     fun newPlatform(): Win32WindowPlatform = Win32WindowPlatform(this, process)
 
@@ -106,6 +121,8 @@ class Win32Windows(private val process: Win32ProcessBackend) {
     /** Reads the operating system once and delivers to every window what it heard. */
     fun pump(timeoutMillis: Long) {
         process.pump(timeoutMillis / 1000.0)
+        // A dialog that ended since the last turn woke the pump; its result goes out here.
+        fileDialogs.deliver()
         // A listener may open or close windows: deliver to the ones that were open.
         for (platform in platforms.toList()) platform.deliver()
     }
@@ -132,6 +149,9 @@ class Win32Windows(private val process: Win32ProcessBackend) {
  * listener's. [WindowListener.onCloseRequested] returning false keeps the window and the
  * application closes it later with [close].
  *
+ * [fileDialogs] shows the system's file dialogs on this window without stopping the pump; a
+ * dialog still open when the window closes ends as cancelled.
+ *
  * Until the renderer's own window moves here, a window keeps the system's caption
  * ([caption] answers none and [startMove] and [startResize] leave the move to the system).
  */
@@ -143,6 +163,16 @@ class Win32WindowPlatform internal constructor(
     private var listener: WindowListener? = null
     private var reportedKey = false
     private var frameWanted = false
+    private var dialogs: WindowsFileDialogs? = null
+
+    /**
+     * File dialogs owned by this window. Results arrive from [pump], on the thread that pumps;
+     * before the window is open and after it is closed every request answers Unavailable.
+     */
+    val fileDialogs: FileDialogs = FileDialogs { request, onResult ->
+        val current = dialogs
+        if (current == null) onResult(FileDialogOutcome.Unavailable) else current.show(request, onResult)
+    }
 
     override val name: String get() = "windows-native"
 
@@ -152,6 +182,7 @@ class Win32WindowPlatform internal constructor(
         window = opened
         this.listener = listener
         reportedKey = false
+        dialogs = WindowsFileDialogs(owner.fileDialogs) { opened.handle.takeIf { it != 0L && window === opened } }
         owner.register(this)
         return true
     }
@@ -214,6 +245,8 @@ class Win32WindowPlatform internal constructor(
 
     override fun systemTheme(): SystemTheme =
         if (window?.systemDark() == true) SystemTheme.Dark else SystemTheme.Light
+
+    override fun textScale(): Float = window?.textScale() ?: TextScale.DEFAULT
 
     override fun setTitle(title: String) {
         window?.setTitle(title)
@@ -281,6 +314,9 @@ class Win32WindowPlatform internal constructor(
 
     override fun close() {
         val current = window ?: return
+        // While the window still exists: its dialog is told to close and every request ends.
+        dialogs?.cancelAll()
+        dialogs = null
         window = null
         owner.unregister(this)
         current.destroy()

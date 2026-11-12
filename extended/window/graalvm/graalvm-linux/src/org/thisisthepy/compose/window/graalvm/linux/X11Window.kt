@@ -18,6 +18,7 @@ import org.thisisthepy.compose.window.atspi.AtspiWindow
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.ResizeStats
 import org.thisisthepy.compose.window.SystemTheme
+import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowListener
@@ -49,6 +50,8 @@ class X11Window : WindowPlatform {
     private var frameWanted = false
     private var lastScale = 0f
     private var lastTheme: SystemTheme? = null
+    private var lastTextScale = TextScale.DEFAULT
+    private var nextTextScaleCheck = 0L
 
     // What the C window records, a key as a keysym, a state word and the text it typed and the
     // preedit callbacks as they came, turned into events by the same code the Kotlin/Native X11
@@ -144,16 +147,16 @@ class X11Window : WindowPlatform {
             }
             for (event in x11Events.heard(read(eventBuffer))) {
                 when (event.kind) {
-                    WindowEvent.POINTER_DOWN -> if (event.buttons and PRIMARY != 0 &&
-                        event.buttons and WindowEvent.SECONDARY_BUTTON == 0
+                    WindowEvent.POINTER_DOWN -> if (event.buttons and WindowEvent.PRIMARY_HELD != 0 &&
+                        !event.isSecondaryPress
                     ) {
                         pressX = event.x
                         pressY = event.y
                         pressNanos = System.nanoTime()
                     }
-                    WindowEvent.POINTER_UP -> if (event.buttons and PRIMARY == 0) gesture.released()
+                    WindowEvent.POINTER_UP -> if (event.buttons and WindowEvent.PRIMARY_HELD == 0) gesture.released()
                     WindowEvent.POINTER_MOVE -> if (gesture.waiting) {
-                        if (event.buttons and PRIMARY == 0) {
+                        if (event.buttons and WindowEvent.PRIMARY_HELD == 0) {
                             gesture.released()
                         } else {
                             val direction = gesture.moved(event.x, event.y)
@@ -169,6 +172,7 @@ class X11Window : WindowPlatform {
             lastScale = scale
             listener?.onScaleChanged(scale)
         }
+        checkTextScale()
         val theme = systemTheme()
         if (theme != lastTheme) {
             lastTheme = theme
@@ -344,6 +348,20 @@ class X11Window : WindowPlatform {
     }
 
     /** Read the way the Kotlin/Native X11 window reads it: from `GTK_THEME`. */
+    override fun textScale(): Float = LinuxTextScale.read()
+
+    /** Read again every few seconds: neither GNOME nor KDE announces the change on the X connection. */
+    private fun checkTextScale() {
+        val now = System.nanoTime()
+        if (now < nextTextScaleCheck) return
+        nextTextScaleCheck = now + 3_000_000_000L
+        val scale = LinuxTextScale.read()
+        if (scale != lastTextScale) {
+            lastTextScale = scale
+            listener?.onTextScaleChanged(scale)
+        }
+    }
+
     override fun systemTheme(): SystemTheme = X11Theme.fromGtkTheme(System.getenv("GTK_THEME"))
 
     /**
@@ -505,9 +523,6 @@ class X11Window : WindowPlatform {
         const val ACTION_MINIMIZE = 0
         const val ACTION_TOGGLE_MAXIMIZE = 1
         const val ACTION_CLOSE = 2
-
-        /** The primary button's bit in an event's buttons. */
-        const val PRIMARY = 1
 
         /**
          * dxc_native_window_begin_drag's number for a `_NET_WM_MOVERESIZE` direction: 0 moves,
