@@ -8,6 +8,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.thisisthepy.compose.window.CaptionAction
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.FileDialogKind
+import org.thisisthepy.compose.window.FileDialogOutcome
+import org.thisisthepy.compose.window.FileDialogRequest
 import org.thisisthepy.compose.window.ScreenPointer
 import org.thisisthepy.compose.window.WindowBounds
 import org.thisisthepy.compose.window.WindowConfig
@@ -35,7 +38,10 @@ private class FakeWindow(val config: WindowConfig) : Win32WindowBackend {
     var followAnchor: Pair<Float, Float>? = null
     var focusCalls = 0
 
+    var handleValue = 0L
+
     override val closed: Boolean get() = destroyed
+    override val handle: Long get() = if (destroyed) 0L else handleValue
     override fun measure() = WindowMeasurement(config.width, config.height, 1f)
     override fun drainEvents(): List<WindowEvent> {
         val out = events.toList()
@@ -101,10 +107,14 @@ private class FakeProcess : Win32ProcessBackend {
     var pumps = 0
     var quit: Int? = null
     var refuse = false
+    val dialogs = FakeDialogs()
+
+    override val fileDialogs: Win32FileDialogBackend get() = dialogs
 
     override fun openWindow(config: WindowConfig): Win32WindowBackend? {
         if (refuse) return null
         val window = FakeWindow(config)
+        window.handleValue = 0x100L * (windows.size + 1)
         windows.add(window)
         return window
     }
@@ -376,5 +386,57 @@ class Win32WindowsTest {
         assertEquals(0, windows.openCount)
         assertNull(platform.bounds())
         assertFalse(platform.isKey)
+    }
+
+    @Test
+    fun fr72_a_window_shows_its_dialog_and_hears_the_result_from_the_pump() {
+        val process = FakeProcess()
+        val windows = Win32Windows(process)
+        val first = windows.newPlatform()
+        val second = windows.newPlatform()
+        val outcomes = ArrayList<FileDialogOutcome>()
+        // No window yet, so no dialog.
+        first.fileDialogs.show(FileDialogRequest(FileDialogKind.OpenFile)) { outcomes.add(it) }
+        assertEquals(listOf<FileDialogOutcome>(FileDialogOutcome.Unavailable), outcomes)
+        assertTrue(first.open(config("a"), Recorder()))
+        assertTrue(second.open(config("b"), Recorder()))
+
+        second.fileDialogs.show(FileDialogRequest(FileDialogKind.OpenFile)) { outcomes.add(it) }
+        assertEquals(listOf(0x200L), process.dialogs.started.map { it.window })
+        process.dialogs.choose(process.dialogs.started[0].id, "C:\\picked.txt")
+        assertEquals(1, outcomes.size)
+        // Pumping on any window delivers.
+        first.pump(0)
+        assertEquals(listOf("C:\\picked.txt"), (outcomes[1] as FileDialogOutcome.Chosen).paths)
+    }
+
+    @Test
+    fun fr72_closing_a_window_cancels_its_dialogs_and_not_another_windows() {
+        val process = FakeProcess()
+        val windows = Win32Windows(process)
+        val first = windows.newPlatform()
+        val second = windows.newPlatform()
+        assertTrue(first.open(config("a"), Recorder()))
+        assertTrue(second.open(config("b"), Recorder()))
+        val firstOutcomes = ArrayList<FileDialogOutcome>()
+        val secondOutcomes = ArrayList<FileDialogOutcome>()
+        first.fileDialogs.show(FileDialogRequest(FileDialogKind.OpenFile)) { firstOutcomes.add(it) }
+        first.fileDialogs.show(FileDialogRequest(FileDialogKind.Save)) { firstOutcomes.add(it) }
+        second.fileDialogs.show(FileDialogRequest(FileDialogKind.OpenFolder)) { secondOutcomes.add(it) }
+        assertEquals(2, process.dialogs.started.size)
+
+        first.close()
+        // The open dialog was told to close while its window still existed.
+        assertEquals(listOf(process.dialogs.started[0].id), process.dialogs.cancelled)
+        assertEquals(listOf<FileDialogOutcome>(FileDialogOutcome.Cancelled, FileDialogOutcome.Cancelled), firstOutcomes)
+        assertTrue(secondOutcomes.isEmpty())
+        second.pump(0)
+        assertEquals(2, firstOutcomes.size)
+        first.fileDialogs.show(FileDialogRequest(FileDialogKind.OpenFile)) { firstOutcomes.add(it) }
+        assertEquals(FileDialogOutcome.Unavailable, firstOutcomes[2])
+
+        process.dialogs.choose(process.dialogs.started[1].id, "C:\\dir")
+        second.pump(0)
+        assertEquals(listOf("C:\\dir"), (secondOutcomes[0] as FileDialogOutcome.Chosen).paths)
     }
 }
