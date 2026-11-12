@@ -160,6 +160,13 @@ class MacosWindow(
 
     private var inTurn = false
 
+    /** True while the view draws a frame from inside its own display or a change of its size. */
+    internal var inDisplay = false
+        private set
+
+    /** A frame for the window's present size is on its way through the main queue. */
+    private var owesFrame = false
+
     fun pumpHost(timeoutMillis: Long = 0L) {
         val currentHost = host ?: return
         if (inTurn) return
@@ -480,21 +487,45 @@ class MacosWindow(
 
         override fun updateLayer() {
             val scale = window?.backingScaleFactor ?: 1.0
-            bounds.useContents { metal.resize(size.width, size.height, scale) }
-            ResizeMetrics.frameBegin()
-            val drew = if (host != null) {
-                metal.draw(::paintFrame)
-            } else {
-                val painted = resizePainter?.invoke() == true
-                if (painted) {
-                    frame.useContents {
-                        val w = (this.size.width * scale).toInt()
-                        val h = (this.size.height * scale).toInt()
-                        measured = IntSize(w, h)
-                        resizeStats.presentAgainst(w, h, w, h)
+            // One frame a transaction (see [MetalSurface.present]). A step of a resize comes
+            // here twice, when the view is given its size and in the display that follows,
+            // and the frame drawn first is the one the screen gets.
+            if (metal.frameAwaitsCommit()) {
+                val fits = bounds.useContents {
+                    kotlin.math.round(size.width * scale).toInt() == metal.widthInPixels &&
+                        kotlin.math.round(size.height * scale).toInt() == metal.heightInPixels
+                }
+                // The frame that waits was drawn for another size: two sizes given in one
+                // transaction. The one for this size is drawn once that one has committed.
+                if (!fits && !owesFrame) {
+                    owesFrame = true
+                    dispatch_async(dispatch_get_main_queue()) {
+                        owesFrame = false
+                        if (!closed) requestFrame()
                     }
                 }
-                painted
+                return
+            }
+            bounds.useContents { metal.resize(size.width, size.height, scale) }
+            ResizeMetrics.frameBegin()
+            inDisplay = true
+            val drew = try {
+                if (host != null) {
+                    metal.draw(::paintFrame)
+                } else {
+                    val painted = resizePainter?.invoke() == true
+                    if (painted) {
+                        frame.useContents {
+                            val w = (this.size.width * scale).toInt()
+                            val h = (this.size.height * scale).toInt()
+                            measured = IntSize(w, h)
+                            resizeStats.presentAgainst(w, h, w, h)
+                        }
+                    }
+                    painted
+                }
+            } finally {
+                inDisplay = false
             }
             bounds.useContents {
                 ResizeMetrics.frameEnd((size.width * scale).toInt(), (size.height * scale).toInt())

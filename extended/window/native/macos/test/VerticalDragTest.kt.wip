@@ -1,0 +1,104 @@
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+
+package org.thisisthepy.compose.window.macos
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import platform.AppKit.NSApplication
+import platform.AppKit.NSApplicationActivationPolicy
+import platform.AppKit.NSEventMaskAny
+import platform.Foundation.NSDate
+import platform.Foundation.NSDefaultRunLoopMode
+import platform.Foundation.NSRunLoop
+import platform.Foundation.NSRunLoopCommonModes
+import platform.Foundation.NSTimer
+import platform.Foundation.dateWithTimeIntervalSinceNow
+import kotlin.test.Test
+import kotlin.test.assertTrue
+
+/**
+ * The content keeps its place on the screen while the bottom and then the top edge of the
+ * window is dragged (fork issues 106 and 121).
+ *
+ * Run only when `DXC_VRESIZE_PROBE` is set, because it needs a screen, takes the pointer's
+ * place for ten seconds and reads the window's image all the while:
+ *
+ *     DXC_VRESIZE_PROBE=1 macos_test.kexe --ktest_filter='*VerticalDragTest*' 2> drag.log
+ *     scripts/check-vresize-jump.sh drag.log
+ *
+ * The window is run as a renderer runs it: the application's own event loop, and a timer in
+ * the common modes that gives the host a turn sixty times a second, during the drag as well.
+ * [VerticalResizeProbe] does the drag and prints where the fixed mark is in each image. The
+ * script judges the log by the absolute measure, the mark within one point of one place.
+ * This test fails on the measure compose-rust's check gates on: the mark may be off only
+ * where the plain AppKit view beside it is off by the same amount, which is the window
+ * server showing a window's frame a step behind its layers and nothing the window drew.
+ */
+class VerticalDragTest {
+    @Test
+    fun the_content_keeps_its_place_while_an_edge_is_dragged() {
+        if (!VerticalResizeProbe.enabled) {
+            println("vertical drag: DXC_VRESIZE_PROBE is not set, so the drag was not run")
+            return
+        }
+        val application = NSApplication.sharedApplication()
+        application.setActivationPolicy(NSApplicationActivationPolicy.NSApplicationActivationPolicyRegular)
+        application.finishLaunching()
+        application.activateIgnoringOtherApps(true)
+        val window = MacosWindow(name = "vertical drag", width = 520, height = 420, topLeft = 120 to 260)
+        val timer = NSTimer.timerWithTimeInterval(1.0 / 60.0, repeats = true) { _: NSTimer? -> window.pumpHost(0L) }
+        try {
+            window.setContent {
+                val strip = window.caption.value.height
+                Box(Modifier.fillMaxSize().background(Color(0xFF204060))) {
+                    Box(Modifier.offset(160.dp, strip + 24.dp).size(120.dp, 40.dp).background(Color(0xFF80A0C0)))
+                    Box(
+                        Modifier.align(Alignment.BottomStart).offset(160.dp, (-24).dp).size(120.dp, 40.dp)
+                            .background(Color(0xFFC0A080)),
+                    )
+                }
+            }
+            NSRunLoop.mainRunLoop.addTimer(timer, forMode = NSRunLoopCommonModes)
+            val begun = kotlin.time.TimeSource.Monotonic.markNow()
+            while (!VerticalResizeProbe.done && begun.elapsedNow().inWholeSeconds < 30) {
+                val event = application.nextEventMatchingMask(
+                    NSEventMaskAny,
+                    untilDate = NSDate.dateWithTimeIntervalSinceNow(0.01),
+                    inMode = NSDefaultRunLoopMode,
+                    dequeue = true,
+                )
+                if (event != null) application.sendEvent(event)
+            }
+            assertTrue(VerticalResizeProbe.done, "the drag finished")
+            val samples = VerticalResizeProbe.samples.toList()
+            val found = samples.filter { it.markerTop >= 0 && it.controlTop >= 0 }
+            assertTrue(found.size >= 10, "the mark was seen in ${found.size} images, 10 are needed to judge")
+            val markAt = found.groupingBy { it.markerTop }.eachCount().maxByOrNull { it.value }!!.key
+            val controlAt = found.groupingBy { it.controlTop }.eachCount().maxByOrNull { it.value }!!.key
+            val off = found.filter { kotlin.math.abs(it.markerTop - markAt) > 1.0 }
+            val alone = off.filter { kotlin.math.abs((it.markerTop - markAt) - (it.controlTop - controlAt)) > 1.0 }
+            val stale = found.count { it.shownHeight != it.imageHeight }
+            println(
+                "vertical drag: images=${samples.size} found=${found.size} mark_at_pt=$markAt " +
+                    "low_pt=${found.minOf { it.markerTop }} high_pt=${found.maxOf { it.markerTop }} " +
+                    "off=${off.size} off_without_appkit=${alone.size} other_height_frames=$stale",
+            )
+            assertTrue(
+                alone.isEmpty(),
+                "the mark moved where AppKit's own view did not, in ${alone.size} of ${found.size} images: " +
+                    alone.take(5).joinToString { "${it.markerTop} (AppKit ${it.controlTop})" },
+            )
+        } finally {
+            timer.invalidate()
+            window.metalSurface.overlay = null
+            window.window.orderOut(null)
+        }
+    }
+}

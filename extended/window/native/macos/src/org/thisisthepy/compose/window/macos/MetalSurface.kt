@@ -219,12 +219,46 @@ class MetalSurface {
                 commands.commit()
                 commands.waitUntilScheduled()
             }
-            sendForNothing(drawable, PRESENT)
+            present(drawable)
         } finally {
             surface.close()
             target.close()
         }
         return true
+    }
+
+    /**
+     * Hands a drawn drawable to the layer, to be shown when the transaction now being put
+     * together commits, and writes on that transaction that it carries a frame.
+     *
+     * One frame a transaction, because the layer shows the first of two: a second one
+     * presented before the commit is drawn and never seen, and the scene that drew it has
+     * nothing left to ask for another with (measured with a number drawn on each frame and
+     * read back from the window's image: two displays in a row drew 4 and 5 and showed 4).
+     * So whoever is about to draw asks [frameAwaitsCommit] first.
+     *
+     * The note is a value of the transaction itself, which Core Animation drops with the
+     * transaction when it commits, whoever commits it: the run loop, AppKit in a step of a
+     * resize, or [commitFrame].
+     */
+    internal fun present(drawable: COpaquePointer) {
+        sendForNothing(drawable, PRESENT)
+        CATransaction.setValue(true, forKey = FRAME_AWAITS_COMMIT)
+    }
+
+    /** Whether a frame presented earlier is still waiting for its transaction to commit. */
+    internal fun frameAwaitsCommit(): Boolean = CATransaction.valueForKey(FRAME_AWAITS_COMMIT) != null
+
+    /**
+     * Commits the transaction now, and with it the frame it carries.
+     *
+     * For a frame drawn outside AppKit's display, on the host's turn: left to the run loop,
+     * it would share its transaction with a frame the window draws for a step of a resize
+     * later in the same turn, and that frame, the one drawn for the new size, would be the
+     * one not shown.
+     */
+    internal fun commitFrame() {
+        CATransaction.flush()
     }
 
     /** Runs [block] with no animation on anything the layer tree does inside it. */
@@ -272,6 +306,9 @@ class MetalSurface {
         internal val NEXT_DRAWABLE = requireNotNull(sel_registerName("nextDrawable"))
         internal val TEXTURE = requireNotNull(sel_registerName("texture"))
         internal val PRESENT = requireNotNull(sel_registerName("present"))
+
+        /** The key of the note [present] leaves on the transaction. */
+        private const val FRAME_AWAITS_COMMIT = "org.thisisthepy.compose.window.frameAwaitsCommit"
 
         /**
          * `objc_msgSend`, found at run time. The runtime declares it without a prototype,

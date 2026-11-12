@@ -97,6 +97,42 @@ static struct measured check_chrome(const struct style *style, NSWindow *window,
     return result;
 }
 
+// A window with its content under the title bar that is never resized still reports a title
+// bar (fork issue 181). Right after it opens the bar may not be laid out yet, and the content
+// layout rect is then as tall as the frame: a bar of 0. The platform asks on every turn of
+// its loop (AppKitWindowPlatform.caption), so what matters is that a later turn reads the
+// bar with nothing having changed the window's size in between.
+static void check_caption_without_resize(const struct style *style) {
+    struct dxc_native_window opened;
+    dxc_native_window_configure(1, 0, 0, style->system_chrome, 0);
+    dxc_native_window_chrome(style->full_size_content, style->transparent_title_bar,
+                             style->title_hidden, style->unified_toolbar);
+    int32_t status = dxc_native_window_open(style->name, 390, 844, &opened);
+    CHECK(status == 0, "%s: the window did not open (status %d)", style->name, status);
+    if (status != 0) return;
+    NSWindow *window = (__bridge NSWindow *)opened.window;
+    NSSize size = window.frame.size;
+    float out[6];
+    dxc_native_window_title_bar(opened.view, out);
+    float at_open = out[0] - out[1];
+    float bar = at_open;
+    int turns = 0;
+    while (bar <= 0 && turns < 120) {
+        spin(1.0 / 60);
+        turns++;
+        dxc_native_window_title_bar(opened.view, out);
+        bar = out[0] - out[1];
+    }
+    CHECK(bar > 0, "%s: no title bar read in %d turns without a resize", style->name, turns);
+    spin(0.5);
+    dxc_native_window_title_bar(opened.view, out);
+    CHECK(out[0] - out[1] == bar, "%s: the bar read %.2f and then %.2f with no resize", style->name, bar,
+          out[0] - out[1]);
+    CHECK(NSEqualSizes(size, window.frame.size), "%s: the window changed size during the check", style->name);
+    printf("%s, never resized: bar %.2f pt at open, %.2f pt after %d turn(s)\n", style->name, at_open, bar, turns);
+    [window orderOut:nil];
+}
+
 static struct dxc_ax_element record(int32_t key, int32_t parent, const char *role, const char *label,
                                     int32_t actions, int32_t flags, float y) {
     struct dxc_ax_element element;
@@ -216,6 +252,7 @@ int main(void) {
             CHECK(strstr(snapshot, "AXMinimizeButton") != NULL, "a minimise button is in the snapshot");
         }
         check_accessibility(windows[0], opened[0].view);
+        for (int index = 0; index < 2; index++) check_caption_without_resize(&styles[index]);
         for (int index = 0; index < 3; index++) [windows[index] orderOut:nil];
     }
     if (failures > 0) {

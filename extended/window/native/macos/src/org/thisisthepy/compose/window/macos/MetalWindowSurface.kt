@@ -41,6 +41,11 @@ class MetalWindowSurface(private val window: MacosWindow) : WindowSurface {
         metal.resize(width / scale, height / scale, scale)
         val drawableWidth = MetalSurface.roundUp(width)
         val drawableHeight = MetalSurface.roundUp(height)
+        // A frame drawn inside the window's own display shares that display's transaction.
+        // One drawn on the host's turn has a transaction to itself: what was presented and
+        // not yet committed goes first, and this frame commits as soon as it is presented.
+        val byItself = !window.inDisplay
+        if (byItself && metal.frameAwaitsCommit()) metal.commitFrame()
         val drawable = metal.nextDrawable() ?: return null
         val texture = MetalSurface.sendForObject(drawable, MetalSurface.TEXTURE) ?: return null
         val target = BackendRenderTarget.makeMetal(drawableWidth, drawableHeight, texture.rawValue)
@@ -73,7 +78,8 @@ class MetalWindowSurface(private val window: MacosWindow) : WindowSurface {
                         commands.commit()
                         commands.waitUntilScheduled()
                     }
-                    MetalSurface.sendForNothing(drawable, MetalSurface.PRESENT)
+                    metal.present(drawable)
+                    if (byItself) metal.commitFrame()
                 } finally {
                     surface.close()
                     target.close()
