@@ -1402,6 +1402,22 @@ int32_t dxc_native_window_open(const char *title, int32_t width, int32_t height,
         XChangeProperty(dxc_display, dxc_window, dxc_a_xdnd_aware, XA_ATOM, 32, PropModeReplace,
                         (unsigned char *)&version, 1);
     }
+    {
+        // Which process on which machine owns the window, before it is mapped, so a tool
+        // that looks a window up by process (`xdotool search --pid`) finds it. The pid only
+        // means something together with the machine, which is why EWMH asks for both.
+        long pid = (long)getpid();
+        XChangeProperty(dxc_display, dxc_window, XInternAtom(dxc_display, "_NET_WM_PID", False),
+                        XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&pid, 1);
+        char host[256];
+        if (gethostname(host, sizeof host) == 0) {
+            host[sizeof host - 1] = '\0';
+            if (host[0] != '\0') {
+                XChangeProperty(dxc_display, dxc_window, XA_WM_CLIENT_MACHINE, XA_STRING, 8,
+                                PropModeReplace, (unsigned char *)host, (int)strlen(host));
+            }
+        }
+    }
     dxc_open_input_method();
     XMapWindow(dxc_display, dxc_window);
     XFlush(dxc_display);
