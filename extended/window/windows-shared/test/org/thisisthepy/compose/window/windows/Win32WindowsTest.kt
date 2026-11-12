@@ -48,6 +48,10 @@ private class FakeWindow(val config: WindowConfig) : Win32WindowBackend {
     override fun readClipboardText(): String? = null
     override fun writeClipboardText(text: String) {}
     override fun setImeSpot(x: Int, y: Int) {}
+    var endedCompositions = 0
+    override fun endComposition() {
+        endedCompositions++
+    }
     override fun showContextMenu(items: List<ContextMenuItem>): Int = if (items.isEmpty()) -1 else items.size - 1
     override fun performCaptionAction(action: CaptionAction) {}
     override fun systemDark(): Boolean = false
@@ -181,6 +185,19 @@ class Win32WindowsTest {
         first.pump(0)
         assertEquals(1, firstListener.events.size)
         assertEquals(3, secondListener.events.size)
+    }
+
+    @Test
+    fun ending_a_composition_is_asked_of_the_window_it_was_asked_on() {
+        val process = FakeProcess()
+        val windows = Win32Windows(process)
+        val first = windows.newPlatform()
+        val second = windows.newPlatform()
+        first.open(config("a"), Recorder())
+        second.open(config("b"), Recorder())
+        second.endComposition()
+        assertEquals(0, process.windows[0].endedCompositions)
+        assertEquals(1, process.windows[1].endedCompositions)
     }
 
     @Test

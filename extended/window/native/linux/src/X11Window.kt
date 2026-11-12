@@ -800,6 +800,18 @@ class X11Window : WindowPlatform {
         if (finished.isNotEmpty()) ime.commit(finished) else ime.preeditDone()
     }
 
+    /**
+     * Makes the input method let go of what it is composing and sends nothing: the field has
+     * kept the text. The run is forgotten before the reset, so a callback the method makes
+     * from inside it to say it is done finds nothing to end.
+     */
+    override fun endComposition() {
+        val method = xim ?: return
+        if (!ime.composing) return
+        ime.discard()
+        method.reset()
+    }
+
     // The clipboard: the CLIPBOARD selection, as UTF-8 text.
 
     override fun writeClipboardText(text: String) {

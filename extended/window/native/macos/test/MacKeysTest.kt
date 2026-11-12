@@ -115,4 +115,15 @@ class MacKeysTest {
             assertFalse(event.isAltPressed)
         }
     }
+
+    @Test
+    fun a_key_pressed_while_composing_is_the_scenes_only_when_the_input_method_gives_it_back() {
+        // An arrow with a Korean syllable marked: the syllable is committed and the arrow
+        // comes back as a command.
+        assertTrue(keyIsLeftForScene(handled = true, command = true))
+        // The next letter of the syllable, or an arrow inside a Japanese conversion: kept.
+        assertFalse(keyIsLeftForScene(handled = true, command = false))
+        // A key the input method did not take at all.
+        assertTrue(keyIsLeftForScene(handled = false, command = false))
+    }
 }

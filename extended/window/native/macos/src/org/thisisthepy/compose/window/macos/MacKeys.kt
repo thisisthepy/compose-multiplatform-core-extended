@@ -59,6 +59,16 @@ internal fun reachesInputMethod(modifierFlags: Long): Boolean =
     modifierFlags and MacModifiers.COMMAND == 0L
 
 /**
+ * Whether a key pressed while the input method was composing is the scene's to read, once
+ * the input method has seen it.
+ *
+ * It is when the input method did not take it ([handled] false) or handed it back as a
+ * command ([command]), which is what it does with an arrow or Enter after committing a
+ * Korean syllable. A key it kept and answered only with text is part of the composition.
+ */
+internal fun keyIsLeftForScene(handled: Boolean, command: Boolean): Boolean = !handled || command
+
+/**
  * Whether this key is one of the text editing shortcuts: Command with A, C, V, X or Z,
  * and Shift as well for redo.
  *

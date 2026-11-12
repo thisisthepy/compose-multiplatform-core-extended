@@ -90,6 +90,18 @@ class X11Events(private val resetInput: () -> String) {
         }
         return ArrayList(pending)
     }
+
+    /**
+     * Makes the input method let go of what it is composing and produces no event, for a
+     * field that has kept the text already ([WindowPlatform.endComposition]). The run is
+     * forgotten before the method is reset, so a callback it makes from inside the reset to
+     * say it is done finds nothing to end, and what it kept is not committed a second time.
+     */
+    fun endComposition() {
+        if (!ime.composing) return
+        ime.discard()
+        resetInput()
+    }
 }
 
 /**

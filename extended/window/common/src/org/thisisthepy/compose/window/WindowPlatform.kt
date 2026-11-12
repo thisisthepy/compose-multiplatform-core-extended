@@ -124,6 +124,18 @@ interface WindowPlatform {
     /** Where the input method puts its candidate window, in window pixels. */
     fun setImeSpot(x: Int, y: Int)
 
+    /**
+     * Makes the input method let go of what it is composing, sending nothing.
+     *
+     * Called when the focused field has kept the marked text as finished text on its own,
+     * which the scene does when a key moves the caret away from it. The input method still
+     * holds the same syllable; left alone it would go on composing it and send it again at
+     * the new caret. Nothing may reach the listener for this: no commit, because the field
+     * has the text already, and the empty composition some input methods send on a cancel
+     * is ignored by the scene. The default does nothing, for a window with no input method.
+     */
+    fun endComposition() {}
+
     /** Shows a context menu at the pointer. The answer arrives at [WindowListener.onContextMenuChosen]. */
     fun showContextMenu(items: List<ContextMenuItem>)
 

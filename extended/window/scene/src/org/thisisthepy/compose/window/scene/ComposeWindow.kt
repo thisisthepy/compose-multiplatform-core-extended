@@ -237,12 +237,42 @@ class ComposeWindowHost(
         }
         heard.clear()
         log.drain(heard)
+        var unsettled = Edit.NONE
         for (event in heard) {
+            val edit = editOf(event.kind)
+            // Two things that change a field, read in one turn. A field given its value by
+            // the application has the new one only after it is composed again, so the second
+            // would be worked out from the value before the first: a commit after an arrow
+            // key goes in at the old caret, and of two arrow keys one is lost. A frame
+            // between them is what composes it.
+            if (needsSettling(unsettled, edit)) {
+                settle()
+                unsettled = Edit.NONE
+            }
+            // A key that moves the caret while a syllable is still marked: the field keeps
+            // the syllable where it is and the input method is told to let go of its copy,
+            // before the key is read. An input method that finishes the composition itself
+            // when it sees such a key has already said so, and nothing is composing here.
+            if (event.kind == WindowEvent.KEY_DOWN && movesCaret(composeKey(event.keyCode)) &&
+                textInput.finishComposition()
+            ) {
+                ime.discard()
+                platform.endComposition()
+                settle()
+            }
             current.receive(event)
             when (event.kind) {
                 WindowEvent.TEXT_COMMIT -> textInput.commit(event.text)
                 WindowEvent.TEXT_COMPOSE -> textInput.compose(event.text)
             }
+            // Only what left the scene with something to compose has to be waited for. A
+            // letter key changes nothing, the text it typed arrives beside it, and a frame
+            // between the two would be a frame for every letter typed.
+            val changed = edit != Edit.NONE && run {
+                runPendingWork()
+                current.hasInvalidations()
+            }
+            if (changed) unsettled = edit
         }
         // The caption as it is now: a change of style, scale or full screen reaches the content
         // in this frame, as a state change the scene sees as an invalidation.
@@ -255,6 +285,16 @@ class ComposeWindowHost(
         }
         placeInputMethod()
         describeForReaders(drew)
+    }
+
+    /**
+     * Lets the scene take in what it was just given: its pending work, then a frame, which
+     * is what composes the content again, then the work that frame started.
+     */
+    private fun settle() {
+        runPendingWork()
+        frames?.draw()
+        runPendingWork()
     }
 
     /** Runs [turn] until the window closes, then releases everything. */
@@ -355,6 +395,30 @@ class ComposeWindowHost(
     private companion object {
         const val FRAME_MILLIS = 16L
     }
+}
+
+/** What an event may change in a field: nothing, or the kind of thing that changes it. */
+internal enum class Edit { NONE, KEY, TEXT, POINTER }
+
+internal fun editOf(kind: Int): Edit = when (kind) {
+    WindowEvent.KEY_DOWN -> Edit.KEY
+    WindowEvent.TEXT_COMMIT, WindowEvent.TEXT_COMPOSE -> Edit.TEXT
+    WindowEvent.POINTER_DOWN, WindowEvent.POINTER_UP -> Edit.POINTER
+    else -> Edit.NONE
+}
+
+/**
+ * Whether the scene has to compose again between a change of kind [before], already made in
+ * this turn, and one of kind [next].
+ *
+ * Text after text does not: the commands go through one editing buffer, which has the first
+ * when the second arrives. A press and its release do not either. Everything else does,
+ * because a key is worked out from the value the field was last composed with.
+ */
+internal fun needsSettling(before: Edit, next: Edit): Boolean = when {
+    before == Edit.NONE || next == Edit.NONE -> false
+    before == next && before != Edit.KEY -> false
+    else -> true
 }
 
 /**

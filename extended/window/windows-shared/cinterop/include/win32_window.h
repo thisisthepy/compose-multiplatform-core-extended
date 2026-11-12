@@ -132,11 +132,15 @@ void dxc_native_raster_end(void);
 // When the frame drawn now will be on the screen, in nanoseconds on the performance counter.
 int64_t dxc_native_frame_time_nanos(void);
 
+// Ends what the input method is composing, sending nothing, and copies what it was composing
+// into out as UTF-8 (out may be null). Answers the bytes copied, zero where nothing was being
+// composed. For a field that has already kept the text, when a key moved the caret off it.
+int32_t dxc_native_ime_reset(char *out, int32_t capacity);
+
 // The X11 window's calls, which the native image also carries here. Each answers nothing.
 void dxc_native_wake(void);
 void dxc_native_window_origin(int32_t *x, int32_t *y);
 int32_t dxc_native_window_focused(void);
-int32_t dxc_native_ime_reset(char *out, int32_t capacity);
 int64_t dxc_native_resize_serial(void);
 void dxc_native_window_server_size(int32_t *width, int32_t *height);
 

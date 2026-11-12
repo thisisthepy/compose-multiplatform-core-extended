@@ -78,3 +78,16 @@ internal fun composeKey(platformKey: Int): Key = when (platformKey) {
     0x79 -> Key.PageDown
     else -> Key.Unknown
 }
+
+/**
+ * Whether [key] moves the caret or the selection in a text field: the arrows, Home, End and
+ * the page keys, with or without a modifier.
+ *
+ * These are the keys that must not find a composition still open. See
+ * [SceneTextInput.finishComposition].
+ */
+internal fun movesCaret(key: Key): Boolean = when (key) {
+    Key.DirectionLeft, Key.DirectionRight, Key.DirectionUp, Key.DirectionDown,
+    Key.MoveHome, Key.MoveEnd, Key.PageUp, Key.PageDown -> true
+    else -> false
+}

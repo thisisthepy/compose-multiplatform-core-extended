@@ -485,6 +485,9 @@ static NSString *dxc_marked_text;
 // arrives while it is came from that key, which the scene has already been given as a
 // key; one that arrives at any other time came from somewhere else and is passed on.
 static BOOL dxc_in_key_down;
+// Whether the input method handed the key being handled back as a command, which is how it
+// says the key was not part of what it is composing.
+static BOOL dxc_command_during_key;
 
 // `DXC_KEY_LOG=1`: a line for each key AppKit delivered, each text an input method
 // committed and each command it asked for, beside the lines the Kotlin side writes for
@@ -745,10 +748,32 @@ void dxc_native_set_cursor(int32_t shape) {
 // Not the input context when Command is held. A Command key is a shortcut and types
 // nothing, and an input method shown one can commit what it was composing or answer with
 // the bare letter. The same rule as `reachesInputMethod` in MacKeys.kt.
+//
+// The other order while something is being composed: the input method first, and the key
+// only if the input method gives it back. An arrow with a Korean syllable marked makes it
+// commit the syllable and hand the arrow back as a command, so the scene reads the commit
+// and then the key, and the caret moves from the end of the finished syllable. Queued the
+// other way round, the key moved the caret under an open composition and the commit that
+// followed pulled it back. A key the input method keeps (the next letter, or an arrow
+// inside a Japanese conversion) is not the scene's at all. The same rule as
+// `keyIsLeftForScene` in MacKeys.kt.
 - (void)keyDown:(NSEvent *)event {
     dxc_log_key(event, "down");
+    BOOL to_input_method = (event.modifierFlags & NSEventModifierFlagCommand) == 0;
+    if (to_input_method && dxc_marked_text.length > 0) {
+        dxc_command_during_key = NO;
+        dxc_in_key_down = YES;
+        BOOL handled = [self.inputContext handleEvent:event];
+        dxc_in_key_down = NO;
+        if (dxc_key_log()) {
+            fprintf(stderr, "compose-rust key: composing key handled=%d command=%d\n",
+                    handled ? 1 : 0, dxc_command_during_key ? 1 : 0);
+        }
+        if (!handled || dxc_command_during_key) [self dxcSend:DXC_EVENT_KEY_DOWN event:event];
+        return;
+    }
     [self dxcSend:DXC_EVENT_KEY_DOWN event:event];
-    if (event.modifierFlags & NSEventModifierFlagCommand) return;
+    if (!to_input_method) return;
     dxc_in_key_down = YES;
     [self.inputContext handleEvent:event];
     dxc_in_key_down = NO;
@@ -971,7 +996,10 @@ void dxc_native_set_cursor(int32_t shape) {
         fprintf(stderr, "compose-rust key: doCommandBySelector %s during-key=%d\n",
                 NSStringFromSelector(selector).UTF8String, dxc_in_key_down ? 1 : 0);
     }
-    if (dxc_in_key_down) return;
+    if (dxc_in_key_down) {
+        dxc_command_during_key = YES;
+        return;
+    }
     [self dxcSendText:DXC_EVENT_EDIT_COMMAND string:NSStringFromSelector(selector)];
 }
 
@@ -1579,6 +1607,28 @@ void dxc_native_set_ime_spot(float x, float y) {
     dxc_ime_spot_y = y;
 }
 
+/**
+ * Ends what the input method is composing where it stands, sending nothing, and copies what
+ * was marked into out as UTF-8. Answers how many bytes that is, zero where there was nothing.
+ * The same call the X11 window answers, and unlike the calls at the end of this file it does
+ * something here; the caller has kept the text already.
+ */
+int32_t dxc_native_ime_reset(char *out, int32_t capacity) {
+    if (out != NULL && capacity > 0) out[0] = 0;
+    if (dxc_marked_text.length == 0) return 0;
+    NSString *kept = dxc_marked_text;
+    dxc_marked_text = nil;
+    // The context of the view being typed into, which is the one composing.
+    [NSTextInputContext.currentInputContext discardMarkedText];
+    if (out == NULL || capacity <= 0) return 0;
+    NSUInteger used = 0;
+    [kept getBytes:out maxLength:(NSUInteger)capacity - 1 usedLength:&used
+          encoding:NSUTF8StringEncoding options:0
+             range:NSMakeRange(0, kept.length) remainingRange:NULL];
+    out[used] = 0;
+    return (int32_t)used;
+}
+
 // What `WindowPlatform` asks of the window beyond drawing and input. Each takes the window
 // or the view the open call returned and runs on the main thread.
 
@@ -1693,11 +1743,6 @@ void dxc_native_window_origin(int32_t *x, int32_t *y) {
 
 int32_t dxc_native_window_focused(void) {
     return atomic_load(&dxc_window_key) ? 1 : 0;
-}
-
-int32_t dxc_native_ime_reset(char *out, int32_t capacity) {
-    if (out != NULL && capacity > 0) out[0] = 0;
-    return 0;
 }
 
 int64_t dxc_native_resize_serial(void) {

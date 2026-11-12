@@ -312,6 +312,11 @@ class MacosWindowPlatform(
 
     override fun setImeSpot(x: Int, y: Int) {
         imeSpot = x to y
+        window?.imeSpot = imeSpot
+    }
+
+    override fun endComposition() {
+        window?.endComposition()
     }
 
     override fun showContextMenu(items: List<ContextMenuItem>) {

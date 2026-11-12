@@ -466,6 +466,8 @@ class X11Window : WindowPlatform {
 
     override fun setImeSpot(x: Int, y: Int) = X11Natives.setImeSpot(x.toFloat(), y.toFloat())
 
+    override fun endComposition() = x11Events.endComposition()
+
     /**
      * Bare X11 has no native context menu, and the Kotlin/Native X11 window does not draw
      * one either: the items are not shown and the listener hears the menu was dismissed, so

@@ -25,6 +25,7 @@ import org.thisisthepy.compose.window.windows.c.dxc_native_pointer_on_screen
 import org.thisisthepy.compose.window.windows.c.dxc_native_post_quit
 import org.thisisthepy.compose.window.windows.c.dxc_native_pump
 import org.thisisthepy.compose.window.windows.c.dxc_native_quit_posted
+import org.thisisthepy.compose.window.windows.c.dxc_native_ime_reset
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_ime_spot
 import org.thisisthepy.compose.window.windows.c.dxc_native_system_dark
 import org.thisisthepy.compose.window.windows.c.dxc_native_take_activation
@@ -91,6 +92,12 @@ internal class Win32CWindowBackend(private val native: Win32NativeWindow) : Win3
     override fun writeClipboardText(text: String) = on(Unit) { dxc_native_clipboard_write(text) }
 
     override fun setImeSpot(x: Int, y: Int) = on(Unit) { dxc_native_set_ime_spot(x.toFloat(), y.toFloat()) }
+
+    // What the input method held is not asked for: the caller has kept the text already.
+    override fun endComposition() = on(Unit) {
+        dxc_native_ime_reset(null, 0)
+        Unit
+    }
 
     override fun showContextMenu(items: List<ContextMenuItem>): Int = on(-1) {
         val lines = StringBuilder()

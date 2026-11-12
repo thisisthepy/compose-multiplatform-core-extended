@@ -143,7 +143,9 @@ static void x11_names(void) {
     dxc_native_window_server_size(&width, &height);
     CHECK(x == 0 && y == 0 && width == 0 && height == 0);
     CHECK(dxc_native_window_focused() == 0);
+    // Not one of them any more, but with no window and nothing composed it answers the same.
     CHECK(dxc_native_ime_reset(text, sizeof text) == 0 && text[0] == 0);
+    CHECK(dxc_native_ime_reset(NULL, 0) == 0);
     CHECK(dxc_native_resize_serial() == 0);
 }
 

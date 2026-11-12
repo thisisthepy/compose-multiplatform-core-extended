@@ -228,6 +228,8 @@ class AppKitWindowPlatform : WindowPlatform {
 
     override fun setImeSpot(x: Int, y: Int) = setNativeImeSpot(x.toFloat(), y.toFloat())
 
+    override fun endComposition() = endNativeComposition()
+
     override fun showContextMenu(items: List<ContextMenuItem>) {
         val current = window ?: return
         val chosen = current.showContextMenu(packMenu(items))
