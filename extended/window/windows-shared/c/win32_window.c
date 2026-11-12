@@ -71,6 +71,7 @@
 #include "win32_caption.h"
 #include "win32_multi.h"
 #include "win32_placement.h"
+#include "win32_scheme.h"
 
 // What happened in the window, waiting to be read.
 //
@@ -274,6 +275,13 @@ struct DxcWin {
     float follow_anchor_y;
     int follow_ended;      // 0 running or idle, 1 released, 2 cancelled; read once
     int follow_end_pending;
+
+    // The color scheme the application asked of this window's caption (FR-53): 0 follows the
+    // system, 1 light, 2 dark. scheme_applied is set once DWM took one; caption_dark is what
+    // it was told last.
+    int32_t color_scheme;
+    int32_t caption_dark;
+    int scheme_applied;
 };
 
 #define dxc_events (dxc_w->events)
@@ -1674,6 +1682,72 @@ static DWORD dxc_window_style(void) {
     return style;
 }
 
+int32_t dxc_native_system_dark(void);
+
+typedef HRESULT(WINAPI *dxc_dwm_set_attribute_fn)(HWND, DWORD, LPCVOID, DWORD);
+
+/**
+ * Tells DWM whether the selected window's caption is dark, from its color scheme. Looked up
+ * at run time like DwmFlush. Tries DWMWA_USE_IMMERSIVE_DARK_MODE and then the number it had
+ * before Windows 10 2004. 1 when DWM took it.
+ */
+static int dxc_apply_color_scheme(HWND window) {
+    static int looked_up;
+    static dxc_dwm_set_attribute_fn set_attribute;
+    if (!looked_up) {
+        looked_up = 1;
+        HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
+        if (dwm != NULL) {
+            set_attribute = (dxc_dwm_set_attribute_fn)(void *)GetProcAddress(dwm, "DwmSetWindowAttribute");
+        }
+    }
+    if (set_attribute == NULL || window == NULL) return 0;
+    BOOL dark = dxc_scheme_caption_dark(dxc_w->color_scheme, dxc_native_system_dark()) ? TRUE : FALSE;
+    if (FAILED(set_attribute(window, DXC_SCHEME_DARK_ATTRIBUTE, &dark, sizeof dark)) &&
+        FAILED(set_attribute(window, DXC_SCHEME_DARK_ATTRIBUTE_OLD, &dark, sizeof dark))) {
+        return 0;
+    }
+    dxc_w->caption_dark = dark ? 1 : 0;
+    dxc_w->scheme_applied = 1;
+    SetWindowPos(window, NULL, 0, 0, 0, 0,
+                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    return 1;
+}
+
+/**
+ * Makes the selected window resizable or not after it opened. The style and the caption's
+ * hit test both read the option, so the frame and the top resize band change together.
+ * 0 when no window is selected.
+ */
+int32_t dxc_native_window_set_resizable(int32_t resizable) {
+    if (dxc_window == NULL) return 0;
+    dxc_options.resizable = resizable ? 1 : 0;
+    LONG_PTR style = GetWindowLongPtrW(dxc_window, GWL_STYLE);
+    style = (LONG_PTR)dxc_scheme_style((uint32_t)style, dxc_options.resizable);
+    SetWindowLongPtrW(dxc_window, GWL_STYLE, style);
+    SetWindowPos(dxc_window, NULL, 0, 0, 0, 0,
+                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    return 1;
+}
+
+/**
+ * Sets the selected window's caption to follow the system (0), stay light (1) or stay
+ * dark (2). A window that follows the system follows it on WM_SETTINGCHANGE. 1 when DWM
+ * took it; 0 with no window, a scheme it does not know, or a DWM that refused.
+ */
+int32_t dxc_native_window_set_color_scheme(int32_t scheme) {
+    if (dxc_window == NULL || !dxc_scheme_valid(scheme)) return 0;
+    dxc_w->color_scheme = scheme;
+    return dxc_apply_color_scheme(dxc_window);
+}
+
+/** What the selected window's caption was last told, for tests. 0 until a scheme was applied. */
+int32_t dxc_native_window_caption_dark(int32_t *dark) {
+    if (!dxc_w->scheme_applied) return 0;
+    if (dark != NULL) *dark = dxc_w->caption_dark;
+    return 1;
+}
+
 /*
  * Taking the caption strip into the client area while the frame stays whole.
  *
@@ -2559,6 +2633,13 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         // Answered so the window is never painted white between frames. Every pixel of
         // the client area comes from the swapchain.
         return 1;
+    case WM_SETTINGCHANGE:
+        // A window that follows the system's scheme follows it when the user changes it.
+        if (dxc_w->scheme_applied && dxc_w->color_scheme == DXC_SCHEME_SYSTEM &&
+            dxc_scheme_is_theme_change((const uint16_t *)lparam)) {
+            dxc_apply_color_scheme(window);
+        }
+        break;
     case WM_CLOSE:
         // The application decides when a window goes where it has asked to be told: it hears
         // the request, and closes the window itself or leaves it open. A window nobody asked
