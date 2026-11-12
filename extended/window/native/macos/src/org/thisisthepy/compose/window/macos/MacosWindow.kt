@@ -155,6 +155,22 @@ class MacosWindow(
     internal var movedPending = false
 
     private val windowDelegate = MacosWindowDelegate(this)
+
+    /**
+     * Put up when the secondary button is pressed, after the press has reached the scene so the
+     * field under the pointer has taken focus. The menu tracks the pointer until it is chosen
+     * from or dismissed, and takes the release with it, so the release is sent once it returns.
+     * Null puts up nothing, which is what an application that draws the menu itself wants.
+     */
+    var onContextMenu: (() -> Unit)? = null
+
+    /**
+     * True to have the platform put up the system's edit menu (Cut, Copy, Paste, Select All) on
+     * a right click. Off by default: an application whose Compose answers a text field's menu
+     * with an `NSMenu` of its own would show two.
+     */
+    var editMenuOnRightClick: Boolean = false
+
     var resizePainter: (() -> Boolean)? = null
     var host: ComposeWindowHost? = null
 
@@ -569,6 +585,8 @@ class MacosWindow(
         override fun mouseDown(event: NSEvent) {
             if (hasMarkedText()) inputContext?.discardMarkedText()
             val control = event.modifierFlags and NSEventModifierFlagControl != 0uL
+            // Control with the primary button is the secondary button on this platform.
+            if (control && onContextMenu != null) return rightMouseDown(event)
             controlClick = control
             postPointer(event, WindowEvent.POINTER_DOWN, if (control) WindowEvent.SECONDARY_BUTTON else 0)
         }
@@ -579,11 +597,19 @@ class MacosWindow(
             postPointer(event, WindowEvent.POINTER_UP, if (was) WindowEvent.SECONDARY_BUTTON else 0)
         }
 
-        override fun rightMouseDown(event: NSEvent) =
+        override fun rightMouseDown(event: NSEvent) {
             postPointer(event, WindowEvent.POINTER_DOWN, WindowEvent.SECONDARY_BUTTON)
-
-        override fun rightMouseUp(event: NSEvent) =
+            val menu = onContextMenu ?: return
+            menu()
+            // The menu's tracking swallowed the release; without this the scene would go on
+            // believing a button is held down.
             postPointer(event, WindowEvent.POINTER_UP, WindowEvent.SECONDARY_BUTTON)
+        }
+
+        override fun rightMouseUp(event: NSEvent) {
+            if (onContextMenu != null) return
+            postPointer(event, WindowEvent.POINTER_UP, WindowEvent.SECONDARY_BUTTON)
+        }
 
         override fun otherMouseDown(event: NSEvent) =
             postPointer(event, WindowEvent.POINTER_DOWN, eventButtonOfMacButton(event.buttonNumber.toInt()))
@@ -729,6 +755,7 @@ class MacosWindow(
     fun setContent(content: @Composable () -> Unit) {
         initWindow()
         val platform = MacosWindowPlatform()
+        platform.nativeEditMenu = editMenuOnRightClick
         platform.attachWindow(this)
         val config = WindowConfig(name, width, height)
         val createdHost = ComposeWindowHost(

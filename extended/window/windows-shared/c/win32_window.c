@@ -2600,10 +2600,6 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         }
         return 0;
     }
-    case WM_SETTINGCHANGE:
-        // Any settings broadcast may be the Text size slider, so look rather than parse lparam.
-        dxc_check_text_scale();
-        break;
     case WM_DPICHANGED:
         fprintf(stderr, "compose-rust: resize-mode: dpi -> %u because WM_DPICHANGED\n",
                 (unsigned)HIWORD(wparam));
@@ -2685,6 +2681,8 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         // the client area comes from the swapchain.
         return 1;
     case WM_SETTINGCHANGE:
+        // Any settings broadcast may be the Text size slider, so look rather than parse lparam.
+        dxc_check_text_scale();
         // A window that follows the system's scheme follows it when the user changes it.
         if (dxc_w->scheme_applied && dxc_w->color_scheme == DXC_SCHEME_SYSTEM &&
             dxc_scheme_is_theme_change((const uint16_t *)lparam)) {

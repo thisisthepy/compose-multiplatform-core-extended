@@ -85,6 +85,23 @@ class UpcallTableTest {
     }
 
     @Test
+    fun fr5_a_control_character_the_input_context_hands_over_is_not_committed_as_text() {
+        val recorder = Recorder()
+        // Control A, when the input method has no binding for it, comes back as U+0001.
+        val control = WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "\u0001")
+        AppKitWindowPlatform.deliver(control, recorder)
+        assertTrue(recorder.events.isEmpty(), "nothing is typed into the field")
+
+        val mixed = WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "a\u0001b")
+        AppKitWindowPlatform.deliver(mixed, recorder)
+        assertEquals(listOf("ab"), recorder.events.map { it.text })
+
+        val composed = WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "한글")
+        AppKitWindowPlatform.deliver(composed, recorder)
+        assertEquals("한글", recorder.events.last().text)
+    }
+
+    @Test
     fun skia_resource_cache_limit_defaults_to_16_mb_and_respects_override() {
         assertEquals(16L * 1048576L, defaultSkiaCacheLimitBytes(null))
         assertEquals(16L * 1048576L, defaultSkiaCacheLimitBytes(""))
