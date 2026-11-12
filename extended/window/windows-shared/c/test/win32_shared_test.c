@@ -17,6 +17,7 @@
 #include "win32_multi.h"
 #include "win32_file_dialog_spec.h"
 #include "win32_placement.h"
+#include "win32_scheme.h"
 #include "win32_window.h"
 
 // The records the Kotlin side reads and writes by offset. A field added on one side only is
@@ -806,10 +807,32 @@ static void fr72_dialogs_answer_what_the_reader_chose(void) {
     dxc_native_window_release(a.window);
 }
 
+// Changing an open window's resizable and color scheme (FR-53).
+static void open_window_scheme(void) {
+    uint32_t base = 0x10CF0000u; // WS_OVERLAPPEDWINDOW | WS_VISIBLE
+    CHECK(dxc_scheme_style(base, 0) == (base & ~0x00050000u));
+    CHECK(dxc_scheme_style(dxc_scheme_style(base, 0), 1) == base);
+    CHECK(dxc_scheme_style(base, 1) == base);
+    CHECK(dxc_scheme_valid(0) && dxc_scheme_valid(1) && dxc_scheme_valid(2));
+    CHECK(!dxc_scheme_valid(3) && !dxc_scheme_valid(-1));
+    CHECK(dxc_scheme_caption_dark(2, 0) == 1);
+    CHECK(dxc_scheme_caption_dark(1, 1) == 0);
+    CHECK(dxc_scheme_caption_dark(0, 1) == 1);
+    CHECK(dxc_scheme_caption_dark(0, 0) == 0);
+    static const uint16_t theme[] = {'I','m','m','e','r','s','i','v','e','C','o','l','o','r','S','e','t',0};
+    static const uint16_t longer[] = {'I','m','m','e','r','s','i','v','e','C','o','l','o','r','S','e','t','s',0};
+    static const uint16_t other[] = {'P','o','l','i','c','y',0};
+    CHECK(dxc_scheme_is_theme_change(theme));
+    CHECK(!dxc_scheme_is_theme_change(longer));
+    CHECK(!dxc_scheme_is_theme_change(other));
+    CHECK(!dxc_scheme_is_theme_change(NULL));
+}
+
 int main(int argc, char **argv) {
     resize_decisions();
     pointer_buttons();
     first_window_placement();
+    open_window_scheme();
     wheel_direction();
     utf8_conversion();
     caption_zones();

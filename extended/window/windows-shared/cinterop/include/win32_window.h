@@ -192,6 +192,12 @@ void dxc_native_window_set_title(const char *title);
 void dxc_native_window_set_min_size(int32_t width, int32_t height);
 void dxc_native_window_set_visibility(int32_t visibility);
 int32_t dxc_native_system_dark(void);
+// Changing the selected window after it opened (FR-53). set_resizable returns 0 with no window;
+// set_color_scheme takes 0 follow the system, 1 light, 2 dark and returns 1 when DWM took it;
+// caption_dark writes what the caption was last told and returns 1 once a scheme was applied.
+int32_t dxc_native_window_set_resizable(int32_t resizable);
+int32_t dxc_native_window_set_color_scheme(int32_t scheme);
+int32_t dxc_native_window_caption_dark(int32_t *dark);
 // Focus. Focus returns 0 when the foreground lock refused and the window flashed instead.
 int32_t dxc_native_window_focus(void);
 int32_t dxc_native_window_is_active(void);
