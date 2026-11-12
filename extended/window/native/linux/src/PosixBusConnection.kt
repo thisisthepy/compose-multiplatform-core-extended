@@ -17,6 +17,7 @@ import org.thisisthepy.compose.window.atspi.BusConnection
 import org.thisisthepy.compose.window.atspi.authenticateToBus
 import org.thisisthepy.compose.window.atspi.dbusMessageLength
 import platform.posix.AF_UNIX
+import platform.posix.MSG_NOSIGNAL
 import platform.posix.POLLIN
 import platform.posix.SOCK_STREAM
 import platform.posix.getenv
@@ -26,7 +27,6 @@ import platform.posix.pollfd
 import platform.posix.read
 import platform.posix.readlink
 import platform.posix.socket
-import platform.posix.write
 import unixsocket.dxc_connect_unix
 
 /**
@@ -47,8 +47,9 @@ class PosixBusConnection private constructor(private val socket: Int) : BusConne
         if (!open) return false
         var offset = 0
         while (offset < message.size) {
+            // Not write(): a bus that has gone would answer it with SIGPIPE, which ends the process.
             val written = message.usePinned { pinned ->
-                write(socket, pinned.addressOf(offset), (message.size - offset).convert())
+                platform.posix.send(socket, pinned.addressOf(offset), (message.size - offset).convert(), MSG_NOSIGNAL)
             }
             if (written <= 0) {
                 close()
@@ -61,23 +62,34 @@ class PosixBusConnection private constructor(private val socket: Int) : BusConne
 
     override fun receive(timeoutMillis: Int): ByteArray? {
         takeMessage()?.let { return it }
-        if (!open) return null
-        val ready = memScoped {
-            val watched = alloc<pollfd>()
-            watched.fd = socket
-            watched.events = POLLIN.toShort()
-            poll(watched.ptr, 1.convert(), timeoutMillis.coerceAtLeast(0))
+        var wait = timeoutMillis.coerceAtLeast(0)
+        // One wait, then whatever else has already arrived: a long message comes in several
+        // reads, and stopping after the first would spread it over as many turns of the loop.
+        while (open) {
+            val ready = memScoped {
+                val watched = alloc<pollfd>()
+                watched.fd = socket
+                watched.events = POLLIN.toShort()
+                poll(watched.ptr, 1.convert(), wait)
+            }
+            if (ready <= 0) return null
+            wait = 0
+            val chunk = ByteArray(CHUNK_BYTES)
+            val count = chunk.usePinned { pinned -> read(socket, pinned.addressOf(0), CHUNK_BYTES.convert()) }
+            if (count <= 0) {
+                close()
+                return null
+            }
+            pending += chunk.copyOf(count.toInt())
+            takeMessage()?.let { return it }
         }
-        if (ready <= 0) return null
-        val chunk = ByteArray(CHUNK_BYTES)
-        val count = chunk.usePinned { pinned -> read(socket, pinned.addressOf(0), CHUNK_BYTES.convert()) }
-        if (count <= 0) {
-            close()
-            return null
-        }
-        pending += chunk.copyOf(count.toInt())
-        return takeMessage()
+        return null
     }
+
+    override val isOpen: Boolean get() = open
+
+    /** The socket, for a wait that watches it beside the display's; -1 once closed. */
+    internal val descriptor: Int get() = if (open) socket else -1
 
     override fun close() {
         if (!open) return

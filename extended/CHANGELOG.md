@@ -7,6 +7,9 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`, 0.1.0)
 
+- **Fix.** The Windows mouse wheel scrolled in reverse on both the GraalVM and Kotlin/Native
+  paths: `WM_MOUSEWHEEL` now negates its delta, because Win32 counts a turn away from the reader
+  as positive and Compose reads a positive `scrollDelta.y` as a scroll down. (#169)
 - **Breaking default.** `WindowConfig` gains `chrome` and `titleBar`, defaulting to
   `WindowChrome.Modern` and `TitleBarStyle.Normal`: the content runs to the top of the window.
   On Linux that means no system title bar; the scene draws the caption and its buttons. Pass
