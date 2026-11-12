@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <windows.h>
+#include <wchar.h>
 
 #include "win32_buttons.h"
 #include "win32_resize.h"
@@ -14,6 +15,7 @@
 #include "win32_wheel.h"
 #include "win32_caption.h"
 #include "win32_multi.h"
+#include "win32_file_dialog_spec.h"
 #include "win32_placement.h"
 #include "win32_window.h"
 
@@ -442,6 +444,364 @@ static void fr53_activate_reports_focus(void) {
     dxc_native_window_release(b.window);
 }
 
+// The type list a dialog is given: one line per filter, a label, a tab and the extensions.
+static void fr72_filter_lines_become_dialog_patterns(void) {
+    const char *filters = "Images\tpng,jpg\n\nAll files\nDocuments\t\nOdd\t,a,,b,";
+    const char *label, *extensions, *first;
+    size_t label_length, extensions_length;
+    char pattern[64];
+    CHECK(dxc_file_filter_count(filters) == 4);
+    CHECK(dxc_file_filter_count("") == 0);
+    CHECK(dxc_file_filter_count(NULL) == 0);
+    CHECK(dxc_file_filter_at(filters, 0, &label, &label_length, &extensions, &extensions_length) == 1);
+    CHECK(label_length == 6 && memcmp(label, "Images", 6) == 0);
+    CHECK(dxc_file_filter_pattern(extensions, extensions_length, NULL, 0) == 11);
+    CHECK(dxc_file_filter_pattern(extensions, extensions_length, pattern, sizeof pattern) == 11);
+    CHECK(strcmp(pattern, "*.png;*.jpg") == 0);
+    // A buffer too small is filled and ended, and the whole length is still reported.
+    CHECK(dxc_file_filter_pattern(extensions, extensions_length, pattern, 5) == 11);
+    CHECK(strcmp(pattern, "*.pn") == 0);
+    CHECK(dxc_file_filter_first_extension(extensions, extensions_length, &first) == 3);
+    CHECK(memcmp(first, "png", 3) == 0);
+    // No tab, and a tab with nothing after it, are both every file.
+    CHECK(dxc_file_filter_at(filters, 1, &label, &label_length, &extensions, &extensions_length) == 1);
+    CHECK(label_length == 9 && extensions_length == 0);
+    CHECK(dxc_file_filter_pattern(extensions, extensions_length, pattern, sizeof pattern) == 3);
+    CHECK(strcmp(pattern, "*.*") == 0);
+    CHECK(dxc_file_filter_first_extension(extensions, extensions_length, &first) == 0);
+    CHECK(dxc_file_filter_at(filters, 2, &label, &label_length, &extensions, &extensions_length) == 1);
+    CHECK(label_length == 9 && extensions_length == 0);
+    // Empty entries are skipped.
+    CHECK(dxc_file_filter_at(filters, 3, &label, &label_length, &extensions, &extensions_length) == 1);
+    CHECK(dxc_file_filter_pattern(extensions, extensions_length, pattern, sizeof pattern) == 7);
+    CHECK(strcmp(pattern, "*.a;*.b") == 0);
+    CHECK(dxc_file_filter_first_extension(extensions, extensions_length, &first) == 1 && *first == 'a');
+    CHECK(dxc_file_filter_at(filters, 4, &label, &label_length, &extensions, &extensions_length) == 0);
+}
+
+// What cannot be a dialog starts nothing and leaves no answer behind.
+static void fr72_a_dialog_that_cannot_start_answers_nothing(void) {
+    int64_t request = 0;
+    int32_t status = 0, filter = 0, count = 0, bytes = 0;
+    CHECK(dxc_native_file_dialog_show(NULL, 1, DXC_FILE_DIALOG_OPEN_FILE, "", "", "", "", 0) != 0);
+    CHECK(dxc_native_file_dialog_show((void *)(intptr_t)0x7ffffff0, 2, DXC_FILE_DIALOG_OPEN_FILE, "", "", "", "", 0) != 0);
+    CHECK(dxc_native_file_dialog_next(&request, &status, &filter, &count, &bytes) == 0);
+    CHECK(dxc_native_file_dialog_take(1, NULL, 0) == -1);
+    // Nothing is open under this number, so this is a call that does nothing.
+    dxc_native_file_dialog_cancel(1);
+}
+
+// Pumps this thread until the oldest answer is there, for at most [millis].
+static int wait_for_dialog_answer(int64_t *request, int32_t *status, int32_t *filter, int32_t *count,
+                                  int32_t *bytes, DWORD millis) {
+    DWORD start = GetTickCount();
+    while (GetTickCount() - start < millis) {
+        if (dxc_native_file_dialog_next(request, status, filter, count, bytes)) return 1;
+        dxc_native_pump(0.02);
+    }
+    return 0;
+}
+
+// A dialog on a real window: the window's thread is not held while the dialog is open, a
+// second dialog under the same number is refused, and a dialog told to close answers once,
+// as cancelled. A runner that cannot show a dialog answers unavailable, also once.
+static void fr72_an_open_dialog_does_not_hold_the_loop_and_answers_once(void) {
+    if (!real_windows_ok) { printf("skip: fr72_an_open_dialog_does_not_hold_the_loop_and_answers_once\n"); return; }
+    struct dxc_native_window a;
+    memset(&a, 0, sizeof a);
+    if (!open_test_window(&a, "dialog")) return;
+    int64_t request = 0;
+    int32_t status = 0, filter = 0, count = 0, bytes = 0;
+    DWORD before = GetTickCount();
+    CHECK(dxc_native_file_dialog_show(a.window, 41, DXC_FILE_DIALOG_OPEN_FILES, "Pick", "", "",
+                                      "Text\ttxt,md\nAll files", 0) == 0);
+    // Show came back without waiting for the reader.
+    CHECK(GetTickCount() - before < 2000);
+    CHECK(dxc_native_file_dialog_show(a.window, 41, DXC_FILE_DIALOG_SAVE, "", "", "", "", 0) != 0);
+    CHECK(dxc_native_file_dialog_show(a.window, 43, 0, "", "", "", "", 0) != 0);
+    CHECK(dxc_native_file_dialog_show(a.window, 43, 6, "", "", "", "", 0) != 0);
+    CHECK(dxc_native_file_dialog_show(a.window, 43, DXC_FILE_DIALOG_SAVE, "\xff", "", "", "", 0) != 0);
+    // The loop turns while the dialog is opening and open.
+    for (int turn = 0; turn < 25; turn++) dxc_native_pump(0.02);
+    dxc_native_file_dialog_cancel(41);
+    CHECK(wait_for_dialog_answer(&request, &status, &filter, &count, &bytes, 20000) == 1);
+    CHECK(request == 41);
+    CHECK(status == DXC_FILE_DIALOG_CANCELLED || status == DXC_FILE_DIALOG_UNAVAILABLE);
+    CHECK(count == 0 && bytes == 0 && filter == -1);
+    printf("fr72 dialog answered %s\n", status == DXC_FILE_DIALOG_CANCELLED ? "cancelled" : "unavailable");
+    CHECK(dxc_native_file_dialog_take(41, NULL, 0) == 0);
+    // Taken once: there is no second answer.
+    CHECK(dxc_native_file_dialog_take(41, NULL, 0) == -1);
+    for (int turn = 0; turn < 10; turn++) dxc_native_pump(0.02);
+    CHECK(dxc_native_file_dialog_next(&request, &status, &filter, &count, &bytes) == 0);
+    // The owner takes input again once its dialog is gone.
+    CHECK(IsWindowEnabled((HWND)a.window));
+
+    // A dialog whose owner is destroyed closes by itself and still answers, once.
+    CHECK(dxc_native_file_dialog_show(a.window, 42, DXC_FILE_DIALOG_OPEN_FOLDER, "", "", "", "", 0) == 0);
+    for (int turn = 0; turn < 25; turn++) dxc_native_pump(0.02);
+    dxc_native_window_destroy(a.window);
+    CHECK(wait_for_dialog_answer(&request, &status, &filter, &count, &bytes, 20000) == 1);
+    CHECK(request == 42);
+    CHECK(status == DXC_FILE_DIALOG_CANCELLED || status == DXC_FILE_DIALOG_UNAVAILABLE);
+    CHECK(dxc_native_file_dialog_take(42, NULL, 0) == 0);
+    pump_all();
+    dxc_native_window_release(a.window);
+}
+
+// ---- a dialog played through, with this thread as the reader ---------------------------------
+//
+// The runner has a desktop, so the dialog is real. What a reader would do with the keyboard
+// is done here with messages to the dialog's own controls: the name goes into its name field
+// and its default button is pressed. This thread goes on pumping throughout, which is the
+// point: the dialog is on a thread of its own.
+
+static HWND dialog_owner;
+
+static BOOL CALLBACK find_owned_dialog(HWND window, LPARAM out) {
+    WCHAR name[64];
+    if (IsWindowVisible(window) && GetWindow(window, GW_OWNER) == dialog_owner &&
+        GetClassNameW(window, name, 64) > 0 && wcscmp(name, L"#32770") == 0) {
+        *(HWND *)out = window;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOL CALLBACK find_name_field(HWND window, LPARAM out) {
+    WCHAR name[64];
+    if (IsWindowVisible(window) && GetClassNameW(window, name, 64) > 0 && wcscmp(name, L"Edit") == 0) {
+        *(HWND *)out = window;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static HWND owned_dialog(HWND owner) {
+    HWND dialog = NULL;
+    dialog_owner = owner;
+    EnumWindows(find_owned_dialog, (LPARAM)&dialog);
+    return dialog;
+}
+
+struct played_dialog {
+    int answered;
+    int64_t request;
+    int32_t status, filter, count, bytes;
+    char paths[4096];
+    // The loop of this thread while the dialog was open.
+    int turns;
+    DWORD longest_turn;
+    // 1 once a second window (the system's own question) stood over the dialog.
+    int asked;
+};
+
+// Pumps until the dialog of [request] answers. Once the dialog is up and has settled, types
+// [text] into its name field and presses its default button, again every second until it
+// answers ([type_once] types only before the first press). With [stop_when_asked], a question over the dialog (replace this file?) ends the
+// play instead, by cancelling the dialog.
+static void play_dialog_typing(HWND owner, int64_t request, const WCHAR *text, int stop_when_asked,
+                               int type_once, struct played_dialog *played) {
+    memset(played, 0, sizeof *played);
+    DWORD start = GetTickCount(), last_turn = start, seen_at = 0, pressed_at = 0;
+    int cancelled = 0;
+    while (GetTickCount() - start < 30000) {
+        dxc_native_pump(0.01);
+        DWORD now = GetTickCount();
+        if (now - last_turn > played->longest_turn) played->longest_turn = now - last_turn;
+        last_turn = now;
+        played->turns++;
+        if (dxc_native_file_dialog_next(&played->request, &played->status, &played->filter,
+                                        &played->count, &played->bytes)) {
+            if (played->bytes < (int32_t)sizeof played->paths) {
+                dxc_native_file_dialog_take(request, played->paths, (int32_t)sizeof played->paths - 1);
+                played->answered = 1;
+            }
+            return;
+        }
+        HWND dialog = owned_dialog(owner);
+        if (dialog == NULL || cancelled) continue;
+        if (seen_at == 0) seen_at = now;
+        HWND question = GetWindow(dialog, GW_ENABLEDPOPUP);
+        if (question != NULL && question != dialog && !IsWindowEnabled(dialog)) {
+            played->asked = 1;
+            if (stop_when_asked) {
+                dxc_native_file_dialog_cancel(request);
+                cancelled = 1;
+            }
+            continue;
+        }
+        // A moment for the dialog to fill itself in, then once a second.
+        if (now - seen_at < 1500 || (pressed_at != 0 && now - pressed_at < 1000)) continue;
+        HWND field = NULL;
+        EnumChildWindows(dialog, find_name_field, (LPARAM)&field);
+        if (field == NULL) continue;
+        DWORD_PTR ignored = 0;
+        // A folder picker opens the folder named on the first press and chooses the folder it
+        // is in on the next, so there the name is typed once. No text is the name the dialog
+        // came up with, accepted as it stands.
+        if (text != NULL && (pressed_at == 0 || !type_once)) {
+            SendMessageTimeoutW(field, WM_SETTEXT, 0, (LPARAM)text, SMTO_ABORTIFHUNG, 2000, &ignored);
+        }
+        PostMessageW(dialog, WM_COMMAND, MAKEWPARAM(IDOK, BN_CLICKED), (LPARAM)GetDlgItem(dialog, IDOK));
+        pressed_at = now;
+    }
+    // Nobody answered: close it so the checks that follow start clean.
+    dxc_native_file_dialog_cancel(request);
+    DWORD wait = GetTickCount();
+    while (GetTickCount() - wait < 10000) {
+        dxc_native_pump(0.01);
+        if (dxc_native_file_dialog_next(&played->request, &played->status, &played->filter,
+                                        &played->count, &played->bytes)) {
+            dxc_native_file_dialog_take(played->request, played->paths, (int32_t)sizeof played->paths - 1);
+            break;
+        }
+    }
+    played->answered = 0;
+}
+
+static void play_dialog(HWND owner, int64_t request, const WCHAR *text, int stop_when_asked,
+                        struct played_dialog *played) {
+    play_dialog_typing(owner, request, text, stop_when_asked, 0, played);
+}
+
+static void utf8_of(const WCHAR *wide, char *out, int capacity) {
+    if (WideCharToMultiByte(CP_UTF8, 0, wide, -1, out, capacity, NULL, NULL) == 0) out[0] = '\0';
+}
+
+static void make_file(const WCHAR *directory, const WCHAR *name) {
+    WCHAR path[MAX_PATH];
+    swprintf(path, MAX_PATH, L"%ls\\%ls", directory, name);
+    HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+}
+
+// The whole path of a dialog, for each kind: what the reader chose reaches the asking thread
+// whole and in UTF-8, the loop of that thread never stops while the dialog is open, a save
+// takes its extension from the selected type and asks before replacing a file.
+static void fr72_dialogs_answer_what_the_reader_chose(void) {
+    if (!real_windows_ok) { printf("skip: fr72_dialogs_answer_what_the_reader_chose\n"); return; }
+    WCHAR temp[MAX_PATH], directory[MAX_PATH], sub[MAX_PATH];
+    GetTempPathW(MAX_PATH, temp);
+    // The long form: the dialog answers with it, whatever form it was given.
+    WCHAR long_temp[MAX_PATH];
+    if (GetLongPathNameW(temp, long_temp, MAX_PATH) == 0) wcscpy(long_temp, temp);
+    swprintf(directory, MAX_PATH, L"%lsdxc-dialog-%lu", long_temp, GetCurrentProcessId());
+    CreateDirectoryW(directory, NULL);
+    swprintf(sub, MAX_PATH, L"%ls\\sub one", directory);
+    CreateDirectoryW(sub, NULL);
+    make_file(directory, L"alpha.txt");
+    make_file(directory, L"\xd55c\xae00 \xd30c\xc77c.txt");
+    char directory_utf8[1024], expected[2048];
+    utf8_of(directory, directory_utf8, sizeof directory_utf8);
+
+    struct dxc_native_window a;
+    memset(&a, 0, sizeof a);
+    if (!open_test_window(&a, "dialogs")) return;
+    const char *filters = "Text\ttxt,md\nAll files";
+    struct played_dialog played;
+
+    // One file.
+    CHECK(dxc_native_file_dialog_show(a.window, 51, DXC_FILE_DIALOG_OPEN_FILE, "One file", directory_utf8, "",
+                                      filters, 0) == 0);
+    play_dialog((HWND)a.window, 51, L"alpha.txt", 0, &played);
+    if (played.status == DXC_FILE_DIALOG_UNAVAILABLE) {
+        // A runner with no shell to show the dialog. Said, so the log shows what was not checked.
+        printf("skip: fr72_dialogs_answer_what_the_reader_chose (the dialog is unavailable here)\n");
+        dxc_native_window_destroy(a.window);
+        pump_all();
+        dxc_native_window_release(a.window);
+        return;
+    }
+    CHECK(played.answered == 1 && played.request == 51);
+    CHECK(played.status == DXC_FILE_DIALOG_CHOSEN && played.count == 1 && played.filter == 0);
+    snprintf(expected, sizeof expected, "%s\\alpha.txt", directory_utf8);
+    CHECK(played.bytes == (int32_t)strlen(expected) && _stricmp(played.paths, expected) == 0);
+    // The dialog was open for more than a second and this thread kept turning all the while.
+    CHECK(played.turns > 20);
+    CHECK(played.longest_turn < 1000);
+    printf("fr72 open file: %d loop turns while the dialog was open, longest %lu ms, answer %s\n",
+           played.turns, played.longest_turn, played.paths);
+    CHECK(IsWindowEnabled((HWND)a.window));
+
+    // Several files, one of them with a name outside ASCII: both whole, a NUL between.
+    CHECK(dxc_native_file_dialog_show(a.window, 52, DXC_FILE_DIALOG_OPEN_FILES, "", directory_utf8, "",
+                                      "All files", 0) == 0);
+    play_dialog((HWND)a.window, 52, L"\"alpha.txt\" \"\xd55c\xae00 \xd30c\xc77c.txt\"", 0, &played);
+    CHECK(played.answered == 1 && played.status == DXC_FILE_DIALOG_CHOSEN && played.count == 2);
+    {
+        char korean[1024], second_expected[2048];
+        utf8_of(L"\xd55c\xae00 \xd30c\xc77c.txt", korean, sizeof korean);
+        snprintf(second_expected, sizeof second_expected, "%s\\%s", directory_utf8, korean);
+        const char *first = played.paths;
+        const char *second = first + strlen(first) + 1;
+        CHECK(played.bytes == (int32_t)(strlen(first) + 1 + strlen(second)));
+        // The dialog chooses the order; both are there.
+        CHECK((_stricmp(first, expected) == 0 && strcmp(second, second_expected) == 0) ||
+              (_stricmp(second, expected) == 0 && strcmp(first, second_expected) == 0));
+    }
+
+    // A folder. The picker opens the folder named on the first press and chooses it on the next.
+    CHECK(dxc_native_file_dialog_show(a.window, 53, DXC_FILE_DIALOG_OPEN_FOLDER, "", directory_utf8, "",
+                                      filters, 0) == 0);
+    play_dialog_typing((HWND)a.window, 53, sub, 0, 1, &played);
+    snprintf(expected, sizeof expected, "%s\\sub one", directory_utf8);
+    printf("fr72 folder: answered=%d status=%d count=%d filter=%d paths=%s\n", played.answered, played.status,
+           played.count, played.filter, played.paths);
+    CHECK(played.answered == 1 && played.status == DXC_FILE_DIALOG_CHOSEN && played.count == 1);
+    // A folder picker has no type list.
+    CHECK(played.filter == -1);
+    CHECK(_stricmp(played.paths, expected) == 0);
+
+    // A save: the suggested name is in the name field, and accepted as it stands, without an
+    // extension, it takes the selected type's first one.
+    CHECK(dxc_native_file_dialog_show(a.window, 54, DXC_FILE_DIALOG_SAVE, "", directory_utf8, "report",
+                                      "All files\nMarkdown\tmd,markdown", 1) == 0);
+    play_dialog_typing((HWND)a.window, 54, NULL, 0, 0, &played);
+    snprintf(expected, sizeof expected, "%s\\report.md", directory_utf8);
+    printf("fr72 save: answered=%d status=%d count=%d filter=%d paths=%s\n", played.answered, played.status,
+           played.count, played.filter, played.paths);
+    CHECK(played.answered == 1 && played.status == DXC_FILE_DIALOG_CHOSEN && played.count == 1);
+    CHECK(played.filter == 1);
+    CHECK(_stricmp(played.paths, expected) == 0);
+    // Only the path is answered: nothing was written.
+    {
+        WCHAR made[MAX_PATH];
+        swprintf(made, MAX_PATH, L"%ls\\report.md", directory);
+        CHECK(GetFileAttributesW(made) == INVALID_FILE_ATTRIBUTES);
+    }
+
+    // A save over a file that is there: the system asks first, and no answer comes until the
+    // reader has said yes. Here nobody says yes; the dialog is told to close while the
+    // question is up, and it closes, answers cancelled and gives the window back its input.
+    _putenv("DXC_FILE_DIALOG_TRACE=1");
+    CHECK(dxc_native_file_dialog_show(a.window, 55, DXC_FILE_DIALOG_SAVE, "", directory_utf8, "", filters, 0) == 0);
+    play_dialog((HWND)a.window, 55, L"alpha.txt", 1, &played);
+    printf("fr72 save over a file: asked=%d answered=%d status=%d count=%d owner_enabled=%d\n", played.asked,
+           played.answered, played.status, played.count, IsWindowEnabled((HWND)a.window));
+    CHECK(played.asked == 1);
+    CHECK(played.answered == 1 && played.status == DXC_FILE_DIALOG_CANCELLED && played.count == 0);
+    CHECK(IsWindowEnabled((HWND)a.window));
+    CHECK(owned_dialog((HWND)a.window) == NULL);
+    fflush(stdout);
+
+    // Whatever is still open goes with its owner, and its answer is taken.
+    dxc_native_window_destroy(a.window);
+    {
+        int64_t request = 0;
+        int32_t status = 0, filter = 0, count = 0, bytes = 0;
+        DWORD wait = GetTickCount();
+        while (GetTickCount() - wait < 3000) {
+            dxc_native_pump(0.01);
+            if (dxc_native_file_dialog_next(&request, &status, &filter, &count, &bytes)) {
+                dxc_native_file_dialog_take(request, played.paths, (int32_t)sizeof played.paths - 1);
+            }
+        }
+    }
+    pump_all();
+    dxc_native_window_release(a.window);
+}
+
 int main(int argc, char **argv) {
     resize_decisions();
     pointer_buttons();
@@ -463,6 +823,10 @@ int main(int argc, char **argv) {
     fr53_close_request_reaches_only_its_window();
     fr53_destroying_one_window_does_not_quit();
     fr53_activate_reports_focus();
+    fr72_filter_lines_become_dialog_patterns();
+    fr72_a_dialog_that_cannot_start_answers_nothing();
+    fr72_an_open_dialog_does_not_hold_the_loop_and_answers_once();
+    fr72_dialogs_answer_what_the_reader_chose();
     // Never true. It only makes the linker resolve the window and the toasts, so a symbol
     // the header declares and the objects lack fails the link.
     if (argc > 1000) {
@@ -487,6 +851,10 @@ int main(int argc, char **argv) {
         (void)dxc_native_frame_time_nanos();
         dxc_native_wake();
         dxc_notify_start();
+        dxc_native_file_dialog_show(window.window, 1, DXC_FILE_DIALOG_OPEN_FILE, argv[0], argv[0], argv[0], argv[0], 0);
+        dxc_native_file_dialog_cancel(1);
+        dxc_native_file_dialog_next(NULL, NULL, NULL, NULL, NULL);
+        dxc_native_file_dialog_take(1, NULL, 0);
     }
     if (failures == 0) printf("ok\n");
     return failures == 0 ? 0 : 1;
