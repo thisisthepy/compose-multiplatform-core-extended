@@ -153,7 +153,7 @@ class AppKitWindowPlatform : WindowPlatform {
             val scale = current.measure().scale.coerceAtLeast(1f)
             val x = 80f * scale
             val y = 80f * scale
-            sink.onEvent(WindowEvent(WindowEvent.POINTER_DOWN, x, y, 1, 0, 0, 0, ""))
+            sink.onEvent(WindowEvent(WindowEvent.POINTER_DOWN, x, y, WindowEvent.PRIMARY_HELD, 0, 0, 0, ""))
             sink.onEvent(WindowEvent(WindowEvent.POINTER_UP, x, y, 0, 0, 0, 0, ""))
             sink.onEvent(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "abcde"))
         }
