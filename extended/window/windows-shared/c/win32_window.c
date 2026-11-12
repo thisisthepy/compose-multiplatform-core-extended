@@ -3981,25 +3981,35 @@ static int32_t dxc_open_window(
     UINT placement = SWP_NOZORDER | SWP_NOMOVE;
     int left = 0;
     int top = 0;
+    // Where the application said, in points converted at the DPI the window was created at
+    // (the DPI of the monitor Windows first put it on), so a position on a monitor with a
+    // different scale can be off by that ratio until the window is moved there.
+    int wanted_x = dxc_w->has_position ? dxc_points_to_pixels(dxc_w->position_x, dpi) : 0;
+    int wanted_y = dxc_w->has_position ? dxc_points_to_pixels(dxc_w->position_y, dpi) : 0;
+    // With a position, the monitor is the one at that position, not the one Windows first
+    // placed the new window on, so a window asked for on a secondary monitor stays there.
+    HMONITOR monitor;
+    if (dxc_w->has_position) {
+        RECT asked = {wanted_x, wanted_y, wanted_x + outer_width, wanted_y + outer_height};
+        monitor = MonitorFromRect(&asked, MONITOR_DEFAULTTONEAREST);
+    } else {
+        monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    }
     MONITORINFO monitor_info;
     monitor_info.cbSize = sizeof monitor_info;
-    HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
     if (monitor != NULL && GetMonitorInfoW(monitor, &monitor_info)) {
         struct dxc_placement_rect work = {monitor_info.rcWork.left, monitor_info.rcWork.top,
             monitor_info.rcWork.right, monitor_info.rcWork.bottom};
-        // Where the application said, in points of the monitor the window is on.
         struct dxc_placement_rect outer = dxc_placement_fit(work, outer_width, outer_height,
-            min_outer_width, min_outer_height, dxc_w->has_position,
-            dxc_w->has_position ? dxc_points_to_pixels(dxc_w->position_x, dpi) : 0,
-            dxc_w->has_position ? dxc_points_to_pixels(dxc_w->position_y, dpi) : 0);
+            min_outer_width, min_outer_height, dxc_w->has_position, wanted_x, wanted_y);
         left = outer.left;
         top = outer.top;
         outer_width = outer.right - outer.left;
         outer_height = outer.bottom - outer.top;
         placement = SWP_NOZORDER;
     } else if (dxc_w->has_position) {
-        left = dxc_points_to_pixels(dxc_w->position_x, dpi);
-        top = dxc_points_to_pixels(dxc_w->position_y, dpi);
+        left = wanted_x;
+        top = wanted_y;
         placement = SWP_NOZORDER;
     }
     SetWindowPos(window, NULL, left, top, outer_width, outer_height, placement | SWP_FRAMECHANGED);
