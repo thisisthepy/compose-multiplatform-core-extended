@@ -1763,7 +1763,7 @@ static LRESULT dxc_caption_hit_test(HWND window, LPARAM lparam) {
 static void dxc_push_caption_pointer(HWND window, int32_t kind, LPARAM screen) {
     POINT point = {GET_X_LPARAM(screen), GET_Y_LPARAM(screen)};
     ScreenToClient(window, &point);
-    dxc_push_pointer(kind, MAKELPARAM(point.x, point.y));
+    dxc_push_pointer(kind, MAKELPARAM(point.x, point.y), 0);
 }
 
 /** True while the window is maximised, for the renderer's maximise or restore glyph. */
@@ -2287,7 +2287,7 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
     case WM_NCMOUSELEAVE:
         if (!dxc_options.system_chrome) {
             // Off every button, so the scene drops the hover it was shown.
-            dxc_push_pointer(DXC_EVENT_POINTER_MOVE, MAKELPARAM(-1, -1));
+            dxc_push_pointer(DXC_EVENT_POINTER_MOVE, MAKELPARAM(-1, -1), 0);
         }
         break;
     case WM_NCLBUTTONDOWN:
