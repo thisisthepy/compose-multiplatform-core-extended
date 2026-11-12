@@ -1454,6 +1454,8 @@ static int32_t dxc_pressed_buttons(void) {
     if (GetKeyState(VK_LBUTTON) < 0) buttons |= DXC_PRIMARY_HELD;
     if (GetKeyState(VK_RBUTTON) < 0) buttons |= DXC_SECONDARY_HELD;
     if (GetKeyState(VK_MBUTTON) < 0) buttons |= DXC_MIDDLE_HELD;
+    if (GetKeyState(VK_XBUTTON1) < 0) buttons |= DXC_BACK_HELD;
+    if (GetKeyState(VK_XBUTTON2) < 0) buttons |= DXC_FORWARD_HELD;
     return buttons;
 }
 
@@ -1486,13 +1488,30 @@ static float dxc_wheel_lines(void) {
     return (float)lines;
 }
 
-static void dxc_push_pointer(int32_t kind, LPARAM where, int secondary_event) {
+/** The DXC_*_BUTTON flag of the button a WM_*BUTTONDOWN or WM_*BUTTONUP message is about. */
+static int32_t dxc_event_button(UINT message, WPARAM wparam) {
+    switch (message) {
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONUP:
+        return DXC_SECONDARY_BUTTON;
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONUP:
+        return DXC_MIDDLE_BUTTON;
+    case WM_XBUTTONDOWN:
+    case WM_XBUTTONUP:
+        return GET_XBUTTON_WPARAM(wparam) == XBUTTON1 ? DXC_BACK_BUTTON : DXC_FORWARD_BUTTON;
+    default:
+        return 0;
+    }
+}
+
+static void dxc_push_pointer(int32_t kind, LPARAM where, int32_t event_button) {
     struct dxc_event record;
     memset(&record, 0, sizeof record);
     record.kind = kind;
     record.x = (float)GET_X_LPARAM(where);
     record.y = (float)GET_Y_LPARAM(where);
-    record.buttons = dxc_pointer_buttons(dxc_pressed_buttons(), secondary_event);
+    record.buttons = dxc_pointer_buttons(dxc_pressed_buttons(), event_button);
     record.modifiers = dxc_held_modifiers();
     dxc_push_event(record);
 }
@@ -2319,17 +2338,20 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
     case WM_LBUTTONDOWN:
     case WM_RBUTTONDOWN:
     case WM_MBUTTONDOWN:
+    case WM_XBUTTONDOWN:
         // Held so that a drag leaving the window still reports where it went, and so the
         // release that ends it is heard at all.
         SetCapture(window);
-        dxc_push_pointer(DXC_EVENT_POINTER_DOWN, lparam, message == WM_RBUTTONDOWN);
-        return 0;
+        dxc_push_pointer(DXC_EVENT_POINTER_DOWN, lparam, dxc_event_button(message, wparam));
+        // WM_XBUTTONDOWN asks for TRUE, where the other button messages ask for zero.
+        return message == WM_XBUTTONDOWN ? TRUE : 0;
     case WM_LBUTTONUP:
     case WM_RBUTTONUP:
     case WM_MBUTTONUP:
+    case WM_XBUTTONUP:
         ReleaseCapture();
-        dxc_push_pointer(DXC_EVENT_POINTER_UP, lparam, message == WM_RBUTTONUP);
-        return 0;
+        dxc_push_pointer(DXC_EVENT_POINTER_UP, lparam, dxc_event_button(message, wparam));
+        return message == WM_XBUTTONUP ? TRUE : 0;
     case WM_MOUSEWHEEL:
     case WM_MOUSEHWHEEL: {
         // The sign of each axis is decided in win32_wheel.h, where it is tested.

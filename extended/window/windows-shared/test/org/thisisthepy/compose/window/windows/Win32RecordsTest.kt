@@ -56,6 +56,10 @@ class Win32RecordsTest {
         assertTrue(Win32Records.readEvent(record).isSecondaryPress)
         record.buttons = WindowEvent.PRIMARY_HELD
         assertFalse(Win32Records.readEvent(record).isSecondaryPress)
+        record.buttons = WindowEvent.pointerButtons(WindowEvent.MIDDLE_HELD, WindowEvent.MIDDLE_BUTTON)
+        val middle = Win32Records.readEvent(record)
+        assertFalse(middle.isSecondaryPress)
+        assertEquals(WindowEvent.MIDDLE_HELD, middle.changedHeldBit)
     }
 
     @Test

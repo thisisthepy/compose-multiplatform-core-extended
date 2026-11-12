@@ -19,12 +19,29 @@ class WindowEventButtonsTest {
         assertEquals(1, WindowEvent.PRIMARY_HELD)
         assertEquals(2, WindowEvent.SECONDARY_HELD)
         assertEquals(4, WindowEvent.MIDDLE_HELD)
+        assertEquals(8, WindowEvent.BACK_HELD)
+        assertEquals(16, WindowEvent.FORWARD_HELD)
         assertEquals(1 shl 16, WindowEvent.SECONDARY_BUTTON)
+        assertEquals(1 shl 17, WindowEvent.MIDDLE_BUTTON)
+        assertEquals(1 shl 18, WindowEvent.BACK_BUTTON)
+        assertEquals(1 shl 19, WindowEvent.FORWARD_BUTTON)
+        val own = WindowEvent.SECONDARY_BUTTON or WindowEvent.MIDDLE_BUTTON or WindowEvent.BACK_BUTTON or WindowEvent.FORWARD_BUTTON
+        assertEquals(0, own and WindowEvent.ALL_HELD, "the event's own button must not overlap the held bits")
+    }
+
+    @Test
+    fun the_changed_button_is_the_one_the_event_names_and_the_primary_when_none() {
+        assertEquals(WindowEvent.PRIMARY_HELD, event(WindowEvent.POINTER_DOWN, WindowEvent.PRIMARY_HELD).changedHeldBit)
         assertEquals(
-            0,
-            WindowEvent.SECONDARY_BUTTON and (WindowEvent.PRIMARY_HELD or WindowEvent.SECONDARY_HELD or WindowEvent.MIDDLE_HELD),
-            "the event's own button must not overlap the held bits",
+            WindowEvent.SECONDARY_HELD,
+            event(WindowEvent.POINTER_DOWN, WindowEvent.pointerButtons(0, WindowEvent.SECONDARY_BUTTON)).changedHeldBit,
         )
+        assertEquals(
+            WindowEvent.MIDDLE_HELD,
+            event(WindowEvent.POINTER_UP, WindowEvent.pointerButtons(0, WindowEvent.MIDDLE_BUTTON)).changedHeldBit,
+        )
+        assertEquals(WindowEvent.BACK_HELD, event(WindowEvent.POINTER_DOWN, WindowEvent.BACK_BUTTON).changedHeldBit)
+        assertEquals(WindowEvent.FORWARD_HELD, event(WindowEvent.POINTER_DOWN, WindowEvent.FORWARD_BUTTON).changedHeldBit)
     }
 
     @Test

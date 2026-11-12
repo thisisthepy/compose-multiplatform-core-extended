@@ -110,6 +110,19 @@ class LinuxInputTest {
         assertEquals(WindowEvent.PRIMARY_HELD, left)
     }
 
+    /** Middle, back and forward presses and releases say which button they are. */
+    @Test
+    fun the_middle_back_and_forward_buttons_name_themselves() {
+        val middle = pointerButtonsOf(0u, button = 2, press = true)
+        assertEquals(WindowEvent.MIDDLE_HELD or WindowEvent.MIDDLE_BUTTON, middle)
+        val middleUp = pointerButtonsOf(Button2Mask.toUInt(), button = 2, press = false)
+        assertEquals(WindowEvent.MIDDLE_BUTTON, middleUp)
+        assertEquals(WindowEvent.BACK_HELD or WindowEvent.BACK_BUTTON, pointerButtonsOf(0u, button = 8, press = true))
+        assertEquals(WindowEvent.FORWARD_BUTTON, pointerButtonsOf(0u, button = 9, press = false))
+        val withPrimaryHeld = pointerButtonsOf(Button1Mask.toUInt(), button = 3, press = true)
+        assertEquals(WindowEvent.PRIMARY_HELD or WindowEvent.SECONDARY_HELD or WindowEvent.SECONDARY_BUTTON, withPrimaryHeld)
+    }
+
     /** Each shape the scene can ask for is a shape this server has, and nothing else is. */
     @Test
     fun every_pointer_shape_has_a_cursor_and_the_rest_are_arrows() {
