@@ -136,8 +136,7 @@ class ComposeWindowHost(
                 else -> {
                     // A platform with no menu of its own (showContextMenu answers -1) gets
                     // the scene's: a secondary press opens it at the pointer.
-                    if (event.kind == WindowEvent.POINTER_DOWN && event.buttons and 2 != 0 &&
-                        !platform.hasNativeEditMenu()
+                    if (event.isSecondaryPress && !platform.hasNativeEditMenu()
                     ) {
                         editMenuAt = IntOffset(event.x.toInt(), event.y.toInt())
                     } else if (event.kind == WindowEvent.POINTER_DOWN) {

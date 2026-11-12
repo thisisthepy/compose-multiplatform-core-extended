@@ -9,6 +9,7 @@
 #include <windows.h>
 #include <wchar.h>
 
+#include "win32_buttons.h"
 #include "win32_resize.h"
 #include "win32_ime_text.h"
 #include "win32_wheel.h"
@@ -97,6 +98,15 @@ static void resize_decisions(void) {
     CHECK(dxc_resize_draw_here(&resize) == 1);
     dxc_resize_end_drag(&resize);
     CHECK(dxc_resize_draw_here(&resize) == 0);
+}
+
+// The values Kotlin's WindowEvent names, and a right-button press carrying its own flag.
+static void pointer_buttons(void) {
+    CHECK(DXC_PRIMARY_HELD == 1 && DXC_SECONDARY_HELD == 2 && DXC_MIDDLE_HELD == 4);
+    CHECK(DXC_SECONDARY_BUTTON == (1 << 16));
+    CHECK(dxc_pointer_buttons(DXC_SECONDARY_HELD, 1) == (DXC_SECONDARY_HELD | DXC_SECONDARY_BUTTON));
+    CHECK(dxc_pointer_buttons(DXC_PRIMARY_HELD, 1) == (DXC_PRIMARY_HELD | DXC_SECONDARY_BUTTON));
+    CHECK(dxc_pointer_buttons(DXC_PRIMARY_HELD, 0) == DXC_PRIMARY_HELD);
 }
 
 static void wheel_direction(void) {
@@ -794,6 +804,7 @@ static void fr72_dialogs_answer_what_the_reader_chose(void) {
 
 int main(int argc, char **argv) {
     resize_decisions();
+    pointer_buttons();
     first_window_placement();
     wheel_direction();
     utf8_conversion();

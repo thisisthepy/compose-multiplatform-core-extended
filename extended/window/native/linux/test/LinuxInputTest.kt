@@ -8,6 +8,9 @@ package org.thisisthepy.compose.window.linux
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import org.thisisthepy.compose.window.WindowEvent
 import x11.Button1Mask
 import x11.Button2Mask
 import x11.Button3Mask
@@ -84,6 +87,27 @@ class LinuxInputTest {
         assertEquals(4, buttonsOf(Button2Mask.toUInt()), "the middle button is the third bit")
         assertEquals(3, buttonsOf((Button1Mask or Button3Mask).toUInt()))
         assertEquals(0, buttonsOf(0u))
+    }
+
+    /**
+     * A right-button press as this window translates it is a secondary press to the scene,
+     * and its release is not a press. The server reports the state before the event, so the
+     * press arrives with nothing held and the release with the button still held.
+     */
+    @Test
+    fun a_right_button_press_is_seen_as_secondary_by_the_scene() {
+        val press = pointerButtonsOf(0u, button = 3, press = true)
+        assertTrue(WindowEvent(WindowEvent.POINTER_DOWN, 0f, 0f, press, 0, 0, 0, "").isSecondaryPress)
+        assertEquals(WindowEvent.SECONDARY_HELD, press and WindowEvent.SECONDARY_HELD)
+
+        val release = pointerButtonsOf(Button3Mask.toUInt(), button = 3, press = false)
+        assertEquals(0, release and WindowEvent.SECONDARY_HELD, "the button is let go")
+        assertNotEquals(0, release and WindowEvent.SECONDARY_BUTTON, "and the release says which one")
+        assertFalse(WindowEvent(WindowEvent.POINTER_UP, 0f, 0f, release, 0, 0, 0, "").isSecondaryPress)
+
+        val left = pointerButtonsOf(0u, button = 1, press = true)
+        assertFalse(WindowEvent(WindowEvent.POINTER_DOWN, 0f, 0f, left, 0, 0, 0, "").isSecondaryPress)
+        assertEquals(WindowEvent.PRIMARY_HELD, left)
     }
 
     /** Each shape the scene can ask for is a shape this server has, and nothing else is. */

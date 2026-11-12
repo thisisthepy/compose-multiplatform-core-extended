@@ -144,16 +144,16 @@ class X11Window : WindowPlatform {
             }
             for (event in x11Events.heard(read(eventBuffer))) {
                 when (event.kind) {
-                    WindowEvent.POINTER_DOWN -> if (event.buttons and PRIMARY != 0 &&
-                        event.buttons and WindowEvent.SECONDARY_BUTTON == 0
+                    WindowEvent.POINTER_DOWN -> if (event.buttons and WindowEvent.PRIMARY_HELD != 0 &&
+                        !event.isSecondaryPress
                     ) {
                         pressX = event.x
                         pressY = event.y
                         pressNanos = System.nanoTime()
                     }
-                    WindowEvent.POINTER_UP -> if (event.buttons and PRIMARY == 0) gesture.released()
+                    WindowEvent.POINTER_UP -> if (event.buttons and WindowEvent.PRIMARY_HELD == 0) gesture.released()
                     WindowEvent.POINTER_MOVE -> if (gesture.waiting) {
-                        if (event.buttons and PRIMARY == 0) {
+                        if (event.buttons and WindowEvent.PRIMARY_HELD == 0) {
                             gesture.released()
                         } else {
                             val direction = gesture.moved(event.x, event.y)
@@ -503,9 +503,6 @@ class X11Window : WindowPlatform {
         const val ACTION_MINIMIZE = 0
         const val ACTION_TOGGLE_MAXIMIZE = 1
         const val ACTION_CLOSE = 2
-
-        /** The primary button's bit in an event's buttons. */
-        const val PRIMARY = 1
 
         /**
          * dxc_native_window_begin_drag's number for a `_NET_WM_MOVERESIZE` direction: 0 moves,

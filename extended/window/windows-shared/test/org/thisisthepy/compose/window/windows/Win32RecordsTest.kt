@@ -2,6 +2,8 @@ package org.thisisthepy.compose.window.windows
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
@@ -40,6 +42,20 @@ class Win32RecordsTest {
             WindowEvent(WindowEvent.POINTER_MOVE, 12.5f, 3f, 1, 2, 65, 0x61, "éa"),
             Win32Records.readEvent(record),
         )
+    }
+
+    /**
+     * What win32_window.c writes for WM_RBUTTONDOWN is the right button held and the
+     * secondary button's own flag. The scene reads it as a secondary press.
+     */
+    @Test
+    fun aRightButtonPressTheWindowRecordedIsASecondaryPress() = memScoped {
+        val record = alloc<dxc_event>()
+        record.kind = WindowEvent.POINTER_DOWN
+        record.buttons = WindowEvent.pointerButtons(WindowEvent.SECONDARY_HELD, secondaryEvent = true)
+        assertTrue(Win32Records.readEvent(record).isSecondaryPress)
+        record.buttons = WindowEvent.PRIMARY_HELD
+        assertFalse(Win32Records.readEvent(record).isSecondaryPress)
     }
 
     @Test

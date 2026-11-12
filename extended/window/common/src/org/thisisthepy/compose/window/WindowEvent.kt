@@ -19,6 +19,14 @@ data class WindowEvent(
     val text: String,
 ) {
 
+    /**
+     * Whether this is the press of the secondary button. Read through [SECONDARY_BUTTON],
+     * which every platform layer sets, and not through the held bits, which a control-click
+     * on macOS does not carry.
+     */
+    val isSecondaryPress: Boolean
+        get() = kind == POINTER_DOWN && buttons and SECONDARY_BUTTON != 0
+
     companion object {
         const val POINTER_MOVE = 1
         const val POINTER_DOWN = 2
@@ -53,6 +61,19 @@ data class WindowEvent(
          * buttons alone cannot say which one was let go.
          */
         const val SECONDARY_BUTTON = 1 shl 16
+
+        /** The buttons held down, in the low bits of [buttons]: primary, secondary and middle. */
+        const val PRIMARY_HELD = 1
+        const val SECONDARY_HELD = 2
+        const val MIDDLE_HELD = 4
+
+        /**
+         * The [buttons] of a pointer event: the buttons [held] and, when the event is the
+         * press or release of the secondary button, [SECONDARY_BUTTON]. Every platform layer
+         * builds the field through this, so the scene reads one encoding.
+         */
+        fun pointerButtons(held: Int, secondaryEvent: Boolean): Int =
+            if (secondaryEvent) held or SECONDARY_BUTTON else held
 
         // An entry of the text edit menu the window put up itself on a right click was
         // chosen; `keyCode` is its [EditMenuId]. Platform layers hand it to
