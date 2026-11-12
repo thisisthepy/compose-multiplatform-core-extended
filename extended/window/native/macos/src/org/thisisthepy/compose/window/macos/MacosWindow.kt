@@ -82,6 +82,7 @@ import platform.AppKit.NSWindowTitleVisible
 import platform.AppKit.NSWindowToolbarStyle
 import platform.AppKit.NSWindowZoomButton
 import platform.AppKit.NSWorkspace
+import platform.AppKit.layoutIfNeeded
 import platform.AppKit.postEvent
 import platform.AppKit.voiceOverEnabled
 import platform.CoreGraphics.CGPoint
@@ -230,10 +231,25 @@ class MacosWindow(
 
     val caption = mutableStateOf(WindowCaption.None)
 
-    private fun measureCaption() {
+    /**
+     * Reads the caption off the window as it is now, and asks for a frame when it changed.
+     *
+     * Never from inside a change of the window's frame. The strip's height is the window's
+     * height less its content layout rect's, and AppKit moves that rect when it lays the
+     * title bar out, which is after the views have been given their new size. Read in
+     * between, a window taken from 360 to 808 points in one step has a strip 448 points
+     * taller than it is, and the frame drawn for the new size is laid out under it. That
+     * frame then stays on the screen: the display that follows reads the strip right and
+     * draws again, but it presents in the same transaction, and of two frames presented in
+     * one transaction the layer shows the first.
+     */
+    internal fun measureCaption() {
+        // A frame set without displaying leaves the title bar where it was until the window
+        // is next laid out, and the rect with it.
+        window.layoutIfNeeded()
         val close = window.standardWindowButton(NSWindowCloseButton)
         val zoom = window.standardWindowButton(NSWindowZoomButton)
-        caption.value = macosWindowCaption(
+        val measured = macosWindowCaption(
             chrome = chrome,
             windowHeight = window.frame.useContents { size.height },
             contentLayoutHeight = window.contentLayoutRect.useContents { size.height },
@@ -241,6 +257,11 @@ class MacosWindow(
             zoomMaxX = zoom?.frame?.useContents { origin.x + size.width },
             cornerRadius = systemCornerRadius(chrome),
         ) ?: return
+        if (measured == caption.value) return
+        caption.value = measured
+        // Content that reads the strip is laid out again by the next frame, so there has to
+        // be one: a window that is not being resized draws nothing until something asks.
+        requestFrame()
     }
 
     // With a full size content view the title bar is not laid out yet when the first reads
@@ -287,11 +308,6 @@ class MacosWindow(
     }
 
     private val backdrop = object : NSVisualEffectView(contentBounds(width, height)) {
-        override fun setFrameSize(newSize: CValue<CGSize>) {
-            super.setFrameSize(newSize)
-            measureCaption()
-        }
-
         override fun accessibilityRole(): String? = MacosAx.GROUP
         override fun isAccessibilityElement(): Boolean = true
         override fun accessibilityChildren(): List<*>? {
@@ -493,7 +509,10 @@ class MacosWindow(
             VerticalResizeProbe.setFrame(oldSize, size)
             val scale = window?.backingScaleFactor ?: 1.0
             resizeStats.step((size.first * scale).toInt(), (size.second * scale).toInt())
-            measureCaption()
+            // The caption is not measured here: the window's frame is new and its content
+            // layout rect is not yet, so the strip would come out taller or shorter by the
+            // change in height. This frame is drawn with the last reading, which a change of
+            // size does not alter, and the platform reads it again on its next turn.
             if (window != null) {
                 VerticalResizeProbe.via = "set-frame"
                 updateLayer()
