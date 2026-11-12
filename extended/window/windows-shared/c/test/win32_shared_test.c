@@ -13,6 +13,7 @@
 #include "win32_wheel.h"
 #include "win32_caption.h"
 #include "win32_multi.h"
+#include "win32_placement.h"
 #include "win32_window.h"
 
 // The records the Kotlin side reads and writes by offset. A field added on one side only is
@@ -30,6 +31,47 @@ void compose_rust_renderer_request_frame(void) {}
 
 #define CHECK(condition) \
     do { if (!(condition)) { printf("fail: %s (line %d)\n", #condition, __LINE__); failures++; } } while (0)
+
+// The first window's outside against the work area of its monitor (#185).
+static int placement_is(struct dxc_placement_rect r, int32_t l, int32_t t, int32_t rt, int32_t b) {
+    return r.left == l && r.top == t && r.right == rt && r.bottom == b;
+}
+
+static void first_window_placement(void) {
+    // A 1280x800 monitor whose taskbar leaves 1280x752.
+    struct dxc_placement_rect work = {0, 0, 1280, 752};
+    // Too big: shrunk to the work area and placed on it.
+    CHECK(placement_is(dxc_placement_fit(work, 1616, 1039, 0, 0, 0, 0, 0), 0, 0, 1280, 752));
+    // Too wide only: the height is kept and the window centred vertically.
+    CHECK(placement_is(dxc_placement_fit(work, 1600, 600, 0, 0, 0, 0, 0), 0, 76, 1280, 676));
+    // Fits: unchanged in size, centred as before.
+    CHECK(placement_is(dxc_placement_fit(work, 800, 600, 0, 0, 0, 0, 0), 240, 76, 1040, 676));
+    // Fits at an explicit position: left where it was asked for.
+    CHECK(placement_is(dxc_placement_fit(work, 800, 600, 0, 0, 1, 100, 50), 100, 50, 900, 650));
+    // Explicit position off the left and the top: pulled in so the caption is reachable.
+    CHECK(placement_is(dxc_placement_fit(work, 800, 600, 0, 0, 1, -300, -40), 0, 0, 800, 600));
+    // Off the right and the bottom: pulled back so the whole outside is on the monitor.
+    CHECK(placement_is(dxc_placement_fit(work, 800, 600, 0, 0, 1, 1000, 700), 480, 152, 1280, 752));
+    // Too big and positioned: shrunk, then placed at the work area's corner.
+    CHECK(placement_is(dxc_placement_fit(work, 2000, 1200, 0, 0, 1, 300, 300), 0, 0, 1280, 752));
+    // A minimum larger than the work area gives way to it; a smaller one still holds.
+    CHECK(placement_is(dxc_placement_fit(work, 1600, 1000, 1400, 900, 0, 0, 0), 0, 0, 1280, 752));
+    CHECK(placement_is(dxc_placement_fit(work, 200, 100, 400, 300, 0, 0, 0), 440, 226, 840, 526));
+
+    // A secondary monitor left of and above the primary one, 1920x1040 of work area.
+    struct dxc_placement_rect second = {-1920, -200, 0, 840};
+    CHECK(placement_is(dxc_placement_fit(second, 2400, 1400, 0, 0, 0, 0, 0), -1920, -200, 0, 840));
+    CHECK(placement_is(dxc_placement_fit(second, 800, 600, 0, 0, 0, 0, 0), -1360, 20, -560, 620));
+    CHECK(placement_is(dxc_placement_fit(second, 800, 600, 0, 0, 1, -2500, -900), -1920, -200, -1120, 400));
+    CHECK(placement_is(dxc_placement_fit(second, 800, 600, 0, 0, 1, -100, 600), -800, 240, 0, 840));
+
+    // 150%: 1600x1000 points are 2400x1500 pixels plus the frame, on a monitor whose work
+    // area is 2560x1392 pixels (1706x928 points).
+    struct dxc_placement_rect scaled = {0, 0, 2560, 1392};
+    CHECK(placement_is(dxc_placement_fit(scaled, 2422, 1556, 0, 0, 0, 0, 0), 69, 0, 2491, 1392));
+    // 800x600 points at 150% fit and keep their size.
+    CHECK(placement_is(dxc_placement_fit(scaled, 1222, 956, 0, 0, 0, 0, 0), 669, 218, 1891, 1174));
+}
 
 static void resize_decisions(void) {
     struct dxc_resize resize;
@@ -392,6 +434,7 @@ static void fr53_activate_reports_focus(void) {
 
 int main(int argc, char **argv) {
     resize_decisions();
+    first_window_placement();
     wheel_direction();
     utf8_conversion();
     caption_zones();
