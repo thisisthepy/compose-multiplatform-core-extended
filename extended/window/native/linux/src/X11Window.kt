@@ -32,6 +32,7 @@ import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.CaptionAction
 import org.thisisthepy.compose.window.CaptionGesture
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowCaption
 import org.thisisthepy.compose.window.WindowEdge
 import org.thisisthepy.compose.window.X11Chrome
@@ -87,6 +88,8 @@ class X11Window : WindowPlatform {
     override val name: String = "x11"
 
     private var display: CPointer<Display>? = null
+    private var lastTextScale = TextScale.DEFAULT
+    private var nextTextScaleCheck = 0L
     private var window: Window = 0uL
     private var context: GLXContext? = null
     private var colormap: Colormap = 0uL
@@ -356,6 +359,7 @@ class X11Window : WindowPlatform {
                 listener?.onMoved(now)
             }
         }
+        checkTextScale()
         // After the events, so that a reader's action lands after the input that came before
         // it, and on this thread, which is the one the scene is on.
         accessibility.setGeometry(measured.width, measured.height, measured.scale)
@@ -508,6 +512,24 @@ class X11Window : WindowPlatform {
     fun noFrame() {
         sync.noFrame()
         presentedSinceEvent = true
+    }
+
+    override fun textScale(): Float = LinuxTextScale.read()
+
+    /**
+     * Neither GNOME's nor KDE's setting is announced on the X connection, so it is read again
+     * every few seconds, which is cheap enough (one `gsettings` run) and quick enough for a
+     * slider in a settings panel.
+     */
+    private fun checkTextScale() {
+        val now = monotonicClockNanos()
+        if (now < nextTextScaleCheck) return
+        nextTextScaleCheck = now + TEXT_SCALE_POLL_NANOS
+        val scale = LinuxTextScale.read()
+        if (scale != lastTextScale) {
+            lastTextScale = scale
+            listener?.onTextScaleChanged(scale)
+        }
     }
 
     override fun systemTheme(): SystemTheme {
@@ -1255,6 +1277,7 @@ class X11Window : WindowPlatform {
     }
 
     private companion object {
+        const val TEXT_SCALE_POLL_NANOS = 3_000_000_000L
         const val EVENT_MASK = ExposureMask or StructureNotifyMask or PointerMotionMask or
             ButtonPressMask or ButtonReleaseMask or KeyPressMask or KeyReleaseMask or FocusChangeMask or
             0L

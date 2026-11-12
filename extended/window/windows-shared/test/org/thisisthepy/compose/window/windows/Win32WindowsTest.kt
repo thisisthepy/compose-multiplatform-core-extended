@@ -38,10 +38,12 @@ private class FakeWindow(val config: WindowConfig) : Win32WindowBackend {
     var followAnchor: Pair<Float, Float>? = null
     var focusCalls = 0
 
+    var scale = 1f
     var handleValue = 0L
 
     override val closed: Boolean get() = destroyed
     override val handle: Long get() = if (destroyed) 0L else handleValue
+    override fun textScale(): Float = scale
     override fun measure() = WindowMeasurement(config.width, config.height, 1f)
     override fun drainEvents(): List<WindowEvent> {
         val out = events.toList()
@@ -161,6 +163,17 @@ private fun config(title: String, x: Int? = null, y: Int? = null) =
     WindowConfig(title = title, width = 300, height = 200, x = x, y = y)
 
 class Win32WindowsTest {
+
+    @Test
+    fun fr53_each_window_answers_the_text_scale_its_backend_reads() {
+        val process = FakeProcess()
+        val windows = Win32Windows(process)
+        val platform = windows.newPlatform()
+        assertEquals(1f, platform.textScale(), "no window yet answers the default")
+        assertTrue(platform.open(config("a"), Recorder()))
+        process.windows[0].scale = 1.5f
+        assertEquals(1.5f, platform.textScale())
+    }
 
     @Test
     fun fr53_two_windows_have_independent_state() {

@@ -15,6 +15,7 @@ import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.value
 import org.thisisthepy.compose.window.AccessibleElement
+import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowMeasurement
@@ -35,6 +36,7 @@ import org.thisisthepy.compose.window.windows.c.dxc_native_set_accessibility
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_cursor
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_draw_callback
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_raster_resize
+import org.thisisthepy.compose.window.windows.c.dxc_native_text_scale_percent
 import org.thisisthepy.compose.window.windows.c.dxc_native_window
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_action
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_is_zoomed
@@ -234,6 +236,9 @@ object Win32Loop {
         }
         return events
     }
+
+    /** The operating system's text size as a multiplier, 1 when unchanged. */
+    fun textScale(): Float = TextScale.fromWindowsPercent(dxc_native_text_scale_percent())
 
     /** The paths of the files last dragged over the window, NUL between them. Empty when none. */
     fun readDroppedPaths(): String = memScoped {

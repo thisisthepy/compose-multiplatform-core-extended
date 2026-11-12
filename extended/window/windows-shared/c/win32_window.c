@@ -93,6 +93,7 @@ enum {
     DXC_EVENT_FILES_ENTERED = 10,
     DXC_EVENT_FILES_DROPPED = 11,
     DXC_EVENT_FILES_EXITED = 12,
+    DXC_EVENT_TEXT_SCALE_CHANGED = 18,
 };
 
 // Room for what an input method is composing, which is a syllable or a word and never a
@@ -225,6 +226,9 @@ struct DxcWin {
     LPCWSTR cursor;
     LONG ime_spot_x;
     LONG ime_spot_y;
+    // The text size percent this window last reported (read when it opened), plus one.
+    // Per window, because the settings broadcast reaches every window and each reports it.
+    int32_t text_scale_seen;
 
     struct dxc_element a11y_elements[DXC_MAX_ELEMENTS];
     int32_t a11y_count;
@@ -1496,6 +1500,49 @@ static float dxc_wheel_lines(void) {
     return (float)lines;
 }
 
+/*
+ * The Text size slider in Settings > Accessibility, as a percent (100 to 225); 0 when the
+ * user never moved it. This is the value UISettings.TextScaleFactor reports, read from the
+ * registry because UISettings is a WinRT class and this file stays plain C. advapi32 is
+ * loaded by name for the same reason dwmapi is: no extra import library to link.
+ */
+typedef LONG (WINAPI *dxc_reg_get_value_fn)(HKEY, LPCWSTR, LPCWSTR, DWORD, LPDWORD, PVOID, LPDWORD);
+
+int32_t dxc_native_text_scale_percent(void) {
+    static dxc_reg_get_value_fn reg_get_value = NULL;
+    static int resolved = 0;
+    if (!resolved) {
+        HMODULE advapi = LoadLibraryW(L"advapi32.dll");
+        if (advapi != NULL) {
+            reg_get_value = (dxc_reg_get_value_fn)(void *)GetProcAddress(advapi, "RegGetValueW");
+        }
+        resolved = 1;
+    }
+    if (reg_get_value == NULL) {
+        return 0;
+    }
+    DWORD value = 0;
+    DWORD size = sizeof value;
+    LONG status = reg_get_value(HKEY_CURRENT_USER, L"Software\\Microsoft\\Accessibility",
+                                L"TextScaleFactor", RRF_RT_REG_DWORD, NULL, &value, &size);
+    return status == ERROR_SUCCESS ? (int32_t)value : 0;
+}
+
+/* Queues a text scale event for the current window when the slider moved since its last look. */
+static void dxc_check_text_scale(void) {
+    int32_t percent = dxc_native_text_scale_percent();
+    int32_t seen = dxc_w->text_scale_seen;
+    dxc_w->text_scale_seen = percent + 1;
+    if (seen == percent + 1) {
+        return;
+    }
+    struct dxc_event record;
+    memset(&record, 0, sizeof record);
+    record.kind = DXC_EVENT_TEXT_SCALE_CHANGED;
+    record.x = (float)percent;
+    dxc_push_event(record);
+}
+
 /** The DXC_*_BUTTON flag of the button a WM_*BUTTONDOWN or WM_*BUTTONUP message is about. */
 static int32_t dxc_event_button(UINT message, WPARAM wparam) {
     switch (message) {
@@ -2553,6 +2600,10 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         }
         return 0;
     }
+    case WM_SETTINGCHANGE:
+        // Any settings broadcast may be the Text size slider, so look rather than parse lparam.
+        dxc_check_text_scale();
+        break;
     case WM_DPICHANGED:
         fprintf(stderr, "compose-rust: resize-mode: dpi -> %u because WM_DPICHANGED\n",
                 (unsigned)HIWORD(wparam));
@@ -4382,6 +4433,8 @@ int32_t dxc_native_window_open(
     }
     win->options = dxc_next_options;
     win->cursor = IDC_ARROW;
+    // The size the window opens with, so the first move of the slider is reported.
+    win->text_scale_seen = dxc_native_text_scale_percent() + 1;
     win->has_position = dxc_next_position.has;
     win->position_x = dxc_next_position.x;
     win->position_y = dxc_next_position.y;

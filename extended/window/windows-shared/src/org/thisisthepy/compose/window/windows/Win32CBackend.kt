@@ -16,6 +16,7 @@ import org.thisisthepy.compose.window.CaptionAction
 import org.thisisthepy.compose.window.ContextMenuItem
 import org.thisisthepy.compose.window.FileDialogRequest
 import org.thisisthepy.compose.window.ScreenPointer
+import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowBounds
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
@@ -122,6 +123,8 @@ internal class Win32CWindowBackend(private val native: Win32NativeWindow) : Win3
     }
 
     override fun systemDark(): Boolean = dxc_native_system_dark() != 0
+
+    override fun textScale(): Float = on(TextScale.DEFAULT) { Win32Loop.textScale() }
 
     override fun setPosition(x: Int, y: Int) = on(Unit) { dxc_native_window_set_position(x, y) }
 
