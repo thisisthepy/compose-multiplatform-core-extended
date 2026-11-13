@@ -151,6 +151,9 @@ class MacosWindow(
     /** The window became or stopped being the key window. */
     var onFocus: ((Boolean) -> Unit)? = null
 
+    /** The window's backing scale changed (it moved to another display), to the new one. */
+    var onScaleChanged: ((Float) -> Unit)? = null
+
     private var slots: MacosNativeViews? = null
 
     /**
@@ -236,7 +239,7 @@ class MacosWindow(
         val size = IntSize(widthInPixels, heightInPixels)
         measured = size
         val begun = kotlin.time.TimeSource.Monotonic.markNow()
-        host?.renderTo(canvas, widthInPixels, heightInPixels)
+        host?.renderTo(canvas, widthInPixels, heightInPixels, window.backingScaleFactor.toFloat())
         onFrameRendered?.invoke(begun.elapsedNow().inWholeNanoseconds)
         val scale = window.backingScaleFactor
         view.frame.useContents {
@@ -249,6 +252,20 @@ class MacosWindow(
     fun requestFrame() {
         view.needsDisplay = true
         host?.requestFrame()
+    }
+
+    /**
+     * The window moved to a screen of another density, or its screen changed density, with no
+     * change of size in points. The layer takes the new scale and a drawable to match, the
+     * platform hears the scale, and a frame is drawn at it: without one the last frame stays up,
+     * scaled by the window server, until something else asks, and a window taken from a 1x
+     * screen to a 2x one shows a soft picture.
+     */
+    internal fun backingChanged() {
+        val scale = window.backingScaleFactor.takeIf { it > 0.0 } ?: 1.0
+        view.bounds.useContents { metal.resize(size.width, size.height, scale) }
+        onScaleChanged?.invoke(scale.toFloat())
+        requestFrame()
     }
 
     var onFrameDrawn: ((widthInPixels: Int, heightInPixels: Int) -> Unit)? = null

@@ -427,8 +427,12 @@ class ComposeWindowHost(
         drewLast = true
     }
 
-    /** Renders directly to [canvas] at the given pixel dimensions, using the host's clock and scene. */
-    fun renderTo(canvas: org.jetbrains.skia.Canvas, widthInPixels: Int, heightInPixels: Int) {
+    /**
+     * Renders directly to [canvas] at the given pixel dimensions, using the host's clock and
+     * scene. A [scale] other than the scene's density (the window moved to a screen of another
+     * density) lays the content out again at that one; null keeps the density.
+     */
+    fun renderTo(canvas: org.jetbrains.skia.Canvas, widthInPixels: Int, heightInPixels: Int, scale: Float? = null) {
         val current = scene ?: return
         // A window drawn by its own run loop reaches here without a turn: what it heard
         // is handed over first, so the frame shows it.
@@ -437,6 +441,10 @@ class ComposeWindowHost(
         sceneMainWork.runPending()
         val fitted = IntSize(widthInPixels, heightInPixels)
         if (current.size != fitted) current.size = fitted
+        if (scale != null && scale > 0f && (current.density.density != scale || current.density.fontScale != textScale)) {
+            current.density = Density(scale, textScale)
+            density = scale
+        }
         current.render(canvas.asComposeCanvas(), clock.frameNanos())
         work.runPending()
         sceneMainWork.runPending()

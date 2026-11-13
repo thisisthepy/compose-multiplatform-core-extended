@@ -137,6 +137,9 @@ class MacosWindowPlatform(
         created.onFocus = { focused ->
             this.listener?.onFocusChanged(focused)
         }
+        created.onScaleChanged = { scale ->
+            this.listener?.onScaleChanged(scale)
+        }
         idleSoak.reset()
 
         if (content !== EMPTY_CONTENT && internalHost == null) {
