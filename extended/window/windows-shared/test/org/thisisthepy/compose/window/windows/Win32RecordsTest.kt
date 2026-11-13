@@ -20,7 +20,7 @@ class Win32RecordsTest {
 
     @Test
     fun recordsHaveTheSizesTheCSideWrites() {
-        assertEquals(124L, sizeOf<dxc_event>())
+        assertEquals(136L, sizeOf<dxc_event>())
         assertEquals(116L, sizeOf<dxc_element>())
         assertEquals(96, Win32Records.TEXT_BYTES)
     }

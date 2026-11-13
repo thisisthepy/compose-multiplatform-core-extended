@@ -67,6 +67,7 @@
 #include "win32_buttons.h"
 #include "win32_resize.h"
 #include "win32_wheel.h"
+#include "win32_keys.h"
 #include "win32_ime_text.h"
 #include "win32_caption.h"
 #include "win32_multi.h"
@@ -2694,19 +2695,15 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
     }
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
-        // Anything held with alt, and F10, arrive as a system key. Answered here rather
-        // than passed on, because the default handler puts the window into menu mode on a
-        // keystroke the scene was meant to read. Alt and F4 together is the exception: it
-        // is how a window is closed from the keyboard, and the handler that does that is
-        // the one being stepped around.
-        dxc_push_key(DXC_EVENT_KEY_DOWN, wparam);
-        if (message == WM_SYSKEYDOWN && wparam == VK_F4) {
-            break;
-        }
-        return 0;
     case WM_KEYUP:
     case WM_SYSKEYUP:
-        dxc_push_key(DXC_EVENT_KEY_UP, wparam);
+        // Anything held with alt, and F10, arrive as a system key. Answered here rather
+        // than passed on, because the default handler puts the window into menu mode on a
+        // keystroke the scene was meant to read (win32_keys.h, where it is tested). Alt and
+        // F4 together is the exception: it is how a window is closed from the keyboard, and
+        // the handler that does that is the one being stepped around.
+        dxc_push_key(dxc_key_is_press(message) ? DXC_EVENT_KEY_DOWN : DXC_EVENT_KEY_UP, wparam);
+        if (dxc_key_passes_to_system(message, wparam)) break;
         return 0;
     case WM_ENTERSIZEMOVE:
         // The reader has taken hold of an edge, or of the title bar. From here until the
