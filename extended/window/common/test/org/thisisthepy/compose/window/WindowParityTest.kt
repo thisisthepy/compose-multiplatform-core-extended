@@ -26,6 +26,15 @@ class WindowParityTest {
     }
 
     @Test
+    fun fr19_3_an_icon_buffer_is_four_bytes_a_pixel_with_no_padding() {
+        assertTrue(isIconBuffer(size = 16 * 16 * 4, width = 16, height = 16))
+        assertFalse(isIconBuffer(size = 16 * 16 * 3, width = 16, height = 16), "no alpha channel")
+        assertFalse(isIconBuffer(size = 16 * 16 * 4 + 1, width = 16, height = 16), "padded rows")
+        assertFalse(isIconBuffer(size = 0, width = 0, height = 0), "no picture")
+        assertFalse(isIconBuffer(size = 4, width = -1, height = -1))
+    }
+
+    @Test
     fun fr19_3_the_dock_icon_waits_for_the_asset_and_is_put_on_once() {
         var arrived: String? = null
         val applied = ArrayList<String>()

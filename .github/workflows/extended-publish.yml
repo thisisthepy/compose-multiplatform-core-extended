@@ -73,6 +73,14 @@ permissions:
   contents: read
 
 env:
+  # Retry transient dependency download failures (TLS handshake resets, timeouts) with
+  # backoff. These are JVM system properties read by Gradle's repository transport, so
+  # they must reach the daemon and Amper's JVMs; JAVA_TOOL_OPTIONS is inherited by all.
+  JAVA_TOOL_OPTIONS: >-
+    -Dorg.gradle.internal.repository.max.retries=6
+    -Dorg.gradle.internal.repository.initial.backoff=1000
+    -Dorg.gradle.internal.http.connectionTimeout=120000
+    -Dorg.gradle.internal.http.socketTimeout=120000
   # Every coordinate the bundle must carry. The check also follows every dependency and
   # variant the bundle names, so this list is the roots, not the closure.
   REQUIRED: >-
@@ -89,6 +97,7 @@ env:
     org.thisisthepy.compose.window:native-linux
     org.thisisthepy.compose.window:graalvm-macos
     org.thisisthepy.compose.window:graalvm-linux
+    org.thisisthepy.compose.window:graalvm-windows
     org.thisisthepy.compose.skiko:skiko-awt
 
 jobs:
@@ -186,7 +195,7 @@ jobs:
           # Windows target in them.
           - os: macos-latest
             name: macos
-            modules: "common scene native/macos graalvm/graalvm-macos graalvm/graalvm-linux"
+            modules: "common scene native/macos graalvm/graalvm-macos graalvm/graalvm-linux graalvm/graalvm-windows"
             compose: "desktop macosArm64 iosArm64 iosSimulatorArm64 tvosArm64 tvosSimulatorArm64 watchosArm64 watchosArm32 watchosSimulatorArm64 mingwX64"
             all-roots: true
             timeout: 360

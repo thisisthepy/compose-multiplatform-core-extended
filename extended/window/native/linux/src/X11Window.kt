@@ -12,6 +12,7 @@ import kotlinx.cinterop.CPointerVar
 import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.LongVar
 import kotlinx.cinterop.UByteVar
+import kotlinx.cinterop.UIntVar
 import kotlinx.cinterop.ULongVar
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
@@ -31,6 +32,7 @@ import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.CaptionAction
 import org.thisisthepy.compose.window.CaptionGesture
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowCaption
 import org.thisisthepy.compose.window.WindowEdge
 import org.thisisthepy.compose.window.X11Chrome
@@ -40,6 +42,8 @@ import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.ResizeStats
 import org.thisisthepy.compose.window.ResizeSync
 import org.thisisthepy.compose.window.SystemTheme
+import org.thisisthepy.compose.window.WindowBounds
+import org.thisisthepy.compose.window.ScreenPointer
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowEventLog
@@ -62,6 +66,8 @@ import platform.posix.write
 import platform.posix.clock_gettime
 import platform.posix.timespec
 import platform.posix.getenv
+import platform.posix.gethostname
+import platform.posix.getpid
 import platform.posix.poll
 import platform.posix.pollfd
 import kotlinx.cinterop.toKString
@@ -84,6 +90,8 @@ class X11Window : WindowPlatform {
     override val name: String = "x11"
 
     private var display: CPointer<Display>? = null
+    private var lastTextScale = TextScale.DEFAULT
+    private var nextTextScaleCheck = 0L
     private var window: Window = 0uL
     private var context: GLXContext? = null
     private var colormap: Colormap = 0uL
@@ -105,6 +113,22 @@ class X11Window : WindowPlatform {
     private var openedHeight = 0
     private var config: WindowConfig? = null
     private var fullscreen = false
+
+    /** The process-wide display connection this window is one of the users of; null before open and after close. */
+    private var connection: X11Connection? = null
+
+    /** Where the window asked to open, as the position hint, when [WindowConfig.x] and [WindowConfig.y] were both given. */
+    private var openedAt: Pair<Int, Int>? = null
+
+    /** Whether the window is the key window, as the last FocusIn or FocusOut said. */
+    private var key = false
+
+    /** The frame changed since the listener was last told, to be checked once at the end of the pump turn. */
+    private var movedPending = false
+    private var lastBounds: WindowBounds? = null
+
+    /** The point of the content to keep under the pointer while a [followPointer] runs. */
+    private var follow: Pair<Float, Float>? = null
 
     // The last press of the primary button, in window pixels and on the monotonic clock, which
     // is where a press in the caption the scene draws was made.
@@ -192,6 +216,9 @@ class X11Window : WindowPlatform {
         tell = { value -> setCounter(value) },
     )
 
+    /** The shared connection, for a test that checks which windows share it. */
+    internal val sharedConnection: X11Connection? get() = connection
+
     /** The X id of the window, for a test that has to address it as another client. */
     internal val windowId: ULong get() = window
 
@@ -208,8 +235,9 @@ class X11Window : WindowPlatform {
 
     override fun open(config: WindowConfig, listener: WindowListener): Boolean {
         if (display != null) return false
-        val display = XOpenDisplay(null) ?: return false
-        val screen = XDefaultScreen(display)
+        val shared = X11Connection.acquire() ?: return false
+        val display = shared.display
+        val screen = shared.screen
         val visual = glXChooseVisual(
             display,
             screen,
@@ -220,7 +248,7 @@ class X11Window : WindowPlatform {
             ),
         )
         if (visual == null) {
-            XCloseDisplay(display)
+            shared.release()
             return false
         }
         val colormap = XCreateColormap(display, XRootWindow(display, screen), visual.pointed.visual, AllocNone)
@@ -231,7 +259,7 @@ class X11Window : WindowPlatform {
             XCreateWindow(
                 display,
                 XRootWindow(display, screen),
-                0, 0,
+                (config.x ?: 0).convert(), (config.y ?: 0).convert(),
                 config.width.convert(), config.height.convert(),
                 0u,
                 visual.pointed.depth,
@@ -247,22 +275,23 @@ class X11Window : WindowPlatform {
             if (context != null) glXDestroyContext(display, context)
             if (window != 0uL) XDestroyWindow(display, window)
             XFreeColormap(display, colormap)
-            XCloseDisplay(display)
+            shared.release()
             return false
         }
+        this.connection = shared
         this.display = display
         this.window = window
         this.context = context
         this.colormap = colormap
         this.listener = listener
         this.title = config.title
-        deleteWindow = XInternAtom(display, "WM_DELETE_WINDOW", 0)
-        protocolsAtom = XInternAtom(display, "WM_PROTOCOLS", 0)
-        syncRequest = XInternAtom(display, "_NET_WM_SYNC_REQUEST", 0)
-        clipboardAtom = XInternAtom(display, "CLIPBOARD", 0)
-        utf8Atom = XInternAtom(display, "UTF8_STRING", 0)
-        targetsAtom = XInternAtom(display, "TARGETS", 0)
-        transferAtom = XInternAtom(display, "COMPOSE_WINDOW_TRANSFER", 0)
+        deleteWindow = shared.deleteWindow
+        protocolsAtom = shared.protocols
+        syncRequest = shared.syncRequest
+        clipboardAtom = shared.clipboard
+        utf8Atom = shared.utf8
+        targetsAtom = shared.targets
+        transferAtom = shared.transfer
         syncCounter = createSyncCounter(display, window)
         memScoped {
             val protocols = allocArray<ULongVar>(2)
@@ -275,6 +304,9 @@ class X11Window : WindowPlatform {
             XSetWMProtocols(display, window, protocols, count)
         }
         XStoreName(display, window, config.title)
+        // Before the window is mapped, so a tool that looks the window up by process
+        // (`xdotool search --pid`) finds it from the first map on.
+        setClientIdentity(display, window)
         this.config = config
         // Before the window is mapped, because a manager decides on the frame when it maps it.
         if (!X11Chrome.keepsFrame(config)) removeDecorations(display, window)
@@ -282,7 +314,7 @@ class X11Window : WindowPlatform {
         accessibility.setTitle(config.title)
         measured = WindowMeasurement(config.width, config.height, DENSITY)
         surface = GlSurface(display, window, context)
-        xim = XimContext.open(display, window, ime)?.also { input ->
+        xim = shared.inputMethod()?.let { method -> XimContext.open(display, window, ime, method) }?.also { input ->
             XSelectInput(display, window, EVENT_MASK or input.filterMask)
         }
         xdnd = XdndTarget(display, window) { log.heard(it) }.also { it.attach() }
@@ -291,46 +323,65 @@ class X11Window : WindowPlatform {
         resizable = config.resizable
         openedWidth = config.width
         openedHeight = config.height
+        val atX = config.x
+        val atY = config.y
+        openedAt = if (atX != null && atY != null) atX to atY else null
         applySizeHints()
+        shared.register(window, this)
         XMapWindow(display, window)
         XFlush(display)
         return true
     }
 
+    /**
+     * Reads the display connection every window of the process shares, waiting at most
+     * [timeoutMillis], and hands each event to the listener of the window it belongs to.
+     *
+     * A caller with several windows pumps once per turn, on any one of them: the wait is for the
+     * shared connection (and the wake pipe of every open window, and the bus socket of an open
+     * file dialog), so pumping each window in turn would multiply it. Pumping a window that is closed does nothing.
+     */
     override fun pump(timeoutMillis: Long) {
-        val display = display ?: return
-        if (timeoutMillis > 0 && XPending(display) == 0) {
-            memScoped {
-                // The display connection, and the wake pipe: a byte from another thread ends
-                // the wait as an event would. One sent before the wait began is still in the
-                // pipe, so it ends this wait at once rather than the next.
-                val watched = allocArray<pollfd>(2)
-                watched[0].fd = XConnectionNumber(display)
-                watched[0].events = POLLIN.toShort()
-                watched[1].fd = wakeRead
-                watched[1].events = POLLIN.toShort()
-                poll(watched, (if (wakeRead >= 0) 2 else 1).convert(), timeoutMillis.toInt())
-            }
-        }
-        drainWakes()
-        log.read {
-            memScoped {
-                val event = alloc<XEvent>()
-                while (XPending(display) > 0) {
-                    XNextEvent(display, event.ptr)
-                    handle(event)
-                }
-            }
-        }
+        connection?.pump(timeoutMillis)
+    }
+
+    /** The wake pipe, for the connection's wait. */
+    internal val wakeDescriptor: Int get() = wakeRead
+
+    /** Hands what the turn read to the listener, then does the per-turn work of this window. */
+    internal fun deliver() {
+        if (display == null) return
         drained.clear()
         log.drain(drained)
         listener?.let { target -> for (event in drained) target.onEvent(event) }
+        if (this.display == null) return
+        stepFollow()
+        if (movedPending && !isClosed) {
+            movedPending = false
+            val now = bounds()
+            if (now != null && now != lastBounds) {
+                lastBounds = now
+                listener?.onMoved(now)
+            }
+        }
+        checkTextScale()
         // After the events, so that a reader's action lands after the input that came before
         // it, and on this thread, which is the one the scene is on.
         accessibility.setGeometry(measured.width, measured.height, measured.scale)
         if (presented && !isClosed) accessibility.join()
         accessibility.pump(isFocused)
+        for (client in busClients.toList()) client.pump()
     }
+
+    /** What reads a bus of its own on this window's turns, such as an open file dialog. */
+    private val busClients = ArrayList<WindowBusClient>()
+
+    internal fun attach(client: WindowBusClient) {
+        if (client !in busClients) busClients.add(client)
+    }
+
+    /** The sockets of the attached clients, for the connection's wait. */
+    internal fun busDescriptors(): List<Int> = busClients.flatMap { it.descriptors() }
 
     /**
      * Ends the wait in [pump] early, so the loop turns now rather than at the end of the
@@ -345,7 +396,7 @@ class X11Window : WindowPlatform {
     }
 
     /** Every wake up to here is answered by this turn, whether it ended the wait or not. */
-    private fun drainWakes() {
+    internal fun drainWakes() {
         if (wakeRead < 0) return
         val sink = ByteArray(WAKE_DRAIN_BYTES)
         sink.usePinned { pinned ->
@@ -468,6 +519,24 @@ class X11Window : WindowPlatform {
         presentedSinceEvent = true
     }
 
+    override fun textScale(): Float = LinuxTextScale.read()
+
+    /**
+     * Neither GNOME's nor KDE's setting is announced on the X connection, so it is read again
+     * every few seconds, which is cheap enough (one `gsettings` run) and quick enough for a
+     * slider in a settings panel.
+     */
+    private fun checkTextScale() {
+        val now = monotonicClockNanos()
+        if (now < nextTextScaleCheck) return
+        nextTextScaleCheck = now + TEXT_SCALE_POLL_NANOS
+        val scale = LinuxTextScale.read()
+        if (scale != lastTextScale) {
+            lastTextScale = scale
+            listener?.onTextScaleChanged(scale)
+        }
+    }
+
     override fun systemTheme(): SystemTheme {
         val gtk = getenv("GTK_THEME")?.toKString().orEmpty().lowercase()
         return if (gtk.endsWith(":dark") || gtk.endsWith("-dark")) SystemTheme.Dark else SystemTheme.Light
@@ -487,17 +556,34 @@ class X11Window : WindowPlatform {
         applySizeHints()
     }
 
-    /** Tells the window manager the sizes [sizeHintsFor] decides on, when there are any. */
+    /** Changes the window manager's resize policy without reopening the window. */
+    fun setResizable(value: Boolean) {
+        if (resizable == value) return
+        resizable = value
+        if (!value) {
+            openedWidth = measured.width
+            openedHeight = measured.height
+        }
+        applySizeHints()
+    }
+
+    /** Replaces the window manager's size hints, including clearing old constraints. */
     private fun applySizeHints() {
         val display = display ?: return
-        val decided = sizeHintsFor(minWidth, minHeight, resizable, openedWidth, openedHeight, DENSITY) ?: return
+        val decided = sizeHintsFor(minWidth, minHeight, resizable, openedWidth, openedHeight, DENSITY)
+        val placed = openedAt
         val hints = XAllocSizeHints() ?: return
-        decided.min?.let { (width, height) ->
+        placed?.let { (x, y) ->
+            hints.pointed.flags = hints.pointed.flags or US_POSITION
+            hints.pointed.x = x
+            hints.pointed.y = y
+        }
+        decided?.min?.let { (width, height) ->
             hints.pointed.flags = hints.pointed.flags or P_MIN_SIZE
             hints.pointed.min_width = width
             hints.pointed.min_height = height
         }
-        decided.max?.let { (width, height) ->
+        decided?.max?.let { (width, height) ->
             hints.pointed.flags = hints.pointed.flags or P_MAX_SIZE
             hints.pointed.max_width = width
             hints.pointed.max_height = height
@@ -628,6 +714,37 @@ class X11Window : WindowPlatform {
         return true
     }
 
+    /**
+     * Says which process on which machine owns the window: `_NET_WM_PID` (CARDINAL, the
+     * process id) and `WM_CLIENT_MACHINE` (STRING, the host name). The pid only means
+     * something together with the machine, which is why EWMH asks for both.
+     */
+    private fun setClientIdentity(display: CPointer<Display>, window: Window) {
+        memScoped {
+            val pid = alloc<LongVar>()
+            pid.value = getpid().toLong()
+            XChangeProperty(
+                display, window,
+                XInternAtom(display, "_NET_WM_PID", 0),
+                XInternAtom(display, "CARDINAL", 0),
+                32, PropModeReplace, pid.ptr.reinterpret(), 1,
+            )
+            val host = allocArray<ByteVar>(HOST_NAME_BYTES)
+            if (gethostname(host, HOST_NAME_BYTES.convert()) == 0) {
+                host[HOST_NAME_BYTES - 1] = 0
+                val name = host.toKString()
+                if (name.isNotEmpty()) {
+                    XChangeProperty(
+                        display, window,
+                        XInternAtom(display, "WM_CLIENT_MACHINE", 0),
+                        XInternAtom(display, "STRING", 0),
+                        8, PropModeReplace, host.reinterpret(), name.encodeToByteArray().size,
+                    )
+                }
+            }
+        }
+    }
+
     /** Asks the manager for no frame: `_MOTIF_WM_HINTS` with only the decorations set, to none. */
     private fun removeDecorations(display: CPointer<Display>, window: Window) {
         val hints = XInternAtom(display, "_MOTIF_WM_HINTS", 0)
@@ -751,6 +868,18 @@ class X11Window : WindowPlatform {
         if (finished.isNotEmpty()) ime.commit(finished) else ime.preeditDone()
     }
 
+    /**
+     * Makes the input method let go of what it is composing and sends nothing: the field has
+     * kept the text. The run is forgotten before the reset, so a callback the method makes
+     * from inside it to say it is done finds nothing to end.
+     */
+    override fun endComposition() {
+        val method = xim ?: return
+        if (!ime.composing) return
+        ime.discard()
+        method.reset()
+    }
+
     // The clipboard: the CLIPBOARD selection, as UTF-8 text.
 
     override fun writeClipboardText(text: String) {
@@ -813,8 +942,150 @@ class X11Window : WindowPlatform {
         listener?.onContextMenuChosen(-1)
     }
 
+    // Several windows in one process: the connection, the atoms and the input method are shared
+    // (see X11Connection); everything below is this window's own share of that.
+
+    override val supportsMultipleWindows: Boolean get() = true
+
+    override val isKey: Boolean get() = key
+
+    private fun changeKey(now: Boolean) {
+        if (key == now) return
+        key = now
+        listener?.onFocusChanged(now)
+    }
+
+    /** The window manager's frame around the content, from `_NET_FRAME_EXTENTS`; none where it gives none. */
+    private fun frameExtents(): FrameExtents {
+        val display = display ?: return FrameExtents.NONE
+        return memScoped {
+            val type = alloc<ULongVar>()
+            val format = alloc<IntVar>()
+            val count = alloc<ULongVar>()
+            val remaining = alloc<ULongVar>()
+            val data = alloc<CPointerVar<UByteVar>>()
+            val status = XGetWindowProperty(
+                display, window, connection?.frameExtents ?: return@memScoped FrameExtents.NONE, 0, 4, 0, 0uL,
+                type.ptr, format.ptr, count.ptr, remaining.ptr, data.ptr,
+            )
+            val bytes = data.value
+            val extents = if (status == 0 && bytes != null && format.value == 32 && count.value >= 4uL) {
+                val words = bytes.reinterpret<LongVar>()
+                FrameExtents(words[0].toInt(), words[1].toInt(), words[2].toInt(), words[3].toInt())
+            } else {
+                FrameExtents.NONE
+            }
+            if (bytes != null) XFree(bytes)
+            extents
+        }
+    }
+
+    override fun setPosition(x: Int, y: Int) {
+        val display = display ?: return
+        if (isClosed) return
+        val (clientX, clientY) = clientOriginFor(x, y, frameExtents())
+        XMoveWindow(display, window, clientX, clientY)
+        XFlush(display)
+        movedPending = true
+    }
+
+    override fun setContentSize(width: Int, height: Int) {
+        val display = display ?: return
+        if (isClosed || width <= 0 || height <= 0) return
+        XResizeWindow(display, window, width.convert(), height.convert())
+        XFlush(display)
+    }
+
+    override fun bounds(): WindowBounds? {
+        if (display == null || isClosed) return null
+        val (originX, originY) = originOnScreen()
+        val size = serverSize()
+        return outerBoundsOf(originX, originY, size.first, size.second, frameExtents())
+    }
+
+    override fun focus() {
+        val display = display ?: return
+        if (isClosed) return
+        val shared = connection ?: return
+        raise()
+        val managed = shared.hasWindowManager()
+        if (!managed) {
+            // No window manager to ask. Only a window that is on the screen can be given the
+            // focus; the server refuses the request for any other with an error that ends the process.
+            val viewable = memScoped {
+                val attributes = alloc<XWindowAttributes>()
+                XGetWindowAttributes(display, window, attributes.ptr) != 0 && attributes.map_state == IsViewable
+            }
+            if (viewable) XSetInputFocus(display, window, RevertToParent, CurrentTime.convert())
+        }
+        XFlush(display)
+    }
+
+    override fun pointerOnScreen(): ScreenPointer? {
+        val display = display ?: return null
+        val root = connection?.root ?: return null
+        return memScoped {
+            val rootReturn = alloc<ULongVar>()
+            val child = alloc<ULongVar>()
+            val rootX = alloc<IntVar>()
+            val rootY = alloc<IntVar>()
+            val winX = alloc<IntVar>()
+            val winY = alloc<IntVar>()
+            val mask = alloc<UIntVar>()
+            if (XQueryPointer(display, root, rootReturn.ptr, child.ptr, rootX.ptr, rootY.ptr, winX.ptr, winY.ptr, mask.ptr) == 0) {
+                null
+            } else {
+                ScreenPointer(
+                    rootX.value.toFloat() / DENSITY,
+                    rootY.value.toFloat() / DENSITY,
+                    mask.value.toLong() and Button1Mask.toLong() != 0L,
+                )
+            }
+        }
+    }
+
+    override fun followPointer(anchorX: Float, anchorY: Float): Boolean {
+        if (display == null || isClosed) return false
+        val pointer = pointerOnScreen() ?: return false
+        if (!pointer.primaryDown) return false
+        follow = anchorX to anchorY
+        return true
+    }
+
+    /** One turn of a [followPointer]: ends it, or moves the window so the anchor is under the pointer. */
+    private fun stepFollow() {
+        val anchor = follow ?: return
+        val display = display ?: return
+        val pointer = pointerOnScreen()
+        if (pointer == null || !pointer.primaryDown) {
+            follow = null
+            listener?.onFollowEnded(false)
+            return
+        }
+        if (escapeIsDown(display)) {
+            follow = null
+            listener?.onFollowEnded(true)
+            return
+        }
+        val (clientX, clientY) = followOrigin(pointer.x, pointer.y, anchor.first, anchor.second, DENSITY)
+        XMoveWindow(display, window, clientX, clientY)
+        XFlush(display)
+        movedPending = true
+    }
+
+    private fun escapeIsDown(display: CPointer<Display>): Boolean = memScoped {
+        val keymap = allocArray<ByteVar>(KEYMAP_BYTES)
+        XQueryKeymap(display, keymap)
+        val code = XKeysymToKeycode(display, KEYSYM_ESCAPE).toInt()
+        val bytes = ByteArray(KEYMAP_BYTES) { keymap[it] }
+        code != 0 && keyIsDown(bytes, code)
+    }
+
     override fun close() {
         accessibility.close()
+        val clients = busClients.toList()
+        busClients.clear()
+        for (client in clients) client.windowClosing()
         val display = display ?: return
         isClosed = true
         xim?.close()
@@ -823,10 +1094,17 @@ class X11Window : WindowPlatform {
         surface = null
         glXMakeCurrent(display, 0uL, null)
         context?.let { glXDestroyContext(display, it) }
+        for (cursor in cursors) if (cursor != 0L) XFreeCursor(display, cursor.toULong())
         XDestroyWindow(display, window)
         XFreeColormap(display, colormap)
-        XCloseDisplay(display)
+        XFlush(display)
+        follow = null
+        key = false
+        val shared = connection
+        connection = null
         this.display = null
+        shared?.unregister(window)
+        shared?.release()
     }
 
     private fun setCounter(value: Long) {
@@ -864,7 +1142,7 @@ class X11Window : WindowPlatform {
         if (!presentedSinceEvent) sync.noFrame()
     }
 
-    private fun handle(event: XEvent) {
+    internal fun handle(event: XEvent) {
         if (isClosed) return
         val taken = xim?.filter(event) == true
         if (taken && (event.type == KeyPress || event.type == KeyRelease)) return
@@ -919,19 +1197,12 @@ class X11Window : WindowPlatform {
                         pressNanos = monotonicClockNanos()
                     }
                     if (event.type == ButtonRelease && button == 1) gesture.released()
-                    val bit = when (button) {
-                        1 -> 1
-                        3 -> 2
-                        2 -> 4
-                        else -> 0
-                    }
-                    val held = buttonsOf(event.xbutton.state)
                     log.heard(
                         event(
                             if (event.type == ButtonPress) WindowEvent.POINTER_DOWN else WindowEvent.POINTER_UP,
                             event.xbutton.x.toFloat(),
                             event.xbutton.y.toFloat(),
-                            if (event.type == ButtonPress) held or bit else held and bit.inv(),
+                            pointerButtonsOf(event.xbutton.state, button, event.type == ButtonPress),
                             modifiersOf(event.xbutton.state),
                         ),
                     )
@@ -941,6 +1212,7 @@ class X11Window : WindowPlatform {
             KeyPress, KeyRelease -> for (heard in readKey(event)) log.heard(heard)
 
             ConfigureNotify -> {
+                movedPending = true
                 val width = event.xconfigure.width
                 val height = event.xconfigure.height
                 if (width == measured.width && height == measured.height) {
@@ -976,8 +1248,14 @@ class X11Window : WindowPlatform {
 
             DestroyNotify -> isClosed = true
 
-            FocusIn -> if (event.xfocus.mode == NotifyNormal || event.xfocus.mode == NotifyWhileGrabbed) isFocused = true
-            FocusOut -> if (event.xfocus.mode == NotifyNormal || event.xfocus.mode == NotifyWhileGrabbed) isFocused = false
+            FocusIn -> if (event.xfocus.mode == NotifyNormal || event.xfocus.mode == NotifyWhileGrabbed) {
+                isFocused = true
+                changeKey(true)
+            }
+            FocusOut -> if (event.xfocus.mode == NotifyNormal || event.xfocus.mode == NotifyWhileGrabbed) {
+                isFocused = false
+                changeKey(false)
+            }
 
             SelectionNotify -> xdnd?.handleSelectionNotify(event)
             SelectionRequest -> answerSelection(event)
@@ -1047,6 +1325,7 @@ class X11Window : WindowPlatform {
     }
 
     private companion object {
+        const val TEXT_SCALE_POLL_NANOS = 3_000_000_000L
         const val EVENT_MASK = ExposureMask or StructureNotifyMask or PointerMotionMask or
             ButtonPressMask or ButtonReleaseMask or KeyPressMask or KeyReleaseMask or FocusChangeMask or
             0L
@@ -1054,6 +1333,10 @@ class X11Window : WindowPlatform {
         const val SOURCE_PAGER = 2L
         const val PRIMARY_BUTTON = 1L
         const val MOTIF_HINT_WORDS = 5
+
+        /** Room for a host name, the terminating zero included (HOST_NAME_MAX is 64 on Linux). */
+        const val HOST_NAME_BYTES = 256
+
         /** The flags word of `_MOTIF_WM_HINTS`: only the decorations field is meant. */
         const val MOTIF_HINTS_DECORATIONS = 2uL
         const val DENSITY = 1.0f
@@ -1062,6 +1345,9 @@ class X11Window : WindowPlatform {
         const val CONFIRM_SLICE_MILLIS = 50L
         const val LOW_HALF = 0xFFFFFFFFuL
         const val KEY_TEXT_BYTES = 32
+        const val US_POSITION = 1L
+        const val KEYMAP_BYTES = 32
+        const val KEYSYM_ESCAPE = 0xFF1BuL
         const val P_MIN_SIZE = 1L shl 4
         const val P_MAX_SIZE = 1L shl 5
 

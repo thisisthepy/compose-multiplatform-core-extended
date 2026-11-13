@@ -29,6 +29,16 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Retry transient dependency download failures (TLS handshake resets, timeouts) with
+  # backoff. These are JVM system properties read by Gradle's repository transport, so
+  # they must reach the daemon and Amper's JVMs; JAVA_TOOL_OPTIONS is inherited by all.
+  JAVA_TOOL_OPTIONS: >-
+    -Dorg.gradle.internal.repository.max.retries=6
+    -Dorg.gradle.internal.repository.initial.backoff=1000
+    -Dorg.gradle.internal.http.connectionTimeout=120000
+    -Dorg.gradle.internal.http.socketTimeout=120000
+
 jobs:
   corner-radius:
     # The table has a row per macOS release, so each release with a runner is measured.
@@ -36,7 +46,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ macos-14, macos-15, macos-latest ]
+        # The macos-14 row is left out because its runner is not supported at the moment
+        # ("macos-14-arm64-us-default is not supported"). It goes back in when it is.
+        os: [ macos-15, macos-latest ]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     defaults:

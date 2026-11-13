@@ -22,6 +22,9 @@ interface BusConnection {
     fun receive(timeoutMillis: Int): ByteArray?
 
     fun close()
+
+    /** False once the connection has gone, which is when [receive] has nothing more to give. */
+    val isOpen: Boolean get() = true
 }
 
 /** Who a call goes to. */
@@ -115,6 +118,10 @@ class DBusMessage private constructor(
     val replySerial: Long?,
     val interfaceName: String?,
     val member: String?,
+    /** The object a call or a signal names. */
+    val path: String?,
+    /** The bus's name for what went wrong, on an error. */
+    val errorName: String?,
     private val bodyStart: Int,
 ) {
     /** A reader at the start of the body. */
@@ -171,6 +178,8 @@ class DBusMessage private constructor(
             var replySerial: Long? = null
             var interfaceName: String? = null
             var member: String? = null
+            var path: String? = null
+            var errorName: String? = null
             reader.position = 16
             try {
                 while (reader.position < fieldsEnd) {
@@ -186,8 +195,10 @@ class DBusMessage private constructor(
                         else -> return null
                     }
                     when (code) {
+                        1 -> path = value as? String
                         2 -> interfaceName = value as? String
                         3 -> member = value as? String
+                        4 -> errorName = value as? String
                         5 -> replySerial = value as? Long
                     }
                 }
@@ -202,6 +213,8 @@ class DBusMessage private constructor(
                 replySerial,
                 interfaceName,
                 member,
+                path,
+                errorName,
                 bodyStart,
             )
         }
@@ -304,5 +317,85 @@ class DBusReader(private val bytes: ByteArray, var position: Int) {
         align(elementAlignment)
         val end = position + length
         while (position < end) element()
+    }
+
+    /**
+     * Steps over the values [signature] describes without reading them, for the entries of a
+     * dictionary this side has no use for. Throws IndexOutOfBoundsException where the bytes end
+     * early and IllegalArgumentException for a signature that is not one.
+     */
+    fun skip(signature: String) {
+        var index = 0
+        while (index < signature.length) index = skipOne(signature, index, 0)
+    }
+
+    private fun skipOne(signature: String, start: Int, depth: Int): Int {
+        if (depth > MAX_DEPTH || start >= signature.length) throw IllegalArgumentException("signature")
+        when (signature[start]) {
+            'y' -> jump(1, 1)
+            'n', 'q' -> jump(2, 2)
+            'b', 'i', 'u', 'h' -> jump(4, 4)
+            'x', 't', 'd' -> jump(8, 8)
+            's', 'o' -> string()
+            'g' -> signature()
+            'v' -> {
+                val inner = signature()
+                var index = 0
+                while (index < inner.length) index = skipOne(inner, index, depth + 1)
+            }
+            'a' -> {
+                val after = typeEnd(signature, start + 1, depth + 1)
+                val length = u32().toInt()
+                align(alignmentOf(signature[start + 1]))
+                val end = position + length
+                if (length < 0 || end > bytes.size) throw IndexOutOfBoundsException()
+                while (position < end) skipOne(signature, start + 1, depth + 1)
+                return after
+            }
+            '(', '{' -> {
+                val close = if (signature[start] == '(') ')' else '}'
+                align(8)
+                var index = start + 1
+                while (index < signature.length && signature[index] != close) index = skipOne(signature, index, depth + 1)
+                if (index >= signature.length) throw IllegalArgumentException("signature")
+                return index + 1
+            }
+            else -> throw IllegalArgumentException("signature")
+        }
+        return start + 1
+    }
+
+    private fun jump(alignment: Int, size: Int) {
+        align(alignment)
+        if (position + size > bytes.size) throw IndexOutOfBoundsException()
+        position += size
+    }
+
+    /** The index after the one complete type that starts at [start]. */
+    private fun typeEnd(signature: String, start: Int, depth: Int): Int {
+        if (depth > MAX_DEPTH || start >= signature.length) throw IllegalArgumentException("signature")
+        return when (signature[start]) {
+            'a' -> typeEnd(signature, start + 1, depth + 1)
+            '(', '{' -> {
+                val close = if (signature[start] == '(') ')' else '}'
+                var index = start + 1
+                while (index < signature.length && signature[index] != close) index = typeEnd(signature, index, depth + 1)
+                if (index >= signature.length) throw IllegalArgumentException("signature")
+                index + 1
+            }
+            else -> start + 1
+        }
+    }
+
+    private fun alignmentOf(type: Char): Int = when (type) {
+        'y', 'g', 'v' -> 1
+        'n', 'q' -> 2
+        'x', 't', 'd', '(', '{' -> 8
+        else -> 4
+    }
+
+    private companion object {
+        /** The bus allows 32 levels of arrays and 32 of structures, so nothing valid nests deeper. */
+        const val MAX_DEPTH = 64
     }
 }
