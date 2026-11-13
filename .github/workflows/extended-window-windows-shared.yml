@@ -139,6 +139,9 @@ jobs:
         shell: bash
         run: |
           PROBE_RASTER=0 PROBE_SAVE='out\frames-states-gpu' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-gpu.log || true
+          PROBE_RASTER=0 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-gpu-30ms.log || true
+          DXC_PREDRAW_FLUSH=1 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-flush.log || true
+          DXC_PREDRAW_FLUSH=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-flush-30ms.log || true
 
       # How far the edge lags the pointer in a right-edge drag, with a frame that costs
       # nothing and with one that costs 30 ms (about what Skia's raster backend takes on this

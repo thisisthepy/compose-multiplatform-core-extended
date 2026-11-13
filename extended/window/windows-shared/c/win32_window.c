@@ -443,6 +443,9 @@ static int dxc_predraw_off;
 // the window's GDI surface with the swapchain's child hidden, as before it was presented
 // through the swapchain. For comparing the two.
 static int dxc_raster_present_off;
+// DXC_PREDRAW_FLUSH=1: the wait for one composition after the frame drawn ahead, also when it
+// is presented through the swapchain. For comparing the two.
+static int dxc_predraw_flush;
 /**
  * One line on stderr for every change of a state that decides how resize frames are
  * produced. On by default: these happen a handful of times a session, and they are what
@@ -2707,7 +2710,9 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     dxc_resizing = 0;
     int drawn = dxc_predrawn.width == width && dxc_predrawn.height == height;
     double drawn_ms = dxc_elapsed_ms(started);
-    int flushed = drawn ? dxc_dwm_flush() : 0;
+    // Only for the copy into the GDI surface. A frame presented through the swapchain is
+    // waited for after its present, in WM_SIZE, like any GPU resize frame.
+    int flushed = drawn && (dxc_raster_present_off || dxc_predraw_flush) ? dxc_dwm_flush() : 0;
     fprintf(stderr,
             "compose-rust: resize-mode: drew %dx%d before the window took it (%s, draw %.2f ms, %s %.2f ms)\n",
             (int)width, (int)height, drawn ? "waiting for WM_SIZE" : "not drawn", drawn_ms,
@@ -4761,6 +4766,8 @@ static int32_t dxc_open_window(
         dxc_predraw_off = predraw != NULL && strcmp(predraw, "0") == 0;
         const char *through = getenv("DXC_RESIZE_SWAPCHAIN");
         dxc_raster_present_off = through != NULL && strcmp(through, "0") == 0;
+        const char *flush = getenv("DXC_PREDRAW_FLUSH");
+        dxc_predraw_flush = flush != NULL && strcmp(flush, "1") == 0;
     }
     dxc_log_monitor(window, "the window opened");
     dxc_memory_point("the window opened", adapter);
