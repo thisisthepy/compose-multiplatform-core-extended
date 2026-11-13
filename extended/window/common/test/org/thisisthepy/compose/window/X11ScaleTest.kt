@@ -181,4 +181,87 @@ class X11ScaleTest {
         // Under one whole multiple: not a DPI GNOME wrote from this factor.
         assertEquals(50.0, X11Scale.withoutTextScale(50.0, 2f))
     }
+
+    /** `kcmfonts` with fonts forced to [dpi], and `kdeglobals` with the global scale [scale]. */
+    private fun kdeFonts(dpi: Int) = "[General]\nforceFontDPI=$dpi\n"
+    private fun kdeGlobals(scale: String) = "[General]\nColorScheme=BreezeLight\n\n[KScreen]\nScaleFactor=$scale\nScreenScaleFactors=eDP-1=$scale;\n"
+
+    /** The scale of the window and of its text on KDE, as the X11 windows report them. */
+    private fun kdeScales(
+        resources: String?,
+        fonts: String?,
+        globals: String?,
+        gnomeOutput: String? = null,
+        gdkScale: String? = null,
+    ): Pair<Float, Float> {
+        val text = TextScale.linuxFactor(gnomeOutput, fonts, globals, currentDesktop = "KDE")
+        return X11Scale.scaleOf(resources, gdkScale, text?.factor, text?.desktopScale) to (text?.factor ?: 1f)
+    }
+
+    @Test
+    fun kdeAt100PercentWithFontsForcedTo120ScalesOnlyTheText() {
+        // Plasma writes the forced DPI into Xft.dpi; before, both scales were 1.25.
+        assertEquals(1f to 1.25f, kdeScales("Xft.dpi:\t120\n", kdeFonts(120), kdeGlobals("1")))
+        // No kdeglobals scale is Plasma's scale of 1.
+        assertEquals(1f to 1.25f, kdeScales("Xft.dpi:\t120\n", kdeFonts(120), null))
+    }
+
+    @Test
+    fun kdeAt200PercentWithoutForcingScalesTheWindow() {
+        // The display settings force fonts to 96 x the global scale themselves; before, text was 2 on top.
+        assertEquals(2f to 1f, kdeScales("Xft.dpi:\t192\n", kdeFonts(192), kdeGlobals("2")))
+        assertEquals(2f to 1f, kdeScales("Xft.dpi:\t192\n", null, kdeGlobals("2")))
+        assertEquals(2f to 1f, kdeScales("Xft.dpi:\t192\n", "[General]\nforceFontDPI=0\n", kdeGlobals("2")))
+    }
+
+    @Test
+    fun kdeAt200PercentWithFontsForcedTo240SplitsTheTwo() {
+        assertEquals(2f to 1.25f, kdeScales("Xft.dpi:\t240\n", kdeFonts(240), kdeGlobals("2")))
+        // Fractional global scales, which KDE has on X11 too.
+        assertEquals(1.5f to 1.25f, kdeScales("Xft.dpi:\t180\n", kdeFonts(180), kdeGlobals("1.5")))
+        assertEquals(1.5f to 1f, kdeScales("Xft.dpi:\t144\n", kdeFonts(144), kdeGlobals("1.5")))
+    }
+
+    @Test
+    fun kdeWithFontsForcedTo96ChangesNothing() {
+        assertEquals(1f to 1f, kdeScales("Xft.dpi:\t96\n", kdeFonts(96), kdeGlobals("1")))
+        assertEquals(1f to 1f, kdeScales("Xft.dpi:\t96\n", kdeFonts(96), null))
+    }
+
+    @Test
+    fun onKdeTextIsScaledOnceByWhatXftDpiSays() {
+        for (scale in listOf("1", "1.25", "1.5", "2", "3")) {
+            for (dpi in listOf(96, 110, 120, 144, 192, 240, 288)) {
+                val forced = (dpi * scale.toDouble()).toInt()
+                val resources = "Xft.dpi:\t$forced\n"
+                val (window, text) = kdeScales(resources, kdeFonts(forced), kdeGlobals(scale))
+                assertEquals(scale.toFloat(), window, "window scale at $scale, fonts at $forced DPI")
+                assertEquals(forced / 96.0, window.toDouble() * text, 1e-4, "text at $scale, fonts at $forced DPI")
+            }
+        }
+    }
+
+    @Test
+    fun onKdeItsFontDpiWinsOverGsettingsDefault() {
+        // gsettings is often installed on KDE and answers its default of 1.
+        assertEquals(1f to 1.25f, kdeScales("Xft.dpi:\t120\n", kdeFonts(120), kdeGlobals("1"), gnomeOutput = "1.0"))
+        // KDE without a forced DPI: GNOME's answer, as before.
+        assertEquals(1.25f to 1f, kdeScales("Xft.dpi:\t120\n", null, null, gnomeOutput = "1.0"))
+    }
+
+    @Test
+    fun onKdeGdkScaleIsTheWindowScaleAndLeavesTheTextScale() {
+        assertEquals(2f to 1.25f, kdeScales("Xft.dpi:\t240\n", kdeFonts(240), kdeGlobals("2"), gdkScale = "2"))
+    }
+
+    @Test
+    fun onKdeAnXftDpiNotFromTheForcedDpiIsLeftAlone() {
+        // xrdb or another tool wrote a DPI that is not 96 x the global scale x the text size.
+        assertEquals((200.0 / 96.0).toFloat() to 1.25f, kdeScales("Xft.dpi:\t200\n", kdeFonts(120), kdeGlobals("1")))
+        assertEquals(192.0, X11Scale.withoutTextScale(240.0, 1.25f, 2f))
+        assertEquals(144.0, X11Scale.withoutTextScale(180.0, 1.25f, 1.5f))
+        assertEquals(200.0, X11Scale.withoutTextScale(200.0, 1.25f, 2f))
+        // A desktop scale that is no number is none: GNOME's whole multiples apply.
+        assertEquals(192.0, X11Scale.withoutTextScale(240.0, 1.25f, Float.NaN))
+    }
 }

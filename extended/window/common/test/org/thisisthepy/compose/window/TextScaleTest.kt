@@ -39,6 +39,32 @@ class TextScaleTest {
     }
 
     @Test
+    fun kdeTextSizeIsTheForcedDpiOverTheGlobalScale() {
+        val globals = "[General]\nScaleFactor=9\n[KScreen]\nScreenScaleFactors=eDP-1=2;\nScaleFactor=2\n"
+        assertEquals(2f, TextScale.kdeDesktopScaleOf(globals))
+        assertNull(TextScale.kdeDesktopScaleOf("[General]\nScaleFactor=2\n"))
+        assertNull(TextScale.kdeDesktopScaleOf("[KScreen]\nScaleFactor=0\n"))
+        assertNull(TextScale.kdeDesktopScaleOf(null))
+        assertEquals(1.25f, TextScale.fromKde("forceFontDPI=240", globals))
+        assertEquals(1f, TextScale.fromKde("forceFontDPI=192", globals))
+        assertEquals(1.25f, TextScale.fromKde("forceFontDPI=120", null))
+        assertNull(TextScale.fromKde("forceFontDPI=0", globals))
+        assertNull(TextScale.fromKde(null, globals))
+    }
+
+    @Test
+    fun onKdeSessionsKdeComesBeforeGnome() {
+        val kde = "forceFontDPI=144"
+        assertEquals(1.5f, TextScale.resolveLinux("1.0", kde, null, "KDE"))
+        assertEquals(1.5f, TextScale.resolveLinux("1.0", kde, null, "ubuntu:KDE"))
+        assertEquals(1f, TextScale.resolveLinux("1.0", kde, null, "GNOME"))
+        assertEquals(1f, TextScale.resolveLinux("1.0", kde))
+        assertEquals(1.25f, TextScale.resolveLinux("1.25", null, null, "KDE"))
+        assertNull(TextScale.linuxFactor("1.25", kde)?.desktopScale)
+        assertEquals(1f, TextScale.linuxFactor(null, kde)?.desktopScale)
+    }
+
+    @Test
     fun windowsPercentBecomesAMultiplier() {
         assertEquals(1f, TextScale.fromWindowsPercent(0))
         assertEquals(1f, TextScale.fromWindowsPercent(100))
