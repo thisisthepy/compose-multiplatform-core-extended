@@ -10,6 +10,10 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 - **Fix.** The Windows mouse wheel scrolled in reverse on both the GraalVM and Kotlin/Native
   paths: `WM_MOUSEWHEEL` now negates its delta, because Win32 counts a turn away from the reader
   as positive and Compose reads a positive `scrollDelta.y` as a scroll down. (#169)
+- **Fix.** On Windows, a refused `ResizeBuffers` lost the new size, so the old frame stayed
+  stretched over the new client area (`DXGI_SCALING_STRETCH`) until the window was given
+  another size. The frame is still skipped, and the size is now asked for again by the next
+  frame, which is asked for at once, up to three refusals in a row. (DarkPyonix/compose-rust#18)
 - **Breaking default.** `WindowConfig` gains `chrome` and `titleBar`, defaulting to
   `WindowChrome.Modern` and `TitleBarStyle.Normal`: the content runs to the top of the window.
   On Linux that means no system title bar; the scene draws the caption and its buttons. Pass

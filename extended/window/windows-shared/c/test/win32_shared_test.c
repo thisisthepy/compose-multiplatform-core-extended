@@ -95,6 +95,37 @@ static void resize_decisions(void) {
     CHECK(dxc_resize_take(&resize, &width, &height) == 0);
 
     CHECK(dxc_resize_draw_here(&resize) == 0);
+
+    // A refused refit asks again for the size, a few frames in a row, then waits for the next.
+    struct dxc_resize refused;
+    memset(&refused, 0, sizeof refused);
+    dxc_resize_fitted(&refused, 800, 600);
+    dxc_resize_note(&refused, 1024, 768);
+    for (int i = 0; i < DXC_RESIZE_RETRIES; i++) {
+        CHECK(dxc_resize_take(&refused, &width, &height) == 1);
+        CHECK(width == 1024 && height == 768);
+        CHECK(dxc_resize_refused(&refused, width, height) == 1);
+    }
+    CHECK(dxc_resize_take(&refused, &width, &height) == 1);
+    CHECK(dxc_resize_refused(&refused, width, height) == 0);
+    CHECK(dxc_resize_take(&refused, &width, &height) == 0);
+    CHECK(refused.fitted_width == 800 && refused.fitted_height == 600);
+    // A new size starts the count again, and a refit that succeeds ends it.
+    dxc_resize_note(&refused, 1280, 720);
+    CHECK(dxc_resize_take(&refused, &width, &height) == 1);
+    CHECK(dxc_resize_refused(&refused, width, height) == 1);
+    CHECK(dxc_resize_take(&refused, &width, &height) == 1);
+    dxc_resize_fitted(&refused, width, height);
+    CHECK(refused.refusals == 0);
+    CHECK(dxc_resize_take(&refused, &width, &height) == 0);
+    // A size given while the refused one was waiting is the one asked for next.
+    dxc_resize_note(&refused, 640, 480);
+    CHECK(dxc_resize_take(&refused, &width, &height) == 1);
+    dxc_resize_note(&refused, 700, 500);
+    CHECK(dxc_resize_refused(&refused, 640, 480) == 1);
+    CHECK(dxc_resize_take(&refused, &width, &height) == 1);
+    CHECK(width == 700 && height == 500);
+
     dxc_resize_begin_drag(&resize);
     CHECK(dxc_resize_draw_here(&resize) == 1);
     dxc_resize_end_drag(&resize);
