@@ -114,6 +114,7 @@ says so), so any Compose application can open a window through it.
 | `native/linux-scene` | `org.thisisthepy.compose.window:native-linux-scene` | `linuxX64`, `linuxArm64` | `x11WindowSurface`, the GL surface a `scene` draws into on the Kotlin/Native X11 window. Apart from `native/linux` so the window links no scene |
 | `graalvm/graalvm-macos` | `org.thisisthepy.compose.window:graalvm-macos` | JVM (native image) | The AppKit window for a native image: `appkit_window.m` and its Kotlin side, and `appKitWindowSurface`, the Metal surface a `scene` draws into |
 | `graalvm/graalvm-linux` | `org.thisisthepy.compose.window:graalvm-linux` | JVM (native image) | The X11 window for a native image: `x11_window.c` and its Kotlin side, and `x11WindowSurface`, the GL surface a `scene` draws into |
+| `graalvm/graalvm-windows` | `org.thisisthepy.compose.window:graalvm-windows` | JVM (native image) | The Win32 window for a native image: the `@CFunction` calls into `windows-shared`'s `win32_window.c`, the window object, the frame door and the upcall a resize draws through. It times its own frames from a monotonic `FrameClock` |
 
 Each is at the fork's one version, `1.11.1-ext.2`. The "Extended window publish" workflow publishes them to the local
 Maven repository the way compose-rust consumes them; `native/linux` joins it in
@@ -146,6 +147,20 @@ does. A reader's press, increment, decrement, menu, value change (a field's text
 value), focus request and scroll arrive at `WindowListener.onAccessibilityAction(id, action,
 argument)` on the thread that pumps. `accessibilityActive` turns true once a reader has asked the
 window anything or VoiceOver is on, so a scene can skip describing itself while nobody listens.
+
+### macOS window diagnostics
+
+`native/macos` reads these environment variables, all off by default. Each prints its readings
+as `compose-rust: ...` lines on standard error.
+
+| Variable | What it does |
+|---|---|
+| `DXC_RESIZE_SOAK` | Runs that many rounds of synthetic live resize and prints memory after each (`soak phase ...`). |
+| `DXC_RESIZE_SOAK_EVENTS` | Sizes per resize round, 100 by default. |
+| `DXC_SKIA_CACHE_MB` | Skia's resource cache limit, set before the first round. |
+| `DXC_WINDOW_IDLE_SOAK_SECONDS` | The window's own idle soak: after the window settles it samples memory every 10 s (`idle-soak phase ...`, with `metal_allocated_mb` and `heap_live_mb`) for that many seconds, then asks the window to close. It runs in one window per process, the first that takes a step. `DXC_IDLE_SOAK_SECONDS` no longer starts it; that variable is left to the embedding's own soak. Either one turns the caret's blink off. |
+| `DXC_SYNTH` | `none` skips the click and typed text the idle soak sends first. |
+| `DXC_METRICS_BREAKDOWN` | `1` adds the system's `footprint` breakdown to the settled readings. |
 
 ### Linux window chrome and accessibility
 

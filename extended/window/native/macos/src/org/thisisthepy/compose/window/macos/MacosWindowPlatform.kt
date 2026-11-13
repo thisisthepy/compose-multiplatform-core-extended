@@ -3,20 +3,29 @@
 package org.thisisthepy.compose.window.macos
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalClipboardManager
+import org.thisisthepy.compose.window.scene.PlatformCompositionLocals
 import kotlinx.cinterop.useContents
 import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.ContextMenuItem
 import org.thisisthepy.compose.window.FramePresentLog
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.SystemTheme
+import org.thisisthepy.compose.window.ScreenPointer
+import org.thisisthepy.compose.window.WindowBounds
 import org.thisisthepy.compose.window.WindowConfig
+import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowListener
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.WindowPlatform
 import org.thisisthepy.compose.window.WindowVisibility
+import org.thisisthepy.compose.window.systemEditMenu
 import org.thisisthepy.compose.window.scene.ComposeWindowHost
 import org.thisisthepy.compose.window.scene.runComposeWindow
 import platform.AppKit.NSApplication
+import platform.AppKit.NSEvent
 import platform.AppKit.currentEvent
 import platform.AppKit.NSMenu
 import platform.AppKit.NSMenuItem
@@ -27,6 +36,16 @@ import platform.Foundation.NSMakeSize
 import platform.Foundation.NSRunLoop
 import platform.Foundation.dateWithTimeIntervalSinceNow
 import platform.Foundation.runMode
+
+/** Where [WindowConfig] asks the window to open, when it gives both coordinates. */
+private fun WindowConfig.topLeft(): Pair<Int, Int>? {
+    val left = x ?: return null
+    val top = y ?: return null
+    return left to top
+}
+
+/** The virtual key code of Escape. */
+private const val KEY_ESCAPE = 53
 
 private val EMPTY_CONTENT: @Composable () -> Unit = {}
 
@@ -41,7 +60,7 @@ private val EMPTY_CONTENT: @Composable () -> Unit = {}
  */
 class MacosWindowPlatform(
     private val content: @Composable () -> Unit = EMPTY_CONTENT,
-) : WindowPlatform {
+) : WindowPlatform, PlatformCompositionLocals {
     override val name: String = "macos-kotlin-native"
 
     /** One record per [present], so a test can ask whether any frame was drawn at the wrong size. */
@@ -53,6 +72,16 @@ class MacosWindowPlatform(
     private var internalHost: ComposeWindowHost? = null
     private var inPump = false
     private val pasteboard = GeneralPasteboard()
+    private val clipboard = MacosClipboard(pasteboard)
+    @Suppress("DEPRECATION")
+    private val clipboardManager = MacosClipboardManager(pasteboard)
+
+    /**
+     * Whether a right click puts up the system's edit menu. The choice is turned into the
+     * shortcut it is named after by the scene, so the field that has focus receives it as it
+     * would from the keyboard and an input method's composition is left where it was.
+     */
+    var nativeEditMenu: Boolean = true
     private val idleSoak = IdleSoak()
 
     /** Where the input method was last told the caret is, in points from the content's top left. */
@@ -63,8 +92,13 @@ class MacosWindowPlatform(
         window = win
     }
 
+    private var follow: Pair<Float, Float>? = null
+
+    override val supportsMultipleWindows: Boolean get() = true
+
     override fun open(config: WindowConfig, listener: WindowListener): Boolean {
         this.listener = listener
+        MacosProcess.install()
         var created = window
         if (created == null) {
             val minimum = if (config.minWidth > 0 || config.minHeight > 0) {
@@ -78,16 +112,30 @@ class MacosWindowPlatform(
                 height = config.height,
                 minimumSize = minimum,
                 chrome = MacosWindowChrome.of(config.chrome, config.titleBar).also { macosTitleBar = it.toTitleBar() },
+                topLeft = config.topLeft(),
             )
             created.initWindow()
             window = created
-            observeSystemAppearance { listener.onThemeChanged(systemTheme()) }
         }
+        if (this !in MacosProcess.platforms) MacosProcess.platforms += this
         created.onEvent = { event ->
+            if (event.kind == WindowEvent.KEY_DOWN && event.keyCode == KEY_ESCAPE) MacosProcess.escapePressed = true
             this.listener?.onEvent(event)
+            // Under NSApplication.run nobody turns the host, so what it heard is handed to
+            // the scene here and a frame is asked for. Inside a turn this does nothing and
+            // the turn drains the log as before.
+            if (created.host?.deliverHeard() == true) created.requestFrame()
+        }
+        created.onContextMenu = if (nativeEditMenu) {
+            { showContextMenu(systemEditMenu(clipboardHasText = pasteboard.hasText())) }
+        } else {
+            null
         }
         created.onClose = {
-            this.listener?.onCloseRequested()
+            this.listener?.onCloseRequested() ?: true
+        }
+        created.onFocus = { focused ->
+            this.listener?.onFocusChanged(focused)
         }
         idleSoak.reset()
 
@@ -106,19 +154,44 @@ class MacosWindowPlatform(
         return true
     }
 
+    /**
+     * The clipboard and the clipboard manager Compose's text fields use, backed by the
+     * general pasteboard. Provided explicitly, so whether copy, cut and paste work is this
+     * window's own doing and not a default's.
+     */
+    @Composable
+    @Suppress("DEPRECATION")
+    override fun Provide(content: @Composable () -> Unit) {
+        CompositionLocalProvider(
+            LocalClipboard provides clipboard,
+            LocalClipboardManager provides clipboardManager,
+        ) { content() }
+    }
+
+    /**
+     * Services every window of the process. The run loop is the process's, so one wait serves all
+     * of them: the caller pumps once per turn, on any one instance. An instance pumped after
+     * another in the same turn does not wait again (see [PumpTurn]), so pumping every instance
+     * each turn costs one wait, not one per window.
+     */
     override fun pump(timeoutMillis: Long) {
+        val wait = if (MacosProcess.turn.claim(this, uptimeNanos(), timeoutMillis)) timeoutMillis else 0L
         val host = internalHost
         if (host != null && !inPump) {
             inPump = true
             try {
-                host.turn(timeoutMillis)
+                host.turn(wait)
+                // The other windows' scenes get a turn that does not wait.
+                for (other in MacosProcess.platforms.toList()) {
+                    if (other !== this) other.turnHostWithoutWaiting()
+                }
             } finally {
                 inPump = false
             }
         } else {
             NSRunLoop.currentRunLoop.runMode(
                 NSDefaultRunLoopMode,
-                beforeDate = NSDate.dateWithTimeIntervalSinceNow(timeoutMillis / 1000.0),
+                beforeDate = NSDate.dateWithTimeIntervalSinceNow(wait / 1000.0),
             )
             val current = window
             val sink = listener
@@ -126,6 +199,106 @@ class MacosWindowPlatform(
                 idleSoak.step(current, sink)
             }
         }
+        for (each in MacosProcess.platforms.toList()) each.reportWindowChanges()
+    }
+
+    private fun turnHostWithoutWaiting() {
+        val host = internalHost ?: return
+        if (inPump) return
+        inPump = true
+        try {
+            host.turn(0L)
+        } finally {
+            inPump = false
+        }
+    }
+
+    /** The reports a pump turn owes this window: its move, and the follow in progress. */
+    private fun reportWindowChanges() {
+        val current = window ?: return
+        val sink = listener ?: return
+        stepFollow()
+        if (current.movedPending) {
+            current.movedPending = false
+            bounds()?.let { sink.onMoved(it) }
+        }
+    }
+
+    internal fun reportTheme() {
+        listener?.onThemeChanged(systemTheme())
+    }
+
+    // ---- several windows ----------------------------------------------------------------------
+
+    override fun setPosition(x: Int, y: Int) {
+        window?.window?.setFrameTopLeftPoint(topLeftToAppKit(x.toDouble(), y.toDouble()))
+    }
+
+    override fun setContentSize(width: Int, height: Int) {
+        val w = window?.window ?: return
+        val left = w.frame.useContents { origin.x }
+        val top = w.frame.useContents { origin.y + size.height }
+        w.setContentSize(NSMakeSize(width.toDouble(), height.toDouble()))
+        w.setFrameTopLeftPoint(CGPointMake(left, top))
+    }
+
+    override fun bounds(): WindowBounds? {
+        val w = window?.window ?: return null
+        val rect = w.frame.useContents {
+            appKitRectToTopLeft(origin.x, origin.y, size.width, size.height, primaryScreenHeight())
+        }
+        return WindowBounds(wholePoints(rect.x), wholePoints(rect.y), wholePoints(rect.width), wholePoints(rect.height))
+    }
+
+    override fun focus() {
+        val w = window?.window ?: return
+        if (w.miniaturized) w.deminiaturize(null)
+        w.makeKeyAndOrderFront(null)
+        NSApplication.sharedApplication().activateIgnoringOtherApps(true)
+    }
+
+    override val isKey: Boolean get() = window?.window?.keyWindow == true
+
+    override fun pointerOnScreen(): ScreenPointer? {
+        val primaryHeight = primaryScreenHeight()
+        val at = NSEvent.mouseLocation.useContents { flipPoint(x, y, primaryHeight) }
+        return ScreenPointer(at.first.toFloat(), at.second.toFloat(), primaryButtonDown(NSEvent.pressedMouseButtons))
+    }
+
+    override fun followPointer(anchorX: Float, anchorY: Float): Boolean {
+        if (window == null) return false
+        if (pointerOnScreen()?.primaryDown != true) return false
+        MacosProcess.escapePressed = false
+        follow = anchorX to anchorY
+        return true
+    }
+
+    /** One turn of a follow: end it on Escape or on release, otherwise put the anchor under the pointer. */
+    private fun stepFollow() {
+        val anchor = follow ?: return
+        val w = window?.window
+        if (w == null) {
+            follow = null
+            return
+        }
+        if (MacosProcess.escapePressed) {
+            follow = null
+            MacosProcess.escapePressed = false
+            listener?.onFollowEnded(true)
+            return
+        }
+        val pointer = pointerOnScreen()
+        if (pointer == null || !pointer.primaryDown) {
+            follow = null
+            listener?.onFollowEnded(false)
+            return
+        }
+        val titleBar = w.frame.useContents { size.height } -
+            w.contentRectForFrameRect(w.frame).useContents { size.height }
+        val top = followFrameTopLeft(
+            pointer.x.toDouble(), pointer.y.toDouble(), anchor.first.toDouble(), anchor.second.toDouble(), titleBar,
+        )
+        w.setFrameTopLeftPoint(topLeftToAppKit(top.first, top.second))
     }
 
     override fun measure(): WindowMeasurement =
@@ -177,6 +350,11 @@ class MacosWindowPlatform(
 
     override fun setImeSpot(x: Int, y: Int) {
         imeSpot = x to y
+        window?.imeSpot = imeSpot
+    }
+
+    override fun endComposition() {
+        window?.endComposition()
     }
 
     override fun showContextMenu(items: List<ContextMenuItem>) {
@@ -205,11 +383,19 @@ class MacosWindowPlatform(
     }
 
     /**
-     * The strip the system's buttons sit in and the radius of the window's corners, as the
-     * window last measured them.
+     * The strip the system's buttons sit in and the radius of the window's corners, measured
+     * from the window now, as the native image's window answers.
+     *
+     * The host asks once a turn, after the pump and outside any change of the window's frame,
+     * which is when the title bar is where the frame says it is. The window used to measure
+     * inside `setFrameSize` instead, against a layout rect still at the old size, and kept
+     * what it read there.
      */
-    override fun caption(): org.thisisthepy.compose.window.WindowCaption =
-        window?.caption?.value?.toCommon() ?: org.thisisthepy.compose.window.WindowCaption.None
+    override fun caption(): org.thisisthepy.compose.window.WindowCaption {
+        val current = window ?: return org.thisisthepy.compose.window.WindowCaption.None
+        current.measureCaption()
+        return current.caption.value.toCommon()
+    }
 
     /**
      * Gives the reader [elements] in place of what the window's own scene says, and hands
@@ -249,6 +435,9 @@ class MacosWindowPlatform(
     val accessibilityTree: AppKitAccessibilityTree? get() = window?.reader
 
     override fun close() {
+        follow = null
+        MacosProcess.platforms.remove(this)
+        MacosProcess.turn.release(this)
         internalHost?.close()
         internalHost = null
         window?.window?.close()

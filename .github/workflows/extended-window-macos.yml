@@ -46,7 +46,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ macos-14, macos-15, macos-latest ]
+        # The macos-14 row is left out because its runner is not supported at the moment
+        # ("macos-14-arm64-us-default is not supported"). It goes back in when it is.
+        os: [ macos-15, macos-latest ]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     defaults:

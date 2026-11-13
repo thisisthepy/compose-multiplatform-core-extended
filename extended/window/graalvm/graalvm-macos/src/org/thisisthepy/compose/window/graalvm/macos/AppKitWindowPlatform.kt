@@ -12,6 +12,7 @@ import org.thisisthepy.compose.window.WindowCaption
 import org.thisisthepy.compose.window.WindowChrome
 import org.thisisthepy.compose.window.macosCaption
 import org.thisisthepy.compose.window.editMenuItems
+import org.thisisthepy.compose.window.printableText
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.WindowConfig
@@ -153,7 +154,7 @@ class AppKitWindowPlatform : WindowPlatform {
             val scale = current.measure().scale.coerceAtLeast(1f)
             val x = 80f * scale
             val y = 80f * scale
-            sink.onEvent(WindowEvent(WindowEvent.POINTER_DOWN, x, y, 1, 0, 0, 0, ""))
+            sink.onEvent(WindowEvent(WindowEvent.POINTER_DOWN, x, y, WindowEvent.PRIMARY_HELD, 0, 0, 0, ""))
             sink.onEvent(WindowEvent(WindowEvent.POINTER_UP, x, y, 0, 0, 0, 0, ""))
             sink.onEvent(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "abcde"))
         }
@@ -228,6 +229,8 @@ class AppKitWindowPlatform : WindowPlatform {
 
     override fun setImeSpot(x: Int, y: Int) = setNativeImeSpot(x.toFloat(), y.toFloat())
 
+    override fun endComposition() = endNativeComposition()
+
     override fun showContextMenu(items: List<ContextMenuItem>) {
         val current = window ?: return
         val chosen = current.showContextMenu(packMenu(items))
@@ -301,6 +304,14 @@ class AppKitWindowPlatform : WindowPlatform {
                 ACCESSIBILITY_ACTION_EVENT -> {
                     val value = if (event.codePoint == AccessibleAction.SET_VALUE) argument() else null
                     sink.onAccessibilityAction(event.keyCode, event.codePoint, value)
+                }
+                // Control A has a character of its own, and an input method with no binding
+                // for it can hand that over as text. Never text anybody meant to type.
+                WindowEvent.TEXT_COMMIT -> {
+                    val text = printableText(event.text)
+                    if (text.isNotEmpty()) {
+                        sink.onEvent(if (text == event.text) event else event.copy(text = text))
+                    }
                 }
                 else -> sink.onEvent(event)
             }

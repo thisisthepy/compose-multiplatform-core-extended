@@ -7,6 +7,9 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`, 0.1.0)
 
+- **Fix.** The Windows mouse wheel scrolled in reverse on both the GraalVM and Kotlin/Native
+  paths: `WM_MOUSEWHEEL` now negates its delta, because Win32 counts a turn away from the reader
+  as positive and Compose reads a positive `scrollDelta.y` as a scroll down. (#169)
 - **Breaking default.** `WindowConfig` gains `chrome` and `titleBar`, defaulting to
   `WindowChrome.Modern` and `TitleBarStyle.Normal`: the content runs to the top of the window.
   On Linux that means no system title bar; the scene draws the caption and its buttons. Pass
@@ -25,6 +28,10 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   `linuxArm64`. (#146)
 - `scene`: Compose's main-thread work runs on a dispatcher every host shares, so it keeps running
   while any window is open. (#142, #143)
+- `graalvm-windows`: the Win32 window for a native image (`Win32GraalWindow`, `Win32Frames`, and the
+  upcall a resize draws through), moved from compose-rust. `frameTimeNanos()` reads a
+  `FrameClock` on the monotonic clock, so a frame is timed by the wall clock and not by a count
+  of 16 ms steps.
 - `graalvm-macos` and `graalvm-linux`: `appKitWindowSurface` and `x11WindowSurface`, the surfaces
   `runComposeWindow` draws into. (#138)
 - `native/linux` and `graalvm-linux`: the chrome API. Under `WindowChrome.Modern` (the default)

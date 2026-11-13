@@ -91,6 +91,15 @@ class ImeSession(private val emit: (WindowEvent) -> Unit) {
     }
 
     /**
+     * Forgets the composition and says nothing. For a field that has already kept what was
+     * being composed as finished text: an empty composition sent after that would be one
+     * edit too many.
+     */
+    fun discard() {
+        preedit.clear()
+    }
+
+    /**
      * Finished text. Whatever was being composed is taken out first: some input methods clear
      * the preedit and then commit, and some commit and never clear it, and a field must not be
      * left holding both the syllable and the mark that was over it.

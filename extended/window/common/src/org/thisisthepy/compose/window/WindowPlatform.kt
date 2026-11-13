@@ -16,6 +16,9 @@ interface WindowListener {
     /** The window moved to a display with another scale, or the scale changed. */
     fun onScaleChanged(scale: Float) {}
 
+    /** The operating system's text size changed to [scale] times the default. */
+    fun onTextScaleChanged(scale: Float) {}
+
     /** The user chose [id] from a menu opened by [WindowPlatform.showContextMenu]; -1 if dismissed. */
     fun onContextMenuChosen(id: Int) {}
 
@@ -30,6 +33,21 @@ interface WindowListener {
      * to the system where it asks.
      */
     fun onAccessibilityAction(id: Int, action: Int, argument: String? = null): Boolean = false
+
+    /** The window became the key window (receives keyboard input) or lost that place. */
+    fun onFocusChanged(focused: Boolean) {}
+
+    /**
+     * The window's outer frame moved or changed size, by the user or by [WindowPlatform.setPosition],
+     * in screen points. At most once per [WindowPlatform.pump] turn however many steps the move took.
+     */
+    fun onMoved(bounds: WindowBounds) {}
+
+    /**
+     * A [WindowPlatform.followPointer] ended: the primary button was released ([cancelled] false),
+     * or the system took the press away or the user pressed Escape ([cancelled] true).
+     */
+    fun onFollowEnded(cancelled: Boolean) {}
 }
 
 /**
@@ -94,6 +112,13 @@ interface WindowPlatform {
     /** The system's current appearance. */
     fun systemTheme(): SystemTheme
 
+    /**
+     * The operating system's text size as a multiplier, 1 when unchanged (see [TextScale]).
+     * A platform with no such setting answers 1, as macOS does. A change is reported through
+     * [WindowListener.onTextScaleChanged].
+     */
+    fun textScale(): Float = TextScale.DEFAULT
+
     fun setTitle(title: String)
 
     /** Applies a minimum size, in points, to the operating system. */
@@ -108,6 +133,18 @@ interface WindowPlatform {
 
     /** Where the input method puts its candidate window, in window pixels. */
     fun setImeSpot(x: Int, y: Int)
+
+    /**
+     * Makes the input method let go of what it is composing, sending nothing.
+     *
+     * Called when the focused field has kept the marked text as finished text on its own,
+     * which the scene does when a key moves the caret away from it. The input method still
+     * holds the same syllable; left alone it would go on composing it and send it again at
+     * the new caret. Nothing may reach the listener for this: no commit, because the field
+     * has the text already, and the empty composition some input methods send on a cancel
+     * is ignored by the scene. The default does nothing, for a window with no input method.
+     */
+    fun endComposition() {}
 
     /** Shows a context menu at the pointer. The answer arrives at [WindowListener.onContextMenuChosen]. */
     fun showContextMenu(items: List<ContextMenuItem>)
@@ -148,6 +185,46 @@ interface WindowPlatform {
 
     /** Does what a caption button the scene drew asks: minimise, maximise or restore, close. */
     fun performCaptionAction(action: CaptionAction) {}
+
+    // ---- several windows in one process --------------------------------------------------------
+    //
+    // Each window is its own WindowPlatform. What the operating system gives the process once
+    // (the run loop, the display connection, the message queue) is shared by every instance, and
+    // [pump] on any one of them services all of them: events reach the listener of the window
+    // they belong to. A caller with several windows pumps once per turn, on one of them.
+
+    /** Whether this platform can have more than one window open at a time. */
+    val supportsMultipleWindows: Boolean get() = false
+
+    /** Moves the window's outer frame so its top left corner is at ([x], [y]) screen points. */
+    fun setPosition(x: Int, y: Int) {}
+
+    /** Sets the size of the window's content to [width] by [height] points, keeping its top left corner. */
+    fun setContentSize(width: Int, height: Int) {}
+
+    /** The window's outer frame in screen points, or null where the platform cannot say. */
+    fun bounds(): WindowBounds? = null
+
+    /**
+     * Brings the window to the front and makes it the key window. A platform that refuses to let
+     * a process take focus (Windows' foreground lock, some X11 window managers) flashes the window
+     * instead and reports no [WindowListener.onFocusChanged].
+     */
+    fun focus() {}
+
+    /** Whether the window is the key window now. */
+    val isKey: Boolean get() = false
+
+    /** Where the pointer is on the screen and whether its primary button is held, or null where unknown. */
+    fun pointerOnScreen(): ScreenPointer? = null
+
+    /**
+     * Moves the window under the pointer on every [pump] turn until the primary button is
+     * released, keeping the point ([anchorX], [anchorY]) of the window's content, in points from
+     * its top left, under the pointer. Ends with [WindowListener.onFollowEnded]. Returns false
+     * where the platform cannot do it or the button is not held now, and then nothing follows.
+     */
+    fun followPointer(anchorX: Float, anchorY: Float): Boolean = false
 
     /** Destroys the window and everything the layer holds for it. */
     fun close()

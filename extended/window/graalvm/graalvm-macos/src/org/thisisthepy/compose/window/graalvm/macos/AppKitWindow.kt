@@ -624,6 +624,9 @@ private external fun nativeSystemDark(): Int
 @CFunction("dxc_native_set_ime_spot")
 private external fun nativeSetImeSpot(x: Float, y: Float)
 
+@CFunction("dxc_native_ime_reset")
+private external fun nativeImeReset(out: CCharPointer?, capacity: Int): Int
+
 @CFunction("dxc_native_context_menu")
 private external fun nativeContextMenu(view: Pointer?, items: CCharPointer?): Int
 
@@ -653,6 +656,14 @@ fun isSystemDark(): Boolean = nativeSystemDark() != 0
 
 /** Tells the input method where the caret is, in points from the top left of the view. */
 fun setNativeImeSpot(x: Float, y: Float) = nativeSetImeSpot(x, y)
+
+/**
+ * Makes the input method let go of what it is composing, sending nothing. What it held is
+ * not asked for: the caller has kept the text already.
+ */
+fun endNativeComposition() {
+    nativeImeReset(WordFactory.nullPointer(), 0)
+}
 
 /**
  * Shows a context menu at the pointer and answers with the id chosen, or -1.
