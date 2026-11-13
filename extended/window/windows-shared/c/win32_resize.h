@@ -30,12 +30,22 @@ struct dxc_resize {
     // that began it, so the renderer's frame loop gets no turn from the first press to
     // the last release.
     int dragging;
+    // Refits refused in a row, since the last one that succeeded or the last size the
+    // window was given.
+    int32_t refusals;
 };
+
+// How many frames in a row ask again for a size the swapchain refused, before the window
+// waits for the next size it is given. Enough for a refusal that passes (a buffer still
+// held for a moment); few enough that one that does not pass is not a frame drawn and
+// refused for ever.
+#define DXC_RESIZE_RETRIES 3
 
 /** Writes down a size the window has just been given. */
 static void dxc_resize_note(struct dxc_resize *resize, int32_t width, int32_t height) {
     resize->wanted_width = width;
     resize->wanted_height = height;
+    resize->refusals = 0;
 }
 
 /**
@@ -72,6 +82,28 @@ static int dxc_resize_take(struct dxc_resize *resize, int32_t *width, int32_t *h
 static void dxc_resize_fitted(struct dxc_resize *resize, int32_t width, int32_t height) {
     resize->fitted_width = width;
     resize->fitted_height = height;
+    resize->refusals = 0;
+}
+
+/**
+ * A refit to [width] by [height] was refused, which leaves the swapchain the size it was.
+ *
+ * The swapchain's buffers are then the old size, and DXGI_SCALING_STRETCH shows them
+ * stretched over the new client area for as long as nothing presents again. So the size is
+ * written down again for the next frame to ask for, and the answer says whether to ask for
+ * that frame now: one for the first DXC_RESIZE_RETRIES refusals in a row, then zero, and the
+ * window waits for the next size it is given. A size that arrived meanwhile is kept.
+ */
+static int dxc_resize_refused(struct dxc_resize *resize, int32_t width, int32_t height) {
+    if (resize->refusals >= DXC_RESIZE_RETRIES) {
+        return 0;
+    }
+    resize->refusals++;
+    if (resize->wanted_width <= 0 || resize->wanted_height <= 0) {
+        resize->wanted_width = width;
+        resize->wanted_height = height;
+    }
+    return 1;
 }
 
 /** The reader has taken hold of the window's edge. */

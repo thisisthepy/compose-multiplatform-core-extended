@@ -4622,12 +4622,17 @@ int32_t dxc_native_frame_begin(void *swapchain_pointer, void **texture_out) {
             swapchain, DXC_BUFFER_COUNT, (UINT)wanted_width, (UINT)wanted_height,
             DXC_SWAPCHAIN_FORMAT, dxc_swapchain_flags);
         // A refusal leaves the swapchain the size it was, so the old buffers are taken
-        // back and the window carries on drawing at the size it had. Losing this frame
-        // is a stretched image for a moment; not taking them back is a window that
-        // stays black from here on.
+        // back; not taking them back is a window that stays black from here on. This frame
+        // is skipped rather than drawn at the old size, which DXGI_SCALING_STRETCH would show
+        // stretched over the new client area. The size is asked for again by the next
+        // frame, which is asked for now (WM_PAINT draws one), a few times in a row at most
+        // (dxc_resize_refused).
         if (FAILED(resized)) {
             dxc_log_dxgi_failure("ResizeBuffers", resized);
             dxc_acquire_buffers(dxc_sizing.fitted_width, dxc_sizing.fitted_height);
+            if (dxc_resize_refused(&dxc_sizing, wanted_width, wanted_height)) {
+                InvalidateRect(dxc_window, NULL, FALSE);
+            }
             return 2;
         }
         if (dxc_acquire_buffers(wanted_width, wanted_height) != 0) {
