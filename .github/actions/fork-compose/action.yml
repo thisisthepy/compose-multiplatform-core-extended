@@ -116,7 +116,8 @@ runs:
           if [[ "$target" == mingwX64 ]]; then mingw=1; else others+=("$target"); fi
         done
         if [[ ${#others[@]} -gt 0 ]]; then
-          ./extended/compose/publish-local.sh ${roots[@]+"${roots[@]}"} "${others[@]}"
+          # A download the network drops (dl.google.com mid handshake) runs the build again.
+          ./extended/compose/retry-network.sh ./extended/compose/publish-local.sh ${roots[@]+"${roots[@]}"} "${others[@]}"
         fi
         if [[ $mingw -eq 1 ]]; then
           # skiko publishes no mingwX64 artifact. build-skiko-mingw.sh builds both halves, its
@@ -133,7 +134,7 @@ runs:
           "$RUNNER_TEMP/xwin/bin/xwin" --accept-license \
             splat --output "$HOME/Library/Caches/cargo-xwin/xwin"
           ./extended/skiko/build-skiko-mingw.sh "$RUNNER_TEMP/skiko-mingw"
-          ./extended/compose/publish-local.sh ${roots[@]+"${roots[@]}"} mingwX64
+          ./extended/compose/retry-network.sh ./extended/compose/publish-local.sh ${roots[@]+"${roots[@]}"} mingwX64
           version="$(sed -n 's/^jetbrains.publication.version.COMPOSE=//p' gradle.properties)"
           skiko_upstream="$(sed -n 's/^PUBLISHED_AS="\(.*\)"$/\1/p' extended/skiko/build-skiko-mingw.sh)"
           python3 extended/skiko/republish-skiko-mingw.py "$HOME/.m2/repository" "$skiko_upstream" "$version" \
