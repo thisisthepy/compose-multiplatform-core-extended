@@ -15,6 +15,15 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   staying put, its size hints are told again in the new pixels, and it measures at the new size
   and scale before the frame it asks for. A fullscreen window keeps the screen's size.
   (DarkPyonix/compose-rust#18, FR-82)
+- **Fix.** A right click in a text field of a scene with no menu of its own (the X11 windows)
+  put up two menus: Compose's own text context menu and one the scene drew beside it with
+  every entry enabled. The scene's is gone; the menu is Compose's, with the entries the field
+  allows, in the platform's language. The scene adds the keyboard's way to it: the Menu key or
+  Shift and F10 over a focused field open the field's menu at the caret, keeping the selection
+  (on the JVM through the menu's own state, on Kotlin/Native by a secondary press inside the
+  selection). Escape closes a popup or a menu (the scene's own back dispatcher), and on
+  Kotlin/Native, whose menu moves only with Tab, the arrow keys step through an open menu.
+  (DarkPyonix/compose-rust#142)
 
 ## 1.11.1-ext.3 (2026-11-13)
 

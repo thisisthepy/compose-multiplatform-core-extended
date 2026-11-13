@@ -11,6 +11,7 @@ package org.thisisthepy.compose.window.scene
 
 import androidx.compose.ui.platform.PlatformTextInputMethodRequest
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.CommitTextCommand
 import androidx.compose.ui.text.input.FinishComposingTextCommand
 import androidx.compose.ui.text.input.SetComposingTextCommand
@@ -86,6 +87,9 @@ class SceneTextInput {
         request.onEditCommand(listOf(FinishComposingTextCommand()))
         return true
     }
+
+    /** What the focused field has selected (collapsed where only the caret is), or null with no field focused. */
+    fun selection(): TextRange? = session?.state?.selection
 
     /** Where the focused field's caret is, in window pixels, or null where none is laid out. */
     fun caret(): CaretRect? {

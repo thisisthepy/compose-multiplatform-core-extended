@@ -69,6 +69,11 @@ class SceneSemantics(
         return found
     }
 
+    /** Whether a menu is open: a popup that is not a dialog and holds something to click. */
+    fun menuOpen(): Boolean = owners.any { owner ->
+        owner.getAllSemanticsNodes(mergingEnabled = true).any { it.isMenu() }
+    }
+
     /**
      * Does what a reader asked of the control with [id]: [action] is an [AccessibleAction]
      * value and [argument] the new value for [AccessibleAction.SET_VALUE]. Returns whether the

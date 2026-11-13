@@ -25,6 +25,9 @@ dependencies:
   # that points at androidx.compose.runtime.
   - org.thisisthepy.compose.foundation:foundation:1.11.1-ext.3
   - org.thisisthepy.compose.ui:ui:1.11.1-ext.3
+  # Escape as the back gesture, which closes a popup or a menu (SceneBackInput). The UI uses the
+  # library at run time only, so naming its types takes it here; the version is the UI's own.
+  - androidx.navigationevent:navigationevent:1.0.1
 
 test-dependencies:
   - $kotlin.test
