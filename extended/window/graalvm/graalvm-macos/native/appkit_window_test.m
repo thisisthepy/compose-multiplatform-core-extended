@@ -183,6 +183,28 @@ static void check_accessibility(NSWindow *window, void *view_pointer) {
     printf("AX API from this process: trusted=%d, AXWindows error=%d, windows=%d\n", trusted, error, count);
 }
 
+// The window's appearance against the application's: the theme's scheme wins, zero follows.
+static void check_appearance(NSWindow *window) {
+    NSAppearance *before = NSApp.appearance;
+    NSArray *names = @[ NSAppearanceNameAqua, NSAppearanceNameDarkAqua ];
+    NSApp.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+    dxc_native_set_appearance((__bridge void *)window, 1);
+    NSAppearanceName seen = [window.contentView.effectiveAppearance bestMatchFromAppearancesWithNames:names];
+    CHECK([seen isEqualToString:NSAppearanceNameAqua], "1 under DarkAqua gives Aqua, got %s", seen.UTF8String);
+    NSApp.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+    dxc_native_set_appearance((__bridge void *)window, 2);
+    seen = [window.contentView.effectiveAppearance bestMatchFromAppearancesWithNames:names];
+    CHECK([seen isEqualToString:NSAppearanceNameDarkAqua], "2 under Aqua gives DarkAqua, got %s", seen.UTF8String);
+    dxc_native_set_appearance((__bridge void *)window, 0);
+    CHECK(window.appearance == nil, "0 follows the system");
+    seen = [window.contentView.effectiveAppearance bestMatchFromAppearancesWithNames:names];
+    CHECK([seen isEqualToString:NSAppearanceNameAqua], "and then takes the application's Aqua, got %s", seen.UTF8String);
+    dxc_native_set_appearance((__bridge void *)window, 2);
+    dxc_native_set_appearance((__bridge void *)window, 3);
+    CHECK(window.appearance == nil, "3 follows the system too");
+    NSApp.appearance = before;
+}
+
 int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];
@@ -216,6 +238,7 @@ int main(void) {
             CHECK(strstr(snapshot, "AXMinimizeButton") != NULL, "a minimise button is in the snapshot");
         }
         check_accessibility(windows[0], opened[0].view);
+        check_appearance(windows[0]);
         for (int index = 0; index < 3; index++) [windows[index] orderOut:nil];
     }
     if (failures > 0) {
