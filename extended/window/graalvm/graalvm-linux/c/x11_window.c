@@ -1243,6 +1243,15 @@ int32_t dxc_native_context_menu(void *view, const char *items) {
 }
 
 /*
+ * The Windows window's own edit menu, which this window has not got: the scene draws the
+ * text context menu here. Answered for the same reason as the menu above.
+ */
+void dxc_native_set_edit_menu(void *window_pointer, int32_t flags) {
+    (void)window_pointer;
+    (void)flags;
+}
+
+/*
  * Measuring aids of the AppKit window that this window answers by doing nothing: a key
  * cannot be posted from inside it, and nothing asks for one to be. The resize that can be
  * scripted is dxc_native_debug_resize, below the pump it drives.

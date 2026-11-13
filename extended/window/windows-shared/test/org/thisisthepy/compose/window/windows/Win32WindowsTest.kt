@@ -8,6 +8,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.thisisthepy.compose.window.CaptionAction
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.EditMenuState
 import org.thisisthepy.compose.window.FileDialogKind
 import org.thisisthepy.compose.window.FileDialogOutcome
 import org.thisisthepy.compose.window.FileDialogRequest
@@ -66,6 +67,10 @@ private class FakeWindow(val config: WindowConfig) : Win32WindowBackend {
         endedCompositions++
     }
     override fun showContextMenu(items: List<ContextMenuItem>): Int = if (items.isEmpty()) -1 else items.size - 1
+    val editMenus = ArrayList<Int>()
+    override fun setEditMenu(flags: Int) {
+        editMenus += flags
+    }
     val captionActions = ArrayList<CaptionAction>()
     var maximized = false
     override fun performCaptionAction(action: CaptionAction) {
@@ -210,6 +215,21 @@ class Win32WindowsTest {
         assertTrue(platform.open(config("system").copy(chrome = WindowChrome.System), Recorder()))
         process.windows[0].maximized = true
         assertEquals(WindowCaption.None, platform.caption())
+        platform.close()
+    }
+
+    @Test
+    fun the_windows_own_edit_menu_follows_what_the_focused_field_allows() {
+        val process = FakeProcess()
+        val platform = Win32Windows(process).newPlatform()
+        platform.setEditMenu(EditMenuState())
+        assertTrue(platform.open(config("edit"), Recorder()))
+        val window = process.windows[0]
+        assertTrue(window.editMenus.isEmpty(), "a window that was not open was told nothing")
+        platform.setEditMenu(EditMenuState(hasSelection = false))
+        platform.setEditMenu(EditMenuState.Undescribed)
+        platform.setEditMenu(null)
+        assertEquals(listOf(1 or 2 or 8 or 16, 1, 0), window.editMenus)
         platform.close()
     }
 

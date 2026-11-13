@@ -24,6 +24,13 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   selection). Escape closes a popup or a menu (the scene's own back dispatcher), and on
   Kotlin/Native, whose menu moves only with Tab, the arrow keys step through an open menu.
   (DarkPyonix/compose-rust#142)
+- **New.** The Windows window has a text edit menu of its own, the system's popup menu, for an
+  application that hosts Compose on it: `Win32WindowPlatform.setEditMenu` and
+  `Win32GraalWindow.setEditMenu` (`dxc_native_set_edit_menu`) turn it on while a text field has
+  focus, with what the field allows (`EditMenuState` in `common`). A right click, the Menu
+  key or Shift and F10 put up Cut, Copy, Paste and Select All, greyed where they cannot run,
+  labelled by the system's edit control, at the pointer or at the caret; the entry chosen
+  arrives as Control and X, C, V or A. (DarkPyonix/compose-rust#142)
 
 ## 1.11.1-ext.3 (2026-11-13)
 

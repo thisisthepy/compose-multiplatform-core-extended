@@ -43,3 +43,45 @@ fun systemEditMenu(clipboardHasText: Boolean): List<ContextMenuItem> =
     editMenuItems(canCut = true, canCopy = true, canPaste = true, canSelectAll = true).map {
         if (it.id == EditMenuId.PASTE) it.copy(enabled = clipboardHasText) else it
     }
+
+/**
+ * What the focused text field allows, for a window that puts the edit menu up itself and
+ * greys what cannot run: Cut needs a selection in an editable field, Copy a selection, Paste
+ * an editable field (and text on the clipboard, which the window asks the system about),
+ * Select All some text. [described] false is a field the caller cannot describe, for which
+ * only Paste is judged, by the clipboard, as the macOS window judges it ([systemEditMenu]).
+ */
+data class EditMenuState(
+    val hasSelection: Boolean = true,
+    val editable: Boolean = true,
+    val hasText: Boolean = true,
+    val described: Boolean = true,
+) {
+    companion object {
+        /** A focused field nobody described. */
+        val Undescribed = EditMenuState(described = false)
+    }
+}
+
+/**
+ * The flags the Windows window's `dxc_native_set_edit_menu` takes (`win32_edit_menu.h`):
+ * 0 for no field focused, which puts up no menu, and otherwise on, with what [state] says
+ * the field allows.
+ */
+fun win32EditMenuFlags(state: EditMenuState?): Int {
+    if (state == null) return 0
+    var flags = WIN32_EDIT_MENU_ON
+    if (!state.described) return flags
+    flags = flags or WIN32_EDIT_MENU_KNOWN
+    if (state.hasSelection) flags = flags or WIN32_EDIT_MENU_SELECTION
+    if (state.editable) flags = flags or WIN32_EDIT_MENU_EDITABLE
+    if (state.hasText) flags = flags or WIN32_EDIT_MENU_HAS_TEXT
+    return flags
+}
+
+// The bits of win32_edit_menu.h, which the C test holds.
+private const val WIN32_EDIT_MENU_ON = 1
+private const val WIN32_EDIT_MENU_KNOWN = 2
+private const val WIN32_EDIT_MENU_SELECTION = 4
+private const val WIN32_EDIT_MENU_EDITABLE = 8
+private const val WIN32_EDIT_MENU_HAS_TEXT = 16

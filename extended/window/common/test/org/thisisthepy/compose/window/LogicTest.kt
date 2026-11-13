@@ -104,6 +104,19 @@ class LogicTest {
     }
 
     @Test
+    fun the_windows_edit_menu_is_told_what_the_focused_field_allows() {
+        // No field focused: no menu.
+        assertEquals(0, win32EditMenuFlags(null))
+        // A field nobody described: on, and nothing more is said (win32_edit_menu.h).
+        assertEquals(1, win32EditMenuFlags(EditMenuState.Undescribed))
+        // On, described, selection, editable, text: the bits the C side reads.
+        assertEquals(1 or 2 or 4 or 8 or 16, win32EditMenuFlags(EditMenuState()))
+        assertEquals(1 or 2 or 8 or 16, win32EditMenuFlags(EditMenuState(hasSelection = false)))
+        assertEquals(1 or 2 or 4 or 16, win32EditMenuFlags(EditMenuState(editable = false)))
+        assertEquals(1 or 2 or 8, win32EditMenuFlags(EditMenuState(hasSelection = false, hasText = false)))
+    }
+
+    @Test
     fun fr5_printable_text_never_carries_a_control_character() {
         assertEquals("", printableText("\u0001"), "Control A typed a box into the field")
         assertEquals("", printableText("\u001b"))

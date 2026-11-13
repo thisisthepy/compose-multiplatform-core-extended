@@ -180,6 +180,10 @@ void dxc_native_clipboard_write(const char *text);
 int32_t dxc_native_take_paste(char *out, int32_t capacity);
 int32_t dxc_native_dropped_paths(char *out, int32_t capacity);
 int32_t dxc_native_context_menu(void *window_pointer, const char *items);
+// The window's own text edit menu: on (flags with bit 1) while a text field has focus, off (0)
+// otherwise. A right click, the Menu key or Shift and F10 then put the system's popup up, and
+// the entry chosen arrives as Control and X, C, V or A. The bits are in win32_edit_menu.h.
+void dxc_native_set_edit_menu(void *window_pointer, int32_t flags);
 
 // Measurement and checks, all switched on by environment variables of the application.
 void dxc_native_report_metrics(const char *label);

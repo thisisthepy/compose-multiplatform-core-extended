@@ -1790,6 +1790,16 @@ int32_t dxc_native_context_menu(void *view_pointer, const char *items) {
 }
 
 /*
+ * The Windows window's own edit menu. This window has one of its own, put up on a right click
+ * through dxc_native_set_text_menu, so the Windows call does nothing here; it is answered
+ * because the renderer's one body of Kotlin names it on every desktop.
+ */
+void dxc_native_set_edit_menu(void *window_pointer, int32_t flags) {
+    (void)window_pointer;
+    (void)flags;
+}
+
+/*
  * Calls of the X11 window (graalvm-linux) that the renderer's one native image also carries on
  * macOS, because its code can reach them. A native image links every C function its reachable
  * code names, and macOS binds them lazily, so a name left undefined here kills the process the

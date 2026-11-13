@@ -19,6 +19,7 @@
 #include "win32_file_dialog_spec.h"
 #include "win32_placement.h"
 #include "win32_scheme.h"
+#include "win32_edit_menu.h"
 #include "win32_window.h"
 
 // The records the Kotlin side reads and writes by offset. A field added on one side only is
@@ -962,6 +963,56 @@ static void function_keys_reach_the_scene(void) {
     CHECK(!dxc_key_is_press(WM_SYSCHAR));
 }
 
+// The window's own text edit menu (#142): which entries can be chosen, what a choice
+// presses, and which keys ask for the menu.
+static int entry_is(struct dxc_edit_entry entry, int32_t id, int32_t enabled, int32_t separator) {
+    return entry.id == id && entry.enabled == enabled && entry.separator_before == separator;
+}
+
+static void edit_menu_entries(void) {
+    struct dxc_edit_entry e[DXC_EDIT_ENTRY_COUNT];
+    // Off: no menu at all, whatever else is said.
+    CHECK(dxc_edit_menu_entries(0, 1, e) == 0);
+    CHECK(dxc_edit_menu_entries(DXC_EDIT_MENU_KNOWN | DXC_EDIT_MENU_SELECTION, 1, e) == 0);
+    // On with the field undescribed: everything but a Paste with nothing to paste.
+    CHECK(dxc_edit_menu_entries(DXC_EDIT_MENU_ON, 0, e) == 4);
+    CHECK(entry_is(e[0], DXC_EDIT_CUT, 1, 0) && entry_is(e[1], DXC_EDIT_COPY, 1, 0));
+    CHECK(entry_is(e[2], DXC_EDIT_PASTE, 0, 0) && entry_is(e[3], DXC_EDIT_SELECT_ALL, 1, 1));
+    CHECK(dxc_edit_menu_entries(DXC_EDIT_MENU_ON, 1, e) == 4 && e[2].enabled == 1);
+    // An editable field with a selection: all four, Paste when the clipboard has text.
+    int32_t editing = DXC_EDIT_MENU_ON | DXC_EDIT_MENU_KNOWN | DXC_EDIT_MENU_EDITABLE | DXC_EDIT_MENU_HAS_TEXT;
+    dxc_edit_menu_entries(editing | DXC_EDIT_MENU_SELECTION, 1, e);
+    CHECK(e[0].enabled && e[1].enabled && e[2].enabled && e[3].enabled);
+    // Nothing selected: no Cut and no Copy.
+    dxc_edit_menu_entries(editing, 1, e);
+    CHECK(!e[0].enabled && !e[1].enabled && e[2].enabled && e[3].enabled);
+    // Read only with a selection: Copy and Select All, never Cut or Paste.
+    dxc_edit_menu_entries(DXC_EDIT_MENU_ON | DXC_EDIT_MENU_KNOWN | DXC_EDIT_MENU_SELECTION | DXC_EDIT_MENU_HAS_TEXT, 1, e);
+    CHECK(!e[0].enabled && e[1].enabled && !e[2].enabled && e[3].enabled);
+    // An empty field: only Paste, and only with something to paste.
+    dxc_edit_menu_entries(DXC_EDIT_MENU_ON | DXC_EDIT_MENU_KNOWN | DXC_EDIT_MENU_EDITABLE, 0, e);
+    CHECK(!e[0].enabled && !e[1].enabled && !e[2].enabled && !e[3].enabled);
+
+    // A choice presses Control and the entry's letter; a dismissed menu (0) presses nothing.
+    CHECK(dxc_edit_menu_key(DXC_EDIT_CUT) == 'X' && dxc_edit_menu_key(DXC_EDIT_COPY) == 'C');
+    CHECK(dxc_edit_menu_key(DXC_EDIT_PASTE) == 'V' && dxc_edit_menu_key(DXC_EDIT_SELECT_ALL) == 'A');
+    CHECK(dxc_edit_menu_key(0) == 0 && dxc_edit_menu_key(5) == 0);
+
+    // The Menu key, alone or with Shift, and Shift and F10; nothing else.
+    CHECK(dxc_edit_menu_key_opens(VK_APPS, 0) && dxc_edit_menu_key_opens(VK_APPS, 1));
+    CHECK(dxc_edit_menu_key_opens(VK_F10, 1));
+    CHECK(!dxc_edit_menu_key_opens(VK_F10, 0) && !dxc_edit_menu_key_opens(VK_F10, 1 | 2));
+    CHECK(!dxc_edit_menu_key_opens(VK_APPS, 2) && !dxc_edit_menu_key_opens('C', 1));
+
+    // The system's edit control names its entries by these commands, and an entry it lacks
+    // still has a label.
+    CHECK(dxc_edit_menu_system_command(DXC_EDIT_CUT) == WM_CUT);
+    CHECK(dxc_edit_menu_system_command(DXC_EDIT_COPY) == WM_COPY);
+    CHECK(dxc_edit_menu_system_command(DXC_EDIT_PASTE) == WM_PASTE);
+    CHECK(dxc_edit_menu_system_command(DXC_EDIT_SELECT_ALL) == EM_SETSEL);
+    CHECK(wcscmp(dxc_edit_menu_fallback_label(DXC_EDIT_SELECT_ALL), L"Select &All") == 0);
+}
+
 int main(int argc, char **argv) {
     resize_decisions();
     function_keys_reach_the_scene();
@@ -991,6 +1042,7 @@ int main(int argc, char **argv) {
     fr72_a_dialog_that_cannot_start_answers_nothing();
     fr72_an_open_dialog_does_not_hold_the_loop_and_answers_once();
     fr72_dialogs_answer_what_the_reader_chose();
+    edit_menu_entries();
     // Never true. It only makes the linker resolve the window and the toasts, so a symbol
     // the header declares and the objects lack fails the link.
     if (argc > 1000) {
@@ -999,6 +1051,7 @@ int main(int argc, char **argv) {
         dxc_native_frame_begin(window.swapchain, NULL);
         dxc_native_poll_event(NULL);
         dxc_native_clipboard_write(argv[0]);
+        dxc_native_set_edit_menu(NULL, 0);
         dxc_native_set_raster_resize(1);
         (void)dxc_native_window_is_zoomed();
         void *pixels = NULL;
