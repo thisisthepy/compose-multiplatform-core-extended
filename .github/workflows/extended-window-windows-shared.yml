@@ -154,8 +154,10 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          PROBE_SAVE='out\frames-states' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states.log
-          PROBE_DRAW_MS=30 PROBE_SAVE='out\frames-states-30ms' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-30ms.log
+          status=0
+          PROBE_SAVE='out\frames-states' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states.log || status=1
+          PROBE_DRAW_MS=30 PROBE_SAVE='out\frames-states-30ms' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-30ms.log || status=1
+          exit $status
 
       - uses: actions/upload-artifact@v4
         if: always()
