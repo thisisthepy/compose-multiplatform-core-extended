@@ -134,8 +134,9 @@ class X11WindowTest {
     /**
      * The scale follows `Xft.dpi` in the root window's resources, read when the window opens
      * and again when a desktop rewrites them, as `xrdb -merge` does: the window keeps its size
-     * in pixels, measures at the new scale and tells its listener. A window opened afterwards
-     * is made at its size in points times the scale.
+     * in points (FR-82), so it is resized to that size times the new scale, measures at the new
+     * size and scale and tells its listener. A window opened afterwards is made at its size in
+     * points times the scale.
      */
     @Test
     fun fr81_linux_scale_follows_xft_dpi_on_the_root_window() {
@@ -166,7 +167,11 @@ class X11WindowTest {
             assertTrue(pumpUntil(window) { heard.lastOrNull() == 2f }, "no scale change heard, heard $heard")
             val doubled = window.measure()
             assertEquals(2f, doubled.scale)
-            assertEquals(opened.width to opened.height, doubled.width to doubled.height)
+            assertEquals(opened.width * 2 to opened.height * 2, doubled.width to doubled.height)
+            // The server's size event for the resize would correct the measurement were the
+            // window any other size.
+            repeat(30) { window.pump(10) }
+            assertEquals(Triple(400, 200, 2f), window.measure().let { Triple(it.width, it.height, it.scale) })
 
             val later = X11Window()
             second = later
@@ -177,7 +182,7 @@ class X11WindowTest {
 
             setResources(peer, root, "Xft.dpi:\t144\n")
             assertTrue(pumpUntil(window) { heard.lastOrNull() == 1.5f }, "no change to 1.5 heard, heard $heard")
-            assertEquals(1.5f, window.measure().scale)
+            assertEquals(Triple(300, 150, 1.5f), window.measure().let { Triple(it.width, it.height, it.scale) })
         } finally {
             second?.close()
             window.close()

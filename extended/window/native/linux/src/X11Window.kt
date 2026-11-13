@@ -430,17 +430,41 @@ class X11Window : WindowPlatform {
 
     /**
      * The display's scale is now [now], as the connection read it from the root window's
-     * resources. The window keeps its size in pixels, as the GraalVM X11 window does; the
-     * scene lays out at the new density in the next frame, which is asked for here, and the
-     * listener hears of it at the end of the turn.
+     * resources. The window keeps its size in points, as the macOS and Windows windows do (and
+     * the GraalVM X11 window): it is resized to that size times the new scale
+     * ([X11Scale.sizeAtScale]), its top left staying where it is, and the size hints are told
+     * again in the new pixels. A fullscreen window keeps the screen's size. It measures at the
+     * new size and scale at once, so the frame asked for here is drawn at both, and the listener
+     * hears of the scale at the end of the turn. Where the window manager answers with another
+     * size, its size event corrects the measurement.
      */
     internal fun scaleChanged(now: Float) {
         if (isClosed || now == scale) return
+        val before = scale
         scale = now
-        measured = WindowMeasurement(measured.width, measured.height, now)
+        var width = measured.width
+        var height = measured.height
+        val display = display
+        if (display != null && !fullscreen && width > 0 && height > 0) {
+            val (newWidth, newHeight) = X11Scale.sizeAtScale(width, height, before, now)
+            if (!resizable) {
+                // Held to its size by the hints, which must allow the new one before it is asked for.
+                openedWidth = X11Scale.pixelsAtScale(openedWidth, before, now)
+                openedHeight = X11Scale.pixelsAtScale(openedHeight, before, now)
+            }
+            applySizeHints()
+            if (newWidth != width || newHeight != height) {
+                width = newWidth
+                height = newHeight
+                XResizeWindow(display, window, width.convert(), height.convert())
+                XFlush(display)
+            }
+        } else {
+            applySizeHints()
+        }
+        measured = WindowMeasurement(width, height, now)
         scalePending = true
-        applySizeHints()
-        detail("scale $now")
+        detail("scale $now ${width}x$height")
         frameRequests.request()
     }
 

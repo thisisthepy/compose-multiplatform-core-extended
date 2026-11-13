@@ -105,4 +105,24 @@ object X11Scale {
         if (whole < 1.0 || abs(whole * step - dpi) > 1.0) return dpi
         return whole * BASE_DPI
     }
+
+    /**
+     * The pixels a length of [pixels] at scale [from] comes to at scale [to]: the same length in
+     * points, times the new scale, rounded to the nearest pixel (a half up) and at least 1.
+     *
+     * After a scale change an X11 window keeps its size in points, as the macOS and Windows
+     * windows do, so 640x480 pixels at a scale of 1 become 1280x960 at 2. A scale that is not a
+     * positive number leaves the pixels as they are.
+     *
+     * x11_window.c of the GraalVM window follows the same rule (dxc_pixels_at_scale).
+     */
+    fun pixelsAtScale(pixels: Int, from: Float, to: Float): Int {
+        if (!(from > 0f) || !(to > 0f) || from.isInfinite() || to.isInfinite() || from == to) return pixels
+        val rescaled = floor(pixels.toDouble() / from.toDouble() * to.toDouble() + 0.5)
+        return if (rescaled < 1.0) 1 else if (rescaled > Int.MAX_VALUE) Int.MAX_VALUE else rescaled.toInt()
+    }
+
+    /** [width] x [height] in pixels at scale [from], restated at scale [to] (see [pixelsAtScale]). */
+    fun sizeAtScale(width: Int, height: Int, from: Float, to: Float): Pair<Int, Int> =
+        pixelsAtScale(width, from, to) to pixelsAtScale(height, from, to)
 }

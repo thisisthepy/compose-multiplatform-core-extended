@@ -211,6 +211,10 @@ static struct {
 // whenever a desktop rewrites the root window's resources (dxc_rescale).
 static float dxc_scale = 1.0f;
 
+// Whether the window was last asked to be fullscreen (dxc_set_fullscreen), when it keeps the
+// screen's size through a change of scale rather than its own size in points.
+static int dxc_fullscreen;
+
 // The desktop's text size as the Kotlin side read it (dxc_native_set_text_factor_for), 0 where
 // nothing answers it: GNOME's text-scaling-factor, or KDE's forced font DPI over its global
 // scale. The desktop puts it into Xft.dpi, and the window reports it as its text scale, so it
@@ -965,22 +969,56 @@ static void dxc_apply_size_hints(int32_t width, int32_t height) {
 }
 
 /**
+ * The pixels a length of [pixels] at scale [from] comes to at scale [to]: the same length in
+ * points times the new scale, rounded to the nearest pixel (a half up) and at least 1. A scale
+ * that is not a positive number leaves the pixels as they are. The rule of
+ * X11Scale.pixelsAtScale in common.
+ */
+static int32_t dxc_pixels_at_scale(int32_t pixels, float from, float to) {
+    if (!(from > 0.0f) || !(to > 0.0f) || from > 1.0e30f || to > 1.0e30f || from == to) return pixels;
+    double rescaled = (double)pixels / (double)from * (double)to + 0.5;
+    if (rescaled < 1.0) return 1;
+    if (rescaled > 2147483647.0) return 2147483647;
+    return (int32_t)(long)rescaled;
+}
+
+/**
  * A desktop rewrote the root window's resources, which is how a change of Xft.dpi in its
  * settings arrives (and what `xrdb -merge` does). The scale is read again; when it changed,
- * the window keeps its size in pixels, the minimum size is told again in the new pixels and a
- * frame is drawn at the new scale. The Kotlin side sees the new scale in dxc_native_window_size
- * on its next turn and reports it as a scale change.
+ * the window keeps its size in points, as the macOS and Windows windows do: it is resized to
+ * that size times the new scale (dxc_pixels_at_scale), its top left staying where it is, its
+ * size hints are told again in the new pixels and a frame is drawn at the new size and scale.
+ * A fullscreen window keeps the screen's size. The new size is what dxc_native_window_size
+ * answers at once, so the Kotlin side sees the new size with the new scale on its next turn
+ * and reports it as a scale change; where the window manager answers with another size, its
+ * ConfigureNotify corrects it.
  */
 static void dxc_rescale(void) {
     float scale = dxc_detect_scale();
     if (scale == dxc_scale) return;
+    float before = dxc_scale;
     dxc_scale = scale;
-    // Only a minimum depends on the scale: a window that cannot be resized stays held to the
-    // pixels it opened at, which its hints already say.
-    if (dxc_options.resizable && (dxc_options.min_width > 0 || dxc_options.min_height > 0)) {
-        dxc_apply_size_hints(dxc_width, dxc_height);
-        XFlush(dxc_display);
+    if (dxc_fullscreen || dxc_width <= 0 || dxc_height <= 0) {
+        // Only a minimum depends on the scale here: a window that cannot be resized stays held
+        // to the pixels it has, which its hints already say.
+        if (dxc_options.resizable && (dxc_options.min_width > 0 || dxc_options.min_height > 0)) {
+            dxc_apply_size_hints(dxc_width, dxc_height);
+            XFlush(dxc_display);
+        }
+        dxc_request_frame();
+        return;
     }
+    int32_t width = dxc_pixels_at_scale(dxc_width, before, scale);
+    int32_t height = dxc_pixels_at_scale(dxc_height, before, scale);
+    // Before the resize, so that a window held to its size by its hints is let take the new one.
+    dxc_apply_size_hints(width, height);
+    if (width != dxc_width || height != dxc_height) {
+        dxc_width = width;
+        dxc_height = height;
+        XResizeWindow(dxc_display, dxc_window, (unsigned)width, (unsigned)height);
+        dxc_detail("rescale", dxc_width, dxc_height);
+    }
+    XFlush(dxc_display);
     dxc_request_frame();
 }
 
@@ -1831,6 +1869,7 @@ void dxc_native_set_min_size(int32_t width, int32_t height) {
  * 3 fullscreen. Fullscreen is the window manager's own state, asked through the root window.
  */
 static void dxc_set_fullscreen(int on) {
+    dxc_fullscreen = on ? 1 : 0;
     XEvent message;
     memset(&message, 0, sizeof message);
     message.xclient.type = ClientMessage;
