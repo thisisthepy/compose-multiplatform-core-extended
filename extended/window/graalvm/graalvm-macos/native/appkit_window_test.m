@@ -236,6 +236,34 @@ static void check_backing_change(NSWindow *window, void *view_pointer) {
     CHECK(resized == 1, "a second notice with nothing changed asks for nothing");
 }
 
+// A press reaches the queue dated by NSEvent.timestamp, and the double-click interval is the
+// system's. A press read after a slow frame is still dated when it was made.
+static void check_event_time(NSWindow *window, void *view_pointer) {
+    NSView *view = (__bridge NSView *)view_pointer;
+    struct dxc_event event;
+    while (dxc_native_poll_event(&event)) {}
+    NSPoint middle = NSMakePoint(NSMidX(view.bounds), NSMidY(view.bounds));
+    NSPoint at = [view convertPoint:middle toView:nil];
+    NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:at modifierFlags:0
+                                      timestamp:1234.5 windowNumber:window.windowNumber context:nil
+                                    eventNumber:0 clickCount:1 pressure:1];
+    NSEvent *up = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp location:at modifierFlags:0
+                                    timestamp:1234.625 windowNumber:window.windowNumber context:nil
+                                  eventNumber:0 clickCount:1 pressure:0];
+    [view mouseDown:down];
+    [view mouseUp:up];
+    int64_t pressed = -1, released = -1;
+    while (dxc_native_poll_event(&event)) {
+        if (event.kind == DXC_EVENT_POINTER_DOWN) pressed = event.time_millis;
+        if (event.kind == DXC_EVENT_POINTER_UP) released = event.time_millis;
+    }
+    CHECK(pressed == 1234500, "the press is dated by its timestamp, got %lld", (long long)pressed);
+    CHECK(released == 1234625, "the release is dated by its timestamp, got %lld", (long long)released);
+    int64_t interval = dxc_native_double_click_millis();
+    CHECK(interval == (int64_t)(NSEvent.doubleClickInterval * 1000.0) && interval > 0,
+          "the double-click interval is the system's, got %lld", (long long)interval);
+}
+
 int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];
@@ -271,6 +299,7 @@ int main(void) {
         check_accessibility(windows[0], opened[0].view);
         check_appearance(windows[0]);
         check_backing_change(windows[0], opened[0].view);
+        check_event_time(windows[0], opened[0].view);
         for (int index = 0; index < 3; index++) [windows[index] orderOut:nil];
     }
     if (failures > 0) {

@@ -640,6 +640,7 @@ class MacosWindow(
                     keyCode = 0,
                     codePoint = 0,
                     text = "",
+                    timeMillis = WindowEvent.timeFromSeconds(event.timestamp),
                 ),
             )
         }
@@ -724,6 +725,7 @@ class MacosWindow(
                     keyCode = 0,
                     codePoint = 0,
                     text = "",
+                    timeMillis = WindowEvent.timeFromSeconds(event.timestamp),
                 ),
             )
         }

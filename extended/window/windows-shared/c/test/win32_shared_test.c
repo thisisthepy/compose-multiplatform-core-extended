@@ -22,8 +22,9 @@
 
 // The records the Kotlin side reads and writes by offset. A field added on one side only is
 // a reader that silently reads the wrong bytes, so the sizes are fixed here.
-_Static_assert(sizeof(struct dxc_event) == 124, "struct dxc_event is 124 bytes");
+_Static_assert(sizeof(struct dxc_event) == 136, "struct dxc_event is 136 bytes");
 _Static_assert(offsetof(struct dxc_event, text) == 28, "dxc_event text starts at 28");
+_Static_assert(offsetof(struct dxc_event, time_millis) == 128, "dxc_event time_millis starts at 128");
 _Static_assert(sizeof(struct dxc_element) == 116, "struct dxc_element is 116 bytes");
 _Static_assert(offsetof(struct dxc_element, label) == 20, "dxc_element label starts at 20");
 _Static_assert(sizeof(struct dxc_native_window) == 5 * sizeof(void *), "five pointers");
@@ -444,6 +445,35 @@ static void fr53_window_position_round_trips(void) {
     dxc_native_window_destroy(c.window);
     pump_all();
     dxc_native_window_release(c.window);
+}
+
+// A press is dated by when the system posted it (GetMessageTime, read unsigned), and the
+// double-click interval is the one set in the mouse settings.
+static void pointer_events_carry_the_message_time(void) {
+    CHECK(dxc_native_double_click_millis() == (int64_t)GetDoubleClickTime());
+    if (!real_windows_ok) { printf("skip: pointer_events_carry_the_message_time\n"); return; }
+    struct dxc_native_window d;
+    memset(&d, 0, sizeof d);
+    if (!open_test_window(&d, "d")) return;
+    dxc_native_window_select(d.window);
+    struct dxc_event event;
+    pump_all();
+    while (dxc_native_poll_event(&event)) {}
+    DWORD before = GetTickCount();
+    PostMessageW((HWND)d.window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(10, 10));
+    PostMessageW((HWND)d.window, WM_LBUTTONUP, 0, MAKELPARAM(10, 10));
+    pump_all();
+    int64_t pressed = 0;
+    while (dxc_native_poll_event(&event)) {
+        if (event.kind == DXC_EVENT_POINTER_DOWN) pressed = event.time_millis;
+    }
+    CHECK(pressed != 0);
+    // Within ten seconds of the tick count when it was posted, on the same unsigned clock.
+    CHECK((uint32_t)((uint32_t)pressed - (uint32_t)before) < 10000u ||
+          (uint32_t)((uint32_t)before - (uint32_t)pressed) < 10000u);
+    dxc_native_window_destroy(d.window);
+    pump_all();
+    dxc_native_window_release(d.window);
 }
 
 // A close the system asks for reaches the window it was asked of, and no other.
@@ -928,6 +958,7 @@ int main(int argc, char **argv) {
     _putenv("DXC_D3D12_WARP=1");
     fr53_two_windows_have_independent_state();
     fr53_window_position_round_trips();
+    pointer_events_carry_the_message_time();
     fr53_close_request_reaches_only_its_window();
     fr53_destroying_one_window_does_not_quit();
     fr53_activate_reports_focus();

@@ -4,6 +4,7 @@ import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.toKString
+import org.thisisthepy.compose.window.DoubleClick
 import org.thisisthepy.compose.window.TextScale
 import platform.posix.fgets
 import platform.posix.fopen
@@ -25,13 +26,15 @@ internal object LinuxTextScale {
     fun gnome(): Float? =
         TextScale.fromGnome(run("gsettings get org.gnome.desktop.interface text-scaling-factor 2>/dev/null"))
 
-    private fun kdeFonts(): String? {
+    private fun kdeFonts(): String? = readConfig("kcmfonts")
+
+    internal fun readConfig(name: String): String? {
         val config = getenv("XDG_CONFIG_HOME")?.toKString()?.takeIf { it.isNotEmpty() }
             ?: getenv("HOME")?.toKString()?.let { "$it/.config" } ?: return null
-        return readFile("$config/kcmfonts")
+        return readFile("$config/$name")
     }
 
-    private fun run(command: String): String? {
+    internal fun run(command: String): String? {
         val pipe = popen(command, "r") ?: return null
         val text = drain(pipe)
         pclose(pipe)
@@ -51,4 +54,16 @@ internal object LinuxTextScale {
         while (out.length < 16384 && fgets(line, 512, file) != null) out.append(line.toKString())
         out.toString()
     }
+}
+
+/**
+ * Reads the desktop's double-click interval: GNOME's `double-click`, else KDE's
+ * `DoubleClickInterval`, else [DoubleClick.DEFAULT_MILLIS]. X11 itself has no such setting;
+ * the XSETTINGS `Net/DoubleClickTime` a GNOME session also publishes is the same value.
+ */
+internal object LinuxDoubleClick {
+    fun read(): Long = DoubleClick.resolveLinux(
+        LinuxTextScale.run("gsettings get org.gnome.desktop.peripherals.mouse double-click 2>/dev/null"),
+        LinuxTextScale.readConfig("kdeglobals"),
+    )
 }

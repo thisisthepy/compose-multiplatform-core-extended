@@ -53,6 +53,8 @@ internal class FakePlatform : WindowPlatform {
     var scale = 1f
     var listening = false
     var captionNow = WindowCaption.None
+    var doubleClick = 500L
+    override val doubleClickMillis: Long get() = doubleClick
     val pushed = ArrayList<List<AccessibleElement>>()
     val captionActions = ArrayList<CaptionAction>()
     var moves = 0

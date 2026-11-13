@@ -9,8 +9,10 @@ import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.platform.PlatformContext
 import androidx.compose.ui.platform.PlatformTextInputMethodRequest
+import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.platform.WindowInfo
 import androidx.compose.ui.unit.IntSize
+import org.thisisthepy.compose.window.DoubleClick
 
 /**
  * The window a scene is in, as far as Compose needs to know.
@@ -32,6 +34,16 @@ internal class SceneInputModeManager : InputModeManager {
 }
 
 /**
+ * Compose's defaults with the operating system's double-click interval in place of its own
+ * 300 ms, which is shorter than any desktop's: a double click at the pace the user set their
+ * system to would otherwise count as two single clicks. The shortest gap between the two
+ * presses stays Compose's.
+ */
+internal class SceneViewConfiguration(
+    override val doubleTapTimeoutMillis: Long,
+) : ViewConfiguration by PlatformContext.DefaultViewConfiguration
+
+/**
  * The platform, as the scene sees it, answered without a toolkit.
  *
  * A field asks to be typed into through `startInputMethod`, and until something answers
@@ -44,7 +56,10 @@ internal class ScenePlatformContext(
     private val textInput: SceneTextInput,
     /** Hears every change to the scene's semantics, for the window's accessibility. */
     override val semanticsOwnerListener: PlatformContext.SemanticsOwnerListener? = null,
+    /** The operating system's double-click interval, [org.thisisthepy.compose.window.WindowPlatform.doubleClickMillis]. */
+    doubleClickMillis: Long = DoubleClick.DEFAULT_MILLIS,
 ) : PlatformContext {
+    override val viewConfiguration: ViewConfiguration = SceneViewConfiguration(doubleClickMillis)
     override val windowInfo: WindowInfo = SceneWindowInfo(size)
     override val inputModeManager: InputModeManager = SceneInputModeManager()
 

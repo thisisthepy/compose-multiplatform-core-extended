@@ -11,6 +11,7 @@
 #include <GL/gl.h>
 #include <GL/glx.h>
 #include <locale.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -69,7 +70,14 @@ struct dxc_event {
     int32_t key_code;
     int32_t code_point;
     char text[DXC_TEXT_BYTES];
+    // The X server's time of a pointer event, a 32 bit count of milliseconds, so a press read
+    // after a slow frame still counts towards a double click by when it was made. Zero for
+    // everything else, which the scene times on arrival.
+    int64_t time_millis;
 };
+
+_Static_assert(offsetof(struct dxc_event, time_millis) == 128, "dxc_event time_millis starts at 128");
+_Static_assert(sizeof(struct dxc_event) == 136, "struct dxc_event is 136 bytes");
 
 // One thing in the window, as a reader who cannot see it would meet it. The same fields
 // and the same order as the other two windows declare, because the renderer writes the
@@ -1001,10 +1009,12 @@ static void dxc_pump_events(void) {
                 record.y = (float)event.xmotion.y;
                 record.buttons = dxc_buttons(event.xmotion.state);
                 record.modifiers = (int32_t)event.xmotion.state;
+                record.time_millis = (int64_t)(uint32_t)event.xmotion.time;
                 break;
             case ButtonPress:
             case ButtonRelease: {
                 unsigned int button = event.xbutton.button;
+                record.time_millis = (int64_t)(uint32_t)event.xbutton.time;
                 if (button >= 4 && button <= 7) {
                     if (event.type == ButtonRelease) continue;
                     record.kind = DXC_EVENT_SCROLL;

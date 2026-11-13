@@ -262,6 +262,7 @@ class X11Window : WindowPlatform {
             keyCode = record.readInt(20),
             codePoint = record.readInt(24),
             text = bytes.decodeToString(0, length),
+            timeMillis = record.readLong(X11Layout.EVENT_TIME_OFFSET),
         )
     }
 
@@ -358,6 +359,9 @@ class X11Window : WindowPlatform {
 
     /** Read the way the Kotlin/Native X11 window reads it: from `GTK_THEME`. */
     override fun textScale(): Float = LinuxTextScale.read()
+
+    /** GNOME's, else KDE's, else 500 ms. Read once: `gsettings` is a process start. */
+    override val doubleClickMillis: Long by lazy { LinuxTextScale.doubleClickMillis() }
 
     /** Read again every few seconds: neither GNOME nor KDE announces the change on the X connection. */
     private fun checkTextScale() {

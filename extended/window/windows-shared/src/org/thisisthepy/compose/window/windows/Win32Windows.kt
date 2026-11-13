@@ -2,6 +2,7 @@ package org.thisisthepy.compose.window.windows
 
 import org.thisisthepy.compose.window.CaptionAction
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.DoubleClick
 import org.thisisthepy.compose.window.FileDialogOutcome
 import org.thisisthepy.compose.window.FileDialogs
 import org.thisisthepy.compose.window.FramePresentRecord
@@ -56,6 +57,9 @@ interface Win32WindowBackend {
 
     /** The system's text size as a multiplier, 1 when unchanged (see [TextScale]). */
     fun textScale(): Float = TextScale.DEFAULT
+
+    /** The double-click interval set in the mouse settings, in milliseconds (see [DoubleClick]). */
+    fun doubleClickMillis(): Long = DoubleClick.DEFAULT_MILLIS
 
     fun setPosition(x: Int, y: Int)
     fun setContentSize(width: Int, height: Int)
@@ -258,6 +262,9 @@ class Win32WindowPlatform internal constructor(
         if (window?.systemDark() == true) SystemTheme.Dark else SystemTheme.Light
 
     override fun textScale(): Float = window?.textScale() ?: TextScale.DEFAULT
+
+    override val doubleClickMillis: Long
+        get() = DoubleClick.clamp(window?.doubleClickMillis() ?: DoubleClick.DEFAULT_MILLIS)
 
     override fun setTitle(title: String) {
         window?.setTitle(title)

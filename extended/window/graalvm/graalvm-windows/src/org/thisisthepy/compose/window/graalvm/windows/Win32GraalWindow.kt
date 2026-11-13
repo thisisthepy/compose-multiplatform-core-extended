@@ -13,6 +13,7 @@ import org.graalvm.word.Pointer
 import org.graalvm.word.WordFactory
 import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.FrameClock
+import org.thisisthepy.compose.window.DoubleClick
 import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowMeasurement
@@ -83,6 +84,9 @@ private external fun setCursorShape(shape: Int)
 
 @CFunction("dxc_native_text_scale_percent")
 private external fun textScalePercent(): Int
+
+@CFunction("dxc_native_double_click_millis")
+private external fun doubleClickMillisNative(): Long
 
 @CFunction("dxc_native_set_accessibility")
 private external fun setAccessibility(elements: Pointer?, count: Int, window: Pointer?)
@@ -179,6 +183,9 @@ class Win32GraalWindow internal constructor(
      * the one windows-shared makes, so both Windows windows answer the same number.
      */
     fun textScale(): Float = TextScale.fromWindowsPercent(textScalePercent())
+
+    /** The double-click interval set in the mouse settings, in milliseconds (GetDoubleClickTime). */
+    fun doubleClickMillis(): Long = DoubleClick.clamp(doubleClickMillisNative())
 
     /** True once the window has been closed. */
     fun closed(): Boolean = windowClosed() != 0
@@ -302,6 +309,7 @@ private fun drainWindowEvents(): List<WindowEvent> {
                     keyCode = record.readInt(20),
                     codePoint = record.readInt(24),
                     text = if (length == 0) "" else String(bytes, 0, length, Charsets.UTF_8),
+                    timeMillis = record.readLong(EVENT_TIME_OFFSET),
                 ),
             ),
         )
@@ -323,7 +331,9 @@ internal fun win32Event(raw: WindowEvent): WindowEvent =
     }
 
 private const val EVENT_TEXT_OFFSET = 28
-private const val EVENT_STRUCT_BYTES = 124
+// The int64 after the text, aligned to 8: 28 + 96 is 124, padded to 128.
+private const val EVENT_TIME_OFFSET = 128
+private const val EVENT_STRUCT_BYTES = 136
 
 /**
  * How many things a screen may say it has.

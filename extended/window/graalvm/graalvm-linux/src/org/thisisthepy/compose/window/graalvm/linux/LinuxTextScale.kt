@@ -2,6 +2,7 @@ package org.thisisthepy.compose.window.graalvm.linux
 
 import java.io.File
 import java.util.concurrent.TimeUnit
+import org.thisisthepy.compose.window.DoubleClick
 import org.thisisthepy.compose.window.TextScale
 
 /** Reads the desktop's text size: GNOME's `text-scaling-factor`, else KDE's forced font DPI. */
@@ -18,8 +19,20 @@ internal object LinuxTextScale {
      */
     fun gnome(): Float? = TextScale.fromGnome(gsettings())
 
-    private fun gsettings(): String? = try {
-        val process = ProcessBuilder("gsettings", "get", "org.gnome.desktop.interface", "text-scaling-factor")
+    /**
+     * The desktop's double-click interval: GNOME's `double-click`, else KDE's
+     * `DoubleClickInterval` in `kdeglobals`, else [DoubleClick.DEFAULT_MILLIS].
+     */
+    fun doubleClickMillis(): Long = DoubleClick.resolveLinux(
+        gsettings("org.gnome.desktop.peripherals.mouse", "double-click"),
+        config("kdeglobals"),
+    )
+
+    private fun gsettings(
+        schema: String = "org.gnome.desktop.interface",
+        key: String = "text-scaling-factor",
+    ): String? = try {
+        val process = ProcessBuilder("gsettings", "get", schema, key)
             .redirectErrorStream(false)
             .start()
         process.errorStream.close()
@@ -30,11 +43,13 @@ internal object LinuxTextScale {
         null
     }
 
-    private fun kdeFonts(): String? {
+    private fun kdeFonts(): String? = config("kcmfonts")
+
+    private fun config(name: String): String? {
         val base = System.getenv("XDG_CONFIG_HOME")?.takeIf { it.isNotEmpty() }
             ?: System.getenv("HOME")?.let { "$it/.config" } ?: return null
         return try {
-            File(base, "kcmfonts").takeIf { it.isFile }?.readText()
+            File(base, name).takeIf { it.isFile }?.readText()
         } catch (_: Exception) {
             null
         }

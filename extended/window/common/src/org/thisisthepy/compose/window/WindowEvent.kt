@@ -17,6 +17,13 @@ data class WindowEvent(
     val codePoint: Int,
     /** What an input method produced, and empty for everything that is not text. */
     val text: String,
+    /**
+     * When the operating system says the event happened, in milliseconds on the platform's
+     * own monotonic event clock (`NSEvent.timestamp`, Win32 `GetMessageTime`, the X11 event
+     * time), or [TIME_UNKNOWN] where the platform layer did not say. Only the difference
+     * between two of these means anything; [EventClock] puts them on the scene's clock.
+     */
+    val timeMillis: Long = TIME_UNKNOWN,
 ) {
 
     /**
@@ -42,6 +49,19 @@ data class WindowEvent(
         }
 
     companion object {
+        /** The [timeMillis] of an event the platform layer did not time; the scene times it on arrival. */
+        const val TIME_UNKNOWN = 0L
+
+        /**
+         * A 32 bit event time (Win32 `GetMessageTime`, X11 `Time`) as a [timeMillis]: read
+         * unsigned, so it counts up to 49 days before it wraps rather than turning negative
+         * after 24.
+         */
+        fun timeFrom32Bits(time: Int): Long = time.toLong() and 0xffffffffL
+
+        /** `NSEvent.timestamp`, seconds since the system started, as a [timeMillis]. */
+        fun timeFromSeconds(seconds: Double): Long = (seconds * 1000).toLong()
+
         const val POINTER_MOVE = 1
         const val POINTER_DOWN = 2
         const val POINTER_UP = 3

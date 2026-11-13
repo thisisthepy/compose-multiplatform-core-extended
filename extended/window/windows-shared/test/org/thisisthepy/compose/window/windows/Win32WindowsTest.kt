@@ -47,6 +47,8 @@ private class FakeWindow(val config: WindowConfig) : Win32WindowBackend {
     override val closed: Boolean get() = destroyed
     override val handle: Long get() = if (destroyed) 0L else handleValue
     override fun textScale(): Float = scale
+    var doubleClick = 500L
+    override fun doubleClickMillis(): Long = doubleClick
     override fun measure() = WindowMeasurement(config.width, config.height, 1f)
     override fun drainEvents(): List<WindowEvent> {
         val out = events.toList()
@@ -220,6 +222,18 @@ class Win32WindowsTest {
         assertTrue(platform.open(config("a"), Recorder()))
         process.windows[0].scale = 1.5f
         assertEquals(1.5f, platform.textScale())
+    }
+
+    @Test
+    fun the_double_click_interval_is_the_one_the_backend_reads() {
+        val process = FakeProcess()
+        val platform = Win32Windows(process).newPlatform()
+        assertEquals(500L, platform.doubleClickMillis, "no window yet answers the default")
+        assertTrue(platform.open(config("a"), Recorder()))
+        process.windows[0].doubleClick = 400L
+        assertEquals(400L, platform.doubleClickMillis)
+        process.windows[0].doubleClick = 0L
+        assertEquals(500L, platform.doubleClickMillis, "an unset interval is the default")
     }
 
     @Test

@@ -21,6 +21,7 @@ import org.thisisthepy.compose.window.FrameRequestCoalescer
 import org.thisisthepy.compose.window.FramePresentLog
 import org.thisisthepy.compose.window.ImeSession
 import org.thisisthepy.compose.window.AccessibilityCache
+import org.thisisthepy.compose.window.EventClock
 import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.WindowCaption
 import org.thisisthepy.compose.window.WindowConfig
@@ -116,6 +117,10 @@ class ComposeWindowHost(
     // The platform's account of when each frame reaches the screen, so an animation moves at
     // the speed of the wall clock whatever the display's refresh rate and however late a frame.
     private val clock = FrameClock(platform::frameTimeNanos)
+    // When each pointer event happened, by the platform's account, on one clock: a press read
+    // after a slow frame is still dated when it was made, so two presses of a double click
+    // stay as far apart as they were.
+    internal var eventClock = EventClock()
     private val heard = ArrayList<WindowEvent>()
     private val ime = ImeSession { event -> log.heard(event) }
     private var scene: ComposeScene? = null
@@ -210,7 +215,7 @@ class ComposeWindowHost(
             density = Density(measured.scale, textScale),
             size = size,
             coroutineContext = work,
-            platformContext = ScenePlatformContext({ size }, textInput, semantics),
+            platformContext = ScenePlatformContext({ size }, textInput, semantics, platform.doubleClickMillis),
         )
         val cursorBlink = !isIdleSoakEnabled()
         created.setContent {
@@ -322,7 +327,7 @@ class ComposeWindowHost(
                 platform.endComposition()
                 if (settleBetween) settle() else runPendingWork()
             }
-            current.receive(event)
+            current.receive(event, timeMillis = eventClock.timeOf(event.timeMillis))
             when (event.kind) {
                 WindowEvent.TEXT_COMMIT -> textInput.commit(event.text)
                 WindowEvent.TEXT_COMPOSE -> textInput.compose(event.text)
