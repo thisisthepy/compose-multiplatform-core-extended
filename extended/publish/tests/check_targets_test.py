@@ -23,6 +23,7 @@ BUILD = os.path.join(ROOT, "buildSrc", "public", "src", "main", "kotlin", "org",
 CATALOG = os.path.join(BUILD, "JetBrainsPublication.kt")
 PLATFORMS = os.path.join(BUILD, "ComposePlatforms.kt")
 COORDINATES = os.path.join(ROOT, "extended", "COORDINATES.md")
+DESIGN_SYSTEMS = os.path.join(ROOT, "extended", "design-systems")
 V = "1.11.1-ext.1"
 RELEASED = {"Desktop", "MacosArm64", "LinuxX64", "LinuxArm64"}
 
@@ -47,8 +48,20 @@ def suffix(target):
     return {"Desktop": "desktop", "WasmJs": "wasm-js"}.get(target, target.lower())
 
 
+def make_amper(bundle, project=DESIGN_SYSTEMS, without=(), no_variants_for=()):
+    """Every published module of an Amper project, its root and one component per platform."""
+    for module, group, artifact, platforms in ct.read_amper_project(project):
+        variants = [p + "ApiElements-published" for p in platforms] if module not in no_variants_for else []
+        component(bundle, group, artifact, variants)
+        for platform in platforms:
+            if f"{artifact}-{platform.lower()}" not in without:
+                component(bundle, group, f"{artifact}-{platform.lower()}")
+
+
 def make_bundle(bundle, only=None, without=(), no_variants_for=()):
-    """Every module of the catalogue, for the targets in `only` (all of them when None)."""
+    """Every module of the catalogue, for the targets in `only` (all of them when None), and the
+    design systems."""
+    make_amper(bundle)
     names = ct.read_platforms(PLATFORMS)
     for _, project, supported, custom in ct.read_catalog(CATALOG, names):
         group, artifact = ct.fork_coordinate(project)
@@ -75,7 +88,7 @@ class CheckTargets(unittest.TestCase):
 
     def run_check(self, **kwargs):
         make_bundle(self.work, **kwargs)
-        return ct.check(self.work, CATALOG, PLATFORMS, COORDINATES)
+        return ct.check(self.work, CATALOG, PLATFORMS, COORDINATES, amper_projects=[DESIGN_SYSTEMS])
 
     def test_catalogue_is_read(self):
         names = ct.read_platforms(PLATFORMS)
@@ -140,6 +153,37 @@ class CheckTargets(unittest.TestCase):
                 for name in os.listdir(new):
                     os.rename(os.path.join(new, name), os.path.join(new, name.replace(V, V + "-dev.0123abc")))
         self.assertEqual([], ct.check(self.work, CATALOG, PLATFORMS, COORDINATES))
+
+    def test_design_systems_are_read(self):
+        modules = {artifact: platforms for _, _, artifact, platforms in ct.read_amper_project(DESIGN_SYSTEMS)}
+        self.assertEqual(8, len(modules), modules)
+        for artifact, platforms in modules.items():
+            self.assertTrue(artifact == "designsystem" or artifact.startswith("designsystem-"), artifact)
+            for wanted in ("jvm", "android", "iosArm64", "iosSimulatorArm64", "macosArm64", "linuxX64"):
+                self.assertIn(wanted, platforms, artifact)
+        self.assertEqual({"org.thisisthepy.compose.designsystem"},
+                         {group for _, group, _, _ in ct.read_amper_project(DESIGN_SYSTEMS)})
+
+    def test_design_system_target_is_named(self):
+        make_bundle(self.work)
+        shutil.rmtree(os.path.join(self.work, "org", "thisisthepy", "compose", "designsystem",
+                                   "designsystem-material3-linuxx64"))
+        problems = ct.check(self.work, CATALOG, PLATFORMS, amper_projects=[DESIGN_SYSTEMS])
+        self.assertEqual(1, len(problems), problems)
+        self.assertIn("no designsystem-material3-linuxx64 component for linuxX64", problems[0])
+
+    def test_design_system_root_without_a_variant_is_named(self):
+        make_bundle(self.work)
+        shutil.rmtree(os.path.join(self.work, "org", "thisisthepy", "compose", "designsystem", "designsystem-gnome"))
+        make_amper(os.path.join(self.work, "gnome-only"), no_variants_for=("designsystem-gnome",))
+        shutil.copytree(os.path.join(self.work, "gnome-only", "org", "thisisthepy", "compose", "designsystem", "designsystem-gnome"),
+                        os.path.join(self.work, "org", "thisisthepy", "compose", "designsystem", "designsystem-gnome"))
+        shutil.rmtree(os.path.join(self.work, "gnome-only"))
+        problems = ct.check(self.work, CATALOG, PLATFORMS, amper_projects=[DESIGN_SYSTEMS])
+        self.assertTrue(any("designsystem-gnome-macosarm64 is in the bundle but the root has no macosArm64 variant" in p
+                            for p in problems), problems)
+        self.assertTrue(any("designsystem-gnome-android is in the bundle but the root has no android variant" in p
+                            for p in problems), problems)
 
 
 if __name__ == "__main__":

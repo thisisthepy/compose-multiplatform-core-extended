@@ -15,9 +15,15 @@
 #   extended is the release, and that merge is the owner's.
 #
 # The build is the fork's own: publish-local.sh for Compose (through .github/actions/fork-compose,
-# whose cache this shares with the window workflows), Amper for the window modules,
-# build-skiko-awt.sh for skiko-awt. The bundle tool only reads the local repositories they
-# write.
+# whose cache this shares with the window workflows), Amper for the window modules and the design
+# systems, build-skiko-awt.sh for skiko-awt. The bundle tool only reads the local repositories
+# they write.
+#
+# The design systems (extended/design-systems, org.thisisthepy.compose.designsystem) are built
+# against this fork's Compose at the version being published, which no public repository has yet
+# during a release. Their job therefore runs after the builds, on macOS (every one of their
+# targets compiles there), with the three Compose repositories the builds left merged into its
+# local Maven repository, so each of their targets resolves the fork's Compose from them.
 #
 # Every target upstream Compose Multiplatform publishes is built, on the host that can:
 # macOS builds the Apple targets (macOS, iOS, tvOS, watchOS), the desktop JVM and mingwX64 (with
@@ -56,6 +62,7 @@ on:
       - extended/publish/**
       - extended/compose/**
       - extended/window/**
+      - extended/design-systems/**
       - extended/skiko/**
       - extended/COORDINATES.md
       - buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build/**
@@ -99,6 +106,14 @@ env:
     org.thisisthepy.compose.window:graalvm-linux
     org.thisisthepy.compose.window:graalvm-windows
     org.thisisthepy.compose.skiko:skiko-awt
+    org.thisisthepy.compose.designsystem:designsystem
+    org.thisisthepy.compose.designsystem:designsystem-liquid-glass
+    org.thisisthepy.compose.designsystem:designsystem-material3
+    org.thisisthepy.compose.designsystem:designsystem-cupertino
+    org.thisisthepy.compose.designsystem:designsystem-fluent
+    org.thisisthepy.compose.designsystem:designsystem-gnome
+    org.thisisthepy.compose.designsystem:designsystem-breeze
+    org.thisisthepy.compose.designsystem:designsystem-deepin
 
 jobs:
   plan:
@@ -297,6 +312,61 @@ jobs:
           path: ${{ runner.temp }}/repo
           retention-days: 7
 
+  design-systems:
+    name: Build the design systems
+    needs: [ plan, build ]
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+          sparse-checkout: extended/design-systems
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: The version line
+        run: extended/design-systems/scripts/check-version.sh
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: repo-*
+          path: ${{ runner.temp }}/repos
+
+      # The macOS copy last, so where two runners wrote the same file its roots (which list
+      # every target) win, as they do in the bundle.
+      - name: The fork's Compose in the local Maven repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.m2/repository
+          for runner in linux web macos; do
+            [[ -d "$RUNNER_TEMP/repos/repo-$runner/org" ]] || { echo "::error::no repo-$runner"; exit 1; }
+            cp -R "$RUNNER_TEMP/repos/repo-$runner/org" ~/.m2/repository/
+          done
+          ls ~/.m2/repository/org/thisisthepy/compose
+
+      - name: Publish the design systems
+        working-directory: extended/design-systems
+        run: ./kotlin publish mavenLocal
+
+      - name: Keep what it published
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/repo/org/thisisthepy/compose"
+          cp -R ~/.m2/repository/org/thisisthepy/compose/designsystem "$RUNNER_TEMP/repo/org/thisisthepy/compose/"
+          find "$RUNNER_TEMP/repo" -name '*.pom' | sed "s|$RUNNER_TEMP/repo/||" | sort
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: repo-design-systems
+          path: ${{ runner.temp }}/repo
+          retention-days: 7
+
   skiko-awt:
     name: Build skiko-awt
     needs: plan
@@ -337,7 +407,7 @@ jobs:
 
   bundle:
     name: Check the bundles
-    needs: [ plan, build, skiko-awt ]
+    needs: [ plan, build, design-systems, skiko-awt ]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -353,6 +423,7 @@ jobs:
           # Cone mode: extended/COORDINATES.md comes with the files beside extended/publish.
           sparse-checkout: |
             extended/publish
+            extended/design-systems
             buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build
 
       - uses: actions/download-artifact@v4
@@ -385,9 +456,12 @@ jobs:
             [[ -n "$dir" ]] || { echo "::error::no $1 in the bundle" >&2; exit 1; }
             echo "org.thisisthepy.compose.window:$1:$(basename "$dir")"
           }
+          design="$(find "$staging/org/thisisthepy/compose/designsystem/designsystem-material3" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+          [[ -n "$design" ]] || { echo "::error::no designsystem-material3 in the bundle" >&2; exit 1; }
           gradle --no-daemon --no-configuration-cache -p extended/publish/consumer checkResolution \
             "-Pbundle=$staging" "-Psuffix=$suffix" \
-            "-Pjvm=$(coordinate scene)" "-PlinuxX64=$(coordinate native-linux)"
+            "-Pjvm=$(coordinate scene)" "-PlinuxX64=$(coordinate native-linux)" \
+            "-PdesignSystem=org.thisisthepy.compose.designsystem:designsystem-material3:$(basename "$design")"
           SH
 
       - name: Stage the dev build
@@ -397,6 +471,7 @@ jobs:
             --from "$RUNNER_TEMP/repos/repo-macos" \
             --from "$RUNNER_TEMP/repos/repo-linux" \
             --from "$RUNNER_TEMP/repos/repo-web" \
+            --from "$RUNNER_TEMP/repos/repo-design-systems" \
             --from "$RUNNER_TEMP/repos/repo-skiko-awt" \
             --out "$RUNNER_TEMP/dev" \
             --project thisisthepy/compose-multiplatform-core-extended \
@@ -428,7 +503,8 @@ jobs:
           python3 -I extended/publish/check_targets.py "$RUNNER_TEMP/dev" \
             --catalog buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build/JetBrainsPublication.kt \
             --platforms buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build/ComposePlatforms.kt \
-            --coordinates extended/COORDINATES.md
+            --coordinates extended/COORDINATES.md \
+            --amper-project extended/design-systems
 
       - name: Resolve the dev build from a consumer
         if: env.DEV == 'true'
@@ -448,6 +524,7 @@ jobs:
             --from "$RUNNER_TEMP/repos/repo-macos" \
             --from "$RUNNER_TEMP/repos/repo-linux" \
             --from "$RUNNER_TEMP/repos/repo-web" \
+            --from "$RUNNER_TEMP/repos/repo-design-systems" \
             --from "$RUNNER_TEMP/repos/repo-skiko-awt" \
             --out "$RUNNER_TEMP/staging" \
             --project thisisthepy/compose-multiplatform-core-extended
@@ -492,7 +569,8 @@ jobs:
           python3 -I extended/publish/check_targets.py "$RUNNER_TEMP/staging" \
             --catalog buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build/JetBrainsPublication.kt \
             --platforms buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build/ComposePlatforms.kt \
-            --coordinates extended/COORDINATES.md
+            --coordinates extended/COORDINATES.md \
+            --amper-project extended/design-systems
 
       - name: Resolve the Central bundle from a consumer
         if: env.CENTRAL == 'true'
