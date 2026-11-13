@@ -149,11 +149,19 @@ jobs:
           PROBE_SAVE='out\frames-drag' ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-drag.log || true
           PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-drag-30ms.log || true
 
-      # With a frame that costs nothing and with one that costs 30 ms. Not a gate yet: after
-      # restore, left-half snap and back one composed frame still shows the old picture, while
-      # the GPU takes over again (compose-rust#684). The verdict lines are what is read.
+      # For comparison, not a gate: the frame drawn ahead copied into the window's GDI surface
+      # with the swapchain's child hidden, as before it was presented through the swapchain.
+      # That showed one stale frame on every restore, left-half snap and back.
+      - name: Resize probe, maximise, restore and snap, child hidden for the frame drawn ahead (comparison)
+        shell: bash
+        run: |
+          DXC_RESIZE_SWAPCHAIN=0 PROBE_SAVE='out\frames-states-hidden' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-hidden.log || true
+          DXC_RESIZE_SWAPCHAIN=0 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-hidden-30ms.log || true
+
+      # With a frame that costs nothing and with one that costs 30 ms. A gate: no composed
+      # frame of maximise, restore, left-half snap or back may show another size's picture
+      # (compose-rust#684).
       - name: Resize probe, maximise, restore and snap
-        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail

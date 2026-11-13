@@ -439,6 +439,10 @@ static int dxc_report_latency;
 // DXC_RESIZE_PREDRAW=0: a size given outside a drag is drawn in WM_SIZE, after the window
 // has taken it, as before the frame was drawn ahead in WM_NCCALCSIZE. For comparing the two.
 static int dxc_predraw_off;
+// DXC_RESIZE_SWAPCHAIN=0: a frame drawn ahead of a size given outside a drag is copied into
+// the window's GDI surface with the swapchain's child hidden, as before it was presented
+// through the swapchain. For comparing the two.
+static int dxc_raster_present_off;
 /**
  * One line on stderr for every change of a state that decides how resize frames are
  * produced. On by default: these happen a handful of times a session, and they are what
@@ -2533,6 +2537,63 @@ static void dxc_raster_copy(void) {
     }
 }
 
+/**
+ * Presents the CPU frame drawn ahead of a size change (dxc_predraw_resize) through the
+ * swapchain, with its child left visible: the swapchain is refitted, the bitmap is copied
+ * into its buffer and presented. One when it was presented.
+ *
+ * Outside a drag the child is not hidden for the CPU frame. A hidden child cannot be given
+ * a new picture (a present to it does not reach DWM), so when it was shown again after the
+ * size change DWM composed it once with the picture it held when it was hidden, at its old
+ * size, cut by the new one and transparent beyond, before the present that followed landed
+ * (compose-rust#684). A child that stays visible takes its new picture the way it does when
+ * every resize frame is drawn on the GPU, which never showed that frame.
+ */
+static int dxc_raster_present(int32_t width, int32_t height) {
+    if (dxc_raster_present_off || dxc_sizing.dragging || dxc_swapchain == NULL || dxc_surface == NULL ||
+        !IsWindowVisible(dxc_surface) || dxc_d3d11_context == NULL || dxc_dib_bits == NULL ||
+        width > dxc_dib_width || height > dxc_dib_height) {
+        return 0;
+    }
+    LARGE_INTEGER copy_started;
+    QueryPerformanceCounter(&copy_started);
+    if (dxc_sizing.fitted_width != width || dxc_sizing.fitted_height != height) {
+        dxc_wait_for_gpu();
+        dxc_release_buffers();
+        HRESULT resized = IDXGISwapChain1_ResizeBuffers(dxc_swapchain, DXC_BUFFER_COUNT, (UINT)width,
+                                                        (UINT)height, DXC_SWAPCHAIN_FORMAT, dxc_swapchain_flags);
+        if (FAILED(resized)) {
+            dxc_log_dxgi_failure("ResizeBuffers", resized);
+            return 0;
+        }
+        dxc_resize_fitted(&dxc_sizing, width, height);
+    }
+    ID3D11Resource *back = NULL;
+    HRESULT got = IDXGISwapChain1_GetBuffer(dxc_swapchain, 0, &IID_ID3D11Resource, (void **)&back);
+    if (FAILED(got)) {
+        dxc_log_dxgi_failure("GetBuffer", got);
+        return 0;
+    }
+    // The bitmap is BGRA, top-down, the swapchain's format.
+    D3D11_BOX drawn = {0, 0, 0, (UINT)width, (UINT)height, 1};
+    ID3D11DeviceContext_UpdateSubresource(dxc_d3d11_context, back, 0, &drawn, dxc_dib_bits,
+                                          (UINT)dxc_dib_width * 4, 0);
+    ID3D11DeviceContext_Flush(dxc_d3d11_context);
+    ID3D11Resource_Release(back);
+    dxc_presents_in_change++;
+    HRESULT shown = IDXGISwapChain1_Present(dxc_swapchain, 0, 0);
+    if (FAILED(shown)) {
+        dxc_log_dxgi_failure("Present", shown);
+        return 0;
+    }
+    dxc_presented_width = width;
+    dxc_presented_height = height;
+    dxc_step_copy_ms = dxc_elapsed_ms(copy_started);
+    // Presented: the window is on the GPU again, and the child follows the size below.
+    dxc_switch_frames(0, width, height, "the frame drawn ahead was presented through the swapchain");
+    return 1;
+}
+
 static void dxc_draw_resize(int32_t width, int32_t height) {
     if (width == dxc_presented_width && height == dxc_presented_height) {
         return;
@@ -2560,7 +2621,9 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
         // and it lands before DWM composes the new rectangle again.
         dxc_raster_width = width;
         dxc_raster_height = height;
-        dxc_raster_copy();
+        if (!dxc_raster_present(width, height)) {
+            dxc_raster_copy();
+        }
     }
     dxc_resizing = 0;
     if (dxc_cpu_mode) {
@@ -4696,6 +4759,8 @@ static int32_t dxc_open_window(
     {
         const char *predraw = getenv("DXC_RESIZE_PREDRAW");
         dxc_predraw_off = predraw != NULL && strcmp(predraw, "0") == 0;
+        const char *through = getenv("DXC_RESIZE_SWAPCHAIN");
+        dxc_raster_present_off = through != NULL && strcmp(through, "0") == 0;
     }
     dxc_log_monitor(window, "the window opened");
     dxc_memory_point("the window opened", adapter);
