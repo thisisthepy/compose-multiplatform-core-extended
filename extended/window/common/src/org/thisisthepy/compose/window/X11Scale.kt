@@ -54,38 +54,52 @@ object X11Scale {
 
     /**
      * The scale: `GDK_SCALE` ([gdkScale]) when it is set to 1 or more, else `Xft.dpi` over
-     * [BASE_DPI] with GNOME's text size taken out of it (see [withoutTextScale]), else
+     * [BASE_DPI] with the desktop's text size taken out of it (see [withoutTextScale]), else
      * [DEFAULT]. A DPI under 96 is a scale of 1, as the GraalVM X11 window has always read it:
      * a desktop that writes 72 or 90 means fonts, not a smaller window.
      *
-     * [gnomeTextScale] is GNOME's `text-scaling-factor` ([TextScale.fromGnome]), null where
-     * nothing answers it. The window reports it as its text scale, so it must not be in the
-     * scale of the window as well, or text would grow by it twice.
+     * [textFactor] is the desktop's text size ([TextScale.linuxFactor]: GNOME's
+     * `text-scaling-factor`, or KDE's forced font DPI over its global scale), null where
+     * nothing answers it, and [desktopScale] the scale the desktop says it multiplied it with,
+     * where it says one. The window reports the factor as its text scale, so it must not be in
+     * the scale of the window as well, or text would grow by it twice.
      */
-    fun scaleOf(resources: String?, gdkScale: String? = null, gnomeTextScale: Float? = null): Float {
+    fun scaleOf(
+        resources: String?,
+        gdkScale: String? = null,
+        textFactor: Float? = null,
+        desktopScale: Float? = null,
+    ): Float {
         val forced = gdkScale?.trim()?.toDoubleOrNull()
         if (forced != null && !forced.isNaN() && !forced.isInfinite() && forced >= 1.0) return forced.toFloat()
-        val dpi = withoutTextScale(dpiOf(resources) ?: return DEFAULT, gnomeTextScale)
+        val dpi = withoutTextScale(dpiOf(resources) ?: return DEFAULT, textFactor, desktopScale)
         return if (dpi < BASE_DPI) DEFAULT else (dpi / BASE_DPI).toFloat()
     }
 
     /**
-     * [dpi] without GNOME's text size in it.
+     * [dpi] without the desktop's text size [textFactor] in it.
      *
-     * GNOME's settings daemon writes `Xft.dpi` as 96 x the window scaling factor (a whole
-     * number on X11) x `text-scaling-factor`, cut to a whole DPI. So where [dpi] is, to within
-     * that one DPI, a whole multiple of 96 x [gnomeTextScale], that multiple is the window
-     * scale and it alone is kept: text keeps its size through the text scale, and layout gets
-     * the density the desktop's scaling factor asks for, which is how the macOS and Windows
-     * windows already split the two. Where it is not (no GNOME factor, a factor of 1, or a
-     * DPI another desktop or `xrdb` wrote that the factor does not divide), [dpi] is returned
-     * as it is: that `Xft.dpi` does not hold the text size, so nothing is taken out.
+     * Where the desktop names its scale ([desktopScale], KDE's global scale) and [dpi] is, to
+     * within one DPI, 96 x that scale x [textFactor], the DPI is 96 x [desktopScale]: Plasma on
+     * X11 writes its forced font DPI into `Xft.dpi`, and that DPI is the global scale times the
+     * text size. Where it does not (GNOME), GNOME's settings daemon writes `Xft.dpi` as 96 x the
+     * window scaling factor (a whole number on X11) x `text-scaling-factor`, cut to a whole
+     * DPI; so where [dpi] is, to within that one DPI, a whole multiple of 96 x [textFactor],
+     * that multiple is the window scale and it alone is kept. Either way text keeps its size
+     * through the text scale, and layout gets the density the desktop's scale asks for, which
+     * is how the macOS and Windows windows already split the two. Otherwise (no factor, a
+     * factor of 1, or a DPI another desktop or `xrdb` wrote that the factor does not explain),
+     * [dpi] is returned as it is: that `Xft.dpi` does not hold the text size.
      *
      * x11_window.c of the GraalVM window follows the same rule (dxc_dpi_without_text_factor).
      */
-    fun withoutTextScale(dpi: Double, gnomeTextScale: Float?): Double {
-        val factor = gnomeTextScale?.toDouble() ?: return dpi
+    fun withoutTextScale(dpi: Double, textFactor: Float?, desktopScale: Float? = null): Double {
+        val factor = textFactor?.toDouble() ?: return dpi
         if (factor.isNaN() || factor.isInfinite() || factor <= 0.0 || factor == 1.0) return dpi
+        val desktop = desktopScale?.toDouble()
+        if (desktop != null && !desktop.isNaN() && !desktop.isInfinite() && desktop > 0.0) {
+            return if (abs(BASE_DPI * desktop * factor - dpi) <= 1.0) BASE_DPI * desktop else dpi
+        }
         val step = BASE_DPI * factor
         val whole = floor(dpi / step + 0.5)
         if (whole < 1.0 || abs(whole * step - dpi) > 1.0) return dpi

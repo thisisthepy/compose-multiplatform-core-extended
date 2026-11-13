@@ -2,8 +2,8 @@
  * The scale follows Xft.dpi in the root window's RESOURCE_MANAGER, played against
  * x11_window.c itself: read when the window opens (the window is made at its size in points
  * times the scale) and read again when another client rewrites the property, as `xrdb -merge`
- * does, with the window keeping its size in pixels. GNOME's text-scaling-factor, which GNOME
- * also writes into Xft.dpi, is taken out of the scale.
+ * does, with the window keeping its size in pixels. GNOME's text-scaling-factor and KDE's
+ * forced font DPI, which those desktops also write into Xft.dpi, are taken out of the scale.
  *
  * Needs a display (CI runs it under Xvfb). Exit status 0 means every check passed.
  */
@@ -99,6 +99,23 @@ int main(void) {
     CHECK(scale_now(&width, &height) > 2.19f && scale_now(&width, &height) < 2.2f,
           "a text factor of 1 took something out of Xft.dpi 211");
     dxc_native_set_text_factor(0.0f);
+
+    // KDE writes its forced font DPI into Xft.dpi: 96 x the global scale x the text size, the
+    // global scale named in kdeglobals, fractional ones too.
+    dxc_native_set_text_factor_for(1.25f, 1.0f);
+    set_resources("Xft.dpi:\t120\n");
+    CHECK(pump_until_scale(1.0f), "KDE at 100% with fonts forced to 120 DPI is not a scale of 1");
+    dxc_native_set_text_factor_for(1.25f, 2.0f);
+    set_resources("Xft.dpi:\t240\n");
+    CHECK(pump_until_scale(2.0f), "KDE at 200% with fonts forced to 240 DPI is not a scale of 2");
+    dxc_native_set_text_factor_for(1.25f, 1.5f);
+    set_resources("Xft.dpi:\t180\n");
+    CHECK(pump_until_scale(1.5f), "KDE at 150% with fonts forced to 180 DPI is not a scale of 1.5");
+    set_resources("Xft.dpi:\t144\n");
+    CHECK(pump_until_scale(1.5f), "KDE at 150% with Xft.dpi 144 is not a scale of 1.5");
+    set_resources("Xft.dpi:\t200\n");
+    CHECK(pump_until_scale((float)(200.0 / 96.0)), "Xft.dpi 200, not from KDE's forced DPI, was not left alone");
+    dxc_native_set_text_factor_for(0.0f, 0.0f);
 
     XDeleteProperty(peer, DefaultRootWindow(peer), XA_RESOURCE_MANAGER);
     XFlush(peer);

@@ -153,10 +153,11 @@ internal class X11Connection private constructor(val display: CPointer<Display>)
             if (bytes != null) XFree(bytes)
             text
         }
-        // GNOME's text size is in Xft.dpi too; the window reports it as its text scale, so it
-        // is taken out of the window scale here. Read now: GNOME rewrites the resources when it
-        // changes, which is what brings this here again.
-        return X11Scale.scaleOf(resources, getenv("GDK_SCALE")?.toKString(), LinuxTextScale.gnome())
+        // The desktop's text size (GNOME's factor, KDE's forced font DPI) is in Xft.dpi too; the
+        // window reports it as its text scale, so it is taken out of the window scale here. Read
+        // now: the desktop rewrites the resources when it changes, which brings this here again.
+        val text = LinuxTextScale.factor()
+        return X11Scale.scaleOf(resources, getenv("GDK_SCALE")?.toKString(), text?.factor, text?.desktopScale)
     }
 
     /** A property of the root window changed: when it is the resources, the scale is read again and every window told. */
@@ -167,7 +168,7 @@ internal class X11Connection private constructor(val display: CPointer<Display>)
 
     /**
      * Reads the scale again and tells every window when it changed: on a rewrite of the
-     * resources, and when a window sees the text size change, since GNOME's text size is
+     * resources, and when a window sees the text size change, since the desktop's text size is
      * taken out of `Xft.dpi` (see [readScale]).
      */
     fun rescale() {
