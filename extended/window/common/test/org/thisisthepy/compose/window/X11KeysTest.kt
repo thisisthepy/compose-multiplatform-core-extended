@@ -40,6 +40,27 @@ class X11KeysTest {
     }
 
     @Test
+    fun every_function_key_and_the_menu_key_has_its_number_on_the_board() {
+        // XK_F1 to XK_F12 from keysymdef.h, against the board's F1 to F12.
+        val keysyms = (0xFFBEL..0xFFC9L).toList()
+        val board = listOf(0x7A, 0x78, 0x63, 0x76, 0x60, 0x61, 0x62, 0x64, 0x65, 0x6D, 0x67, 0x6F)
+        assertEquals(board, keysyms.map { x11KeyNumber(it) })
+        assertEquals(0x6E, x11KeyNumber(0xFF67L))
+    }
+
+    @Test
+    fun shift_f10_arrives_as_f10_with_shift_held() {
+        val down = keyEventsFor(press = true, state = X11_SHIFT_MASK, keysym = 0xFFC7L, text = "").single()
+        assertEquals(WindowEvent.KEY_DOWN, down.kind)
+        assertEquals(0x6D, down.keyCode)
+        assertEquals(x11Modifiers(X11_SHIFT_MASK), down.modifiers)
+        val up = keyEventsFor(press = false, state = X11_SHIFT_MASK, keysym = 0xFFC7L, text = "").single()
+        assertEquals(0x6D, up.keyCode)
+        val menu = keyEventsFor(press = true, state = 0, keysym = 0xFF67L, text = "").single()
+        assertEquals(0x6E, menu.keyCode)
+    }
+
+    @Test
     fun a_key_with_no_meaning_is_minus_one_never_zero() {
         assertEquals(NO_KEY, x11KeyNumber(0xFD00L))
         assertNotEquals(0, x11KeyNumber(0xFFBEL))

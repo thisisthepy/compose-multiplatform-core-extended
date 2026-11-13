@@ -77,5 +77,20 @@ internal fun composeKey(platformKey: Int): Key = when (platformKey) {
     0x77 -> Key.MoveEnd
     0x74 -> Key.PageUp
     0x79 -> Key.PageDown
+    // The function keys and the menu key, which mean the same on every board. Shift with F10
+    // and the menu key are how a context menu is asked for from the keyboard.
+    0x7A -> Key.F1
+    0x78 -> Key.F2
+    0x63 -> Key.F3
+    0x76 -> Key.F4
+    0x60 -> Key.F5
+    0x61 -> Key.F6
+    0x62 -> Key.F7
+    0x64 -> Key.F8
+    0x65 -> Key.F9
+    0x6D -> Key.F10
+    0x67 -> Key.F11
+    0x6F -> Key.F12
+    0x6E -> Key.Menu
     else -> Key.Unknown
 }
