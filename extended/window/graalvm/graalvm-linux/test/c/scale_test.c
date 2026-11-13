@@ -2,8 +2,10 @@
  * The scale follows Xft.dpi in the root window's RESOURCE_MANAGER, played against
  * x11_window.c itself: read when the window opens (the window is made at its size in points
  * times the scale) and read again when another client rewrites the property, as `xrdb -merge`
- * does, with the window keeping its size in pixels. GNOME's text-scaling-factor and KDE's
- * forced font DPI, which those desktops also write into Xft.dpi, are taken out of the scale.
+ * does, with the window keeping its size in points (FR-82): 640x480 pixels at Xft.dpi 96 are
+ * 1280x960 at 192, and the minimum size is told again in the new pixels. GNOME's
+ * text-scaling-factor and KDE's forced font DPI, which those desktops also write into Xft.dpi,
+ * are taken out of the scale.
  *
  * Needs a display (CI runs it under Xvfb). Exit status 0 means every check passed.
  */
@@ -39,6 +41,23 @@ static int pump_until_scale(float wanted) {
     return 0;
 }
 
+/* The size the server holds the window at, after it has had the time to take a resize. */
+static void server_size(int32_t *width, int32_t *height) {
+    for (int i = 0; i < 30; i++) dxc_native_pump(0.01);
+    dxc_native_window_server_size(width, height);
+}
+
+/* The smallest size the window tells the manager, in pixels, as another client reads it. */
+static int min_hint(int *width, int *height) {
+    XSizeHints hints;
+    long supplied = 0;
+    memset(&hints, 0, sizeof hints);
+    if (!XGetWMNormalHints(peer, dxc_window, &hints, &supplied) || !(hints.flags & PMinSize)) return 0;
+    *width = hints.min_width;
+    *height = hints.min_height;
+    return 1;
+}
+
 static void settle(void) {
     for (int i = 0; i < 30; i++) dxc_native_pump(0.01);
     struct dxc_event record;
@@ -55,7 +74,7 @@ int main(void) {
     set_resources("Xft.antialias:\t1\nXft.dpi:\t144\n");
 
     struct dxc_native_window w;
-    if (dxc_native_window_open("scale", 200, 100, &w) != 0) {
+    if (dxc_native_window_open("scale", 640, 480, &w) != 0) {
         fprintf(stderr, "FAIL: no window\n");
         return 1;
     }
@@ -64,19 +83,50 @@ int main(void) {
     float scale = scale_now(&width, &height);
     fprintf(stderr, "opened at Xft.dpi 144: %dx%d scale %.2f\n", width, height, scale);
     CHECK(scale == 1.5f, "Xft.dpi 144 at open is not a scale of 1.5");
-    CHECK(width == 300 && height == 150, "the window was not made at 200x100 points times 1.5");
+    CHECK(width == 960 && height == 720, "the window was not made at 640x480 points times 1.5");
 
+    set_resources("Xft.antialias:\t1\nXft.dpi:\t96\n");
+    CHECK(pump_until_scale(1.0f), "a change of Xft.dpi to 96 was not read again");
+    scale = scale_now(&width, &height);
+    CHECK(width == 640 && height == 480, "at Xft.dpi 96 the window is not 640x480 pixels");
+    server_size(&width, &height);
+    fprintf(stderr, "at Xft.dpi 96: the server holds %dx%d\n", width, height);
+    CHECK(width == 640 && height == 480, "the server does not hold the window at 640x480 at Xft.dpi 96");
+    dxc_native_set_min_size(160, 120);
+    int min_width = 0, min_height = 0;
+    CHECK(min_hint(&min_width, &min_height) && min_width == 160 && min_height == 120,
+          "a minimum of 160x120 points is not 160x120 pixels at Xft.dpi 96");
+
+    // FR-82: the window keeps its size in points, so it is twice the pixels at twice the scale.
     set_resources("Xft.antialias:\t1\nXft.dpi:\t192\n");
     CHECK(pump_until_scale(2.0f), "a change of Xft.dpi to 192 was not read again");
     scale = scale_now(&width, &height);
     fprintf(stderr, "after Xft.dpi 192: %dx%d scale %.2f\n", width, height, scale);
-    CHECK(width == 300 && height == 150, "the window changed its size in pixels with the scale");
+    CHECK(width == 1280 && height == 960, "640x480 pixels at Xft.dpi 96 did not measure 1280x960 at 192");
+    server_size(&width, &height);
+    fprintf(stderr, "after Xft.dpi 192: the server holds %dx%d\n", width, height);
+    CHECK(width == 1280 && height == 960, "640x480 pixels at Xft.dpi 96 were not resized to 1280x960 at 192");
+    scale = scale_now(&width, &height);
+    CHECK(width == 1280 && height == 960, "the server's answer to the resize changed the measurement");
+    CHECK(min_hint(&min_width, &min_height) && min_width == 320 && min_height == 240,
+          "a minimum of 160x120 points is not told again as 320x240 pixels at Xft.dpi 192");
+    dxc_native_set_min_size(0, 0);
 
     set_resources("Xft.antialias:\t1\nXft.dpi:\t96\n");
     CHECK(pump_until_scale(1.0f), "a change of Xft.dpi to 96 was not read again");
+    server_size(&width, &height);
+    CHECK(width == 640 && height == 480, "1280x960 pixels at Xft.dpi 192 were not resized to 640x480 at 96");
 
     set_resources("Xft.dpi:\t120\n");
     CHECK(pump_until_scale(1.25f), "a change of Xft.dpi to 120 was not read again");
+    server_size(&width, &height);
+    CHECK(width == 800 && height == 600, "640x480 pixels at Xft.dpi 96 were not resized to 800x600 at 120");
+    set_resources("Xft.dpi:\t240\n");
+    CHECK(pump_until_scale(2.5f), "a change of Xft.dpi to 240 was not read again");
+    server_size(&width, &height);
+    CHECK(width == 1600 && height == 1200, "800x600 pixels at a scale of 1.25 were not resized to 1600x1200 at 2.5");
+    set_resources("Xft.dpi:\t120\n");
+    CHECK(pump_until_scale(1.25f), "a change of Xft.dpi back to 120 was not read again");
 
     // GNOME writes Xft.dpi as 96 x its window scale x text-scaling-factor; the factor is the
     // text scale, so the window scale is what is left (X11Scale.withoutTextScale).

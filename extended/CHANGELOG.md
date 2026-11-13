@@ -3,6 +3,19 @@
 The upstream changelogs under `compose/` stay upstream's. This one is for the modules this fork
 adds: the window modules, the design systems, the skiko scripts and the packaging templates.
 
+## Unreleased
+
+### Window modules (`org.thisisthepy.compose.window`)
+
+- **Fix.** After a change of scale (`Xft.dpi` rewritten in the root window's resources) the X11
+  windows kept their size in pixels, so a 640x480 window at a scale of 1 was 320x240 points at
+  2. Both X11 layers (Kotlin/Native and GraalVM) now keep the size in points, as the macOS and
+  Windows windows do: the window is resized to its size in points times the new scale
+  (`X11Scale.sizeAtScale` in `common`, `dxc_pixels_at_scale` in `x11_window.c`), its top left
+  staying put, its size hints are told again in the new pixels, and it measures at the new size
+  and scale before the frame it asks for. A fullscreen window keeps the screen's size.
+  (DarkPyonix/compose-rust#18, FR-82)
+
 ## 1.11.1-ext.3 (2026-11-13)
 
 ### Window modules (`org.thisisthepy.compose.window`, 0.1.0)

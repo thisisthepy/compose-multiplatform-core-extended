@@ -264,4 +264,34 @@ class X11ScaleTest {
         // A desktop scale that is no number is none: GNOME's whole multiples apply.
         assertEquals(192.0, X11Scale.withoutTextScale(240.0, 1.25f, Float.NaN))
     }
+
+    @Test
+    fun aScaleChangeKeepsTheSizeInPoints() {
+        assertEquals(1280 to 960, X11Scale.sizeAtScale(640, 480, 1f, 2f))
+        assertEquals(640 to 480, X11Scale.sizeAtScale(1280, 960, 2f, 1f))
+        // 800x600 at 1.25 is 640x480 points, which are 1600x1200 at 2.5.
+        assertEquals(1600 to 1200, X11Scale.sizeAtScale(800, 600, 1.25f, 2.5f))
+        assertEquals(960 to 720, X11Scale.sizeAtScale(640, 480, 1f, 1.5f))
+    }
+
+    @Test
+    fun aRescaledSizeRoundsToTheNearestPixel() {
+        // 641 at 1 to 1.25 is 801.25; 333 at 1.5 to 1 is 222; 101 at 2 to 1 is 50.5, a half up.
+        assertEquals(801, X11Scale.pixelsAtScale(641, 1f, 1.25f))
+        assertEquals(222, X11Scale.pixelsAtScale(333, 1.5f, 1f))
+        assertEquals(51, X11Scale.pixelsAtScale(101, 2f, 1f))
+        assertEquals(1602, X11Scale.pixelsAtScale(801, 1.25f, 2.5f))
+        // 1 at 2 to 1 is half a pixel, kept at one; nothing goes under one pixel.
+        assertEquals(1, X11Scale.pixelsAtScale(1, 2f, 1f))
+        assertEquals(1, X11Scale.pixelsAtScale(1, 4f, 1f))
+    }
+
+    @Test
+    fun aScaleThatIsNoPositiveNumberLeavesThePixels() {
+        assertEquals(640, X11Scale.pixelsAtScale(640, 0f, 2f))
+        assertEquals(640, X11Scale.pixelsAtScale(640, 1f, -1f))
+        assertEquals(640, X11Scale.pixelsAtScale(640, Float.NaN, 2f))
+        assertEquals(640, X11Scale.pixelsAtScale(640, 1f, Float.POSITIVE_INFINITY))
+        assertEquals(640, X11Scale.pixelsAtScale(640, 2f, 2f))
+    }
 }
