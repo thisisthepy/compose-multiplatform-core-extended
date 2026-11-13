@@ -66,6 +66,8 @@ import platform.posix.write
 import platform.posix.clock_gettime
 import platform.posix.timespec
 import platform.posix.getenv
+import platform.posix.gethostname
+import platform.posix.getpid
 import platform.posix.poll
 import platform.posix.pollfd
 import kotlinx.cinterop.toKString
@@ -302,6 +304,9 @@ class X11Window : WindowPlatform {
             XSetWMProtocols(display, window, protocols, count)
         }
         XStoreName(display, window, config.title)
+        // Before the window is mapped, so a tool that looks the window up by process
+        // (`xdotool search --pid`) finds it from the first map on.
+        setClientIdentity(display, window)
         this.config = config
         // Before the window is mapped, because a manager decides on the frame when it maps it.
         if (!X11Chrome.keepsFrame(config)) removeDecorations(display, window)
@@ -707,6 +712,37 @@ class X11Window : WindowPlatform {
         // button is still down.
         log.heard(event(WindowEvent.POINTER_UP, pressX, pressY, 0, 0))
         return true
+    }
+
+    /**
+     * Says which process on which machine owns the window: `_NET_WM_PID` (CARDINAL, the
+     * process id) and `WM_CLIENT_MACHINE` (STRING, the host name). The pid only means
+     * something together with the machine, which is why EWMH asks for both.
+     */
+    private fun setClientIdentity(display: CPointer<Display>, window: Window) {
+        memScoped {
+            val pid = alloc<LongVar>()
+            pid.value = getpid().toLong()
+            XChangeProperty(
+                display, window,
+                XInternAtom(display, "_NET_WM_PID", 0),
+                XInternAtom(display, "CARDINAL", 0),
+                32, PropModeReplace, pid.ptr.reinterpret(), 1,
+            )
+            val host = allocArray<ByteVar>(HOST_NAME_BYTES)
+            if (gethostname(host, HOST_NAME_BYTES.convert()) == 0) {
+                host[HOST_NAME_BYTES - 1] = 0
+                val name = host.toKString()
+                if (name.isNotEmpty()) {
+                    XChangeProperty(
+                        display, window,
+                        XInternAtom(display, "WM_CLIENT_MACHINE", 0),
+                        XInternAtom(display, "STRING", 0),
+                        8, PropModeReplace, host.reinterpret(), name.encodeToByteArray().size,
+                    )
+                }
+            }
+        }
     }
 
     /** Asks the manager for no frame: `_MOTIF_WM_HINTS` with only the decorations set, to none. */
@@ -1297,6 +1333,10 @@ class X11Window : WindowPlatform {
         const val SOURCE_PAGER = 2L
         const val PRIMARY_BUTTON = 1L
         const val MOTIF_HINT_WORDS = 5
+
+        /** Room for a host name, the terminating zero included (HOST_NAME_MAX is 64 on Linux). */
+        const val HOST_NAME_BYTES = 256
+
         /** The flags word of `_MOTIF_WM_HINTS`: only the decorations field is meant. */
         const val MOTIF_HINTS_DECORATIONS = 2uL
         const val DENSITY = 1.0f
