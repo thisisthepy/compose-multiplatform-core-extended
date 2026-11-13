@@ -119,6 +119,58 @@ jobs:
             extended/window/windows-shared/out/dxc_win32_window.lib
             extended/window/windows-shared/cinterop/include/win32_window.h
 
+      # The window on this runner's desktop, with a stand-in renderer, read back frame by frame
+      # through DXGI desktop duplication (c/test/win32_resize_probe.c). FR-19.8 criterion 4,
+      # compose-rust#684: no composed frame shows the window at one size with a picture drawn
+      # for another.
+      - name: Build the resize probe
+        run: |
+          cl /nologo /std:c11 /W3 /Ic /Icinterop\include /Foout\ c\test\win32_resize_probe.c /Feout\win32_resize_probe.exe /link out\dxc_win32_window.lib d3d12.lib d3d11.lib dxgi.lib dxguid.lib dwmapi.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib || exit /b 1
+
+      # For comparison, not a gate: the size drawn in WM_SIZE after the window took it, as
+      # before, and resize frames on the GPU, where the frame cannot be drawn ahead.
+      - name: Resize probe, maximise, restore and snap, drawn after the window took the size (comparison)
+        shell: bash
+        run: |
+          DXC_RESIZE_PREDRAW=0 PROBE_SAVE='out\frames-states-after' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-after.log || true
+          DXC_RESIZE_PREDRAW=0 PROBE_DRAW_MS=30 PROBE_SAVE='out\frames-states-after-30ms' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-after-30ms.log || true
+
+      - name: Resize probe, maximise, restore and snap, resize frames on the GPU (comparison)
+        shell: bash
+        run: |
+          PROBE_RASTER=0 PROBE_SAVE='out\frames-states-gpu' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-gpu.log || true
+
+      # How far the edge lags the pointer in a right-edge drag, with a frame that costs
+      # nothing and with one that costs 30 ms (about what Skia's raster backend takes on this
+      # runner). Measured, not a gate.
+      - name: Resize probe, right-edge drag
+        shell: bash
+        run: |
+          PROBE_SAVE='out\frames-drag' ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-drag.log || true
+          PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-drag-30ms.log || true
+
+      # With a frame that costs nothing and with one that costs 30 ms. Not a gate yet: after
+      # restore, left-half snap and back one composed frame still shows the old picture, while
+      # the GPU takes over again (compose-rust#684). The verdict lines are what is read.
+      - name: Resize probe, maximise, restore and snap
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          PROBE_SAVE='out\frames-states' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states.log || status=1
+          PROBE_DRAW_MS=30 PROBE_SAVE='out\frames-states-30ms' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-30ms.log || status=1
+          exit $status
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-shared-resize-probe
+          if-no-files-found: ignore
+          path: |
+            extended/window/windows-shared/out/probe-*.log
+            extended/window/windows-shared/out/frames-*/
+
   kotlin:
     name: windows-shared Kotlin/Native (mingwX64 klib build and test)
     runs-on: windows-2022
