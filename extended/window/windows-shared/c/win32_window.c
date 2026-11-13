@@ -2256,6 +2256,8 @@ static int dxc_capture_failures;
 static void dxc_capture_step(HWND window);
 // When the last CPU frame was copied into the window.
 static int dxc_raster_enabled;
+// What the last Present answered: DXGI_STATUS_OCCLUDED for a present to the hidden child.
+static HRESULT dxc_last_present;
 #define DXC_WM_GPU_RETURN (WM_APP + 2)
 
 void dxc_native_set_raster_resize(int32_t enabled) {
@@ -2281,12 +2283,41 @@ static void dxc_return_to_gpu(HWND window, int32_t width, int32_t height) {
         SetWindowPos(dxc_surface, NULL, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE);
     }
     dxc_resize_note(&dxc_sizing, width, height);
+    dxc_last_present = S_OK;
     dxc_draw_one_frame();
+    HRESULT hidden_present = dxc_last_present;
+    int fresh = dxc_presented_width == width && dxc_presented_height == height;
+    int again = 0;
     if (dxc_surface != NULL) {
+        // A present to the hidden child does not reach what DWM shows for it (DXGI answers
+        // it as occluded), so shown as it is the child would show the picture it held when it
+        // was hidden, at the size it had then, cut by the new size (compose-rust#684). So the
+        // frame waits for the GPU, DWM composes once, and the child is shown and the same
+        // buffer (a sequential swapchain keeps it) presented again at once, both early in a
+        // composition interval, so the composition after shows the child with this frame.
+        if (fresh) {
+            dxc_wait_for_gpu();
+            dxc_dwm_flush();
+        }
         ShowWindow(dxc_surface, SW_SHOWNA);
+        if (fresh && dxc_swapchain != NULL) {
+            HRESULT shown = IDXGISwapChain1_Present(dxc_swapchain, 0, 0);
+            if (FAILED(shown)) {
+                dxc_log_dxgi_failure("Present", shown);
+            } else {
+                again = 1;
+            }
+        }
     }
-    fprintf(stderr, "compose-rust: resize-mode: surface shown at %dx%d after its frame was presented\n",
-            (int)width, (int)height);
+    LARGE_INTEGER now, frequency;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&frequency);
+    fprintf(stderr,
+            "compose-rust: resize-mode: surface shown at %dx%d after its frame was presented "
+            "(hidden present 0x%08lx, %s) at %.1f ms\n",
+            (int)width, (int)height, (unsigned long)hidden_present,
+            again ? "presented again once shown" : fresh ? "not presented again" : "no frame at this size",
+            (double)now.QuadPart * 1000.0 / (double)frequency.QuadPart);
     (void)window;
 }
 
@@ -4859,6 +4890,7 @@ void dxc_native_frame_end(void *queue_pointer) {
     // for first would hold the drag for one more frame.
     dxc_presents_in_change++;
     HRESULT shown = IDXGISwapChain1_Present(dxc_swapchain, dxc_resizing ? 0 : 1, 0);
+    dxc_last_present = shown;
     if (FAILED(shown)) {
         dxc_log_dxgi_failure("Present", shown);
     }
