@@ -155,6 +155,22 @@ class MacosWindow(
     internal var movedPending = false
 
     private val windowDelegate = MacosWindowDelegate(this)
+
+    /**
+     * Put up when the secondary button is pressed, after the press has reached the scene so the
+     * field under the pointer has taken focus. The menu tracks the pointer until it is chosen
+     * from or dismissed, and takes the release with it, so the release is sent once it returns.
+     * Null puts up nothing, which is what an application that draws the menu itself wants.
+     */
+    var onContextMenu: (() -> Unit)? = null
+
+    /**
+     * True to have the platform put up the system's edit menu (Cut, Copy, Paste, Select All) on
+     * a right click. Off by default: an application whose Compose answers a text field's menu
+     * with an `NSMenu` of its own would show two.
+     */
+    var editMenuOnRightClick: Boolean = false
+
     var resizePainter: (() -> Boolean)? = null
     var host: ComposeWindowHost? = null
 
@@ -350,8 +366,6 @@ class MacosWindow(
             return true
         }
 
-        private var marked: String = ""
-
         override fun insertText(string: Any, replacementRange: CValue<NSRange>) {
             marked = ""
             val text = string.asText()
@@ -413,8 +427,13 @@ class MacosWindow(
             range: CValue<NSRange>,
             actualRange: NSRangePointer?,
         ): CValue<CGRect> {
-            val origin = window?.frame?.useContents { CGRectMake(origin.x, origin.y, 0.0, 0.0) }
-            return origin ?: CGRectMake(0.0, 0.0, 0.0, 0.0)
+            // Where the caret is, so the candidate window opens beside what is being typed
+            // and follows the caret when a key moves it. The scene reports it in pixels from
+            // the top left; the view is flipped, so only the scale is taken out.
+            val w = window ?: return CGRectMake(0.0, 0.0, 0.0, 0.0)
+            val scale = if (w.backingScaleFactor > 0.0) w.backingScaleFactor else 1.0
+            val local = CGRectMake(imeSpot.first / scale, imeSpot.second / scale, 1.0, IME_LINE_POINTS)
+            return w.convertRectToScreen(convertRect(local, toView = null))
         }
 
         override fun characterIndexForPoint(point: CValue<CGPoint>): ULong =
@@ -424,6 +443,7 @@ class MacosWindow(
             val name = NSStringFromSelector(selector)
             if (inKeyDown) {
                 KeyLog.line("doCommandBySelector $name during-key=1")
+                commandDuringKey = true
                 return
             }
             if (name == null) return
@@ -467,6 +487,10 @@ class MacosWindow(
         }
 
         private var inKeyDown = false
+
+        // Whether the input method handed the key being handled back as a command, which is
+        // how it says the key was not part of what it is composing.
+        private var commandDuringKey = false
 
         private fun Any.asText(): String = when (this) {
             is NSAttributedString -> string
@@ -576,10 +600,13 @@ class MacosWindow(
             addTrackingArea(area)
         }
 
-        private fun postPointer(event: NSEvent, kind: Int, secondary: Boolean = false) {
+        // Whether the primary button's press went to the scene as a secondary one (control was
+        // held), so that its release is marked the same, whatever is held by then.
+        private var controlClick = false
+
+        private fun postPointer(event: NSEvent, kind: Int, eventButton: Int = 0) {
             val position = event.offsetInView
-            var buttons = NSEvent.pressedMouseButtons.toInt()
-            if (secondary) buttons = buttons or WindowEvent.SECONDARY_BUTTON
+            val buttons = WindowEvent.pointerButtons(NSEvent.pressedMouseButtons.toInt(), eventButton)
             onEvent?.invoke(
                 WindowEvent(
                     kind = kind,
@@ -597,22 +624,48 @@ class MacosWindow(
         override fun mouseDown(event: NSEvent) {
             if (hasMarkedText()) inputContext?.discardMarkedText()
             val control = event.modifierFlags and NSEventModifierFlagControl != 0uL
-            postPointer(event, WindowEvent.POINTER_DOWN, secondary = control)
+            // Control with the primary button is the secondary button on this platform.
+            if (control && onContextMenu != null) return rightMouseDown(event)
+            controlClick = control
+            postPointer(event, WindowEvent.POINTER_DOWN, if (control) WindowEvent.SECONDARY_BUTTON else 0)
         }
 
-        override fun mouseUp(event: NSEvent) =
-            postPointer(event, WindowEvent.POINTER_UP)
+        override fun mouseUp(event: NSEvent) {
+            val was = controlClick
+            controlClick = false
+            postPointer(event, WindowEvent.POINTER_UP, if (was) WindowEvent.SECONDARY_BUTTON else 0)
+        }
 
-        override fun rightMouseDown(event: NSEvent) =
-            postPointer(event, WindowEvent.POINTER_DOWN, secondary = true)
+        override fun rightMouseDown(event: NSEvent) {
+            postPointer(event, WindowEvent.POINTER_DOWN, WindowEvent.SECONDARY_BUTTON)
+            val menu = onContextMenu ?: return
+            menu()
+            // The menu's tracking swallowed the release; without this the scene would go on
+            // believing a button is held down.
+            postPointer(event, WindowEvent.POINTER_UP, WindowEvent.SECONDARY_BUTTON)
+        }
 
-        override fun rightMouseUp(event: NSEvent) =
-            postPointer(event, WindowEvent.POINTER_UP, secondary = true)
+        override fun rightMouseUp(event: NSEvent) {
+            if (onContextMenu != null) return
+            postPointer(event, WindowEvent.POINTER_UP, WindowEvent.SECONDARY_BUTTON)
+        }
+
+        override fun otherMouseDown(event: NSEvent) =
+            postPointer(event, WindowEvent.POINTER_DOWN, eventButtonOfMacButton(event.buttonNumber.toInt()))
+
+        override fun otherMouseUp(event: NSEvent) =
+            postPointer(event, WindowEvent.POINTER_UP, eventButtonOfMacButton(event.buttonNumber.toInt()))
 
         override fun mouseMoved(event: NSEvent) =
             postPointer(event, WindowEvent.POINTER_MOVE)
 
         override fun mouseDragged(event: NSEvent) =
+            postPointer(event, WindowEvent.POINTER_MOVE)
+
+        override fun rightMouseDragged(event: NSEvent) =
+            postPointer(event, WindowEvent.POINTER_MOVE)
+
+        override fun otherMouseDragged(event: NSEvent) =
             postPointer(event, WindowEvent.POINTER_MOVE)
 
         override fun scrollWheel(event: NSEvent) {
@@ -636,19 +689,39 @@ class MacosWindow(
         override fun keyDown(event: NSEvent) {
             KeyLog.platform(event.keyCode.toInt(), event.modifierFlags.toLong(), event.characters, down = true)
             val codePoint = event.charactersIgnoringModifiers?.firstOrNull()?.code ?: 0
-            onEvent?.invoke(
-                WindowEvent(
-                    kind = WindowEvent.KEY_DOWN,
-                    x = 0f,
-                    y = 0f,
-                    buttons = 0,
-                    modifiers = event.modifierFlags.toInt(),
-                    keyCode = event.keyCode.toInt(),
-                    codePoint = codePoint,
-                    text = "",
-                ),
+            val key = WindowEvent(
+                kind = WindowEvent.KEY_DOWN,
+                x = 0f,
+                y = 0f,
+                buttons = 0,
+                modifiers = event.modifierFlags.toInt(),
+                keyCode = event.keyCode.toInt(),
+                codePoint = codePoint,
+                text = "",
             )
-            if (!reachesInputMethod(event.modifierFlags.toLong())) return
+            val toInputMethod = reachesInputMethod(event.modifierFlags.toLong())
+            if (toInputMethod && marked.isNotEmpty()) {
+                // Something is being composed, so the key is the input method's first. An
+                // arrow with a Korean syllable marked makes it commit the syllable and hand
+                // the arrow back as a command; the scene then reads the commit before the
+                // key, and the caret moves from the end of the finished syllable. Read the
+                // other way round, the key moved the caret under an open composition and the
+                // commit that followed pulled it back. A key the input method keeps (the next
+                // letter, or an arrow inside a Japanese conversion) is not the scene's at all.
+                commandDuringKey = false
+                var handled = false
+                inKeyDown = true
+                try {
+                    handled = inputContext?.handleEvent(event) == true
+                } finally {
+                    inKeyDown = false
+                }
+                KeyLog.line("composing key handled=$handled command=$commandDuringKey")
+                if (keyIsLeftForScene(handled, commandDuringKey)) onEvent?.invoke(key)
+                return
+            }
+            onEvent?.invoke(key)
+            if (!toInputMethod) return
             inKeyDown = true
             try {
                 inputContext?.handleEvent(event)
@@ -683,6 +756,23 @@ class MacosWindow(
             keyUp(event)
             return true
         }
+    }
+
+    // What the input method is composing, as it last said. Held here and not in the field,
+    // which is on the scene's side.
+    private var marked: String = ""
+
+    /** Where the focused field's caret is, in pixels from the content's top left. */
+    var imeSpot: Pair<Int, Int> = 0 to 0
+
+    /**
+     * Makes the input method let go of what it is composing, sending nothing. The field has
+     * kept the text; see [org.thisisthepy.compose.window.WindowPlatform.endComposition].
+     */
+    fun endComposition() {
+        if (marked.isEmpty()) return
+        marked = ""
+        view.inputContext?.discardMarkedText()
     }
 
     private var windowInitialized = false
@@ -741,6 +831,7 @@ class MacosWindow(
     fun setContent(content: @Composable () -> Unit) {
         initWindow()
         val platform = MacosWindowPlatform()
+        platform.nativeEditMenu = editMenuOnRightClick
         platform.attachWindow(this)
         val config = WindowConfig(name, width, height)
         val createdHost = ComposeWindowHost(
@@ -1108,6 +1199,21 @@ internal fun applyChrome(window: NSWindow, chrome: MacosWindowChrome) {
  * Rust's `Instant` reads on macOS.
  */
 internal fun uptimeNanos(): Long = (NSProcessInfo.processInfo.systemUptime * 1_000_000_000.0).toLong()
+
+/** The height the input method is told a line has, in points: enough to clear the caret. */
+private const val IME_LINE_POINTS = 20.0
+
+/**
+ * The [WindowEvent] button flag of the button AppKit numbers [buttonNumber] in an `otherMouse`
+ * event: 2 is the middle button, 3 and 4 the back and forward ones. The left and right buttons
+ * have their own event types and are not numbered here, so any other number has no flag.
+ */
+internal fun eventButtonOfMacButton(buttonNumber: Int): Int = when (buttonNumber) {
+    2 -> WindowEvent.MIDDLE_BUTTON
+    3 -> WindowEvent.BACK_BUTTON
+    4 -> WindowEvent.FORWARD_BUTTON
+    else -> 0
+}
 
 private val CAPTION_RETRY_DELAYS_NANOS = longArrayOf(50_000_000L, 150_000_000L, 300_000_000L)
 

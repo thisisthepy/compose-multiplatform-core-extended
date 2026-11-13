@@ -32,6 +32,7 @@ import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.CaptionAction
 import org.thisisthepy.compose.window.CaptionGesture
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowCaption
 import org.thisisthepy.compose.window.WindowEdge
 import org.thisisthepy.compose.window.X11Chrome
@@ -65,6 +66,8 @@ import platform.posix.write
 import platform.posix.clock_gettime
 import platform.posix.timespec
 import platform.posix.getenv
+import platform.posix.gethostname
+import platform.posix.getpid
 import platform.posix.poll
 import platform.posix.pollfd
 import kotlinx.cinterop.toKString
@@ -87,6 +90,8 @@ class X11Window : WindowPlatform {
     override val name: String = "x11"
 
     private var display: CPointer<Display>? = null
+    private var lastTextScale = TextScale.DEFAULT
+    private var nextTextScaleCheck = 0L
     private var window: Window = 0uL
     private var context: GLXContext? = null
     private var colormap: Colormap = 0uL
@@ -299,6 +304,9 @@ class X11Window : WindowPlatform {
             XSetWMProtocols(display, window, protocols, count)
         }
         XStoreName(display, window, config.title)
+        // Before the window is mapped, so a tool that looks the window up by process
+        // (`xdotool search --pid`) finds it from the first map on.
+        setClientIdentity(display, window)
         this.config = config
         // Before the window is mapped, because a manager decides on the frame when it maps it.
         if (!X11Chrome.keepsFrame(config)) removeDecorations(display, window)
@@ -356,6 +364,7 @@ class X11Window : WindowPlatform {
                 listener?.onMoved(now)
             }
         }
+        checkTextScale()
         // After the events, so that a reader's action lands after the input that came before
         // it, and on this thread, which is the one the scene is on.
         accessibility.setGeometry(measured.width, measured.height, measured.scale)
@@ -510,6 +519,24 @@ class X11Window : WindowPlatform {
         presentedSinceEvent = true
     }
 
+    override fun textScale(): Float = LinuxTextScale.read()
+
+    /**
+     * Neither GNOME's nor KDE's setting is announced on the X connection, so it is read again
+     * every few seconds, which is cheap enough (one `gsettings` run) and quick enough for a
+     * slider in a settings panel.
+     */
+    private fun checkTextScale() {
+        val now = monotonicClockNanos()
+        if (now < nextTextScaleCheck) return
+        nextTextScaleCheck = now + TEXT_SCALE_POLL_NANOS
+        val scale = LinuxTextScale.read()
+        if (scale != lastTextScale) {
+            lastTextScale = scale
+            listener?.onTextScaleChanged(scale)
+        }
+    }
+
     override fun systemTheme(): SystemTheme {
         val gtk = getenv("GTK_THEME")?.toKString().orEmpty().lowercase()
         return if (gtk.endsWith(":dark") || gtk.endsWith("-dark")) SystemTheme.Dark else SystemTheme.Light
@@ -529,12 +556,22 @@ class X11Window : WindowPlatform {
         applySizeHints()
     }
 
-    /** Tells the window manager the sizes [sizeHintsFor] decides on, when there are any. */
+    /** Changes the window manager's resize policy without reopening the window. */
+    fun setResizable(value: Boolean) {
+        if (resizable == value) return
+        resizable = value
+        if (!value) {
+            openedWidth = measured.width
+            openedHeight = measured.height
+        }
+        applySizeHints()
+    }
+
+    /** Replaces the window manager's size hints, including clearing old constraints. */
     private fun applySizeHints() {
         val display = display ?: return
         val decided = sizeHintsFor(minWidth, minHeight, resizable, openedWidth, openedHeight, DENSITY)
         val placed = openedAt
-        if (decided == null && placed == null) return
         val hints = XAllocSizeHints() ?: return
         placed?.let { (x, y) ->
             hints.pointed.flags = hints.pointed.flags or US_POSITION
@@ -677,6 +714,37 @@ class X11Window : WindowPlatform {
         return true
     }
 
+    /**
+     * Says which process on which machine owns the window: `_NET_WM_PID` (CARDINAL, the
+     * process id) and `WM_CLIENT_MACHINE` (STRING, the host name). The pid only means
+     * something together with the machine, which is why EWMH asks for both.
+     */
+    private fun setClientIdentity(display: CPointer<Display>, window: Window) {
+        memScoped {
+            val pid = alloc<LongVar>()
+            pid.value = getpid().toLong()
+            XChangeProperty(
+                display, window,
+                XInternAtom(display, "_NET_WM_PID", 0),
+                XInternAtom(display, "CARDINAL", 0),
+                32, PropModeReplace, pid.ptr.reinterpret(), 1,
+            )
+            val host = allocArray<ByteVar>(HOST_NAME_BYTES)
+            if (gethostname(host, HOST_NAME_BYTES.convert()) == 0) {
+                host[HOST_NAME_BYTES - 1] = 0
+                val name = host.toKString()
+                if (name.isNotEmpty()) {
+                    XChangeProperty(
+                        display, window,
+                        XInternAtom(display, "WM_CLIENT_MACHINE", 0),
+                        XInternAtom(display, "STRING", 0),
+                        8, PropModeReplace, host.reinterpret(), name.encodeToByteArray().size,
+                    )
+                }
+            }
+        }
+    }
+
     /** Asks the manager for no frame: `_MOTIF_WM_HINTS` with only the decorations set, to none. */
     private fun removeDecorations(display: CPointer<Display>, window: Window) {
         val hints = XInternAtom(display, "_MOTIF_WM_HINTS", 0)
@@ -798,6 +866,18 @@ class X11Window : WindowPlatform {
         if (!ime.composing) return
         val finished = method.reset()
         if (finished.isNotEmpty()) ime.commit(finished) else ime.preeditDone()
+    }
+
+    /**
+     * Makes the input method let go of what it is composing and sends nothing: the field has
+     * kept the text. The run is forgotten before the reset, so a callback the method makes
+     * from inside it to say it is done finds nothing to end.
+     */
+    override fun endComposition() {
+        val method = xim ?: return
+        if (!ime.composing) return
+        ime.discard()
+        method.reset()
     }
 
     // The clipboard: the CLIPBOARD selection, as UTF-8 text.
@@ -1117,19 +1197,12 @@ class X11Window : WindowPlatform {
                         pressNanos = monotonicClockNanos()
                     }
                     if (event.type == ButtonRelease && button == 1) gesture.released()
-                    val bit = when (button) {
-                        1 -> 1
-                        3 -> 2
-                        2 -> 4
-                        else -> 0
-                    }
-                    val held = buttonsOf(event.xbutton.state)
                     log.heard(
                         event(
                             if (event.type == ButtonPress) WindowEvent.POINTER_DOWN else WindowEvent.POINTER_UP,
                             event.xbutton.x.toFloat(),
                             event.xbutton.y.toFloat(),
-                            if (event.type == ButtonPress) held or bit else held and bit.inv(),
+                            pointerButtonsOf(event.xbutton.state, button, event.type == ButtonPress),
                             modifiersOf(event.xbutton.state),
                         ),
                     )
@@ -1252,6 +1325,7 @@ class X11Window : WindowPlatform {
     }
 
     private companion object {
+        const val TEXT_SCALE_POLL_NANOS = 3_000_000_000L
         const val EVENT_MASK = ExposureMask or StructureNotifyMask or PointerMotionMask or
             ButtonPressMask or ButtonReleaseMask or KeyPressMask or KeyReleaseMask or FocusChangeMask or
             0L
@@ -1259,6 +1333,10 @@ class X11Window : WindowPlatform {
         const val SOURCE_PAGER = 2L
         const val PRIMARY_BUTTON = 1L
         const val MOTIF_HINT_WORDS = 5
+
+        /** Room for a host name, the terminating zero included (HOST_NAME_MAX is 64 on Linux). */
+        const val HOST_NAME_BYTES = 256
+
         /** The flags word of `_MOTIF_WM_HINTS`: only the decorations field is meant. */
         const val MOTIF_HINTS_DECORATIONS = 2uL
         const val DENSITY = 1.0f

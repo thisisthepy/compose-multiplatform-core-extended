@@ -13,4 +13,5 @@ internal actual fun useAsComposeMainDispatcher(dispatcher: CoroutineDispatcher) 
 
 @OptIn(ExperimentalForeignApi::class)
 internal actual fun isIdleSoakEnabled(): Boolean =
-    (getenv("DXC_IDLE_SOAK_SECONDS")?.toKString()?.toIntOrNull() ?: 0) > 0
+    listOf("DXC_IDLE_SOAK_SECONDS", "DXC_WINDOW_IDLE_SOAK_SECONDS")
+        .any { (getenv(it)?.toKString()?.toIntOrNull() ?: 0) > 0 }

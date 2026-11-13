@@ -1,7 +1,7 @@
 #ifndef DXC_WIN32_WINDOW_H
 #define DXC_WIN32_WINDOW_H
 
-// The surface of `c/win32_window.c` and `c/win32_notifications.c`: what a consumer can call
+// The surface of `c/win32_window.c`, `c/win32_file_dialog.c` and `c/win32_notifications.c`: what a consumer can call
 // and the records it reads back. One header for both consumers. The GraalVM path reaches
 // these by symbol name from its Kotlin `@CFunction` wrapper; the Kotlin/Native path runs
 // cinterop over this file (`../win32_window.def`) and is linked, by MSVC, against the object
@@ -38,6 +38,8 @@ enum {
     DXC_EVENT_FILES_ENTERED = 10,
     DXC_EVENT_FILES_DROPPED = 11,
     DXC_EVENT_FILES_EXITED = 12,
+    // The Text size setting moved; `x` is the new percent (100 means unchanged, 0 unset).
+    DXC_EVENT_TEXT_SCALE_CHANGED = 18,
 };
 
 // Room for what an input method is composing, which is a syllable or a word and never a
@@ -132,11 +134,15 @@ void dxc_native_raster_end(void);
 // When the frame drawn now will be on the screen, in nanoseconds on the performance counter.
 int64_t dxc_native_frame_time_nanos(void);
 
+// Ends what the input method is composing, sending nothing, and copies what it was composing
+// into out as UTF-8 (out may be null). Answers the bytes copied, zero where nothing was being
+// composed. For a field that has already kept the text, when a key moved the caret off it.
+int32_t dxc_native_ime_reset(char *out, int32_t capacity);
+
 // The X11 window's calls, which the native image also carries here. Each answers nothing.
 void dxc_native_wake(void);
 void dxc_native_window_origin(int32_t *x, int32_t *y);
 int32_t dxc_native_window_focused(void);
-int32_t dxc_native_ime_reset(char *out, int32_t capacity);
 int64_t dxc_native_resize_serial(void);
 void dxc_native_window_server_size(int32_t *width, int32_t *height);
 
@@ -144,6 +150,9 @@ void dxc_native_window_server_size(int32_t *width, int32_t *height);
 void dxc_native_pump(double seconds);
 int32_t dxc_native_window_closed(void);
 int32_t dxc_native_poll_event(struct dxc_event *out);
+
+// The Text size slider as a percent (100 to 225), or 0 when it was never set.
+int32_t dxc_native_text_scale_percent(void);
 
 // Input, text and the system's own services.
 void dxc_native_set_cursor(int32_t shape);
@@ -192,6 +201,12 @@ void dxc_native_window_set_title(const char *title);
 void dxc_native_window_set_min_size(int32_t width, int32_t height);
 void dxc_native_window_set_visibility(int32_t visibility);
 int32_t dxc_native_system_dark(void);
+// Changing the selected window after it opened (FR-53). set_resizable returns 0 with no window;
+// set_color_scheme takes 0 follow the system, 1 light, 2 dark and returns 1 when DWM took it;
+// caption_dark writes what the caption was last told and returns 1 once a scheme was applied.
+int32_t dxc_native_window_set_resizable(int32_t resizable);
+int32_t dxc_native_window_set_color_scheme(int32_t scheme);
+int32_t dxc_native_window_caption_dark(int32_t *dark);
 // Focus. Focus returns 0 when the foreground lock refused and the window flashed instead.
 int32_t dxc_native_window_focus(void);
 int32_t dxc_native_window_is_active(void);
@@ -203,6 +218,45 @@ int32_t dxc_native_take_moved(int32_t *x, int32_t *y, int32_t *width, int32_t *h
 int32_t dxc_native_pointer_on_screen(float *x, float *y, int32_t *primary_down);
 int32_t dxc_native_follow_start(float anchor_x, float anchor_y);
 int32_t dxc_native_take_follow_end(int32_t *cancelled);
+
+// File open and save dialogs, win32_file_dialog.c: the Common Item Dialog, owned by a window.
+// A dialog runs on a thread of its own, so the window goes on pumping and drawing while it is
+// open; only input to the owning window waits. Show returns at once, and every dialog it
+// started answers exactly once: the answer waits on a list which the thread that pumps reads
+// with next and take after each pump (the pump is woken when an answer arrives). Requests are
+// the caller's numbers. One dialog per window at a time is the caller's to keep.
+enum {
+    DXC_FILE_DIALOG_OPEN_FILE = 1,
+    DXC_FILE_DIALOG_OPEN_FILES = 2,
+    DXC_FILE_DIALOG_OPEN_FOLDER = 3,
+    DXC_FILE_DIALOG_OPEN_FOLDERS = 4,
+    DXC_FILE_DIALOG_SAVE = 5,
+};
+enum {
+    DXC_FILE_DIALOG_CHOSEN = 1,
+    DXC_FILE_DIALOG_CANCELLED = 2,
+    // No dialog could be shown, or what was chosen cannot be carried: a path with no UTF-8
+    // form, more than 10000 paths or more than 32 MiB of them. Never a part of a selection.
+    DXC_FILE_DIALOG_UNAVAILABLE = 3,
+};
+// 0 when the dialog was started; otherwise nothing was started and no answer comes. Text is
+// UTF-8 and empty means the system's choice. filters is one line per file type: the label, a
+// tab, and the extensions without dots separated by commas ("Images\tpng,jpg\nAll files");
+// no extensions is every file. A save asks before replacing a file and adds the selected
+// type's first extension to a name typed without one. Call on the thread that pumps.
+int32_t dxc_native_file_dialog_show(void *window, int64_t request, int32_t kind, const char *title,
+                                    const char *directory, const char *name, const char *filters,
+                                    int32_t default_filter);
+// Asks an open dialog to close. Its answer still comes, once, as cancelled. A dialog whose
+// owner is destroyed closes the same way by itself.
+void dxc_native_file_dialog_cancel(int64_t request);
+// The oldest answer not taken: 1 and its request, status, selected type (from 0, -1 for none),
+// path count and the bytes take needs. 0 when there is none.
+int32_t dxc_native_file_dialog_next(int64_t *request, int32_t *status, int32_t *filter_index,
+                                    int32_t *path_count, int32_t *path_bytes);
+// Copies the paths of that answer, absolute, UTF-8, a NUL between one and the next, forgets
+// the answer and returns the bytes written. -1 when there is no such answer or no room.
+int32_t dxc_native_file_dialog_take(int64_t request, char *out, int32_t capacity);
 
 // The toasts, win32_notifications.c. The application defines
 // compose_rust_renderer_request_frame(void), which the toasts call when an answer arrives.

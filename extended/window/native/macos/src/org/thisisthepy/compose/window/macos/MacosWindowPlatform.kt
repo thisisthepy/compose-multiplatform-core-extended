@@ -3,6 +3,10 @@
 package org.thisisthepy.compose.window.macos
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalClipboardManager
+import org.thisisthepy.compose.window.scene.PlatformCompositionLocals
 import kotlinx.cinterop.useContents
 import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.ContextMenuItem
@@ -17,6 +21,7 @@ import org.thisisthepy.compose.window.WindowListener
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.WindowPlatform
 import org.thisisthepy.compose.window.WindowVisibility
+import org.thisisthepy.compose.window.systemEditMenu
 import org.thisisthepy.compose.window.scene.ComposeWindowHost
 import org.thisisthepy.compose.window.scene.runComposeWindow
 import platform.AppKit.NSApplication
@@ -55,7 +60,7 @@ private val EMPTY_CONTENT: @Composable () -> Unit = {}
  */
 class MacosWindowPlatform(
     private val content: @Composable () -> Unit = EMPTY_CONTENT,
-) : WindowPlatform {
+) : WindowPlatform, PlatformCompositionLocals {
     override val name: String = "macos-kotlin-native"
 
     /** One record per [present], so a test can ask whether any frame was drawn at the wrong size. */
@@ -67,6 +72,16 @@ class MacosWindowPlatform(
     private var internalHost: ComposeWindowHost? = null
     private var inPump = false
     private val pasteboard = GeneralPasteboard()
+    private val clipboard = MacosClipboard(pasteboard)
+    @Suppress("DEPRECATION")
+    private val clipboardManager = MacosClipboardManager(pasteboard)
+
+    /**
+     * Whether a right click puts up the system's edit menu. The choice is turned into the
+     * shortcut it is named after by the scene, so the field that has focus receives it as it
+     * would from the keyboard and an input method's composition is left where it was.
+     */
+    var nativeEditMenu: Boolean = true
     private val idleSoak = IdleSoak()
 
     /** Where the input method was last told the caret is, in points from the content's top left. */
@@ -106,6 +121,15 @@ class MacosWindowPlatform(
         created.onEvent = { event ->
             if (event.kind == WindowEvent.KEY_DOWN && event.keyCode == KEY_ESCAPE) MacosProcess.escapePressed = true
             this.listener?.onEvent(event)
+            // Under NSApplication.run nobody turns the host, so what it heard is handed to
+            // the scene here and a frame is asked for. Inside a turn this does nothing and
+            // the turn drains the log as before.
+            if (created.host?.deliverHeard() == true) created.requestFrame()
+        }
+        created.onContextMenu = if (nativeEditMenu) {
+            { showContextMenu(systemEditMenu(clipboardHasText = pasteboard.hasText())) }
+        } else {
+            null
         }
         created.onClose = {
             this.listener?.onCloseRequested() ?: true
@@ -128,6 +152,20 @@ class MacosWindowPlatform(
             host.open()
         }
         return true
+    }
+
+    /**
+     * The clipboard and the clipboard manager Compose's text fields use, backed by the
+     * general pasteboard. Provided explicitly, so whether copy, cut and paste work is this
+     * window's own doing and not a default's.
+     */
+    @Composable
+    @Suppress("DEPRECATION")
+    override fun Provide(content: @Composable () -> Unit) {
+        CompositionLocalProvider(
+            LocalClipboard provides clipboard,
+            LocalClipboardManager provides clipboardManager,
+        ) { content() }
     }
 
     /**
@@ -312,6 +350,11 @@ class MacosWindowPlatform(
 
     override fun setImeSpot(x: Int, y: Int) {
         imeSpot = x to y
+        window?.imeSpot = imeSpot
+    }
+
+    override fun endComposition() {
+        window?.endComposition()
     }
 
     override fun showContextMenu(items: List<ContextMenuItem>) {

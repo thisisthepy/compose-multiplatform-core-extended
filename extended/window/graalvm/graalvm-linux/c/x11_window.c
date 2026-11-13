@@ -7,6 +7,7 @@
 #include <X11/keysym.h>
 #include <X11/Xresource.h>
 #include <X11/extensions/sync.h>
+#include "x11_buttons.h"
 #include <GL/gl.h>
 #include <GL/glx.h>
 #include <locale.h>
@@ -244,12 +245,6 @@ static void dxc_push_event(struct dxc_event event) {
     }
     dxc_events[(dxc_event_head + dxc_event_count) % DXC_EVENT_CAPACITY] = event;
     dxc_event_count++;
-}
-
-static int32_t dxc_buttons(unsigned int state) {
-    return ((state & Button1Mask) ? 1 : 0) |
-           ((state & Button3Mask) ? 2 : 0) |
-           ((state & Button2Mask) ? 4 : 0);
 }
 
 // Keys and modifiers cross as the server wrote them: a keysym and a state word. Turning
@@ -944,10 +939,7 @@ static void dxc_pump_events(void) {
                     record.kind = event.type == ButtonPress ? DXC_EVENT_POINTER_DOWN : DXC_EVENT_POINTER_UP;
                     record.x = (float)event.xbutton.x;
                     record.y = (float)event.xbutton.y;
-                    record.buttons = dxc_buttons(event.xbutton.state);
-                    int32_t bit = button == 1 ? 1 : button == 3 ? 2 : button == 2 ? 4 : 0;
-                    if (event.type == ButtonPress) record.buttons |= bit;
-                    else record.buttons &= ~bit;
+                    record.buttons = dxc_pointer_buttons(event.xbutton.state, button, event.type == ButtonPress);
                     if (event.type == ButtonPress && button == 2) {
                         // The middle button pastes the primary selection, the way every X
                         // program does: what was last selected, with no copy asked for.
@@ -1409,6 +1401,22 @@ int32_t dxc_native_window_open(const char *title, int32_t width, int32_t height,
         long version = 5;
         XChangeProperty(dxc_display, dxc_window, dxc_a_xdnd_aware, XA_ATOM, 32, PropModeReplace,
                         (unsigned char *)&version, 1);
+    }
+    {
+        // Which process on which machine owns the window, before it is mapped, so a tool
+        // that looks a window up by process (`xdotool search --pid`) finds it. The pid only
+        // means something together with the machine, which is why EWMH asks for both.
+        long pid = (long)getpid();
+        XChangeProperty(dxc_display, dxc_window, XInternAtom(dxc_display, "_NET_WM_PID", False),
+                        XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&pid, 1);
+        char host[256];
+        if (gethostname(host, sizeof host) == 0) {
+            host[sizeof host - 1] = '\0';
+            if (host[0] != '\0') {
+                XChangeProperty(dxc_display, dxc_window, XA_WM_CLIENT_MACHINE, XA_STRING, 8,
+                                PropModeReplace, (unsigned char *)host, (int)strlen(host));
+            }
+        }
     }
     dxc_open_input_method();
     XMapWindow(dxc_display, dxc_window);
