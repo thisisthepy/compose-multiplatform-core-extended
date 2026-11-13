@@ -84,6 +84,15 @@ enum {
     DXC_ROLE_FIELD = 3,
     DXC_ROLE_CHECKBOX = 4,
     DXC_ROLE_IMAGE = 5,
+    // ElementRole's numbers; 6 to 13 are not told apart here yet and read as groups.
+    DXC_ROLE_TAB_GROUP = 14,
+    DXC_ROLE_OUTLINE = 15,
+    DXC_ROLE_OUTLINE_ROW = 16,
+    DXC_ROLE_MENU = 17,
+    DXC_ROLE_MENU_ITEM = 18,
+    DXC_ROLE_LIST = 19,
+    DXC_ROLE_LIST_ITEM = 20,
+    DXC_ROLE_NAVIGATION = 21,
 };
 
 struct dxc_native_window {

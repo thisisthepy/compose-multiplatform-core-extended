@@ -107,6 +107,11 @@ internal fun SemanticsNode.describe(parentId: Int, density: Float): AccessibleEl
     val canClick = config.getOrNull(SemanticsActions.OnClick) != null
     val canSetText = config.getOrNull(SemanticsActions.SetText) != null
     val canSetProgress = config.getOrNull(SemanticsActions.SetProgress) != null
+    val canExpand = config.getOrNull(SemanticsActions.Expand) != null
+    val canCollapse = config.getOrNull(SemanticsActions.Collapse) != null
+    val expandable = canExpand || canCollapse
+    val collectionItem = config.getOrNull(SemanticsProperties.CollectionItemInfo) != null
+    val inMenu = canClick && insideMenu()
     val role = when {
         composeRole == Role.Button -> ElementRole.BUTTON
         composeRole == Role.Checkbox -> ElementRole.CHECKBOX
@@ -118,6 +123,12 @@ internal fun SemanticsNode.describe(parentId: Int, density: Float): AccessibleEl
         editable != null -> ElementRole.FIELD
         range != null -> if (canSetProgress) ElementRole.SLIDER else ElementRole.PROGRESS
         toggle != null -> ElementRole.CHECKBOX
+        isTabGroup() -> ElementRole.TAB_GROUP
+        config.getOrNull(SemanticsProperties.CollectionInfo) != null ->
+            if (children.any { it.isOutlineRow() }) ElementRole.OUTLINE else ElementRole.LIST
+        collectionItem -> if (expandable) ElementRole.OUTLINE_ROW else ElementRole.LIST_ITEM
+        isMenu() -> ElementRole.MENU
+        inMenu -> ElementRole.MENU_ITEM
         canClick -> ElementRole.BUTTON
         config.getOrNull(SemanticsProperties.Heading) != null && label != null -> ElementRole.HEADING
         label != null -> ElementRole.TEXT
@@ -138,6 +149,11 @@ internal fun SemanticsNode.describe(parentId: Int, density: Float): AccessibleEl
         }
     }
     if (config.getOrNull(SemanticsProperties.Selected) == true) states = states or AccessibleState.SELECTED
+    // Compose has no expanded property: what it can do says which way it is, as on Android.
+    if (expandable) {
+        states = states or AccessibleState.EXPANDABLE
+        if (canCollapse && !canExpand) states = states or AccessibleState.EXPANDED
+    }
     val password = config.getOrNull(SemanticsProperties.Password) != null
     if (editable != null) {
         states = states or if (canSetText) AccessibleState.EDITABLE else AccessibleState.READ_ONLY
@@ -155,6 +171,8 @@ internal fun SemanticsNode.describe(parentId: Int, density: Float): AccessibleEl
         actions = actions or AccessibleAction.SCROLL_FORWARD or AccessibleAction.SCROLL_BACKWARD
     }
     if (config.getOrNull(SemanticsActions.OnLongClick) != null) actions = actions or AccessibleAction.SHOW_MENU
+    if (canExpand) actions = actions or AccessibleAction.EXPAND
+    if (canCollapse) actions = actions or AccessibleAction.COLLAPSE
 
     val value = when {
         // A password is announced by its length, never its letters.
@@ -183,6 +201,44 @@ internal fun SemanticsNode.describe(parentId: Int, density: Float): AccessibleEl
         rangeMax = range?.range?.endInclusive,
         rangeValue = range?.current,
     )
+}
+
+/**
+ * A tab row: a selectable group (what Material's tab rows set) or a collection whose
+ * children include a [Role.Tab]. Compose has no tab group role of its own.
+ */
+private fun SemanticsNode.isTabGroup(): Boolean =
+    (config.getOrNull(SemanticsProperties.SelectableGroup) != null ||
+        config.getOrNull(SemanticsProperties.CollectionInfo) != null) &&
+        children.any { it.config.getOrNull(SemanticsProperties.Role) == Role.Tab }
+
+/** A collection item that opens and closes: a row of a tree. */
+private fun SemanticsNode.isOutlineRow(): Boolean =
+    config.getOrNull(SemanticsProperties.CollectionItemInfo) != null &&
+        (config.getOrNull(SemanticsActions.Expand) != null || config.getOrNull(SemanticsActions.Collapse) != null)
+
+/**
+ * A menu. Compose has no menu role, so this is the shape a dropdown or context menu takes:
+ * a popup that is not a dialog, holding something to click.
+ */
+private fun SemanticsNode.isMenu(): Boolean {
+    if (config.getOrNull(SemanticsProperties.IsPopup) == null) return false
+    if (config.getOrNull(SemanticsProperties.IsDialog) != null) return false
+    fun clickable(node: SemanticsNode): Boolean =
+        node.config.getOrNull(SemanticsActions.OnClick) != null || node.children.any(::clickable)
+    return children.any(::clickable)
+}
+
+/** Inside a [isMenu] popup: the nearest popup or dialog above it is a menu. */
+private fun SemanticsNode.insideMenu(): Boolean {
+    var at = parent
+    while (at != null) {
+        if (at.config.getOrNull(SemanticsProperties.IsPopup) != null ||
+            at.config.getOrNull(SemanticsProperties.IsDialog) != null
+        ) return at.isMenu()
+        at = at.parent
+    }
+    return false
 }
 
 /**
@@ -218,6 +274,8 @@ internal fun SemanticsConfiguration.perform(action: Int, argument: String?, heig
         AccessibleAction.SCROLL_FORWARD -> scrolled(+1)
         AccessibleAction.SCROLL_BACKWARD -> scrolled(-1)
         AccessibleAction.SHOW_MENU -> getOrNull(SemanticsActions.OnLongClick)?.action?.invoke() ?: false
+        AccessibleAction.EXPAND -> getOrNull(SemanticsActions.Expand)?.action?.invoke() ?: false
+        AccessibleAction.COLLAPSE -> getOrNull(SemanticsActions.Collapse)?.action?.invoke() ?: false
         else -> false
     }
 }

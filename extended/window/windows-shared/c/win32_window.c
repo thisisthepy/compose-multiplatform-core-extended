@@ -653,6 +653,15 @@ enum {
     DXC_ROLE_FIELD = 3,
     DXC_ROLE_CHECKBOX = 4,
     DXC_ROLE_IMAGE = 5,
+    // ElementRole's numbers; 6 to 13 are not told apart here yet and read as groups.
+    DXC_ROLE_TAB_GROUP = 14,
+    DXC_ROLE_OUTLINE = 15,
+    DXC_ROLE_OUTLINE_ROW = 16,
+    DXC_ROLE_MENU = 17,
+    DXC_ROLE_MENU_ITEM = 18,
+    DXC_ROLE_LIST = 19,
+    DXC_ROLE_LIST_ITEM = 20,
+    DXC_ROLE_NAVIGATION = 21,
 };
 
 static int dxc_uia_control_type(int32_t role) {
@@ -662,6 +671,14 @@ static int dxc_uia_control_type(int32_t role) {
         case DXC_ROLE_FIELD:    return UIA_EditControlTypeId;
         case DXC_ROLE_CHECKBOX: return UIA_CheckBoxControlTypeId;
         case DXC_ROLE_IMAGE:    return UIA_ImageControlTypeId;
+        case DXC_ROLE_TAB_GROUP:   return UIA_TabControlTypeId;
+        case DXC_ROLE_OUTLINE:     return UIA_TreeControlTypeId;
+        case DXC_ROLE_OUTLINE_ROW: return UIA_TreeItemControlTypeId;
+        case DXC_ROLE_MENU:        return UIA_MenuControlTypeId;
+        case DXC_ROLE_MENU_ITEM:   return UIA_MenuItemControlTypeId;
+        case DXC_ROLE_LIST:        return UIA_ListControlTypeId;
+        case DXC_ROLE_LIST_ITEM:   return UIA_ListItemControlTypeId;
+        // A navigation landmark is a group; UIA's landmark type property is not reported yet.
         default:                return UIA_GroupControlTypeId;
     }
 }

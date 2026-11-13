@@ -338,7 +338,14 @@ class AtspiServer(
             "GetRoleName", "GetLocalizedRoleName" ->
                 AtspiWire.methodReturn(serial(), call, "s") { string(AtspiRole.nameOf(roleOf(id))) }
             "GetState" -> AtspiWire.methodReturn(serial(), call, "au") { stateWords(id) }
-            "GetAttributes" -> AtspiWire.methodReturn(serial(), call, "a{ss}") { array(8) {} }
+            "GetAttributes" -> AtspiWire.methodReturn(serial(), call, "a{ss}") {
+                array(8) {
+                    for ((key, value) in attributesOf(roleOf(id))) struct {
+                        string(key)
+                        string(value)
+                    }
+                }
+            }
             "GetRelationSet" -> AtspiWire.methodReturn(serial(), call, "a(ua(so))") { array(8) {} }
             "GetInterfaces" -> AtspiWire.methodReturn(serial(), call, "as") {
                 array(4) { for (name in interfacesOf(id)) string(name) }

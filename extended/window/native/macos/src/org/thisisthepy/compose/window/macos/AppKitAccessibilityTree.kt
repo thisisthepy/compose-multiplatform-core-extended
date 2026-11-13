@@ -12,6 +12,7 @@ import org.thisisthepy.compose.window.MacosAx
 import org.thisisthepy.compose.window.MacosAxElement
 import org.thisisthepy.compose.window.MacosAxValue
 import org.thisisthepy.compose.window.macosAxElement
+import org.thisisthepy.compose.window.macosAxExpandAction
 import org.thisisthepy.compose.window.macosAxKey
 import org.thisisthepy.compose.window.macosAxParents
 import platform.AppKit.NSAccessibilityCustomAction
@@ -171,6 +172,13 @@ class AxElement internal constructor(private val tree: AppKitAccessibilityTree) 
     override fun isAccessibilityEnabled(): Boolean = element.states and AccessibleState.ENABLED != 0
     override fun isAccessibilityFocused(): Boolean = isFocused
     override fun isAccessibilitySelected(): Boolean = element.states and AccessibleState.SELECTED != 0
+    override fun isAccessibilityExpanded(): Boolean = ax.expanded == true
+
+    /** A reader opened or closed it through `AXExpanded`: the scene runs the expand or collapse. */
+    override fun setAccessibilityExpanded(accessibilityExpanded: Boolean) {
+        val action = macosAxExpandAction(element, accessibilityExpanded) ?: return
+        tree.perform(this, action)
+    }
     override fun accessibilityFrame(): CValue<CGRect> = tree.frameOf(element)
     override fun accessibilityParent(): Any? = parentRef?.get()
     override fun accessibilityChildren(): List<*>? = kids
@@ -186,6 +194,16 @@ class AxElement internal constructor(private val tree: AppKitAccessibilityTree) 
         if (has(AccessibleAction.SCROLL_BACKWARD)) {
             actions += NSAccessibilityCustomAction(name = MacosAx.SCROLL_BACKWARD_NAME, handler = {
                 tree.perform(this, AccessibleAction.SCROLL_BACKWARD)
+            })
+        }
+        if (has(AccessibleAction.EXPAND)) {
+            actions += NSAccessibilityCustomAction(name = MacosAx.EXPAND_NAME, handler = {
+                tree.perform(this, AccessibleAction.EXPAND)
+            })
+        }
+        if (has(AccessibleAction.COLLAPSE)) {
+            actions += NSAccessibilityCustomAction(name = MacosAx.COLLAPSE_NAME, handler = {
+                tree.perform(this, AccessibleAction.COLLAPSE)
             })
         }
         return actions
@@ -225,6 +243,7 @@ class AxElement internal constructor(private val tree: AppKitAccessibilityTree) 
         SELECTOR_SHOW_MENU -> has(AccessibleAction.SHOW_MENU)
         SELECTOR_SET_VALUE -> ax.valueSettable
         SELECTOR_SET_FOCUSED -> ax.focusSettable
+        SELECTOR_SET_EXPANDED -> ax.expanded != null && (has(AccessibleAction.EXPAND) || has(AccessibleAction.COLLAPSE))
         else -> super.isAccessibilitySelectorAllowed(selector)
     }
 }
@@ -235,3 +254,4 @@ private val SELECTOR_DECREMENT = NSSelectorFromString("accessibilityPerformDecre
 private val SELECTOR_SHOW_MENU = NSSelectorFromString("accessibilityPerformShowMenu")
 private val SELECTOR_SET_VALUE = NSSelectorFromString("setAccessibilityValue:")
 private val SELECTOR_SET_FOCUSED = NSSelectorFromString("setAccessibilityFocused:")
+private val SELECTOR_SET_EXPANDED = NSSelectorFromString("setAccessibilityExpanded:")

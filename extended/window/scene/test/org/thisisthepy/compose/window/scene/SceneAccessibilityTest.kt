@@ -14,7 +14,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.ui.semantics.CollectionInfo
+import androidx.compose.ui.semantics.CollectionItemInfo
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.collapse
+import androidx.compose.ui.semantics.collectionInfo
+import androidx.compose.ui.semantics.collectionItemInfo
+import androidx.compose.ui.semantics.expand
+import androidx.compose.ui.semantics.popup
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -148,6 +158,69 @@ class SceneAccessibilityTest {
         assertTrue(host.open())
         host.turn(0)
         assertEquals(platform.captionNow, seen)
+        host.close()
+    }
+
+    @Composable
+    private fun Containers(expanded: Boolean, onExpanded: (Boolean) -> Unit) {
+        Column {
+            Row(Modifier.selectableGroup()) {
+                for ((index, title) in listOf("Home", "Settings").withIndex()) {
+                    Box(Modifier.size(40.dp).selectable(selected = index == 0, role = Role.Tab) {}) { BasicText(title) }
+                }
+            }
+            Column(Modifier.semantics { collectionInfo = CollectionInfo(rowCount = 2, columnCount = 1) }) {
+                for (row in 0 until 2) {
+                    Box(Modifier.semantics(mergeDescendants = true) { collectionItemInfo = CollectionItemInfo(row, 1, 0, 1) }) { BasicText("Row $row") }
+                }
+            }
+            Box(Modifier.semantics { popup() }) {
+                Column {
+                    Box(Modifier.clickable {}) { BasicText("Copy") }
+                    Box(Modifier.clickable {}) { BasicText("Paste") }
+                }
+            }
+            Box(
+                Modifier.size(40.dp).semantics {
+                    contentDescription = "Details"
+                    if (expanded) collapse { onExpanded(false); true } else expand { onExpanded(true); true }
+                },
+            )
+        }
+    }
+
+    @Test
+    fun a_tab_row_a_list_a_menu_and_an_expandable_node_take_their_roles() {
+        val platform = FakePlatform().apply { listening = true }
+        var expanded by mutableStateOf(false)
+        val host = opened(platform) { Containers(expanded) { expanded = it } }
+        repeat(3) { host.turn(0) }
+        val elements = platform.last()
+        fun byId(id: Int) = elements.single { it.id == id }
+
+        val tabs = elements.filter { it.role == ElementRole.TAB }
+        assertEquals(listOf("Home", "Settings"), tabs.map { it.label })
+        assertEquals(ElementRole.TAB_GROUP, byId(tabs.first().parentId).role)
+
+        val items = elements.filter { it.role == ElementRole.LIST_ITEM }
+        assertEquals(listOf("Row 0", "Row 1"), items.map { it.label })
+        assertEquals(ElementRole.LIST, byId(items.first().parentId).role)
+
+        val menuItems = elements.filter { it.role == ElementRole.MENU_ITEM }
+        assertEquals(listOf("Copy", "Paste"), menuItems.map { it.label })
+        assertEquals(1, elements.count { it.role == ElementRole.MENU })
+
+        val details = elements.single { it.label == "Details" }
+        assertTrue(details.states and AccessibleState.EXPANDABLE != 0)
+        assertTrue(details.states and AccessibleState.EXPANDED == 0)
+        assertEquals(AccessibleAction.EXPAND, details.actions and (AccessibleAction.EXPAND or AccessibleAction.COLLAPSE))
+
+        platform.readerAsks += Triple(details.id, AccessibleAction.EXPAND, null)
+        repeat(3) { host.turn(0) }
+        assertEquals(listOf(true), platform.readerAnswers)
+        val opened = platform.last().single { it.label == "Details" }
+        assertTrue(opened.states and AccessibleState.EXPANDED != 0)
+        assertEquals(AccessibleAction.COLLAPSE, opened.actions and (AccessibleAction.EXPAND or AccessibleAction.COLLAPSE))
         host.close()
     }
 }
