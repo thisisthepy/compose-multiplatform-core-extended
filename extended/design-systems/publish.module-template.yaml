@@ -26,7 +26,7 @@ settings:
   publishing:
     enabled: true
     group: org.thisisthepy.compose.designsystem
-    version: 1.11.1-ext.2
+    version: 1.11.1-ext.3
     # Central asks for a sources jar beside every artifact; without it the bundle tool would
     # add an empty one.
     publishSources: true
