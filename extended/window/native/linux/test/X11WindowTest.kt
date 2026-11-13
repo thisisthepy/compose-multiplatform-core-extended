@@ -10,8 +10,19 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlinx.cinterop.ByteVar
+import kotlinx.cinterop.CPointer
+import kotlinx.cinterop.CPointerVar
+import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.LongVar
+import kotlinx.cinterop.UByteVar
+import kotlinx.cinterop.ULongVar
 import kotlinx.cinterop.alloc
+import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.readBytes
+import kotlinx.cinterop.reinterpret
+import kotlinx.cinterop.set
+import kotlinx.cinterop.value
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
@@ -120,11 +131,115 @@ class X11WindowTest {
         }
     }
 
+    /**
+     * The scale follows `Xft.dpi` in the root window's resources, read when the window opens
+     * and again when a desktop rewrites them, as `xrdb -merge` does: the window keeps its size
+     * in pixels, measures at the new scale and tells its listener. A window opened afterwards
+     * is made at its size in points times the scale.
+     */
+    @Test
+    fun fr81_linux_scale_follows_xft_dpi_on_the_root_window() {
+        if (getenv("DISPLAY")?.toKString().isNullOrEmpty()) return
+        // A forced scale wins over Xft.dpi, so there would be nothing to see.
+        if (!getenv("GDK_SCALE")?.toKString().isNullOrEmpty()) return
+        val peer = assertNotNull(XOpenDisplay(null))
+        val root = XDefaultRootWindow(peer)
+        val before = resources(peer, root)
+        val heard = mutableListOf<Float>()
+        val listener = object : WindowListener {
+            override fun onEvent(event: WindowEvent) {}
+            override fun onScaleChanged(scale: Float) {
+                heard += scale
+            }
+        }
+        val window = X11Window()
+        var second: X11Window? = null
+        try {
+            setResources(peer, root, "Xft.antialias:\t1\nXft.dpi:\t96\n")
+            assertTrue(window.open(WindowConfig("scale", 200, 100), listener))
+            // A connection another test left open hears the change of resources on its next turn.
+            pumpUntil(window) { window.measure().scale == 1f }
+            assertEquals(1f, window.measure().scale)
+            val opened = window.measure()
+
+            setResources(peer, root, "Xft.antialias:\t1\nXft.dpi:\t192\n")
+            assertTrue(pumpUntil(window) { heard.lastOrNull() == 2f }, "no scale change heard, heard $heard")
+            val doubled = window.measure()
+            assertEquals(2f, doubled.scale)
+            assertEquals(opened.width to opened.height, doubled.width to doubled.height)
+
+            val later = X11Window()
+            second = later
+            assertTrue(later.open(WindowConfig("scale 2", 100, 50), object : WindowListener {
+                override fun onEvent(event: WindowEvent) {}
+            }))
+            assertEquals(Triple(200, 100, 2f), later.measure().let { Triple(it.width, it.height, it.scale) })
+
+            setResources(peer, root, "Xft.dpi:\t144\n")
+            assertTrue(pumpUntil(window) { heard.lastOrNull() == 1.5f }, "no change to 1.5 heard, heard $heard")
+            assertEquals(1.5f, window.measure().scale)
+        } finally {
+            second?.close()
+            window.close()
+            if (before == null) {
+                XDeleteProperty(peer, root, RESOURCE_MANAGER)
+            } else {
+                setResources(peer, root, before)
+            }
+            XFlush(peer)
+            XCloseDisplay(peer)
+        }
+    }
+
+    private fun pumpUntil(window: X11Window, done: () -> Boolean): Boolean {
+        repeat(300) {
+            window.pump(10)
+            if (done()) return true
+        }
+        return done()
+    }
+
+    private fun resources(display: CPointer<Display>, root: Window): String? = memScoped {
+        val type = alloc<ULongVar>()
+        val format = alloc<IntVar>()
+        val count = alloc<ULongVar>()
+        val remaining = alloc<ULongVar>()
+        val data = alloc<CPointerVar<UByteVar>>()
+        val status = XGetWindowProperty(
+            display, root, RESOURCE_MANAGER, 0, 1L shl 20, 0, XA_STRING_ATOM,
+            type.ptr, format.ptr, count.ptr, remaining.ptr, data.ptr,
+        )
+        val bytes = data.value
+        val text = if (status == 0 && bytes != null && count.value > 0uL) {
+            bytes.reinterpret<ByteVar>().readBytes(count.value.toInt()).decodeToString()
+        } else {
+            null
+        }
+        if (bytes != null) XFree(bytes)
+        text
+    }
+
+    private fun setResources(display: CPointer<Display>, root: Window, text: String) {
+        val bytes = text.encodeToByteArray()
+        memScoped {
+            val data = allocArray<UByteVar>(bytes.size + 1)
+            for (index in bytes.indices) data[index] = bytes[index].toUByte()
+            XChangeProperty(display, root, RESOURCE_MANAGER, XA_STRING_ATOM, 8, PropModeReplace, data, bytes.size)
+        }
+        XFlush(display)
+    }
+
     private fun openWindow(title: String, width: Int, height: Int): X11Window? {
         val window = X11Window()
         val listener = object : WindowListener {
             override fun onEvent(event: WindowEvent) {}
         }
         return if (window.open(WindowConfig(title, width, height), listener)) window else null
+    }
+
+    private companion object {
+        /** The predefined atoms `RESOURCE_MANAGER` and `STRING`. */
+        const val RESOURCE_MANAGER = 23uL
+        const val XA_STRING_ATOM = 31uL
     }
 }

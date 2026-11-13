@@ -7,6 +7,15 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`, 0.1.0)
 
+- **Fix.** The Kotlin/Native X11 window drew at a scale of 1 whatever the display: it now
+  measures at `Xft.dpi` / 96 from the root window's `RESOURCE_MANAGER` (or `GDK_SCALE`, as the
+  GraalVM window reads it), opens at its size in points times that, takes and reports positions
+  and sizes in points, and follows a change of the resources with `onScaleChanged` and a frame.
+  The parsing is `X11Scale` in `common`. (DarkPyonix/compose-rust#18)
+- **Fix.** The GraalVM X11 window read `Xft.dpi` once, from Xlib's copy of the resources taken
+  when the connection opened: it now asks the root window for them and reads them again when
+  they change, so the scale it measures (and reports through `onScaleChanged`) follows the
+  desktop's setting. (DarkPyonix/compose-rust#18)
 - **Fix.** The Windows mouse wheel scrolled in reverse on both the GraalVM and Kotlin/Native
   paths: `WM_MOUSEWHEEL` now negates its delta, because Win32 counts a turn away from the reader
   as positive and Compose reads a positive `scrollDelta.y` as a scroll down. (#169)

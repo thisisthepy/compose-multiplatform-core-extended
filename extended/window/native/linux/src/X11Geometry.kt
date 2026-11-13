@@ -46,3 +46,19 @@ internal fun keyIsDown(keymap: ByteArray, keycode: Int): Boolean {
     if (keycode < 0 || keycode ushr 3 >= keymap.size) return false
     return (keymap[keycode ushr 3].toInt() and (1 shl (keycode and 7))) != 0
 }
+
+/** [points] in pixels at [scale], rounded to the nearest pixel. */
+internal fun pixelsOf(points: Int, scale: Float): Int = (points * scale).roundToInt()
+
+/** [bounds] in pixels as screen points at [scale]: what the window manager placed, in the unit the interface speaks. */
+internal fun pointsOf(bounds: WindowBounds, scale: Float): WindowBounds =
+    if (scale == 1f) {
+        bounds
+    } else {
+        WindowBounds(
+            (bounds.x / scale).roundToInt(),
+            (bounds.y / scale).roundToInt(),
+            (bounds.width / scale).roundToInt(),
+            (bounds.height / scale).roundToInt(),
+        )
+    }
