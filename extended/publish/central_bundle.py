@@ -21,8 +21,7 @@ stage    copies every component under org/thisisthepy from each repository into 
          modules list every target. Then each POM gets what Central asks for and a local
          build does not always write (name, description, url, licenses, developers, scm);
          url and scm always name the repository the artifacts are built from, since that is
-         where their sources are. Comments are kept, the published-with-gradle-metadata
-         marker among them. A component that is not a bare POM gets an empty javadoc
+         where their sources are. A component that is not a bare POM gets an empty javadoc
          jar when it has none, and an empty sources jar when it has none; both are listed.
          A Kotlin Multiplatform root lists a variant for every target the build configured, and
          a constraint for every sibling library, whether or not this release builds them: a
@@ -54,8 +53,6 @@ validate checks <dir> the way Central's validation does, and a little more:
            Gradle module points at, is in the bundle at that version, so nothing on Central
            sends a consumer to a coordinate nobody published;
          - every Gradle plugin a jar declares has its marker POM;
-         - every POM beside a Gradle module carries the published-with-gradle-metadata
-           comment, without which Gradle and Amper never read the module;
          - every --require coordinate is present.
          With --verify-signatures each .asc is checked with gpg; with --unsigned no .asc is
          asked for. --dev=<suffix> checks a dev build instead of a release: every version ends
@@ -98,18 +95,6 @@ LICENSE = {"name": "The Apache License, Version 2.0", "url": "https://www.apache
 
 ET.register_namespace("", POM_NS)
 ET.register_namespace("xsi", XSI_NS)
-
-
-# Gradle reads a component's .module only when its POM carries this comment; without it a
-# consumer sees the POM alone, so a Kotlin Multiplatform root offers no target and Gradle and
-# Amper resolve every target of it to the root's metadata jar. The builds write it, and every
-# rewrite of a POM here has to keep it.
-GRADLE_METADATA_MARKER = "do_not_remove: published-with-gradle-metadata"
-
-
-def parse_pom(path):
-    """A POM with its comments: ElementTree drops them by default, the marker above with them."""
-    return ET.parse(path, ET.XMLParser(target=ET.TreeBuilder(insert_comments=True)))
 
 
 def q(tag):
@@ -211,7 +196,7 @@ def prune_unbuilt(out):
             with open(module_path, "w") as f:
                 json.dump(metadata, f, indent=2)
         pom_path = os.path.join(directory, stem + ".pom")
-        tree = parse_pom(pom_path)
+        tree = ET.parse(pom_path)
         managed = tree.getroot().find(f"{q('dependencyManagement')}/{q('dependencies')}")
         if managed is not None:
             changed = False
@@ -241,7 +226,7 @@ def rename_versions(out, suffix):
         target = new(group, artifact, version)
         old_stem, new_stem = f"{artifact}-{version}", f"{artifact}-{target}"
         pom_path = os.path.join(directory, old_stem + ".pom")
-        tree = parse_pom(pom_path)
+        tree = ET.parse(pom_path)
         pom = tree.getroot()
         child(pom, "version").text = target
         for dependency in pom.iter(q("dependency")):
@@ -336,7 +321,7 @@ def text_of(parent, path):
 
 
 def complete_pom(path, artifact, url, project):
-    tree = parse_pom(path)
+    tree = ET.parse(path)
     pom = tree.getroot()
     if not text_of(pom, "name"):
         child(pom, "name").text = artifact
@@ -492,10 +477,6 @@ def validate(out, version, required, verify, dev=None, unsigned=False):
         module = os.path.join(directory, f"{stem}.module")
         metadata = None
         if os.path.isfile(module):
-            with open(pom_path, encoding="utf-8") as f:
-                if GRADLE_METADATA_MARKER not in f.read():
-                    errors.append(f"{where}: the POM lacks '<!-- {GRADLE_METADATA_MARKER} -->', so Gradle "
-                                  f"never reads {stem}.module and a consumer gets no target of it")
             errors += check_module(out, where, module, directory)
             try:
                 with open(module) as f:

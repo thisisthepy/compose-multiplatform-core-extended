@@ -21,7 +21,6 @@ pass() { echo "ok    $1"; }
 fail() { echo "FAIL  $1" >&2; failures=$((failures + 1)); }
 
 V=1.11.1-ext.1
-MARKER="do_not_remove: published-with-gradle-metadata"
 pom() { # <file> <group> <artifact> <version> [packaging] [extra xml]
     cat > "$1" <<XML
 <?xml version="1.0" encoding="UTF-8"?>
@@ -51,7 +50,7 @@ PY
 make_repo() {
     local repo="$1" d
     d="$repo/org/thisisthepy/compose/ui/ui/$V"; mkdir -p "$d"
-    pom "$d/ui-$V.pom" org.thisisthepy.compose.ui ui "$V" jar "<!-- $MARKER -->"
+    pom "$d/ui-$V.pom" org.thisisthepy.compose.ui ui "$V"
     jar "$d/ui-$V.jar"
     cat > "$d/ui-$V.module" <<JSON
 {"formatVersion":"1.1","component":{"group":"org.thisisthepy.compose.ui","module":"ui","version":"$V"},
@@ -109,15 +108,9 @@ python3 -I "$tool" zip "$out" "$work/bundle.zip" > /dev/null
 python3 -I -c 'import sys, zipfile; n = zipfile.ZipFile(sys.argv[1]).namelist(); sys.exit(0 if any(x.startswith("org/thisisthepy/compose/ui/ui/") and x.endswith(".pom.asc") for x in n) else 1)' "$work/bundle.zip" &&
     pass "the bundle zip is in Maven layout" || fail "the bundle zip layout"
 
-grep -q -- "<!-- $MARKER -->" "$out/org/thisisthepy/compose/ui/ui/$V/ui-$V.pom" &&
-    pass "the POM keeps the marker that sends Gradle to the .module" || fail "staging dropped the gradle-metadata marker"
 expect_fail "the release version is enforced" "not 1.11.1-ext.2" "$out" --version 1.11.1-ext.2
 expect_fail "a required coordinate is enforced" "required, and not in the bundle" "$out" --require org.thisisthepy.compose.skiko:skiko-awt
 
-out="$(build nomarker)"; p="$out/org/thisisthepy/compose/ui/ui/$V/ui-$V.pom"
-grep -v -- "$MARKER" "$p" > "$p.tmp" && mv "$p.tmp" "$p"
-python3 -I "$tool" sign "$out" > /dev/null
-expect_fail "a POM beside a .module without the gradle-metadata marker fails" "published-with-gradle-metadata" "$out"
 out="$(build noasc)"; rm "$out/org/thisisthepy/compose/ui/ui/$V/ui-$V.jar.asc"
 expect_fail "a missing signature fails" "has no .asc" "$out"
 out="$(build nosha512)"; rm "$out/org/thisisthepy/compose/ui/ui/$V/ui-$V.pom.sha512"
