@@ -199,7 +199,8 @@ static struct {
     int32_t backdrop;
 } dxc_options = {1, 0, 0, 0, 0};
 
-// How many pixels go to a point on this display, read once when the window is made.
+// How many pixels go to a point on this display, read when the window is made and again
+// whenever a desktop rewrites the root window's resources (dxc_rescale).
 static float dxc_scale = 1.0f;
 
 // Atoms this file asks the server for once.
@@ -863,11 +864,29 @@ void dxc_native_window_begin_drag_at(int32_t edge, float x, float y) {
     dxc_move_resize(edge, root_x, root_y, x, y);
 }
 
-/** Reads how many pixels go to a point: the toolkit-independent settings desktops write. */
+/**
+ * Reads how many pixels go to a point: the toolkit-independent settings desktops write.
+ *
+ * The resources are asked of the server every time rather than through
+ * XResourceManagerString, which is the copy Xlib took when the connection opened and never
+ * changes after, so a change of Xft.dpi would not be seen.
+ */
 static float dxc_detect_scale(void) {
     const char *forced = getenv("GDK_SCALE");
     if (forced != NULL && atof(forced) >= 1.0) return (float)atof(forced);
-    char *resources = XResourceManagerString(dxc_display);
+    Atom actual = None;
+    int format = 0;
+    unsigned long count = 0, after = 0;
+    unsigned char *data = NULL;
+    char *resources = NULL;
+    if (XGetWindowProperty(dxc_display, DefaultRootWindow(dxc_display), XA_RESOURCE_MANAGER, 0,
+                           1 << 20, False, XA_STRING, &actual, &format, &count, &after,
+                           &data) == Success &&
+        data != NULL && format == 8 && count > 0) {
+        // Xlib ends what it returns with a zero byte past the data.
+        resources = (char *)data;
+    }
+    float scale = 1.0f;
     if (resources != NULL) {
         XrmInitialize();
         XrmDatabase database = XrmGetStringDatabase(resources);
@@ -876,15 +895,50 @@ static float dxc_detect_scale(void) {
             XrmValue value;
             if (XrmGetResource(database, "Xft.dpi", "Xft.Dpi", &type, &value) && value.addr != NULL) {
                 double dpi = atof(value.addr);
-                if (dpi >= 96.0) {
-                    XrmDestroyDatabase(database);
-                    return (float)(dpi / 96.0);
-                }
+                if (dpi >= 96.0) scale = (float)(dpi / 96.0);
             }
             XrmDestroyDatabase(database);
         }
     }
-    return 1.0f;
+    if (data != NULL) XFree(data);
+    return scale;
+}
+
+/** Tells the manager the smallest size, and for a window that cannot be resized the only one, in pixels. */
+static void dxc_apply_size_hints(int32_t width, int32_t height) {
+    XSizeHints hints;
+    memset(&hints, 0, sizeof hints);
+    if (dxc_options.min_width > 0 || dxc_options.min_height > 0) {
+        hints.flags |= PMinSize;
+        hints.min_width = (int)((float)dxc_options.min_width * dxc_scale + 0.5f);
+        hints.min_height = (int)((float)dxc_options.min_height * dxc_scale + 0.5f);
+    }
+    if (!dxc_options.resizable) {
+        hints.flags |= PMinSize | PMaxSize;
+        hints.min_width = hints.max_width = width;
+        hints.min_height = hints.max_height = height;
+    }
+    if (hints.flags != 0) XSetWMNormalHints(dxc_display, dxc_window, &hints);
+}
+
+/**
+ * A desktop rewrote the root window's resources, which is how a change of Xft.dpi in its
+ * settings arrives (and what `xrdb -merge` does). The scale is read again; when it changed,
+ * the window keeps its size in pixels, the minimum size is told again in the new pixels and a
+ * frame is drawn at the new scale. The Kotlin side sees the new scale in dxc_native_window_size
+ * on its next turn and reports it as a scale change.
+ */
+static void dxc_rescale(void) {
+    float scale = dxc_detect_scale();
+    if (scale == dxc_scale) return;
+    dxc_scale = scale;
+    // Only a minimum depends on the scale: a window that cannot be resized stays held to the
+    // pixels it opened at, which its hints already say.
+    if (dxc_options.resizable && (dxc_options.min_width > 0 || dxc_options.min_height > 0)) {
+        dxc_apply_size_hints(dxc_width, dxc_height);
+        XFlush(dxc_display);
+    }
+    dxc_request_frame();
 }
 
 static void dxc_pump_events(void) {
@@ -1063,6 +1117,12 @@ static void dxc_pump_events(void) {
                 continue;
             case DestroyNotify:
                 dxc_closed = 1;
+                continue;
+            case PropertyNotify:
+                if (event.xproperty.window == DefaultRootWindow(dxc_display) &&
+                    event.xproperty.atom == XA_RESOURCE_MANAGER) {
+                    dxc_rescale();
+                }
                 continue;
             default:
                 continue;
@@ -1373,21 +1433,10 @@ int32_t dxc_native_window_open(const char *title, int32_t width, int32_t height,
                     (const unsigned char *)title, (int)strlen(title));
     // Sizes the window may take, in pixels. A window that cannot be resized is held to the
     // size it opened at; otherwise only the minimum is stated.
-    {
-        XSizeHints hints;
-        memset(&hints, 0, sizeof hints);
-        if (dxc_options.min_width > 0 || dxc_options.min_height > 0) {
-            hints.flags |= PMinSize;
-            hints.min_width = (int)((float)dxc_options.min_width * dxc_scale + 0.5f);
-            hints.min_height = (int)((float)dxc_options.min_height * dxc_scale + 0.5f);
-        }
-        if (!dxc_options.resizable) {
-            hints.flags |= PMinSize | PMaxSize;
-            hints.min_width = hints.max_width = width;
-            hints.min_height = hints.max_height = height;
-        }
-        if (hints.flags != 0) XSetWMNormalHints(dxc_display, dxc_window, &hints);
-    }
+    dxc_apply_size_hints(width, height);
+    // Only this client's interest in the root window: a change of the resources there is a
+    // change of Xft.dpi (dxc_rescale).
+    XSelectInput(dxc_display, DefaultRootWindow(dxc_display), PropertyChangeMask);
     if (!dxc_options.system_chrome) {
         // No frame of the manager's: the renderer draws the caption and the edges. The
         // fields are flags, functions, decorations, input mode and status; only the
