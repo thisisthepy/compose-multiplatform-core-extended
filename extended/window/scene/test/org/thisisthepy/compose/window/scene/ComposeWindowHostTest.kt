@@ -112,6 +112,11 @@ internal class FakePlatform : WindowPlatform {
     override fun readClipboardText(): String? = null
     override fun writeClipboardText(text: String) {}
     override fun setImeSpot(x: Int, y: Int) {}
+    /** How many times the scene asked the input method to let go of its composition. */
+    var endedCompositions = 0
+    override fun endComposition() {
+        endedCompositions++
+    }
     override fun showContextMenu(items: List<ContextMenuItem>) {}
     override fun close() {
         closedCalls++

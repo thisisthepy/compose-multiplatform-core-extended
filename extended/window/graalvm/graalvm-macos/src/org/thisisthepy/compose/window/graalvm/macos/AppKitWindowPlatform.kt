@@ -12,6 +12,7 @@ import org.thisisthepy.compose.window.WindowCaption
 import org.thisisthepy.compose.window.WindowChrome
 import org.thisisthepy.compose.window.macosCaption
 import org.thisisthepy.compose.window.editMenuItems
+import org.thisisthepy.compose.window.printableText
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.WindowConfig
@@ -228,6 +229,8 @@ class AppKitWindowPlatform : WindowPlatform {
 
     override fun setImeSpot(x: Int, y: Int) = setNativeImeSpot(x.toFloat(), y.toFloat())
 
+    override fun endComposition() = endNativeComposition()
+
     override fun showContextMenu(items: List<ContextMenuItem>) {
         val current = window ?: return
         val chosen = current.showContextMenu(packMenu(items))
@@ -301,6 +304,14 @@ class AppKitWindowPlatform : WindowPlatform {
                 ACCESSIBILITY_ACTION_EVENT -> {
                     val value = if (event.codePoint == AccessibleAction.SET_VALUE) argument() else null
                     sink.onAccessibilityAction(event.keyCode, event.codePoint, value)
+                }
+                // Control A has a character of its own, and an input method with no binding
+                // for it can hand that over as text. Never text anybody meant to type.
+                WindowEvent.TEXT_COMMIT -> {
+                    val text = printableText(event.text)
+                    if (text.isNotEmpty()) {
+                        sink.onEvent(if (text == event.text) event else event.copy(text = text))
+                    }
                 }
                 else -> sink.onEvent(event)
             }
