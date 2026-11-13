@@ -116,9 +116,10 @@ class X11Window : WindowPlatform {
         )
         accessibility.listener = listener
         accessibility.setTitle(config.title)
-        // GNOME's text size is in Xft.dpi too, and this window reports it as its text scale,
-        // so the C side takes it out of the scale the window opens at.
-        X11Natives.setTextFactor(LinuxTextScale.gnome() ?: 0f)
+        // The desktop's text size (GNOME's factor, KDE's forced font DPI) is in Xft.dpi too, and
+        // this window reports it as its text scale, so the C side takes it out of the scale the
+        // window opens at.
+        tellTextFactor()
         val title = CTypeConversion.toCString(config.title)
         val out = UnmanagedMemory.calloc<Pointer>(X11Layout.WINDOW_BYTES)
         try {
@@ -172,9 +173,9 @@ class X11Window : WindowPlatform {
         }
         var scale = measure().scale
         if (scale != lastScale) {
-            // GNOME rewrites Xft.dpi when its text size changes, before this window's next
+            // The desktop rewrites Xft.dpi when its text size changes, before this window's next
             // read of the factor: read it now, so the new DPI is not taken for a new scale.
-            X11Natives.setTextFactor(LinuxTextScale.gnome() ?: 0f)
+            tellTextFactor()
             scale = measure().scale
         }
         if (scale != lastScale) {
@@ -364,14 +365,19 @@ class X11Window : WindowPlatform {
         val now = System.nanoTime()
         if (now < nextTextScaleCheck) return
         nextTextScaleCheck = now + 3_000_000_000L
-        val gnome = LinuxTextScale.gnome()
         // Scale changes it makes are told on the next turn, with the others.
-        X11Natives.setTextFactor(gnome ?: 0f)
-        val scale = LinuxTextScale.resolve(gnome)
+        val scale = tellTextFactor()?.factor ?: TextScale.DEFAULT
         if (scale != lastTextScale) {
             lastTextScale = scale
             listener?.onTextScaleChanged(scale)
         }
+    }
+
+    /** Reads the desktop's text size and tells the C side, which takes it out of Xft.dpi. */
+    private fun tellTextFactor(): TextScale.LinuxTextFactor? {
+        val text = LinuxTextScale.factor()
+        X11Natives.setTextFactorFor(text?.factor ?: 0f, text?.desktopScale ?: 0f)
+        return text
     }
 
     override fun systemTheme(): SystemTheme = X11Theme.fromGtkTheme(System.getenv("GTK_THEME"))

@@ -12,23 +12,27 @@ import platform.posix.getenv
 import platform.posix.pclose
 import platform.posix.popen
 
-/** Reads the desktop's text size: GNOME's `text-scaling-factor`, else KDE's forced font DPI. */
+/** Reads the desktop's text size: GNOME's `text-scaling-factor`, or KDE's forced font DPI over its global scale. */
 internal object LinuxTextScale {
-    /** Reads both settings now. A missing tool or file is an unset setting, not an error. */
-    fun read(): Float = gnome() ?: TextScale.fromKdeFontsConfig(kdeFonts()) ?: TextScale.DEFAULT
+    /** Reads the settings now. A missing tool or file is an unset setting, not an error. */
+    fun read(): Float = factor()?.factor ?: TextScale.DEFAULT
 
     /**
-     * GNOME's `text-scaling-factor` alone, null where `gsettings` does not answer it. GNOME
-     * puts it into `Xft.dpi` as well, which [org.thisisthepy.compose.window.X11Scale] takes
-     * it out of again so that text is scaled once.
+     * The text size and where it came from, null where no desktop answers it. GNOME and KDE
+     * put it into `Xft.dpi` as well, which [org.thisisthepy.compose.window.X11Scale] takes it
+     * out of again so that text is scaled once.
      */
-    fun gnome(): Float? =
-        TextScale.fromGnome(run("gsettings get org.gnome.desktop.interface text-scaling-factor 2>/dev/null"))
+    fun factor(): TextScale.LinuxTextFactor? = TextScale.linuxFactor(
+        gnomeOutput = run("gsettings get org.gnome.desktop.interface text-scaling-factor 2>/dev/null"),
+        kdeFontsConfig = kdeConfig("kcmfonts"),
+        kdeGlobals = kdeConfig("kdeglobals"),
+        currentDesktop = getenv("XDG_CURRENT_DESKTOP")?.toKString(),
+    )
 
-    private fun kdeFonts(): String? {
+    private fun kdeConfig(name: String): String? {
         val config = getenv("XDG_CONFIG_HOME")?.toKString()?.takeIf { it.isNotEmpty() }
             ?: getenv("HOME")?.toKString()?.let { "$it/.config" } ?: return null
-        return readFile("$config/kcmfonts")
+        return readFile("$config/$name")
     }
 
     private fun run(command: String): String? {
