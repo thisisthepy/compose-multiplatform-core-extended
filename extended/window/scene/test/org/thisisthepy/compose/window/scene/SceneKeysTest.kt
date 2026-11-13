@@ -22,6 +22,18 @@ class SceneKeysTest {
     }
 
     @Test
+    fun every_function_key_and_the_menu_key_on_the_shared_board() {
+        val board = listOf(0x7A, 0x78, 0x63, 0x76, 0x60, 0x61, 0x62, 0x64, 0x65, 0x6D, 0x67, 0x6F)
+        val keys = listOf(
+            Key.F1, Key.F2, Key.F3, Key.F4, Key.F5, Key.F6,
+            Key.F7, Key.F8, Key.F9, Key.F10, Key.F11, Key.F12,
+        )
+        assertEquals(keys, board.map { composeKey(it) })
+        assertEquals(Key.Menu, composeKey(0x6E))
+        assertEquals(Key.Insert, composeKey(0x72))
+    }
+
+    @Test
     fun nfr14_a_key_with_no_number_is_not_a_letter() {
         assertEquals(Key.Unknown, composeKey(-1))
     }

@@ -13,6 +13,7 @@
 #include "win32_resize.h"
 #include "win32_ime_text.h"
 #include "win32_wheel.h"
+#include "win32_keys.h"
 #include "win32_caption.h"
 #include "win32_multi.h"
 #include "win32_file_dialog_spec.h"
@@ -938,8 +939,32 @@ static void open_window_scheme(void) {
     CHECK(!dxc_scheme_is_theme_change(NULL));
 }
 
+// F1 to F12, Shift with F10 and the menu key are the scene's, press and release, plain or
+// as a system key, and never reach the default handler that would enter menu mode on F10 or
+// put up its own context menu. Only Alt with F4 goes on to it, to close the window.
+static void function_keys_reach_the_scene(void) {
+    const UINT messages[] = {WM_KEYDOWN, WM_SYSKEYDOWN, WM_KEYUP, WM_SYSKEYUP};
+    for (int index = 0; index < 4; index++) {
+        UINT message = messages[index];
+        int press = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
+        CHECK(dxc_key_is_press(message) == press);
+        for (WPARAM key = VK_F1; key <= VK_F12; key++) {
+            int closes = message == WM_SYSKEYDOWN && key == VK_F4;
+            CHECK(dxc_key_passes_to_system(message, key) == closes);
+        }
+        CHECK(!dxc_key_passes_to_system(message, VK_F10));
+        CHECK(!dxc_key_passes_to_system(message, VK_APPS));
+        CHECK(!dxc_key_passes_to_system(message, VK_MENU));
+        CHECK(!dxc_key_passes_to_system(message, VK_SHIFT));
+    }
+    CHECK(VK_F10 == 0x79 && VK_APPS == 0x5D);
+    CHECK(!dxc_key_is_press(WM_CHAR));
+    CHECK(!dxc_key_is_press(WM_SYSCHAR));
+}
+
 int main(int argc, char **argv) {
     resize_decisions();
+    function_keys_reach_the_scene();
     pointer_buttons();
     first_window_placement();
     open_window_scheme();

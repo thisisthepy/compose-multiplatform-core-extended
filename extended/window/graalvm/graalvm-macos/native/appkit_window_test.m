@@ -264,6 +264,48 @@ static void check_event_time(NSWindow *window, void *view_pointer) {
           "the double-click interval is the system's, got %lld", (long long)interval);
 }
 
+// F1 to F12 and the menu key reach the queue as their own key numbers, and Shift with F10,
+// which asks for a context menu, keeps Shift in its modifiers. The renderer's key table then
+// reads these numbers; a key the view dropped or renumbered would never reach it.
+static void check_function_keys(NSWindow *window, void *view_pointer) {
+    NSView *view = (__bridge NSView *)view_pointer;
+    struct dxc_event event;
+    while (dxc_native_poll_event(&event)) {}
+    // kVK_F1 to kVK_F12, then kVK_ContextualMenu, with the characters AppKit gives them.
+    static const unsigned short codes[] = {0x7A, 0x78, 0x63, 0x76, 0x60, 0x61, 0x62, 0x64,
+                                           0x65, 0x6D, 0x67, 0x6F, 0x6E};
+    const int count = (int)(sizeof codes / sizeof codes[0]);
+    for (int index = 0; index < count; index++) {
+        unichar character = index < 12 ? (unichar)(NSF1FunctionKey + index) : (unichar)NSMenuFunctionKey;
+        NSString *text = [NSString stringWithCharacters:&character length:1];
+        NSEventModifierFlags flags = NSEventModifierFlagFunction |
+            (codes[index] == 0x6D ? NSEventModifierFlagShift : 0);
+        for (int up = 0; up < 2; up++) {
+            NSEvent *key = [NSEvent keyEventWithType:up ? NSEventTypeKeyUp : NSEventTypeKeyDown
+                                            location:NSZeroPoint
+                                       modifierFlags:flags
+                                           timestamp:0
+                                        windowNumber:window.windowNumber
+                                             context:nil
+                                          characters:text
+                         charactersIgnoringModifiers:text
+                                           isARepeat:NO
+                                             keyCode:codes[index]];
+            if (up) [view keyUp:key]; else [view keyDown:key];
+        }
+        int downs = 0, ups = 0;
+        while (dxc_native_poll_event(&event)) {
+            if (event.kind != DXC_EVENT_KEY_DOWN && event.kind != DXC_EVENT_KEY_UP) continue;
+            CHECK(event.key_code == codes[index], "key 0x%x arrived as 0x%x", codes[index], event.key_code);
+            if (codes[index] == 0x6D) {
+                CHECK((event.modifiers & NSEventModifierFlagShift) != 0, "Shift is held with F10");
+            }
+            if (event.kind == DXC_EVENT_KEY_DOWN) downs++; else ups++;
+        }
+        CHECK(downs == 1 && ups == 1, "key 0x%x: %d press(es) and %d release(s)", codes[index], downs, ups);
+    }
+}
+
 int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];
@@ -300,6 +342,7 @@ int main(void) {
         check_appearance(windows[0]);
         check_backing_change(windows[0], opened[0].view);
         check_event_time(windows[0], opened[0].view);
+        check_function_keys(windows[0], opened[0].view);
         for (int index = 0; index < 3; index++) [windows[index] orderOut:nil];
     }
     if (failures > 0) {

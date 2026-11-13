@@ -28,6 +28,16 @@ class MacKeysTest {
     private val option = MacModifiers.OPTION
 
     @Test
+    fun shift_f10_arrives_as_f10_with_shift_and_is_not_an_editing_shortcut() {
+        val event = macKeyEvent(0x6D, shift, KeyEventType.KeyDown)
+        assertEquals(Key.F10, event.key)
+        assertTrue(event.isShiftPressed)
+        assertFalse(event.isMetaPressed)
+        assertFalse(isEditingShortcut(0x6D, shift))
+        assertEquals(Key.Menu, macKeyEvent(0x6E, 0L, KeyEventType.KeyDown).key)
+    }
+
+    @Test
     fun fr5_command_letters_arrive_as_meta_for_the_editing_shortcuts() {
         // Key number, then what it must be. Compose's macOS mapping matches copy, paste,
         // cut, select all and undo on these keys with `isMetaPressed`.

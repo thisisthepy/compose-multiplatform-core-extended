@@ -9,6 +9,8 @@ application for Windows without a JVM.
   `c/win32_resize.h`, `c/win32_ime_text.h`, `c/win32_buttons.h`, `c/win32_wheel.h` (the wheel's scroll
   direction) and `c/win32_file_dialog_spec.h` (a dialog's type list) are header-only logic that compiles without
   Windows.
+  `c/win32_keys.h` decides which key messages stay the scene's (F10 and the menu key among
+  them); it is header-only too and reads only the message and key names of `<windows.h>`.
 - `cinterop/include/win32_window.h`: the whole surface, functions and records. It includes
   no Windows header, so cinterop and any C compiler read it.
 - `cinterop/win32_window.def` and `src/`: the Kotlin/Native (`mingwX64`) layer.
