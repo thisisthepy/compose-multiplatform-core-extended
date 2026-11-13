@@ -1,7 +1,8 @@
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 
 package org.thisisthepy.compose.window.macos
 
+import androidx.compose.foundation.ComposeFoundationFlags
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalClipboard
@@ -78,11 +79,27 @@ class MacosWindowPlatform(
     private val clipboardManager = MacosClipboardManager(pasteboard)
 
     /**
-     * Whether a right click puts up the system's edit menu. The choice is turned into the
-     * shortcut it is named after by the scene, so the field that has focus receives it as it
-     * would from the keyboard and an input method's composition is left where it was.
+     * Whether the window puts up an edit menu of its own (Cut, Copy, Paste, Select All) on a
+     * right click. The choice is turned into the shortcut it is named after by the scene, so
+     * the field that has focus receives it as it would from the keyboard and an input method's
+     * composition is left where it was.
+     *
+     * Off by default. Compose on this platform answers a right click in a text field with the
+     * system's `NSMenu` itself ([systemTextMenu]), built from what the field allows, and with
+     * the application's own menu where it gives a dropdown or toolbar provider: a menu of the
+     * window's own would be a second one.
      */
-    var nativeEditMenu: Boolean = true
+    var nativeEditMenu: Boolean = false
+
+    /**
+     * Whether a text field's menu is the system's `NSMenu`. Compose's foundation on macOS puts
+     * one up, holding the field's own entries, on its new context menu path, and draws a menu
+     * of its own on the old one; so the window turns
+     * `ComposeFoundationFlags.isNewContextMenuEnabled` on when it opens, before the content is
+     * composed. A right click then puts up one menu, the system's (FR-33.1). The flag is the
+     * process's: set this false before [open] to leave it as the application set it.
+     */
+    var systemTextMenu: Boolean = true
     private val idleSoak = IdleSoak()
 
     /** Where the input method was last told the caret is, in points from the content's top left. */
@@ -102,6 +119,7 @@ class MacosWindowPlatform(
 
     override fun open(config: WindowConfig, listener: WindowListener): Boolean {
         this.listener = listener
+        if (systemTextMenu) ComposeFoundationFlags.isNewContextMenuEnabled = true
         MacosProcess.install()
         var created = window
         if (created == null) {
@@ -448,8 +466,11 @@ class MacosWindowPlatform(
         follow = null
         MacosProcess.platforms.remove(this)
         MacosProcess.turn.release(this)
-        internalHost?.close()
+        // Let go of first: the host's own close closes this platform again, and a host still
+        // held here would close its scene a second time.
+        val host = internalHost
         internalHost = null
+        host?.close()
         window?.window?.close()
         window = null
         listener = null

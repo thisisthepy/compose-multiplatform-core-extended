@@ -58,16 +58,10 @@ class UpcallTableTest {
     }
 
     @Test
-    fun fr33_6_the_text_menu_a_right_click_puts_up_is_cut_copy_paste_and_select_all() {
-        val items = AppKitWindowPlatform.textEditMenu()
-        assertEquals(
-            listOf(EditMenuId.CUT, EditMenuId.COPY, EditMenuId.PASTE, EditMenuId.SELECT_ALL),
-            items.map { it.id },
-        )
-        assertEquals(
-            "1\t1\t0\tCut\n2\t1\t0\tCopy\n3\t1\t1\tPaste\n4\t1\t0\tSelect All",
-            AppKitWindowPlatform.packMenu(items),
-        )
+    fun fr33_1_compose_s_menu_is_the_system_s_and_the_window_adds_none() {
+        // The scene hands Compose's own entries to showContextMenu and draws no menu; the
+        // window's own text menu stays off, or a right click would put up two.
+        assertTrue(AppKitWindowPlatform().systemContextMenu)
     }
 
     @Test

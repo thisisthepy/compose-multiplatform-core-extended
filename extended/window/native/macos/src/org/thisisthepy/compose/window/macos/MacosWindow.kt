@@ -192,8 +192,9 @@ class MacosWindow(
 
     /**
      * True to have the platform put up the system's edit menu (Cut, Copy, Paste, Select All) on
-     * a right click. Off by default: an application whose Compose answers a text field's menu
-     * with an `NSMenu` of its own would show two.
+     * a right click. Off by default, as [MacosWindowPlatform.nativeEditMenu] is: Compose on this
+     * platform answers a text field's right click with the system's `NSMenu` itself, so the
+     * window's would be a second one.
      */
     var editMenuOnRightClick: Boolean = false
 
