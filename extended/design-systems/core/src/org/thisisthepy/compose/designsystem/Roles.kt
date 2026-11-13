@@ -113,6 +113,12 @@ enum class WidthClass { Compact, Medium, Expanded }
 enum class SplitPanePresentation { SideBySide, Overlay, Stacked }
 
 /**
+ * How a diagnostic is marked under the code it is about. Systems disagree: VS Code and Kate
+ * draw a squiggle, Xcode a straight line, and most mark a hint more quietly than a problem.
+ */
+enum class UnderlineShape { Wavy, Straight, Dotted }
+
+/**
  * How a value is chosen, which is the part of a picker that is not a matter of styling.
  *
  * The three systems are not the same control painted differently: a Material date is

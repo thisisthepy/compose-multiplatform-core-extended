@@ -7,6 +7,14 @@ on:
       - jb-main
 
 env:
+  # Retry transient dependency download failures (TLS handshake resets, timeouts) with
+  # backoff. These are JVM system properties read by Gradle's repository transport, so
+  # they must reach the daemon and Amper's JVMs; JAVA_TOOL_OPTIONS is inherited by all.
+  JAVA_TOOL_OPTIONS: >-
+    -Dorg.gradle.internal.repository.max.retries=6
+    -Dorg.gradle.internal.repository.initial.backoff=1000
+    -Dorg.gradle.internal.http.connectionTimeout=120000
+    -Dorg.gradle.internal.http.socketTimeout=120000
   # TODO: https://youtrack.jetbrains.com/issue/CMP-9497/Investgate-CfW-tests-flakiness-with-enabled-gradle-configuration-cache-on-CI
   # Web Tests require running additional processes: karma in node, browser;
   # To reduce the memory pressure, we change some defaults:
