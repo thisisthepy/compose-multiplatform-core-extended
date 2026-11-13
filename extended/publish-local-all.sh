@@ -13,6 +13,8 @@
 #   org.thisisthepy.compose.skiko:skiko-mingwx64      extended/skiko/build-skiko-mingw.sh, then
 #                                                     republish-skiko-mingw.py (mingwX64)
 #   org.thisisthepy.compose.window:<module>           extended/window, the modules this host builds
+#   org.thisisthepy.compose.designsystem:<module>     extended/design-systems (macOS), for the targets
+#                                                     Compose was published for here, and Android
 #   org.thisisthepy.compose:compose-gradle-plugin     the plugins, at PLUGIN_REVISION: Compose's, and
 #   org.thisisthepy.kotlin:kotlin-native-desktop-...  the one that links a Windows executable with MSVC
 #
@@ -172,6 +174,37 @@ echo "==> 3. the window modules: ${window_modules[*]}"
 fi
 if [[ $native_linux -eq 1 ]]; then
     "$here/window/scripts/publish-native-linux.sh"
+fi
+
+if [[ $full_host -eq 1 ]]; then
+    # Built against the Compose step 1 published, so only for its targets: a root this host
+    # wrote lists those and no others. Android always, since the fork's roots send it to
+    # androidx. The release builds every target (extended-publish.yml).
+    platforms="android"
+    for target in $targets; do
+        case "$target" in
+            desktop) platforms="$platforms, jvm" ;;
+            macosArm64|linuxX64|iosArm64|iosSimulatorArm64|wasmJs) platforms="$platforms, $target" ;;
+        esac
+    done
+    echo "==> 3b. the design systems: $platforms"
+    (
+        cd "$here/design-systems"
+        scripts/check-version.sh "$root/gradle.properties"
+        saved="$work/design-systems-modules"
+        rm -rf "$saved"
+        mkdir -p "$saved"
+        for yaml in */module.yaml; do
+            mkdir -p "$saved/$(dirname "$yaml")"
+            cp "$yaml" "$saved/$yaml"
+        done
+        trap 'for yaml in */module.yaml; do cp "$saved/$yaml" "$yaml"; done' EXIT
+        for yaml in */module.yaml; do
+            perl -pi -e "s/^  platforms: \\[.*\\]\$/  platforms: [ $platforms ]/" "$yaml"
+            grep -qx "  platforms: \\[ $platforms \\]" "$yaml" || die "could not narrow the platforms of $yaml"
+        done
+        ./kotlin publish mavenLocal
+    )
 fi
 
 if [[ $full_host -eq 0 ]]; then

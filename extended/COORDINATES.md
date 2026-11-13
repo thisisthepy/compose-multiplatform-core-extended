@@ -122,6 +122,47 @@ a target's component, the root's variant for it, or a row of this table.
 | `SAVEDSTATE` | `org.jetbrains.androidx.savedstate:savedstate-compose:1.4.0` | `org.thisisthepy.compose.androidx.savedstate:savedstate-compose:1.11.1-ext.2` |
 | `WINDOW` | `org.jetbrains.androidx.window:window-core:1.5.1` | `org.thisisthepy.compose.androidx.window:window-core:1.11.1-ext.2` |
 
+## The design systems
+
+`extended/design-systems` is a standalone Amper project of this fork's own, published on the
+same version line under one group of its own, `org.thisisthepy.compose.designsystem`, with
+each module's directory named as its artifact.
+
+- **One group, not one per system.** `org.thisisthepy.compose.material3` is already the fork's
+  Material 3, so a group per system would collide there, and a group named after each of the
+  others would take a name a later Compose library of the same name could want.
+- **`designsystem-` in every artifact.** A jar's file name is `<artifact>-<target>-<version>`,
+  and the version line is shared, so a bare `material3` would write
+  `material3-jvm-1.11.1-ext.N.jar` next to the fork's own Material 3 jar in a desktop
+  application's library directory; and Amper names a module's klibs after it, so the shared
+  source sets' metadata would be `material3_commonMain`, the unique_name of the fork's own
+  Material 3 klib, and a consumer's shared source set keeps only one of two klibs that share a
+  unique_name. The Kotlin/Native klibs take the full coordinates as their unique_name.
+- **Built against this fork's Compose** (`org.thisisthepy.compose.runtime`, `foundation`, `ui`,
+  `material3`) at the same version, for every target. On Android those roots send the
+  consumer to androidx (`androidx.compose.*`), so an Android application gets androidx's
+  Compose and nothing else. JetBrains' `org.jetbrains.compose.*` is never named: next to the
+  fork's it would be the same classes twice under two groups, and klib unique names the fork's
+  klibs do not answer to (see "What it costs").
+
+Every module is published for `jvm`, `android`, `iosArm64`, `iosSimulatorArm64`, `macosArm64`,
+`linuxX64` and `wasmJs`, Amper's way: the root `<artifact>` and one component per target,
+`<artifact>-jvm`, `-android` (an aar), `-iosarm64`, `-iossimulatorarm64`, `-macosarm64`,
+`-linuxx64` and `-wasmjs`. A consumer names the root. `extended/publish/check_targets.py
+--amper-project extended/design-systems` reads the platforms from each module.yaml and fails
+the publish workflow when one of them is missing from the bundle.
+
+| Module | What it is | This fork |
+|---|---|---|
+| `designsystem/` | core: the contract every system speaks (colour roles, styles, `DesignSystem`) | `org.thisisthepy.compose.designsystem:designsystem:1.11.1-ext.2` |
+| `designsystem-liquid-glass/` | the Liquid Glass material | `org.thisisthepy.compose.designsystem:designsystem-liquid-glass:1.11.1-ext.2` |
+| `designsystem-material3/` | Material 3, delegating to the fork's `material3` | `org.thisisthepy.compose.designsystem:designsystem-material3:1.11.1-ext.2` |
+| `designsystem-cupertino/` | Cupertino (iOS) | `org.thisisthepy.compose.designsystem:designsystem-cupertino:1.11.1-ext.2` |
+| `designsystem-fluent/` | Fluent 2 | `org.thisisthepy.compose.designsystem:designsystem-fluent:1.11.1-ext.2` |
+| `designsystem-gnome/` | GNOME 50 (Adwaita) | `org.thisisthepy.compose.designsystem:designsystem-gnome:1.11.1-ext.2` |
+| `designsystem-breeze/` | KDE Breeze | `org.thisisthepy.compose.designsystem:designsystem-breeze:1.11.1-ext.2` |
+| `designsystem-deepin/` | Deepin (DDE) | `org.thisisthepy.compose.designsystem:designsystem-deepin:1.11.1-ext.2` |
+
 ## What is not renamed, and why
 
 - **skiko.** `extended/skiko` builds skiko for `mingwX64` and as a static archive from

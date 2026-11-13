@@ -24,6 +24,13 @@ any version of a component counts, so the same check serves a release and a dev 
 module JetBrainsPublication.kt lists as having an Android target of its own (ui-backhandler) is
 not asked for an android variant either.
 
+With --amper-project <dir> (repeatable) the bundle is also held to an Amper project of this fork
+(extended/design-systems): every module its project.yaml lists that publishes needs its root
+(publishing group and artifactId, from its module.yaml or a template it applies) and, for each
+platform its module.yaml names, the component Amper publishes for it (<artifactId>-<platform> in
+lower case: designsystem-jvm, designsystem-iosarm64, designsystem-wasmjs, designsystem-android)
+and the root's variant for that platform.
+
 Exits 1 on any gap, printing each one.
 """
 
@@ -228,7 +235,66 @@ def read_coordinates(path):
     return found
 
 
-def check(bundle, catalog, platforms, coordinates=None, skip=()):
+def yaml_value(text, key):
+    """The first `key: value` of a module.yaml, or None; enough for the flat keys read here."""
+    match = re.search(r"^\s*" + re.escape(key) + r":[ \t]*([^#\n]+?)[ \t]*$", text, re.M)
+    return match.group(1).strip().strip("\"'") if match else None
+
+
+def yaml_list(text, key):
+    """The items of a top-level `key:` block list (`  - item`), comments and `: exported` left out."""
+    match = re.search(r"^" + re.escape(key) + r":[ \t]*\n((?:[ \t]+-[^\n]*\n|[ \t]*#[^\n]*\n|[ \t]*\n)*)", text + "\n", re.M)
+    if not match:
+        return []
+    return [item.split(":")[0].strip() for item in re.findall(r"^[ \t]+-[ \t]*([^#\n]+)", match.group(1), re.M)]
+
+
+def read_amper_project(project):
+    """[(module, group, artifact, platforms)] for every published module of an Amper project."""
+    with open(os.path.join(project, "project.yaml"), encoding="utf-8") as handle:
+        modules = yaml_list(handle.read(), "modules")
+    if not modules:
+        raise ValueError(f"{project}/project.yaml lists no modules")
+    found = []
+    for module in modules:
+        directory = os.path.join(project, module)
+        with open(os.path.join(directory, "module.yaml"), encoding="utf-8") as handle:
+            text = handle.read()
+        texts = [text]
+        for template in yaml_list(text, "apply"):
+            with open(os.path.normpath(os.path.join(directory, template)), encoding="utf-8") as handle:
+                texts.append(handle.read())
+        def first(key):
+            return next((value for value in (yaml_value(t, key) for t in texts) if value), None)
+        if (first("enabled") or "").lower() != "true" or not first("group"):
+            continue
+        listed = re.search(r"^\s*platforms:\s*\[([^\]]*)\]", text, re.M)
+        platforms = [p.strip() for p in listed.group(1).split(",") if p.strip()] if listed else []
+        found.append((module, first("group"), first("artifactId") or os.path.basename(module), platforms))
+    return found
+
+
+def check_amper_project(project, index, skipped):
+    problems = []
+    for module, group, artifact, platforms in read_amper_project(project):
+        where = f"{group}:{artifact} ({os.path.basename(os.path.normpath(project))}/{module})"
+        root = index.get((group, artifact))
+        if not root:
+            problems.append(f"{where}: the root is not in the bundle")
+            continue
+        variants = root_variants(root)
+        for platform in platforms:
+            if platform.lower() in skipped:
+                continue
+            component = f"{artifact}-{platform.lower()}"
+            if (group, component) not in index:
+                problems.append(f"{where}: no {component} component for {platform}, which its module.yaml names")
+            elif not lists_target(variants, platform):
+                problems.append(f"{where}: {component} is in the bundle but the root has no {platform} variant for a consumer to find it by")
+    return problems
+
+
+def check(bundle, catalog, platforms, coordinates=None, skip=(), amper_projects=()):
     names = read_platforms(platforms)
     problems = []
     index = bundle_index(bundle)
@@ -265,6 +331,9 @@ def check(bundle, catalog, platforms, coordinates=None, skip=()):
             elif not lists_target(variants, target) and not (project in SPECIAL_JVM_COMPONENTS and lists_target(variants, "jvm")):
                 problems.append(f"{where}: {artifact}-{aliases[0]} is in the bundle but the root has no {target} variant for a consumer to find it by")
 
+    for project in amper_projects:
+        problems += check_amper_project(project, index, skipped)
+
     if coordinates:
         for group, artifact in read_coordinates(coordinates):
             if (group, artifact) not in index:
@@ -279,8 +348,9 @@ def main():
     parser.add_argument("--platforms", required=True)
     parser.add_argument("--coordinates")
     parser.add_argument("--skip-target", action="append", default=[])
+    parser.add_argument("--amper-project", action="append", default=[])
     args = parser.parse_args()
-    problems = check(args.bundle, args.catalog, args.platforms, args.coordinates, args.skip_target)
+    problems = check(args.bundle, args.catalog, args.platforms, args.coordinates, args.skip_target, args.amper_project)
     for problem in problems:
         print(f"FAIL  {problem}")
     print(f"{len(problems)} gap(s) between {args.bundle} and what upstream publishes")

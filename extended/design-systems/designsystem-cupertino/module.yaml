@@ -1,0 +1,56 @@
+# Cupertino.
+#
+# Apple ships no Compose library, so this is ours to implement. The candidate third party
+# option is alexzhirkevich/compose-cupertino, which targets an older Kotlin and Compose
+# than this project uses and predates Liquid Glass; whether it can be adopted is a
+# feasibility question, not a given. Until that is answered with a build, the
+# implementation lives here.
+
+product:
+  type: kmp/lib
+  platforms: [ jvm, android, iosArm64, iosSimulatorArm64, macosArm64, linuxX64, wasmJs ]
+
+dependencies:
+  - //designsystem: exported
+  - //designsystem-liquid-glass
+  - $libs.compose.fork.runtime
+  - $libs.compose.fork.foundation
+  - $libs.compose.fork.ui
+
+test-dependencies:
+  - $kotlin.test
+  # Test only, and never a production dependency in any direction. Two other modules
+  # already compare a pair and a trio, and neither of them ever asks Cupertino anything,
+  # so the claim that these are six design systems rather than one with six palettes had
+  # a gap in it exactly where this module sits. Checking it means holding all six at once.
+  - //designsystem-material3
+  - //designsystem-fluent
+  - //designsystem-gnome
+  - //designsystem-breeze
+  - //designsystem-deepin
+
+apply:
+  - ../publish.module-template.yaml
+
+settings:
+  publishing:
+    artifactId: designsystem-cupertino
+    pom:
+      name: "Design systems: Cupertino"
+      description: "Cupertino (iOS) as a design system for Compose, with Liquid Glass surfaces."
+
+# A klib's unique_name defaults to the Amper module name, the directory name, which a
+# consumer's own module (or another library) can share; the Kotlin/Native linker refuses two
+# libraries with one unique_name. The Maven coordinates are globally unique. Native only:
+# the Wasm compiler takes no -module-name.
+settings@native:
+  kotlin:
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.designsystem:designsystem-cupertino
+
+test-settings@native:
+  kotlin:
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.designsystem:designsystem-cupertino-test
