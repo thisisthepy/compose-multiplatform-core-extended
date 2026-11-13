@@ -18,13 +18,13 @@
 
 product:
   type: kmp/lib
-  platforms: [ jvm, android, iosArm64, iosSimulatorArm64, wasmJs ]
+  platforms: [ jvm, android, iosArm64, iosSimulatorArm64, macosArm64, linuxX64, wasmJs ]
 
 dependencies:
-  - //core
-  - $compose.runtime
-  - $compose.foundation
-  - $compose.ui
+  - //designsystem
+  - $libs.compose.fork.runtime
+  - $libs.compose.fork.foundation
+  - $libs.compose.fork.ui
 
 test-dependencies:
   - $kotlin.test
@@ -33,11 +33,38 @@ test-dependencies:
 # produces, which is the only way to tell a superellipse from a rounded rectangle without
 # looking at a screen. Building a Path on the JVM runs Skia, and the common Compose
 # artifacts carry its Kotlin classes without the native library, so the JVM test run needs
-# the host's skiko binary on its classpath. Test only, and only on the JVM: the other
+# the host's skiko binary on its classpath. Named directly rather than through
+# compose.desktop.currentOs, which is JetBrains' desktop module and would bring JetBrains'
+# Compose UI next to the fork's. Test only, and only on the JVM: the other
 # targets link Skia into the binary themselves.
 test-dependencies@jvm:
-  - $compose.desktop.currentOs
+  - $libs.skiko.runtime.macos.arm64
+  - $libs.skiko.runtime.macos.x64
+  - $libs.skiko.runtime.linux.x64
+  - $libs.skiko.runtime.windows.x64
+
+apply:
+  - ../publish.module-template.yaml
 
 settings:
-  compose:
-    enabled: true
+  publishing:
+    artifactId: designsystem-liquid-glass
+    pom:
+      name: "Design systems: Liquid Glass"
+      description: "The Liquid Glass material for Compose: concentric shapes, glass fills, contrast and reduced transparency."
+
+# A klib's unique_name defaults to the Amper module name, the directory name, which a
+# consumer's own module (or another library) can share; the Kotlin/Native linker refuses two
+# libraries with one unique_name. The Maven coordinates are globally unique. Native only:
+# the Wasm compiler takes no -module-name.
+settings@native:
+  kotlin:
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.designsystem:designsystem-liquid-glass
+
+test-settings@native:
+  kotlin:
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.designsystem:designsystem-liquid-glass-test
