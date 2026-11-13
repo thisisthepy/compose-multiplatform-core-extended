@@ -47,6 +47,7 @@ import org.thisisthepy.compose.window.windows.c.dxc_native_window_closed
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_destroy
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_focus
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_is_active
+import org.thisisthepy.compose.window.windows.c.dxc_native_window_is_zoomed
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_release
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_select
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_set_content_size
@@ -128,6 +129,8 @@ internal class Win32CWindowBackend(private val native: Win32NativeWindow) : Win3
             },
         )
     }
+
+    override fun isMaximized(): Boolean = on(false) { dxc_native_window_is_zoomed() != 0 }
 
     override fun systemDark(): Boolean = dxc_native_system_dark() != 0
 

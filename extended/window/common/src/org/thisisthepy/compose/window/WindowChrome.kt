@@ -9,6 +9,9 @@ package org.thisisthepy.compose.window
  * is no system title bar: the window has no decorations, the scene draws the caption and its
  * buttons, a press in an empty part of the caption moves the window ([WindowPlatform.startMove])
  * and a press at an edge resizes it ([WindowPlatform.startResize]).
+ * On Windows the window keeps the
+ * system's frame and gives the caption strip to the content: the scene draws the three buttons,
+ * and moving, resizing and Snap Layouts stay the system's ([Win32Chrome]).
  *
  * [System] is the platform's own title bar, with the content below it. [TitleBarStyle] has no
  * effect there.
@@ -46,9 +49,22 @@ data class WindowCaption(
     val cornerRadius: Float = 0f,
     /**
      * Whether the scene draws the window buttons itself, because the platform draws none
-     * (Linux under [WindowChrome.Modern]). They then act through [WindowPlatform.performCaptionAction].
+     * (Linux and Windows under [WindowChrome.Modern]). They then act through
+     * [WindowPlatform.performCaptionAction].
      */
     val buttonsDrawnByScene: Boolean = false,
+    /**
+     * Whether the frame around the strip is still the system's (Windows): its edges resize the
+     * window and an empty part of the strip moves it with nothing asked of the scene, so the
+     * scene draws the buttons and no resize edges of its own, which would take the presses at
+     * the corner of the close button.
+     */
+    val frameBySystem: Boolean = false,
+    /**
+     * Whether the window is maximised now, where the platform knows ([Win32Chrome]): the
+     * maximise button the scene draws then shows restore.
+     */
+    val maximized: Boolean = false,
 ) {
     companion object {
         /** No strip to avoid. */

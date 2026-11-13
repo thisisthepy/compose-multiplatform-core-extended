@@ -16,6 +16,7 @@ import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.value
 import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.TextScale
+import org.thisisthepy.compose.window.Win32Chrome
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowMeasurement
@@ -150,15 +151,16 @@ class Win32NativeWindow private constructor(
          * Opens the window [config] describes, at its position when it names one, and holds
          * the system's requests to close it for [Win32Windows] to put to the application.
          *
-         * The window keeps the system's caption: the caption the scene draws moves here with
-         * the renderer's own window. Sizes and the position are in points.
+         * Under [org.thisisthepy.compose.window.WindowChrome.Modern] the caption strip is the
+         * content's and the scene draws the buttons in it; under System the window keeps the
+         * system's caption ([Win32Chrome]). Sizes and the position are in points.
          */
         fun open(config: WindowConfig): Win32NativeWindow? {
             configure(
                 resizable = config.resizable,
                 minWidth = config.minWidth,
                 minHeight = config.minHeight,
-                systemChrome = true,
+                systemChrome = Win32Chrome.systemCaption(config),
             )
             val x = config.x
             val y = config.y

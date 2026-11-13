@@ -12,7 +12,10 @@ import org.thisisthepy.compose.window.FileDialogKind
 import org.thisisthepy.compose.window.FileDialogOutcome
 import org.thisisthepy.compose.window.FileDialogRequest
 import org.thisisthepy.compose.window.ScreenPointer
+import org.thisisthepy.compose.window.Win32Chrome
 import org.thisisthepy.compose.window.WindowBounds
+import org.thisisthepy.compose.window.WindowCaption
+import org.thisisthepy.compose.window.WindowChrome
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowListener
@@ -61,7 +64,13 @@ private class FakeWindow(val config: WindowConfig) : Win32WindowBackend {
         endedCompositions++
     }
     override fun showContextMenu(items: List<ContextMenuItem>): Int = if (items.isEmpty()) -1 else items.size - 1
-    override fun performCaptionAction(action: CaptionAction) {}
+    val captionActions = ArrayList<CaptionAction>()
+    var maximized = false
+    override fun performCaptionAction(action: CaptionAction) {
+        captionActions += action
+        if (action == CaptionAction.ToggleMaximize) maximized = !maximized
+    }
+    override fun isMaximized(): Boolean = maximized
     override fun systemDark(): Boolean = false
 
     override fun setPosition(x: Int, y: Int) {
@@ -167,6 +176,40 @@ private fun config(title: String, x: Int? = null, y: Int? = null) =
     WindowConfig(title = title, width = 300, height = 200, x = x, y = y)
 
 class Win32WindowsTest {
+
+    @Test
+    fun fr19_4_a_modern_window_tells_the_scene_to_draw_the_buttons_in_its_caption_strip() {
+        val process = FakeProcess()
+        val platform = Win32Windows(process).newPlatform()
+        assertEquals(WindowCaption.None, platform.caption(), "a window that is not open has no caption")
+        assertTrue(platform.open(config("modern"), Recorder()))
+
+        val caption = platform.caption()
+        assertEquals(Win32Chrome.caption(config("modern")), caption)
+        assertTrue(caption.buttonsDrawnByScene)
+        assertTrue(caption.frameBySystem)
+        assertFalse(caption.maximized)
+
+        // The maximise button the scene drew toggles the window, and the caption says which glyph is next.
+        platform.performCaptionAction(CaptionAction.ToggleMaximize)
+        assertEquals(listOf(CaptionAction.ToggleMaximize), process.windows[0].captionActions)
+        assertTrue(platform.caption().maximized)
+        platform.performCaptionAction(CaptionAction.ToggleMaximize)
+        assertFalse(platform.caption().maximized)
+
+        platform.close()
+        assertEquals(WindowCaption.None, platform.caption())
+    }
+
+    @Test
+    fun fr19_4_a_window_with_the_systems_caption_leaves_the_scene_nothing_to_draw() {
+        val process = FakeProcess()
+        val platform = Win32Windows(process).newPlatform()
+        assertTrue(platform.open(config("system").copy(chrome = WindowChrome.System), Recorder()))
+        process.windows[0].maximized = true
+        assertEquals(WindowCaption.None, platform.caption())
+        platform.close()
+    }
 
     @Test
     fun fr53_each_window_answers_the_text_scale_its_backend_reads() {

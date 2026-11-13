@@ -288,6 +288,10 @@ struct DxcWin {
     int32_t color_scheme;
     int32_t caption_dark;
     int scheme_applied;
+
+    // Where the pointer is between the maximise button and the client area, for a window
+    // that draws its own caption (win32_caption.h).
+    struct dxc_caption_pointer caption_pointer;
 };
 
 #define dxc_events (dxc_w->events)
@@ -1846,8 +1850,8 @@ int32_t dxc_native_window_caption_dark(int32_t *dark) {
  * has to answer for it or the window becomes the one window on the desktop that cannot be
  * resized from the top.
  *
- * The geometry below is duplicated in Kotlin, which draws into the same strip.
- * scripts/tests/windows-caption-metrics.test.sh fails if the two stop agreeing.
+ * The geometry is duplicated in Kotlin (common's Win32Chrome), which the scene lays the
+ * buttons out with. scripts/check-windows-caption-metrics.sh fails if the two stop agreeing.
  */
 
 // Windows 11 caption metrics, in device independent pixels, are in win32_caption.h with
@@ -1914,6 +1918,26 @@ static void dxc_push_caption_pointer(HWND window, int32_t kind, LPARAM screen) {
     POINT point = {GET_X_LPARAM(screen), GET_Y_LPARAM(screen)};
     ScreenToClient(window, &point);
     dxc_push_pointer(kind, MAKELPARAM(point.x, point.y), 0);
+}
+
+/** Tells the scene what win32_caption.h decided about a move or a leave. `screen` is read only for a move. */
+static void dxc_forward_caption(HWND window, enum dxc_caption_forward forward, LPARAM screen) {
+    switch (forward) {
+    case DXC_CAPTION_FORWARD_MOVE:
+        dxc_push_caption_pointer(window, DXC_EVENT_POINTER_MOVE, screen);
+        break;
+    case DXC_CAPTION_FORWARD_LEAVE:
+        // Over nothing the scene draws, so it drops the hover it was showing.
+        dxc_push_pointer(DXC_EVENT_POINTER_MOVE, MAKELPARAM(DXC_CAPTION_OUTSIDE, DXC_CAPTION_OUTSIDE), 0);
+        break;
+    default:
+        break;
+    }
+}
+
+/** Whether a mouse button is down or this window has the mouse, so a leave is not the end of anything. */
+static int32_t dxc_pointer_held(HWND window) {
+    return dxc_pressed_buttons() != 0 || GetCapture() == window ? 1 : 0;
 }
 
 /** True while the window is maximised, for the renderer's maximise or restore glyph. */
@@ -2426,18 +2450,33 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         }
         return dxc_caption_hit_test(window, lparam);
     case WM_NCMOUSEMOVE:
-        if (!dxc_options.system_chrome && wparam == HTMAXBUTTON) {
-            // Asked for, because a pointer leaving a non-client button sends nothing else.
-            TRACKMOUSEEVENT track = {sizeof track, TME_LEAVE | TME_NONCLIENT, window, 0};
-            TrackMouseEvent(&track);
-            dxc_push_caption_pointer(window, DXC_EVENT_POINTER_MOVE, lparam);
-            return 0;
+        if (!dxc_options.system_chrome) {
+            int over_maximise = wparam == HTMAXBUTTON;
+            if (over_maximise) {
+                // Asked for, because a pointer leaving a non-client button sends nothing else.
+                TRACKMOUSEEVENT track = {sizeof track, TME_LEAVE | TME_NONCLIENT, window, 0};
+                TrackMouseEvent(&track);
+            }
+            // A move from the button onto the caption or the top band is no leave to
+            // Windows, so the scene is told here that the button is not under the pointer.
+            dxc_forward_caption(window, dxc_caption_nc_move(&dxc_w->caption_pointer, over_maximise), lparam);
+            if (over_maximise) {
+                return 0;
+            }
         }
         break;
     case WM_NCMOUSELEAVE:
         if (!dxc_options.system_chrome) {
-            // Off every button, so the scene drops the hover it was shown.
-            dxc_push_pointer(DXC_EVENT_POINTER_MOVE, MAKELPARAM(-1, -1), 0);
+            dxc_forward_caption(window, dxc_caption_nc_leave(&dxc_w->caption_pointer, dxc_pointer_held(window)), 0);
+        }
+        break;
+    case WM_MOUSELEAVE:
+        // Only a window that draws its own caption asks for this message (WM_MOUSEMOVE
+        // below): its minimise and close buttons are at the window's edge, where the
+        // pointer leaves without another move, and would stay lit.
+        if (!dxc_options.system_chrome) {
+            dxc_forward_caption(window, dxc_caption_client_leave(&dxc_w->caption_pointer, dxc_pointer_held(window)), 0);
+            return 0;
         }
         break;
     case WM_NCLBUTTONDOWN:
@@ -2445,6 +2484,10 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         if (!dxc_options.system_chrome && wparam == HTMAXBUTTON) {
             // Swallowed, or the default handler runs its own button loop and toggles the
             // window itself; the renderer's button is the one that acts on the release.
+            // Captured like a press in the client area: the release then arrives as
+            // WM_LBUTTONUP wherever the pointer is, over the button, over the caption or
+            // off the window, so the scene never keeps a button it was told is down.
+            SetCapture(window);
             dxc_push_caption_pointer(window, DXC_EVENT_POINTER_DOWN, lparam);
             return 0;
         }
@@ -2477,6 +2520,17 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         // No tracking area. Windows delivers a move whenever the pointer is over the
         // client area, so hover, which is half of what a desktop control does, arrives
         // without having to be asked for.
+        if (!dxc_options.system_chrome) {
+            // The end of the hover does have to be asked for, each time the pointer comes
+            // back: a leave ends the request. Not while the mouse is captured, when a move
+            // arrives from anywhere and asking from outside the client area is answered
+            // with a leave at once.
+            if (GetCapture() != window) {
+                TRACKMOUSEEVENT track = {sizeof track, TME_LEAVE, window, 0};
+                TrackMouseEvent(&track);
+            }
+            dxc_caption_client_move(&dxc_w->caption_pointer);
+        }
         dxc_push_pointer(DXC_EVENT_POINTER_MOVE, lparam, 0);
         return 0;
     case WM_SETCURSOR:

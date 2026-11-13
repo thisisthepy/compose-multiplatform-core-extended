@@ -55,6 +55,25 @@ from `Win32Loop.deliverFileDialogs()` (called by `Win32Windows.pump`; a caller t
 `Win32Loop.pump` calls it after). `Win32WindowPlatform.fileDialogs` is the same for a platform
 window and cancels its dialogs when the window closes.
 
+## The caption
+
+A window opened with `system_chrome` 0 (`dxc_native_window_configure`; `WindowChrome.Modern`
+through `Win32WindowPlatform`) keeps the system's frame and gives its caption strip to the
+content. Nothing here draws: the scene draws minimise, maximise or restore and close at the
+trailing end of the strip, 46 by 32 points each (`common`'s `Win32Chrome`, the same numbers as
+`c/win32_caption.h`, held together by `scripts/check-windows-caption-metrics.sh`).
+
+`WM_NCHITTEST` answers for the strip (`dxc_caption_zone_at`): the top band resizes, an empty
+part moves the window, minimise and close are client area and take ordinary mouse input, and
+maximise is `HTMAXBUTTON`, which is the only way Windows 11 shows Snap Layouts over it. The
+maximise button's non-client moves and its press are passed to the scene as pointer events at
+the same point; the press captures the mouse, so its release arrives like any other. When the
+pointer is over nothing the scene draws any more, the scene hears one move to (-1, -1), which
+ends the hover (`dxc_caption_nc_move` and the three beside it decide when).
+`dxc_native_window_is_zoomed` says which glyph the maximise button shows.
+
+A window nobody configured keeps the system's caption.
+
 ## The live resize
 
 While the reader drags an edge, Windows runs its own loop inside the message that began the
