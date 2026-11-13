@@ -1,6 +1,7 @@
 package org.thisisthepy.compose.window.scene
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
@@ -315,6 +316,58 @@ class ComposeWindowHostTest {
         val settledFrames = host.presentLog.frames
         repeat(60) { host.turn(0) }
         assertEquals(settledFrames, host.presentLog.frames, "idle turns must not redraw")
+        host.close()
+    }
+
+    @Test
+    fun events_heard_outside_a_turn_reach_the_scene_once() {
+        val platform = FakePlatform()
+        val surface = FakeSurface()
+        var clicks = 0
+        val host = host(platform, surface) { Box(Modifier.size(100.dp).clickable { clicks++ }) }
+        assertTrue(host.open())
+        host.turn(0)
+        // What a window driven by NSApplication.run does: the event arrives from the run
+        // loop, not from a turn, and the window hands it over itself.
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, WindowEvent.PRIMARY_HELD, 0, 0, 0, ""))
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_UP, 10f, 10f, 0, 0, 0, 0, ""))
+        platform.pump(0)
+        assertTrue(host.deliverHeard())
+        assertEquals(1, clicks)
+        // Nothing is left for a turn or a second delivery to hand over again.
+        assertTrue(!host.deliverHeard())
+        repeat(4) { host.turn(0) }
+        assertEquals(1, clicks)
+        host.close()
+    }
+
+    @Test
+    fun a_delivery_asked_for_inside_a_turn_leaves_the_events_to_the_turn() {
+        val platform = FakePlatform()
+        val surface = FakeSurface()
+        var clicks = 0
+        lateinit var host: ComposeWindowHost
+        val delivered = ArrayList<Boolean>()
+        val inner = object : WindowPlatform by platform {
+            override fun open(config: WindowConfig, listener: WindowListener): Boolean =
+                platform.open(config, object : WindowListener by listener {
+                    override fun onEvent(event: WindowEvent) {
+                        listener.onEvent(event)
+                        // The window's event handler, reached from the turn's own pump.
+                        delivered += host.deliverHeard()
+                    }
+                })
+        }
+        host = ComposeWindowHost(inner, WindowConfig("test", 200, 100), { surface }) {
+            Box(Modifier.size(100.dp).clickable { clicks++ })
+        }
+        assertTrue(host.open())
+        host.turn(0)
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, WindowEvent.PRIMARY_HELD, 0, 0, 0, ""))
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_UP, 10f, 10f, 0, 0, 0, 0, ""))
+        repeat(4) { host.turn(0) }
+        assertEquals(listOf(false, false), delivered)
+        assertEquals(1, clicks)
         host.close()
     }
 }

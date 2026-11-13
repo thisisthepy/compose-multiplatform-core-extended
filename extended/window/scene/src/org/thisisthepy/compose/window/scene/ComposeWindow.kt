@@ -230,6 +230,65 @@ class ComposeWindowHost(
      * what the window heard, then a frame if there is anything to draw.
      */
     fun turn(timeoutMillis: Long) {
+        if (turning) return
+        turning = true
+        try {
+            turnOnce(timeoutMillis)
+        } finally {
+            turning = false
+        }
+    }
+
+    private var turning = false
+    private var delivering = false
+    private val outside = ArrayList<WindowEvent>()
+
+    /**
+     * Hands the scene what the window heard since the last time, outside a [turn].
+     *
+     * For an embedding whose own run loop drives the application (`NSApplication.run`)
+     * and so never calls [turn]: the window calls this from its event handlers and its
+     * draw path, and the events reach the scene without a timer pumping the host.
+     *
+     * Does nothing inside a [turn], which drains the same log itself, and nothing when
+     * reached from inside a delivery (a listener that makes the window hear something):
+     * what that heard stays in the log and the running delivery takes it on its next
+     * pass. Every event is handed over exactly once. True when anything was delivered.
+     */
+    fun deliverHeard(): Boolean {
+        if (turning || delivering) return false
+        val current = scene ?: return false
+        delivering = true
+        var any = false
+        try {
+            while (true) {
+                outside.clear()
+                log.drain(outside)
+                if (outside.isEmpty()) break
+                any = true
+                receiveAll(current, outside)
+                work.runPending()
+                sceneMainWork.runPending()
+            }
+        } finally {
+            outside.clear()
+            delivering = false
+        }
+        if (any) requestFrame()
+        return any
+    }
+
+    private fun receiveAll(current: ComposeScene, events: List<WindowEvent>) {
+        for (event in events) {
+            current.receive(event)
+            when (event.kind) {
+                WindowEvent.TEXT_COMMIT -> textInput.commit(event.text)
+                WindowEvent.TEXT_COMPOSE -> textInput.compose(event.text)
+            }
+        }
+    }
+
+    private fun turnOnce(timeoutMillis: Long) {
         val current = scene ?: return
         // The one place the operating system is read. A frame drawn inside a resize must not
         // read it again, or the rest of the drag is taken out of the queue unhandled.
@@ -244,13 +303,7 @@ class ComposeWindowHost(
         }
         heard.clear()
         log.drain(heard)
-        for (event in heard) {
-            current.receive(event)
-            when (event.kind) {
-                WindowEvent.TEXT_COMMIT -> textInput.commit(event.text)
-                WindowEvent.TEXT_COMPOSE -> textInput.compose(event.text)
-            }
-        }
+        receiveAll(current, heard)
         // The caption as it is now: a change of style, scale or full screen reaches the content
         // in this frame, as a state change the scene sees as an invalidation.
         val measuredCaption = platform.caption()
@@ -317,6 +370,9 @@ class ComposeWindowHost(
     /** Renders directly to [canvas] at the given pixel dimensions, using the host's clock and scene. */
     fun renderTo(canvas: org.jetbrains.skia.Canvas, widthInPixels: Int, heightInPixels: Int) {
         val current = scene ?: return
+        // A window drawn by its own run loop reaches here without a turn: what it heard
+        // is handed over first, so the frame shows it.
+        deliverHeard()
         work.runPending()
         sceneMainWork.runPending()
         val fitted = IntSize(widthInPixels, heightInPixels)

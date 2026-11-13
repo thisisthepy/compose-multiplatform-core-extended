@@ -180,10 +180,43 @@ internal object ResizeSoak {
     internal fun roundMb(bytes: Long): Long = mb(bytes)
 }
 
-internal class IdleSoak {
-    val seconds: Int =
-        platform.posix.getenv("DXC_IDLE_SOAK_SECONDS")?.toKString()?.toIntOrNull()?.takeIf { it > 0 } ?: 0
-    val enabled: Boolean get() = seconds > 0
+/**
+ * The window's own idle soak: memory lines while the window sits idle, then a close.
+ *
+ * Read from DXC_WINDOW_IDLE_SOAK_SECONDS rather than DXC_IDLE_SOAK_SECONDS, which belongs to
+ * the embedding's own soak: one variable for both started a soak in every window the
+ * embedding opened and the first to finish closed the run. It runs in at most one window a
+ * process: the first window that takes a step claims it, and every other stays out.
+ */
+internal class IdleSoak(
+    val seconds: Int = configuredSeconds(),
+    private val claim: () -> Boolean = ::claimForProcess,
+) {
+    private var claimed: Boolean? = null
+
+    /** True for the one window of the process that runs the soak. */
+    val enabled: Boolean
+        get() {
+            if (seconds <= 0) return false
+            val known = claimed
+            if (known != null) return known
+            return claim().also { claimed = it }
+        }
+
+    companion object {
+        const val VARIABLE = "DXC_WINDOW_IDLE_SOAK_SECONDS"
+
+        fun configuredSeconds(): Int =
+            platform.posix.getenv(VARIABLE)?.toKString()?.toIntOrNull()?.takeIf { it > 0 } ?: 0
+
+        private var processClaimed = false
+
+        private fun claimForProcess(): Boolean {
+            if (processClaimed) return false
+            processClaimed = true
+            return true
+        }
+    }
 
     private var openedAtNanos: Long = 0L
     private var idleStartedAtNanos: Long = 0L

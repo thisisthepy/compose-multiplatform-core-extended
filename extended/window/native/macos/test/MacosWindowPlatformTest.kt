@@ -33,7 +33,7 @@ class MacosWindowPlatformTest {
     @OptIn(ExperimentalForeignApi::class)
     @Test
     fun runMacosWindowIdleSoakWhenRequested() {
-        val seconds = platform.posix.getenv("DXC_IDLE_SOAK_SECONDS")?.toKString()?.toIntOrNull() ?: 0
+        val seconds = platform.posix.getenv("DXC_WINDOW_IDLE_SOAK_SECONDS")?.toKString()?.toIntOrNull() ?: 0
         if (seconds <= 0) return
         val ran = runMacosWindow(WindowConfig(title = "idle-soak-kn", width = 520, height = 360)) {
             var value by remember { mutableStateOf("hello") }

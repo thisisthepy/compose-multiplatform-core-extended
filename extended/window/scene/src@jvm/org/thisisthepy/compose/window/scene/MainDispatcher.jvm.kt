@@ -17,4 +17,5 @@ internal actual fun useAsComposeMainDispatcher(dispatcher: CoroutineDispatcher) 
 }
 
 internal actual fun isIdleSoakEnabled(): Boolean =
-    (System.getenv("DXC_IDLE_SOAK_SECONDS")?.toIntOrNull() ?: 0) > 0
+    listOf("DXC_IDLE_SOAK_SECONDS", "DXC_WINDOW_IDLE_SOAK_SECONDS")
+        .any { (System.getenv(it)?.toIntOrNull() ?: 0) > 0 }

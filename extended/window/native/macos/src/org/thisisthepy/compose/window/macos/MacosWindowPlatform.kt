@@ -106,6 +106,10 @@ class MacosWindowPlatform(
         created.onEvent = { event ->
             if (event.kind == WindowEvent.KEY_DOWN && event.keyCode == KEY_ESCAPE) MacosProcess.escapePressed = true
             this.listener?.onEvent(event)
+            // Under NSApplication.run nobody turns the host, so what it heard is handed to
+            // the scene here and a frame is asked for. Inside a turn this does nothing and
+            // the turn drains the log as before.
+            if (created.host?.deliverHeard() == true) created.requestFrame()
         }
         created.onClose = {
             this.listener?.onCloseRequested() ?: true
