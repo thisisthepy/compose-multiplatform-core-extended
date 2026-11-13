@@ -59,6 +59,20 @@ internal fun reachesInputMethod(modifierFlags: Long): Boolean =
     modifierFlags and MacModifiers.COMMAND == 0L
 
 /**
+ * The character a key hands the scene with it, from its `charactersIgnoringModifiers`.
+ *
+ * None when the key also goes to the input method ([toInputMethod]). Compose on this
+ * platform types a key down that carries a printable character, and the input method puts
+ * the same text in through `insertText`, so a letter carried both ways is typed twice and
+ * a syllable being built is pushed along. The input method is what types; the key is only
+ * read for what it is (an arrow, Backspace, Enter, a Control chord), which Compose takes
+ * from the key number. A Command key never reaches the input method and keeps its
+ * character: Compose does not type it, because Command is held.
+ */
+internal fun keyCodePoint(charactersIgnoringModifiers: String?, toInputMethod: Boolean): Int =
+    if (toInputMethod) 0 else charactersIgnoringModifiers?.firstOrNull()?.code ?: 0
+
+/**
  * Whether a key pressed while the input method was composing is the scene's to read, once
  * the input method has seen it.
  *

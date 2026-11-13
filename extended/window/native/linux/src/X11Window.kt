@@ -51,6 +51,7 @@ import org.thisisthepy.compose.window.WindowListener
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.WindowPlatform
 import org.thisisthepy.compose.window.WindowVisibility
+import org.thisisthepy.compose.window.X11Scale
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
 import platform.posix.CLOCK_MONOTONIC
@@ -151,7 +152,16 @@ class X11Window : WindowPlatform {
         disabled = getenv("NO_AT_BRIDGE")?.toKString() == "1",
     )
 
-    private var measured = WindowMeasurement(0, 0, DENSITY)
+    /**
+     * How many pixels go to a point, from `Xft.dpi` on the root window (see [X11Scale]). The
+     * connection reads it again when a desktop changes it and calls [scaleChanged].
+     */
+    private var scale = X11Scale.DEFAULT
+
+    /** The scale changed since the listener was last told, to be told once at the end of the pump turn. */
+    private var scalePending = false
+
+    private var measured = WindowMeasurement(0, 0, X11Scale.DEFAULT)
 
     /**
      * What a resize showed: every size the window took and every frame presented, judged
@@ -238,6 +248,13 @@ class X11Window : WindowPlatform {
         val shared = X11Connection.acquire() ?: return false
         val display = shared.display
         val screen = shared.screen
+        // The size asked for is in points; the window is made in the pixels they come to on
+        // this display, as the GraalVM X11 window does.
+        val scale = shared.scale
+        val width = pixelsOf(config.width, scale).coerceAtLeast(1)
+        val height = pixelsOf(config.height, scale).coerceAtLeast(1)
+        val atX = config.x?.let { pixelsOf(it, scale) }
+        val atY = config.y?.let { pixelsOf(it, scale) }
         val visual = glXChooseVisual(
             display,
             screen,
@@ -259,8 +276,8 @@ class X11Window : WindowPlatform {
             XCreateWindow(
                 display,
                 XRootWindow(display, screen),
-                (config.x ?: 0).convert(), (config.y ?: 0).convert(),
-                config.width.convert(), config.height.convert(),
+                (atX ?: 0).convert(), (atY ?: 0).convert(),
+                width.convert(), height.convert(),
                 0u,
                 visual.pointed.depth,
                 InputOutput.convert(),
@@ -279,6 +296,7 @@ class X11Window : WindowPlatform {
             return false
         }
         this.connection = shared
+        this.scale = scale
         this.display = display
         this.window = window
         this.context = context
@@ -312,7 +330,7 @@ class X11Window : WindowPlatform {
         if (!X11Chrome.keepsFrame(config)) removeDecorations(display, window)
         accessibility.listener = listener
         accessibility.setTitle(config.title)
-        measured = WindowMeasurement(config.width, config.height, DENSITY)
+        measured = WindowMeasurement(width, height, scale)
         surface = GlSurface(display, window, context)
         xim = shared.inputMethod()?.let { method -> XimContext.open(display, window, ime, method) }?.also { input ->
             XSelectInput(display, window, EVENT_MASK or input.filterMask)
@@ -321,10 +339,8 @@ class X11Window : WindowPlatform {
         minWidth = config.minWidth
         minHeight = config.minHeight
         resizable = config.resizable
-        openedWidth = config.width
-        openedHeight = config.height
-        val atX = config.x
-        val atY = config.y
+        openedWidth = width
+        openedHeight = height
         openedAt = if (atX != null && atY != null) atX to atY else null
         applySizeHints()
         shared.register(window, this)
@@ -363,6 +379,10 @@ class X11Window : WindowPlatform {
                 lastBounds = now
                 listener?.onMoved(now)
             }
+        }
+        if (scalePending && !isClosed) {
+            scalePending = false
+            listener?.onScaleChanged(scale)
         }
         checkTextScale()
         // After the events, so that a reader's action lands after the input that came before
@@ -407,6 +427,22 @@ class X11Window : WindowPlatform {
     }
 
     override fun measure(): WindowMeasurement = measured
+
+    /**
+     * The display's scale is now [now], as the connection read it from the root window's
+     * resources. The window keeps its size in pixels, as the GraalVM X11 window does; the
+     * scene lays out at the new density in the next frame, which is asked for here, and the
+     * listener hears of it at the end of the turn.
+     */
+    internal fun scaleChanged(now: Float) {
+        if (isClosed || now == scale) return
+        scale = now
+        measured = WindowMeasurement(measured.width, measured.height, now)
+        scalePending = true
+        applySizeHints()
+        detail("scale $now")
+        frameRequests.request()
+    }
 
     override fun requestFrame() {
         frameRequests.request()
@@ -570,7 +606,7 @@ class X11Window : WindowPlatform {
     /** Replaces the window manager's size hints, including clearing old constraints. */
     private fun applySizeHints() {
         val display = display ?: return
-        val decided = sizeHintsFor(minWidth, minHeight, resizable, openedWidth, openedHeight, DENSITY)
+        val decided = sizeHintsFor(minWidth, minHeight, resizable, openedWidth, openedHeight, scale)
         val placed = openedAt
         val hints = XAllocSizeHints() ?: return
         placed?.let { (x, y) ->
@@ -983,7 +1019,7 @@ class X11Window : WindowPlatform {
     override fun setPosition(x: Int, y: Int) {
         val display = display ?: return
         if (isClosed) return
-        val (clientX, clientY) = clientOriginFor(x, y, frameExtents())
+        val (clientX, clientY) = clientOriginFor(pixelsOf(x, scale), pixelsOf(y, scale), frameExtents())
         XMoveWindow(display, window, clientX, clientY)
         XFlush(display)
         movedPending = true
@@ -992,7 +1028,9 @@ class X11Window : WindowPlatform {
     override fun setContentSize(width: Int, height: Int) {
         val display = display ?: return
         if (isClosed || width <= 0 || height <= 0) return
-        XResizeWindow(display, window, width.convert(), height.convert())
+        val pixelWidth = pixelsOf(width, scale).coerceAtLeast(1)
+        val pixelHeight = pixelsOf(height, scale).coerceAtLeast(1)
+        XResizeWindow(display, window, pixelWidth.convert(), pixelHeight.convert())
         XFlush(display)
     }
 
@@ -1000,7 +1038,7 @@ class X11Window : WindowPlatform {
         if (display == null || isClosed) return null
         val (originX, originY) = originOnScreen()
         val size = serverSize()
-        return outerBoundsOf(originX, originY, size.first, size.second, frameExtents())
+        return pointsOf(outerBoundsOf(originX, originY, size.first, size.second, frameExtents()), scale)
     }
 
     override fun focus() {
@@ -1036,8 +1074,8 @@ class X11Window : WindowPlatform {
                 null
             } else {
                 ScreenPointer(
-                    rootX.value.toFloat() / DENSITY,
-                    rootY.value.toFloat() / DENSITY,
+                    rootX.value.toFloat() / scale,
+                    rootY.value.toFloat() / scale,
                     mask.value.toLong() and Button1Mask.toLong() != 0L,
                 )
             }
@@ -1067,7 +1105,7 @@ class X11Window : WindowPlatform {
             listener?.onFollowEnded(true)
             return
         }
-        val (clientX, clientY) = followOrigin(pointer.x, pointer.y, anchor.first, anchor.second, DENSITY)
+        val (clientX, clientY) = followOrigin(pointer.x, pointer.y, anchor.first, anchor.second, scale)
         XMoveWindow(display, window, clientX, clientY)
         XFlush(display)
         movedPending = true
@@ -1219,7 +1257,7 @@ class X11Window : WindowPlatform {
                     sync.noFrame()
                     return
                 }
-                measured = WindowMeasurement(width, height, DENSITY)
+                measured = WindowMeasurement(width, height, scale)
                 resizeStats.step(width, height)
                 detail("configure ${width}x$height")
                 frameRequests.request()
@@ -1339,7 +1377,6 @@ class X11Window : WindowPlatform {
 
         /** The flags word of `_MOTIF_WM_HINTS`: only the decorations field is meant. */
         const val MOTIF_HINTS_DECORATIONS = 2uL
-        const val DENSITY = 1.0f
         const val WAKE_DRAIN_BYTES = 64
         const val CONFIRM_TIMEOUT_NANOS = 1_000_000_000L
         const val CONFIRM_SLICE_MILLIS = 50L

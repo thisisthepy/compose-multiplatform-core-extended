@@ -105,6 +105,12 @@ jobs:
           cc -O1 -Wall -o build/resize_test test/c/resize_test.c -lX11 -lXext -lGL
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/resize_test
 
+      - name: The scale follows Xft.dpi on the root window (under a virtual display)
+        working-directory: extended/window/graalvm/graalvm-linux
+        run: |
+          cc -O1 -Wall -o build/scale_test test/c/scale_test.c -lX11 -lXext -lGL
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/scale_test
+
       - name: A resize through a window manager that honours the sync counter (openbox, under a virtual display)
         working-directory: extended/window/graalvm/graalvm-linux
         env:

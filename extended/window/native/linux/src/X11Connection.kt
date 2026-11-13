@@ -2,6 +2,7 @@
 
 package org.thisisthepy.compose.window.linux
 
+import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.CPointerVar
 import kotlinx.cinterop.IntVar
@@ -13,8 +14,13 @@ import kotlinx.cinterop.convert
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
+import kotlinx.cinterop.readBytes
+import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.set
+import kotlinx.cinterop.toKString
 import kotlinx.cinterop.value
+import org.thisisthepy.compose.window.X11Scale
+import platform.posix.getenv
 import platform.posix.POLLIN
 import platform.posix.poll
 import platform.posix.pollfd
@@ -30,8 +36,11 @@ import x11.XGetWindowProperty
 import x11.XInternAtom
 import x11.XNextEvent
 import x11.XOpenDisplay
+import x11.PropertyChangeMask
+import x11.PropertyNotify
 import x11.XPending
 import x11.XRootWindow
+import x11.XSelectInput
 
 /**
  * What the process has once however many windows it opens: the connection to the display
@@ -57,6 +66,19 @@ internal class X11Connection private constructor(val display: CPointer<Display>)
     val transfer = XInternAtom(display, "COMPOSE_WINDOW_TRANSFER", 0)
     val frameExtents = XInternAtom(display, "_NET_FRAME_EXTENTS", 0)
     private val supportingCheck = XInternAtom(display, "_NET_SUPPORTING_WM_CHECK", 0)
+
+    /**
+     * How many pixels go to a point, as the root window's `RESOURCE_MANAGER` says now (see
+     * [X11Scale]). Read when the connection opens and again whenever a desktop rewrites the
+     * property, which is how a change of `Xft.dpi` in its settings arrives.
+     */
+    var scale: Float = readScale()
+        private set
+
+    init {
+        // Only this client's interest in the root window: what other clients select there is theirs.
+        XSelectInput(display, root, PropertyChangeMask)
+    }
 
     private val windows = LinkedHashMap<Window, X11Window>()
     private var references = 0
@@ -107,6 +129,43 @@ internal class X11Connection private constructor(val display: CPointer<Display>)
     }
 
     /**
+     * The scale the root window's resources give now. Asked of the server every time rather
+     * than through `XResourceManagerString`, which is the copy Xlib took when the connection
+     * opened and never changes after.
+     */
+    private fun readScale(): Float {
+        val resources = memScoped {
+            val type = alloc<ULongVar>()
+            val format = alloc<IntVar>()
+            val count = alloc<ULongVar>()
+            val remaining = alloc<ULongVar>()
+            val data = alloc<CPointerVar<UByteVar>>()
+            val status = XGetWindowProperty(
+                display, root, RESOURCE_MANAGER, 0, RESOURCE_MAX_WORDS, 0, STRING,
+                type.ptr, format.ptr, count.ptr, remaining.ptr, data.ptr,
+            )
+            val bytes = data.value
+            val text = if (status == 0 && bytes != null && format.value == 8 && count.value > 0uL) {
+                bytes.reinterpret<ByteVar>().readBytes(count.value.toInt()).decodeToString()
+            } else {
+                null
+            }
+            if (bytes != null) XFree(bytes)
+            text
+        }
+        return X11Scale.scaleOf(resources, getenv("GDK_SCALE")?.toKString())
+    }
+
+    /** A property of the root window changed: when it is the resources, the scale is read again and every window told. */
+    private fun rootPropertyChanged(atom: ULong) {
+        if (atom != RESOURCE_MANAGER) return
+        val now = readScale()
+        if (now == scale) return
+        scale = now
+        for (window in openWindows()) window.scaleChanged(now)
+    }
+
+    /**
      * Gives up one use of the connection. The last one closes the input method and the display.
      * Windows are destroyed by their owners before this is called.
      */
@@ -136,6 +195,8 @@ internal class X11Connection private constructor(val display: CPointer<Display>)
                         val owner = windows[event.xany.window]
                         if (owner != null) {
                             owner.handle(event)
+                        } else if (event.xany.window == root && event.type == PropertyNotify) {
+                            rootPropertyChanged(event.xproperty.atom)
                         } else if (method != null) {
                             // The input method's own messages arrive as ordinary events on windows
                             // that are not ours; left unfiltered, its conversation never ends.
@@ -169,6 +230,13 @@ internal class X11Connection private constructor(val display: CPointer<Display>)
     }
 
     companion object {
+        /** The predefined atoms `RESOURCE_MANAGER` and `STRING`, which the header gives as casts. */
+        private const val RESOURCE_MANAGER = 23uL
+        private const val STRING = 31uL
+
+        /** Far more than any desktop writes into the resources, in 32-bit units as the request counts. */
+        private const val RESOURCE_MAX_WORDS = 1L shl 20
+
         private var shared: X11Connection? = null
 
         /** The process's connection with one more user, opening it if there is none; null where there is no display server. */

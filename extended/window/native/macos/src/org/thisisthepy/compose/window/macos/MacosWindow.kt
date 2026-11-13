@@ -145,6 +145,12 @@ class MacosWindow(
     internal var frameTime: () -> Long = ::uptimeNanos
 
     var onEvent: ((WindowEvent) -> Unit)? = null
+
+    /**
+     * Stands in for the view's input context, for a test that has to know what the input
+     * method answers a key with. Null is the system's input method.
+     */
+    internal var inputMethod: ((NSEvent) -> Boolean)? = null
     /** The close button was pressed. Returns true to let the window close, false to keep it. */
     var onClose: (() -> Boolean)? = null
 
@@ -726,7 +732,7 @@ class MacosWindow(
 
         override fun keyDown(event: NSEvent) {
             KeyLog.platform(event.keyCode.toInt(), event.modifierFlags.toLong(), event.characters, down = true)
-            val codePoint = event.charactersIgnoringModifiers?.firstOrNull()?.code ?: 0
+            val toInputMethod = reachesInputMethod(event.modifierFlags.toLong())
             val key = WindowEvent(
                 kind = WindowEvent.KEY_DOWN,
                 x = 0f,
@@ -734,10 +740,9 @@ class MacosWindow(
                 buttons = 0,
                 modifiers = event.modifierFlags.toInt(),
                 keyCode = event.keyCode.toInt(),
-                codePoint = codePoint,
+                codePoint = keyCodePoint(event.charactersIgnoringModifiers, toInputMethod),
                 text = "",
             )
-            val toInputMethod = reachesInputMethod(event.modifierFlags.toLong())
             if (toInputMethod && marked.isNotEmpty()) {
                 // Something is being composed, so the key is the input method's first. An
                 // arrow with a Korean syllable marked makes it commit the syllable and hand
@@ -750,7 +755,7 @@ class MacosWindow(
                 var handled = false
                 inKeyDown = true
                 try {
-                    handled = inputContext?.handleEvent(event) == true
+                    handled = handleByInputMethod(event)
                 } finally {
                     inKeyDown = false
                 }
@@ -762,15 +767,21 @@ class MacosWindow(
             if (!toInputMethod) return
             inKeyDown = true
             try {
-                inputContext?.handleEvent(event)
+                handleByInputMethod(event)
             } finally {
                 inKeyDown = false
             }
         }
 
+        private fun handleByInputMethod(event: NSEvent): Boolean =
+            inputMethod?.invoke(event) ?: (inputContext?.handleEvent(event) == true)
+
         override fun keyUp(event: NSEvent) {
             KeyLog.platform(event.keyCode.toInt(), event.modifierFlags.toLong(), event.characters, down = false)
-            val codePoint = event.charactersIgnoringModifiers?.firstOrNull()?.code ?: 0
+            val codePoint = keyCodePoint(
+                event.charactersIgnoringModifiers,
+                reachesInputMethod(event.modifierFlags.toLong()),
+            )
             onEvent?.invoke(
                 WindowEvent(
                     kind = WindowEvent.KEY_UP,
