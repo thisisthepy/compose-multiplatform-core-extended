@@ -130,9 +130,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # check_targets_test.py reads the design systems' project.yaml and module.yaml files.
           sparse-checkout: |
             extended/publish
             extended/COORDINATES.md
+            extended/design-systems
             buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build
             gradle.properties
           sparse-checkout-cone-mode: false
