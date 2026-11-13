@@ -133,6 +133,7 @@ jobs:
         shell: bash
         run: |
           DXC_RESIZE_PREDRAW=0 PROBE_SAVE='out\frames-states-after' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-after.log || true
+          DXC_RESIZE_PREDRAW=0 PROBE_DRAW_MS=30 PROBE_SAVE='out\frames-states-after-30ms' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-after-30ms.log || true
 
       - name: Resize probe, maximise, restore and snap, resize frames on the GPU (comparison)
         shell: bash
@@ -148,11 +149,13 @@ jobs:
           PROBE_SAVE='out\frames-drag' ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-drag.log || true
           PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-drag-30ms.log || true
 
+      # With a frame that costs nothing and with one that costs 30 ms.
       - name: Resize probe, maximise, restore and snap (gate)
         shell: bash
         run: |
           set -o pipefail
           PROBE_SAVE='out\frames-states' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states.log
+          PROBE_DRAW_MS=30 PROBE_SAVE='out\frames-states-30ms' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-30ms.log
 
       - uses: actions/upload-artifact@v4
         if: always()

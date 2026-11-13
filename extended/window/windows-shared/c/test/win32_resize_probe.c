@@ -396,8 +396,10 @@ static DWORD WINAPI capture_thread(LPVOID unused) {
                 }
             }
             fprintf(stderr,
-                    "probe: FAULT frame %d at %.1f ms phase %s: window right edge x=%d %s, bottom edge y=%d %s %s\n",
-                    capture_frames, probe_now_ms(), probe_phase_names[phase], right,
+                    "probe: FAULT frame %d presented at %.1f ms phase %s: window right edge x=%d %s, bottom edge y=%d %s %s\n",
+                    capture_frames,
+                    (double)info.LastPresentTime.QuadPart * 1000.0 / (double)probe_frequency.QuadPart,
+                    probe_phase_names[phase], right,
                     right_strip ? "with its strip" : "WITHOUT its strip", bottom,
                     bottom_strip ? "with its strip" : "WITHOUT its strip", saved);
         }
@@ -517,6 +519,9 @@ int main(int argc, char **argv) {
     // scaled, which are not what is judged here.
     ANIMATIONINFO animation = {sizeof animation, 0};
     SystemParametersInfoW(SPI_SETANIMATION, sizeof animation, &animation, 0);
+    // The window follows a dragged edge only with full-window drag on; off, the system
+    // drags an outline and resizes once, on release.
+    SystemParametersInfoW(SPI_SETDRAGFULLWINDOWS, TRUE, NULL, 0);
 
     backdrop_ready = CreateEventW(NULL, TRUE, FALSE, NULL);
     CloseHandle(CreateThread(NULL, 0, backdrop_thread, NULL, 0, NULL));
