@@ -157,6 +157,26 @@ class MacosWindow(
     /** The window became or stopped being the key window. */
     var onFocus: ((Boolean) -> Unit)? = null
 
+    /** The window's backing scale changed (it moved to another display), to the new one. */
+    var onScaleChanged: ((Float) -> Unit)? = null
+
+    private var slots: MacosNativeViews? = null
+
+    /**
+     * The native views placed in this window, beside the scene's Metal view. Made on first use;
+     * a window that never places one does no work for them.
+     */
+    val nativeViews: MacosNativeViews
+        get() = slots ?: MacosNativeViews(this, backdrop, view).also { slots = it }
+
+    // Whether the last pointer move was over a native view's visible region, where the scene
+    // does not get the pointer. The move that crosses into one is the scene's exit; the move
+    // that comes back, its enter.
+    private var pointerInNativeView = false
+
+    /** Whether the window was closed. */
+    internal val isClosed: Boolean get() = closed
+
     /** The frame moved or changed size since the platform last reported it. Set by the delegate. */
     internal var movedPending = false
 
@@ -225,7 +245,7 @@ class MacosWindow(
         val size = IntSize(widthInPixels, heightInPixels)
         measured = size
         val begun = kotlin.time.TimeSource.Monotonic.markNow()
-        host?.renderTo(canvas, widthInPixels, heightInPixels)
+        host?.renderTo(canvas, widthInPixels, heightInPixels, window.backingScaleFactor.toFloat())
         onFrameRendered?.invoke(begun.elapsedNow().inWholeNanoseconds)
         val scale = window.backingScaleFactor
         view.frame.useContents {
@@ -238,6 +258,20 @@ class MacosWindow(
     fun requestFrame() {
         view.needsDisplay = true
         host?.requestFrame()
+    }
+
+    /**
+     * The window moved to a screen of another density, or its screen changed density, with no
+     * change of size in points. The layer takes the new scale and a drawable to match, the
+     * platform hears the scale, and a frame is drawn at it: without one the last frame stays up,
+     * scaled by the window server, until something else asks, and a window taken from a 1x
+     * screen to a 2x one shows a soft picture.
+     */
+    internal fun backingChanged() {
+        val scale = window.backingScaleFactor.takeIf { it > 0.0 } ?: 1.0
+        view.bounds.useContents { metal.resize(size.width, size.height, scale) }
+        onScaleChanged?.invoke(scale.toFloat())
+        requestFrame()
     }
 
     var onFrameDrawn: ((widthInPixels: Int, heightInPixels: Int) -> Unit)? = null
@@ -320,12 +354,22 @@ class MacosWindow(
             isTheKeyWindow = true
             if (chrome.fullSizeContentView && caption.value.height.value <= 0f) measureCaption()
             view.needsDisplay = true
+            slots?.keyChanged(true)
         }
 
         override fun resignKeyWindow() {
             super.resignKeyWindow()
             isTheKeyWindow = false
             view.needsDisplay = true
+            slots?.keyChanged(false)
+        }
+
+        // Every change of first responder, a click in a native view or one back in the scene,
+        // passes here; the slots say whether keyboard focus went in or out of one.
+        override fun makeFirstResponder(responder: platform.AppKit.NSResponder?): Boolean {
+            val made = super.makeFirstResponder(responder)
+            slots?.firstResponderChanged()
+            return made
         }
     }
 
@@ -338,7 +382,8 @@ class MacosWindow(
                 view.needsDisplay = true
             }
             host?.describeForReaders()
-            return reader.roots
+            val natives = slots?.accessibleViews().orEmpty()
+            return if (natives.isEmpty()) reader.roots else reader.roots.orEmpty() + natives
         }
     }.also {
         it.material = NSVisualEffectMaterialUnderWindowBackground
@@ -351,14 +396,17 @@ class MacosWindow(
         NSDraggingDestinationProtocol {
         private var tracking: NSTrackingArea? = null
 
+        // A drag over a native view is that view's: the scene takes files only outside them.
         override fun draggingEntered(sender: NSDraggingInfoProtocol): NSDragOperation =
-            if (FileDrop.carriesFiles(sender.draggingPasteboard)) NSDragOperationCopy
+            if (slots?.covers(sender.draggingLocation) == true) NSDragOperationNone
+            else if (FileDrop.carriesFiles(sender.draggingPasteboard)) NSDragOperationCopy
             else NSDragOperationNone
 
         override fun draggingUpdated(sender: NSDraggingInfoProtocol): NSDragOperation =
             draggingEntered(sender)
 
         override fun performDragOperation(sender: NSDraggingInfoProtocol): Boolean {
+            if (slots?.covers(sender.draggingLocation) == true) return false
             val paths = FileDrop.paths(sender.draggingPasteboard)
             if (paths.isEmpty()) return false
             FileDrop.dropped.value = paths
@@ -631,8 +679,29 @@ class MacosWindow(
         override fun otherMouseUp(event: NSEvent) =
             postPointer(event, WindowEvent.POINTER_UP, eventButtonOfMacButton(event.buttonNumber.toInt()))
 
-        override fun mouseMoved(event: NSEvent) =
+        // The scene's tracking area covers the whole window, native views included, so a move
+        // over one reaches here too. It is not the scene's: the first such move tells the scene
+        // the pointer left, and the first move back tells it the pointer came in again.
+        override fun mouseMoved(event: NSEvent) {
+            if (slots?.covers(event.locationInWindow) == true) {
+                if (!pointerInNativeView) {
+                    pointerInNativeView = true
+                    postPointer(event, WindowEvent.POINTER_EXIT)
+                }
+                return
+            }
+            if (pointerInNativeView) {
+                pointerInNativeView = false
+                postPointer(event, WindowEvent.POINTER_ENTER)
+            }
             postPointer(event, WindowEvent.POINTER_MOVE)
+        }
+
+        // Inside a native view the cursor is the view's to set.
+        override fun cursorUpdate(event: NSEvent) {
+            if (pointerInNativeView || slots?.covers(event.locationInWindow) == true) return
+            super.cursorUpdate(event)
+        }
 
         override fun mouseDragged(event: NSEvent) =
             postPointer(event, WindowEvent.POINTER_MOVE)

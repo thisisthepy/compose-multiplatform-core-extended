@@ -1018,6 +1018,30 @@ void dxc_native_set_cursor(int32_t shape) {
 
 // Without a tracking area the view hears a moving pointer only while a button is held,
 // and hover is half of what a desktop control does.
+// The window moved to a screen of another density, or its screen changed density, with no
+// change of size in points. The layer is given the new scale and a drawable to match, and
+// the scene hears the new size in pixels through the queue, which also asks it for a frame:
+// without one the last frame stays up, scaled by the window server, until something else
+// asks for one, and a window taken from a 1x screen to a 2x one shows a soft picture.
+- (void)viewDidChangeBackingProperties {
+    [super viewDidChangeBackingProperties];
+    if (![self.layer isKindOfClass:[CAMetalLayer class]]) return;
+    CAMetalLayer *layer = (CAMetalLayer *)self.layer;
+    CGFloat scale = self.window.backingScaleFactor > 0 ? self.window.backingScaleFactor : 1;
+    NSSize size = self.bounds.size;
+    CGSize drawable = CGSizeMake(size.width * scale, size.height * scale);
+    if (layer.contentsScale == scale && CGSizeEqualToSize(layer.drawableSize, drawable)) return;
+    layer.contentsScale = scale;
+    layer.drawableSize = drawable;
+
+    struct dxc_event record;
+    memset(&record, 0, sizeof record);
+    record.kind = DXC_EVENT_RESIZE;
+    record.x = (float)drawable.width;
+    record.y = (float)drawable.height;
+    dxc_push_event(record);
+}
+
 // The window changed size. The layer is told first, because a drawable handed out at the
 // old size would be drawn into at the new one, and the scene is told through the queue so
 // that it changes its mind between frames rather than during one.

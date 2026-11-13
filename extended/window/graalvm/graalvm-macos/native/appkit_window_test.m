@@ -205,6 +205,37 @@ static void check_appearance(NSWindow *window) {
     NSApp.appearance = before;
 }
 
+// A change of backing scale with no change of size: the layer had a scale and a drawable
+// from another screen (forced here, as one screen cannot give two scales), and the view is
+// told what AppKit tells it when the window moves to a screen of another density.
+static void check_backing_change(NSWindow *window, void *view_pointer) {
+    NSView *view = (__bridge NSView *)view_pointer;
+    CAMetalLayer *layer = (CAMetalLayer *)view.layer;
+    CGFloat scale = window.backingScaleFactor > 0 ? window.backingScaleFactor : 1;
+    CGFloat stale = scale == 1 ? 2 : 1;
+    layer.contentsScale = stale;
+    layer.drawableSize = CGSizeMake(view.bounds.size.width * stale, view.bounds.size.height * stale);
+    struct dxc_event event;
+    while (dxc_native_poll_event(&event)) {}
+    [view viewDidChangeBackingProperties];
+    CHECK(layer.contentsScale == scale, "the layer takes the window's scale %.1f, has %.1f",
+          scale, layer.contentsScale);
+    CHECK(layer.drawableSize.width == view.bounds.size.width * scale &&
+              layer.drawableSize.height == view.bounds.size.height * scale,
+          "the drawable is the view's size at the new scale, got %.0fx%.0f",
+          layer.drawableSize.width, layer.drawableSize.height);
+    int resized = 0;
+    while (dxc_native_poll_event(&event)) {
+        if (event.kind == DXC_EVENT_RESIZE && event.x == (float)(view.bounds.size.width * scale)) resized++;
+    }
+    CHECK(resized == 1, "one resize in pixels tells the scene to draw again, got %d", resized);
+    [view viewDidChangeBackingProperties];
+    while (dxc_native_poll_event(&event)) {
+        if (event.kind == DXC_EVENT_RESIZE) resized++;
+    }
+    CHECK(resized == 1, "a second notice with nothing changed asks for nothing");
+}
+
 int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];
@@ -239,6 +270,7 @@ int main(void) {
         }
         check_accessibility(windows[0], opened[0].view);
         check_appearance(windows[0]);
+        check_backing_change(windows[0], opened[0].view);
         for (int index = 0; index < 3; index++) [windows[index] orderOut:nil];
     }
     if (failures > 0) {

@@ -64,6 +64,10 @@ internal class MacosWindowDelegate(private val owner: MacosWindow) : NSObject(),
         owner.onFocus?.invoke(false)
     }
 
+    override fun windowDidChangeBackingProperties(notification: NSNotification) {
+        owner.backingChanged()
+    }
+
     // Moves and resizes arrive in steps; the platform reports one per pump turn.
     override fun windowDidMove(notification: NSNotification) {
         owner.movedPending = true

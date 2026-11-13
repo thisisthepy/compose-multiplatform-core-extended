@@ -66,6 +66,24 @@ internal fun ComposeScene.receive(event: WindowEvent, keyOf: (Int) -> Key = ::co
             buttons = pointerButtonsOf((event.buttons and WindowEvent.ALL_HELD) and event.changedHeldBit.inv()),
         )
 
+        // The pointer went into or came back from a place the scene does not get it, a native
+        // view slot: what it hovered stops being hovered, and starts again on the way back.
+        WindowEvent.POINTER_EXIT -> sendPointerEvent(
+            eventType = PointerEventType.Exit,
+            position = Offset(event.x, event.y),
+            buttons = pointerButtonsOf(event.buttons and WindowEvent.ALL_HELD),
+        )
+
+        WindowEvent.POINTER_ENTER -> sendPointerEvent(
+            eventType = PointerEventType.Enter,
+            position = Offset(event.x, event.y),
+            buttons = pointerButtonsOf(event.buttons and WindowEvent.ALL_HELD),
+        )
+
+        // A native view took the keyboard: the scene lets go of its focus, so no field keeps a
+        // caret or takes the input method while keys go elsewhere.
+        WindowEvent.NATIVE_VIEW_FOCUS_IN -> focusManager.releaseFocus()
+
         // The wheel's travel arrives where a position usually is, because a scroll happens
         // wherever the pointer already was.
         WindowEvent.SCROLL -> sendPointerEvent(
