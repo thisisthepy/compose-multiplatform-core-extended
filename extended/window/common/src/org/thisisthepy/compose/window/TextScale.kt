@@ -38,17 +38,84 @@ object TextScale {
      * KDE keeps a forced font DPI as `forceFontDPI=120` in `kcmfonts`; the scale is that DPI
      * over [BASE_DPI]. Null when the file names no usable value.
      */
-    fun fromKdeFontsConfig(contents: String?): Float? {
+    fun fromKdeFontsConfig(contents: String?): Float? = forcedFontDpiOf(contents)?.let { clamp(it / BASE_DPI) }
+
+    /** The `forceFontDPI` of `kcmfonts`, null when it names none above 0 (0 is KDE's "not forced"). */
+    private fun forcedFontDpiOf(contents: String?): Float? {
         val line = contents?.lineSequence()
             ?.map { it.trim() }
             ?.firstOrNull { it.startsWith("forceFontDPI=") } ?: return null
         val dpi = line.substringAfter('=').trim().toFloatOrNull() ?: return null
-        return if (dpi > 0f) clamp(dpi / BASE_DPI) else null
+        return if (dpi > 0f) dpi else null
     }
 
-    /** GNOME wins when it answers, then KDE, then [DEFAULT]. */
-    fun resolveLinux(gnomeOutput: String?, kdeFontsConfig: String?): Float =
-        fromGnome(gnomeOutput) ?: fromKdeFontsConfig(kdeFontsConfig) ?: DEFAULT
+    /**
+     * KDE's global scale, `ScaleFactor=2` in the `[KScreen]` group of `kdeglobals`, which the
+     * display settings write. Null when the file names no usable value, which Plasma reads as 1.
+     */
+    fun kdeDesktopScaleOf(globals: String?): Float? {
+        if (globals == null) return null
+        var group = ""
+        for (raw in globals.lineSequence()) {
+            val line = raw.trim()
+            if (line.startsWith("[")) {
+                group = line
+                continue
+            }
+            if (group != "[KScreen]" || !line.startsWith("ScaleFactor=")) continue
+            val scale = line.substringAfter('=').trim().toFloatOrNull() ?: return null
+            return if (scale > 0f && !scale.isInfinite()) scale else null
+        }
+        return null
+    }
+
+    /**
+     * KDE's text size: the forced font DPI of `kcmfonts` ([fromKdeFontsConfig]) over 96 x the
+     * desktop scale of `kdeglobals` ([kdeDesktopScaleOf], 1 where unset). Plasma on X11 writes
+     * that DPI into `Xft.dpi`, and its display settings force it to 96 x the global scale when
+     * they set one, so only what the DPI holds beyond the global scale is the text size. Null
+     * when no font DPI is forced.
+     */
+    fun fromKde(fontsConfig: String?, globals: String?): Float? {
+        val dpi = forcedFontDpiOf(fontsConfig) ?: return null
+        return clamp(dpi / (BASE_DPI * (kdeDesktopScaleOf(globals) ?: DEFAULT)))
+    }
+
+    /**
+     * Where a Linux desktop's text size came from: [factor] is the text scale the window
+     * reports, and the same factor the desktop multiplied into `Xft.dpi`, on top of
+     * [desktopScale] where the desktop names that scale (KDE), null where it does not (GNOME,
+     * whose window scales are whole numbers). [X11Scale.scaleOf] takes it out of `Xft.dpi`
+     * again so that text is scaled once.
+     */
+    class LinuxTextFactor(val factor: Float, val desktopScale: Float?)
+
+    /**
+     * The Linux text size: GNOME's when it answers, then KDE's, except on a KDE session
+     * ([currentDesktop] is `XDG_CURRENT_DESKTOP`) where KDE's comes first, since `gsettings`
+     * is often installed there too and answers its default. Null when neither answers.
+     */
+    fun linuxFactor(
+        gnomeOutput: String?,
+        kdeFontsConfig: String?,
+        kdeGlobals: String? = null,
+        currentDesktop: String? = null,
+    ): LinuxTextFactor? {
+        val gnome = fromGnome(gnomeOutput)?.let { LinuxTextFactor(it, null) }
+        val kde = fromKde(kdeFontsConfig, kdeGlobals)?.let {
+            LinuxTextFactor(it, kdeDesktopScaleOf(kdeGlobals) ?: DEFAULT)
+        }
+        val onKde = currentDesktop?.split(':')?.any { it.trim().equals("KDE", ignoreCase = true) } == true
+        return if (onKde) kde ?: gnome else gnome ?: kde
+    }
+
+    /** GNOME wins when it answers, then KDE, then [DEFAULT] (see [linuxFactor]). */
+    fun resolveLinux(
+        gnomeOutput: String?,
+        kdeFontsConfig: String?,
+        kdeGlobals: String? = null,
+        currentDesktop: String? = null,
+    ): Float = linuxFactor(gnomeOutput, kdeFontsConfig, kdeGlobals, currentDesktop)?.factor ?: DEFAULT
 
     /**
      * Windows keeps the Text size slider as a percent (100 to 225) in

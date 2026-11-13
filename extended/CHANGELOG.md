@@ -7,6 +7,17 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`, 0.1.0)
 
+- **Fix.** On KDE Plasma (X11), text was scaled twice whenever fonts DPI was forced, which
+  Plasma's display settings also do themselves at any global scale other than 100%: Plasma
+  writes `forceFontDPI` from `kcmfonts` into `Xft.dpi`, the X11 windows took their scale from
+  that, and they reported `forceFontDPI` / 96 as the text scale on top (so 100% with fonts at
+  120 DPI was 1.25 x 1.25, and 200% without forcing anything was 2 x 2). The text scale is now
+  `forceFontDPI` / (96 x the global scale of `kdeglobals` `[KScreen] ScaleFactor`), and both X11
+  windows take it out of `Xft.dpi` with the GNOME rule of `X11Scale.withoutTextScale`, given
+  that global scale, so the window scale is Plasma's global scale (fractional ones too) and
+  text is scaled once. On a KDE session (`XDG_CURRENT_DESKTOP`) KDE's setting now comes before
+  `gsettings`, which is often installed there and answers its default. `GDK_SCALE` still wins.
+  (#210, DarkPyonix/compose-rust#18)
 - **Fix.** On GNOME, text was scaled twice by any text size other than 100%: the settings
   daemon writes `Xft.dpi` as 96 x the window scaling factor x `text-scaling-factor`, the X11
   windows took their scale from that, and they report `text-scaling-factor` as the text scale
