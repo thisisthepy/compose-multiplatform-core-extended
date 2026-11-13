@@ -67,6 +67,19 @@ internal object VerticalResizeProbe {
     private var windowNumber = 0u
     private val started = kotlin.time.TimeSource.Monotonic.markNow()
 
+    /** What one image of the window showed: places in points from its top, -1 where not found. */
+    class Sample(val markerTop: Double, val controlTop: Double, val shownHeight: Int, val imageHeight: Int)
+
+    /** True once the drag is over and the last image has been read. */
+    @kotlin.concurrent.Volatile
+    var done = false
+        private set
+
+    /** Every image read during the drag, for a test to judge. Read it once [done] is true. */
+    val samples: List<Sample> get() = taken
+
+    private val taken = ArrayList<Sample>()
+
     private fun ms(): String = format(started.elapsedNow().inWholeMicroseconds / 1000.0)
 
     private val magenta = Paint().apply { color = 0xFFFF00FF.toInt() }
@@ -179,7 +192,10 @@ internal object VerticalResizeProbe {
                 platform.darwin.dispatch_after(
                     platform.darwin.dispatch_time(platform.darwin.DISPATCH_TIME_NOW, 300_000_000L),
                     platform.darwin.dispatch_get_main_queue(),
-                ) { printError("compose-rust: vresize done") }
+                ) {
+                    printError("compose-rust: vresize done")
+                    done = true
+                }
                 return@timerWithTimeInterval
             }
             val name = if (edge == 0) "bottom" else "top"
@@ -332,6 +348,14 @@ internal object VerticalResizeProbe {
         }
         val frame = if (top >= 0) readBits(pixels, width, height, top, 0) else -1
         val drawn = if (top >= 0) readBits(pixels, width, height, top, 1) else -1
+        taken.add(
+            Sample(
+                markerTop = if (top >= 0) top / scale else -1.0,
+                controlTop = if (controlTop >= 0) controlTop / scale else -1.0,
+                shownHeight = drawn.toInt(),
+                imageHeight = height,
+            ),
+        )
         printError(
             "compose-rust: vresize sample i=$index t_ms=$at image=${width}x$height scale=${format(scale)} " +
                 "found=${if (top >= 0) 1 else 0} " +
