@@ -131,4 +131,63 @@ class MacosAccessibilityTest {
         assertEquals(1, macosAxFocused(elements))
         assertEquals(-1, macosAxFocused(elements.take(1)))
     }
+
+    @Test
+    fun the_new_roles_and_states_are_added_after_the_old_ones_without_moving_them() {
+        assertEquals(13, ElementRole.LINK)
+        assertEquals(
+            listOf(14, 15, 16, 17, 18, 19, 20, 21),
+            listOf(
+                ElementRole.TAB_GROUP, ElementRole.OUTLINE, ElementRole.OUTLINE_ROW, ElementRole.MENU,
+                ElementRole.MENU_ITEM, ElementRole.LIST, ElementRole.LIST_ITEM, ElementRole.NAVIGATION,
+            ),
+        )
+        assertEquals(1 shl 10, AccessibleState.MULTI_LINE)
+        assertEquals(1 shl 11, AccessibleState.EXPANDABLE)
+        assertEquals(1 shl 12, AccessibleState.EXPANDED)
+        assertEquals(1 shl 7, AccessibleAction.SHOW_MENU)
+        assertEquals(1 shl 8, AccessibleAction.EXPAND)
+        assertEquals(1 shl 9, AccessibleAction.COLLAPSE)
+    }
+
+    @Test
+    fun containers_and_their_items_take_appkits_roles() {
+        val expected = mapOf(
+            ElementRole.TAB_GROUP to (MacosAx.TAB_GROUP to null),
+            ElementRole.OUTLINE to (MacosAx.OUTLINE to null),
+            ElementRole.OUTLINE_ROW to (MacosAx.ROW to MacosAx.OUTLINE_ROW_SUBROLE),
+            ElementRole.MENU to (MacosAx.MENU to null),
+            ElementRole.MENU_ITEM to (MacosAx.MENU_ITEM to null),
+            ElementRole.LIST to (MacosAx.LIST to null),
+            ElementRole.LIST_ITEM to (MacosAx.GROUP to null),
+            ElementRole.NAVIGATION to (MacosAx.GROUP to MacosAx.LANDMARK_NAVIGATION_SUBROLE),
+        )
+        for ((role, ax) in expected) {
+            assertEquals(ax, macosAxElement(element(role)).let { it.role to it.subrole }, "role $role")
+        }
+        assertEquals("AXTabGroup", MacosAx.TAB_GROUP)
+        assertEquals("AXOutlineRow", MacosAx.OUTLINE_ROW_SUBROLE)
+        assertEquals("AXLandmarkNavigation", MacosAx.LANDMARK_NAVIGATION_SUBROLE)
+    }
+
+    @Test
+    fun an_expandable_control_reports_ax_expanded_and_setting_it_asks_for_expand_or_collapse() {
+        val closed = element(
+            ElementRole.OUTLINE_ROW,
+            states = AccessibleState.ENABLED or AccessibleState.EXPANDABLE,
+            actions = AccessibleAction.EXPAND,
+        )
+        val open = closed.copy(
+            states = closed.states or AccessibleState.EXPANDED,
+            actions = AccessibleAction.COLLAPSE,
+        )
+        assertEquals(false, macosAxElement(closed).expanded)
+        assertEquals(true, macosAxElement(open).expanded)
+        assertNull(macosAxElement(element(ElementRole.BUTTON, states = AccessibleState.ENABLED or AccessibleState.EXPANDED)).expanded)
+
+        assertEquals(AccessibleAction.EXPAND, macosAxExpandAction(closed, true))
+        assertNull(macosAxExpandAction(closed, false), "already closed")
+        assertEquals(AccessibleAction.COLLAPSE, macosAxExpandAction(open, false))
+        assertNull(macosAxExpandAction(open.copy(actions = 0), false), "offers no collapse")
+    }
 }

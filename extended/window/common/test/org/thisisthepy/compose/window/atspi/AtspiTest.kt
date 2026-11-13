@@ -330,6 +330,44 @@ class AtspiTest {
     }
 
     @Test
+    fun the_container_roles_and_expanded_states_are_the_registrys_own_numbers() {
+        assertEquals(33, AtspiRole.MENU)
+        assertEquals(35, AtspiRole.MENU_ITEM)
+        assertEquals(38, AtspiRole.PAGE_TAB_LIST)
+        assertEquals(65, AtspiRole.TREE)
+        assertEquals(91, AtspiRole.TREE_ITEM)
+        assertEquals(110, AtspiRole.LANDMARK)
+        assertEquals(9, AtspiState.EXPANDABLE)
+        assertEquals(10, AtspiState.EXPANDED)
+        assertEquals("page tab list", AtspiRole.nameOf(AtspiRole.PAGE_TAB_LIST))
+        assertEquals("tree item", AtspiRole.nameOf(AtspiRole.TREE_ITEM))
+        assertEquals(mapOf("xml-roles" to "navigation"), attributesOf(AtspiRole.LANDMARK))
+        assertTrue(attributesOf(AtspiRole.PANEL).isEmpty())
+    }
+
+    @Test
+    fun an_expandable_row_says_whether_it_is_expanded_and_offers_expand_or_collapse() {
+        val closed = describeElement(
+            element(ElementRole.OUTLINE_ROW, states = AccessibleState.ENABLED or AccessibleState.EXPANDABLE, actions = AccessibleAction.EXPAND),
+        )
+        assertTrue(closed.has(AtspiState.EXPANDABLE))
+        assertFalse(closed.has(AtspiState.EXPANDED))
+        assertEquals(listOf("expand"), closed.actions)
+        val open = describeElement(
+            element(
+                ElementRole.OUTLINE_ROW,
+                states = AccessibleState.ENABLED or AccessibleState.EXPANDABLE or AccessibleState.EXPANDED,
+                actions = AccessibleAction.COLLAPSE,
+            ),
+        )
+        assertTrue(open.has(AtspiState.EXPANDED))
+        assertEquals(listOf("collapse"), open.actions)
+        assertEquals(AccessibleAction.EXPAND, accessibleActionNamed("expand"))
+        // Without EXPANDABLE, EXPANDED says nothing.
+        assertFalse(describeElement(element(ElementRole.BUTTON, states = AccessibleState.ENABLED or AccessibleState.EXPANDED)).has(AtspiState.EXPANDED))
+    }
+
+    @Test
     fun nfr8_linux_a_button_is_a_push_button_named_by_its_text_that_can_be_clicked() {
         val described = describeElement(
             element(ElementRole.BUTTON, "Save", AccessibleState.ENABLED or AccessibleState.FOCUSABLE, AccessibleAction.PRESS),
@@ -366,6 +404,14 @@ class AtspiTest {
             ElementRole.HEADING to AtspiRole.HEADING,
             ElementRole.COMBO_BOX to AtspiRole.COMBO_BOX,
             ElementRole.LINK to AtspiRole.LINK,
+            ElementRole.TAB_GROUP to AtspiRole.PAGE_TAB_LIST,
+            ElementRole.OUTLINE to AtspiRole.TREE,
+            ElementRole.OUTLINE_ROW to AtspiRole.TREE_ITEM,
+            ElementRole.MENU to AtspiRole.MENU,
+            ElementRole.MENU_ITEM to AtspiRole.MENU_ITEM,
+            ElementRole.LIST to AtspiRole.LIST,
+            ElementRole.LIST_ITEM to AtspiRole.LIST_ITEM,
+            ElementRole.NAVIGATION to AtspiRole.LANDMARK,
             ElementRole.GROUP to AtspiRole.PANEL,
         )
         for ((role, atspi) in expected) assertEquals(atspi, describeElement(element(role)).role, "role $role")

@@ -19,6 +19,20 @@ object ElementRole {
     const val HEADING = 11
     const val COMBO_BOX = 12
     const val LINK = 13
+    /** A set of tabs, one of which is shown: a tab row. Its children are [TAB]s. */
+    const val TAB_GROUP = 14
+    /** A tree whose rows open and close: an outline. Its children are [OUTLINE_ROW]s. */
+    const val OUTLINE = 15
+    /** One row of an [OUTLINE], usually [AccessibleState.EXPANDABLE]. */
+    const val OUTLINE_ROW = 16
+    /** A menu: a set of commands, often in a popup. Its children are [MENU_ITEM]s. */
+    const val MENU = 17
+    const val MENU_ITEM = 18
+    /** A list of items read one after another. Its children are [LIST_ITEM]s. */
+    const val LIST = 19
+    const val LIST_ITEM = 20
+    /** A navigation landmark: the part of a screen that moves between screens, such as a navigation bar or rail. */
+    const val NAVIGATION = 21
 }
 
 /** What is true of a control right now, as bits of [AccessibleElement.states]. */
@@ -45,6 +59,13 @@ object AccessibleState {
     /** A field whose text is not read out. */
     const val PASSWORD = 1 shl 9
     const val MULTI_LINE = 1 shl 10
+    /**
+     * Opens and closes: a tree row, a disclosure, a menu button. Without it the control does
+     * not expand, and [EXPANDED] says nothing.
+     */
+    const val EXPANDABLE = 1 shl 11
+    /** Open. With [EXPANDABLE] and not this, it is closed. */
+    const val EXPANDED = 1 shl 12
 }
 
 /**
@@ -66,6 +87,10 @@ object AccessibleAction {
     const val SCROLL_BACKWARD = 1 shl 6
     /** Open its menu: a long press or a context menu. */
     const val SHOW_MENU = 1 shl 7
+    /** Open an [AccessibleState.EXPANDABLE] control that is closed. */
+    const val EXPAND = 1 shl 8
+    /** Close an [AccessibleState.EXPANDABLE] control that is open. */
+    const val COLLAPSE = 1 shl 9
 }
 
 /**

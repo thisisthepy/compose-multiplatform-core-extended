@@ -29,7 +29,10 @@ object AtspiRole {
     const val LABEL = 29
     const val LIST = 31
     const val LIST_ITEM = 32
+    const val MENU = 33
+    const val MENU_ITEM = 35
     const val PAGE_TAB = 37
+    const val PAGE_TAB_LIST = 38
     const val PANEL = 39
     const val PASSWORD_TEXT = 40
     const val PROGRESS_BAR = 42
@@ -37,10 +40,13 @@ object AtspiRole {
     const val RADIO_BUTTON = 44
     const val SLIDER = 51
     const val TOGGLE_BUTTON = 62
+    const val TREE = 65
     const val APPLICATION = 75
     const val ENTRY = 79
     const val HEADING = 83
     const val LINK = 88
+    const val TREE_ITEM = 91
+    const val LANDMARK = 110
 
     /** The name a reader speaks for a role, which is `atspi_role_get_name`'s. */
     fun nameOf(role: Int): String = when (role) {
@@ -52,7 +58,10 @@ object AtspiRole {
         LABEL -> "label"
         LIST -> "list"
         LIST_ITEM -> "list item"
+        MENU -> "menu"
+        MENU_ITEM -> "menu item"
         PAGE_TAB -> "page tab"
+        PAGE_TAB_LIST -> "page tab list"
         PANEL -> "panel"
         PASSWORD_TEXT -> "password text"
         PROGRESS_BAR -> "progress bar"
@@ -60,10 +69,13 @@ object AtspiRole {
         RADIO_BUTTON -> "radio button"
         SLIDER -> "slider"
         TOGGLE_BUTTON -> "toggle button"
+        TREE -> "tree"
         APPLICATION -> "application"
         ENTRY -> "text"
         HEADING -> "heading"
         LINK -> "link"
+        TREE_ITEM -> "tree item"
+        LANDMARK -> "landmark"
         else -> "unknown"
     }
 }
@@ -73,6 +85,8 @@ object AtspiState {
     const val ACTIVE = 1
     const val CHECKED = 4
     const val EDITABLE = 7
+    const val EXPANDABLE = 9
+    const val EXPANDED = 10
     const val ENABLED = 8
     const val FOCUSABLE = 11
     const val FOCUSED = 12
@@ -94,6 +108,8 @@ object AtspiState {
         ACTIVE -> "active"
         CHECKED -> "checked"
         EDITABLE -> "editable"
+        EXPANDABLE -> "expandable"
+        EXPANDED -> "expanded"
         ENABLED -> "enabled"
         FOCUSABLE -> "focusable"
         FOCUSED -> "focused"
@@ -124,10 +140,19 @@ private val NAMED_ACTIONS = listOf(
     "scroll-forward" to AccessibleAction.SCROLL_FORWARD,
     "scroll-backward" to AccessibleAction.SCROLL_BACKWARD,
     "show-menu" to AccessibleAction.SHOW_MENU,
+    "expand" to AccessibleAction.EXPAND,
+    "collapse" to AccessibleAction.COLLAPSE,
 )
 
 /** The [AccessibleAction] an Action interface name asks for, or null for one this window does not offer. */
 fun accessibleActionNamed(name: String): Int? = NAMED_ACTIONS.firstOrNull { it.first == name }?.second
+
+/**
+ * The object attributes a node of [role] reports through `GetAttributes`. A landmark says which
+ * kind it is in `xml-roles`, as browsers do, and the only landmark this window has is navigation.
+ */
+fun attributesOf(role: Int): Map<String, String> =
+    if (role == AtspiRole.LANDMARK) mapOf("xml-roles" to "navigation") else emptyMap()
 
 /** What a control is announced as. */
 data class Description(
@@ -162,6 +187,15 @@ fun describeElement(element: AccessibleElement): Description {
         ElementRole.HEADING -> AtspiRole.HEADING
         ElementRole.COMBO_BOX -> AtspiRole.COMBO_BOX
         ElementRole.LINK -> AtspiRole.LINK
+        ElementRole.TAB_GROUP -> AtspiRole.PAGE_TAB_LIST
+        ElementRole.OUTLINE -> AtspiRole.TREE
+        ElementRole.OUTLINE_ROW -> AtspiRole.TREE_ITEM
+        ElementRole.MENU -> AtspiRole.MENU
+        ElementRole.MENU_ITEM -> AtspiRole.MENU_ITEM
+        ElementRole.LIST -> AtspiRole.LIST
+        ElementRole.LIST_ITEM -> AtspiRole.LIST_ITEM
+        // Which kind of landmark is the `xml-roles` attribute's ([attributesOf]).
+        ElementRole.NAVIGATION -> AtspiRole.LANDMARK
         else -> if (element.label.isEmpty() && element.actions == 0) AtspiRole.FILLER else AtspiRole.PANEL
     }
     var atspi = AtspiState.bit(AtspiState.SHOWING) or AtspiState.bit(AtspiState.VISIBLE)
@@ -175,6 +209,10 @@ fun describeElement(element: AccessibleElement): Description {
         atspi = atspi or AtspiState.bit(AtspiState.CHECKABLE)
         if (has(AccessibleState.CHECKED)) atspi = atspi or AtspiState.bit(AtspiState.CHECKED)
         if (has(AccessibleState.MIXED)) atspi = atspi or AtspiState.bit(AtspiState.INDETERMINATE)
+    }
+    if (has(AccessibleState.EXPANDABLE)) {
+        atspi = atspi or AtspiState.bit(AtspiState.EXPANDABLE)
+        if (has(AccessibleState.EXPANDED)) atspi = atspi or AtspiState.bit(AtspiState.EXPANDED)
     }
     if (has(AccessibleState.SELECTED) || element.role == ElementRole.TAB || element.role == ElementRole.RADIO_BUTTON) {
         atspi = atspi or AtspiState.bit(AtspiState.SELECTABLE)

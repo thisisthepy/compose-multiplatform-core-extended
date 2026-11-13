@@ -23,6 +23,8 @@ data class MacosAxElement(
     val focusSettable: Boolean,
     /** The AX actions it answers, in the order a reader lists them. */
     val actions: List<String>,
+    /** What `AXExpanded` reports, or null for a control that does not open ([macosAxExpanded]). */
+    val expanded: Boolean? = null,
 )
 
 /** An AX value: text for a field, a number for a checkbox, a slider or a progress indicator. */
@@ -47,10 +49,18 @@ object MacosAx {
     const val HEADING = "AXHeading"
     const val COMBO_BOX = "AXComboBox"
     const val LINK = "AXLink"
+    const val TAB_GROUP = "AXTabGroup"
+    const val OUTLINE = "AXOutline"
+    const val ROW = "AXRow"
+    const val MENU = "AXMenu"
+    const val MENU_ITEM = "AXMenuItem"
+    const val LIST = "AXList"
 
     const val SWITCH_SUBROLE = "AXSwitch"
     const val TAB_BUTTON_SUBROLE = "AXTabButton"
     const val SECURE_TEXT_FIELD_SUBROLE = "AXSecureTextField"
+    const val OUTLINE_ROW_SUBROLE = "AXOutlineRow"
+    const val LANDMARK_NAVIGATION_SUBROLE = "AXLandmarkNavigation"
 
     /** The subroles of a window's own three buttons; the green one reads as full screen where it does that. */
     const val CLOSE_BUTTON_SUBROLE = "AXCloseButton"
@@ -70,6 +80,13 @@ object MacosAx {
      */
     const val SCROLL_FORWARD_NAME = "Scroll forward"
     const val SCROLL_BACKWARD_NAME = "Scroll backward"
+
+    /**
+     * The names of the expand and collapse actions, offered as custom actions as the scroll
+     * ones are. A reader can also set `AXExpanded`, which asks for the same thing.
+     */
+    const val EXPAND_NAME = "Expand"
+    const val COLLAPSE_NAME = "Collapse"
 }
 
 /** The AX form of [element]. */
@@ -95,6 +112,15 @@ fun macosAxElement(element: AccessibleElement): MacosAxElement {
         ElementRole.HEADING -> MacosAx.HEADING to null
         ElementRole.COMBO_BOX -> MacosAx.COMBO_BOX to null
         ElementRole.LINK -> MacosAx.LINK to null
+        ElementRole.TAB_GROUP -> MacosAx.TAB_GROUP to null
+        ElementRole.OUTLINE -> MacosAx.OUTLINE to null
+        ElementRole.OUTLINE_ROW -> MacosAx.ROW to MacosAx.OUTLINE_ROW_SUBROLE
+        ElementRole.MENU -> MacosAx.MENU to null
+        ElementRole.MENU_ITEM -> MacosAx.MENU_ITEM to null
+        ElementRole.LIST -> MacosAx.LIST to null
+        // No AX role of its own: AppKit and WebKit present a list item as a group inside the list.
+        ElementRole.LIST_ITEM -> MacosAx.GROUP to null
+        ElementRole.NAVIGATION -> MacosAx.GROUP to MacosAx.LANDMARK_NAVIGATION_SUBROLE
         else -> MacosAx.GROUP to null
     }
     val actions = ArrayList<String>(4)
@@ -111,7 +137,26 @@ fun macosAxElement(element: AccessibleElement): MacosAxElement {
         focusSettable = element.actions and AccessibleAction.FOCUS != 0 ||
             states and AccessibleState.FOCUSABLE != 0,
         actions = actions,
+        expanded = macosAxExpanded(element),
     )
+}
+
+/**
+ * What `AXExpanded` reports: whether an [AccessibleState.EXPANDABLE] control is open, or null
+ * for a control that does not open, which then has no such attribute.
+ */
+fun macosAxExpanded(element: AccessibleElement): Boolean? =
+    if (element.states and AccessibleState.EXPANDABLE == 0) null else element.states and AccessibleState.EXPANDED != 0
+
+/**
+ * The [AccessibleAction] a reader setting `AXExpanded` to [expanded] asks for, or null where
+ * the control does not offer it or is already that way.
+ */
+fun macosAxExpandAction(element: AccessibleElement, expanded: Boolean): Int? {
+    val now = macosAxExpanded(element) ?: return null
+    if (now == expanded) return null
+    val action = if (expanded) AccessibleAction.EXPAND else AccessibleAction.COLLAPSE
+    return action.takeIf { element.actions and it != 0 }
 }
 
 /**
