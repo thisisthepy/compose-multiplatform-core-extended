@@ -25,6 +25,7 @@ import org.thisisthepy.compose.window.WindowVisibility
 import org.thisisthepy.compose.window.windows.c.dxc_native_clipboard_read
 import org.thisisthepy.compose.window.windows.c.dxc_native_clipboard_write
 import org.thisisthepy.compose.window.windows.c.dxc_native_context_menu
+import org.thisisthepy.compose.window.windows.c.dxc_native_set_edit_menu
 import org.thisisthepy.compose.window.windows.c.dxc_native_file_dialog_cancel
 import org.thisisthepy.compose.window.windows.c.dxc_native_file_dialog_next
 import org.thisisthepy.compose.window.windows.c.dxc_native_file_dialog_show
@@ -120,6 +121,8 @@ internal class Win32CWindowBackend(private val native: Win32NativeWindow) : Win3
         }
         dxc_native_context_menu(native.window, lines.toString())
     }
+
+    override fun setEditMenu(flags: Int) = on(Unit) { dxc_native_set_edit_menu(native.window, flags) }
 
     override fun performCaptionAction(action: CaptionAction) = on(Unit) {
         dxc_native_window_action(

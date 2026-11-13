@@ -11,6 +11,8 @@ application for Windows without a JVM.
   Windows.
   `c/win32_keys.h` decides which key messages stay the scene's (F10 and the menu key among
   them); it is header-only too and reads only the message and key names of `<windows.h>`.
+  `c/win32_edit_menu.h` holds what the text edit menu offers and which keys ask for it; it
+  compiles without Windows.
 - `cinterop/include/win32_window.h`: the whole surface, functions and records. It includes
   no Windows header, so cinterop and any C compiler read it.
 - `cinterop/win32_window.def` and `src/`: the Kotlin/Native (`mingwX64`) layer.
@@ -75,6 +77,20 @@ ends the hover (`dxc_caption_nc_move` and the three beside it decide when).
 `dxc_native_window_is_zoomed` says which glyph the maximise button shows.
 
 A window nobody configured keeps the system's caption.
+
+## The text edit menu
+
+An application that hosts Compose on this window and draws no text context menu of its own
+turns the window's on with `dxc_native_set_edit_menu` (`Win32WindowPlatform.setEditMenu`,
+`Win32GraalWindow.setEditMenu`) while a text field has focus, saying what the field allows.
+A right click, the Menu key or Shift and F10 then put up the system's popup menu: Cut, Copy,
+Paste and Select All, labelled as the system's own edit control labels them (English where the
+system has no such menu), greyed where the field or the clipboard says the entry cannot run.
+It opens at the pointer, or for the keyboard at the caret given to `dxc_native_set_ime_spot`.
+The entry chosen is pushed as Control and X, C, V or A, pressed and let go, so the field
+reads it as it reads the keyboard. `TrackPopupMenuEx` runs the menu's own loop until it
+closes, which dispatches this window's messages but not the application's frame loop: the
+window shows its last frame while the menu is up, as under any Windows menu.
 
 ## The live resize
 

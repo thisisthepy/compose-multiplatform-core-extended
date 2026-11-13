@@ -73,6 +73,7 @@
 #include "win32_multi.h"
 #include "win32_placement.h"
 #include "win32_scheme.h"
+#include "win32_edit_menu.h"
 
 // What happened in the window, waiting to be read.
 //
@@ -233,6 +234,9 @@ struct DxcWin {
     LPCWSTR cursor;
     LONG ime_spot_x;
     LONG ime_spot_y;
+    // What dxc_native_set_edit_menu last said (DXC_EDIT_MENU_*): 0 while no text field has
+    // focus, and then a right click puts up no menu.
+    int32_t edit_menu;
     // The text size percent this window last reported (read when it opened), plus one.
     // Per window, because the settings broadcast reaches every window and each reports it.
     int32_t text_scale_seen;
@@ -345,6 +349,7 @@ struct DxcWin {
 #define dxc_cursor (dxc_w->cursor)
 #define dxc_ime_spot_x (dxc_w->ime_spot_x)
 #define dxc_ime_spot_y (dxc_w->ime_spot_y)
+#define dxc_edit_menu (dxc_w->edit_menu)
 #define dxc_a11y_elements (dxc_w->a11y_elements)
 #define dxc_a11y_count (dxc_w->a11y_count)
 #define dxc_a11y_dirty (dxc_w->a11y_dirty)
@@ -1639,12 +1644,12 @@ static void dxc_push_scroll(float x, float y) {
     dxc_push_event(record);
 }
 
-static void dxc_push_key(int32_t kind, WPARAM key) {
+static void dxc_push_key_held(int32_t kind, WPARAM key, int32_t modifiers) {
     struct dxc_event record;
     memset(&record, 0, sizeof record);
     record.kind = kind;
     record.buttons = dxc_pressed_buttons();
-    record.modifiers = dxc_held_modifiers();
+    record.modifiers = modifiers;
     record.key_code = (int32_t)key;
     // The character the key carries with no modifier applied, which is what the macOS
     // side puts here. Windows delivers typed text as a separate message, so it is asked
@@ -1653,6 +1658,101 @@ static void dxc_push_key(int32_t kind, WPARAM key) {
     UINT typed = MapVirtualKeyW((UINT)key, MAPVK_VK_TO_CHAR);
     record.code_point = (int32_t)(typed & 0x7fffffffu);
     dxc_push_event(record);
+}
+
+static void dxc_push_key(int32_t kind, WPARAM key) {
+    dxc_push_key_held(kind, key, dxc_held_modifiers());
+}
+
+// The window's own text edit menu (win32_edit_menu.h).
+
+/**
+ * The label of an entry in the language of the system, copied into [out]: the one the
+ * system's edit control puts in its own context menu, which is the first menu of user32. The
+ * menu is not a documented resource, so an entry it does not have, or a system without it,
+ * takes the English label.
+ */
+static void dxc_edit_menu_label(int32_t id, WCHAR *out, int capacity) {
+    static HMENU system_menu;
+    static int looked;
+    if (!looked) {
+        looked = 1;
+        HMODULE user32 = GetModuleHandleW(L"user32.dll");
+        HMENU loaded = user32 != NULL ? LoadMenuW(user32, MAKEINTRESOURCEW(1)) : NULL;
+        system_menu = loaded != NULL ? GetSubMenu(loaded, 0) : NULL;
+    }
+    out[0] = L'\0';
+    if (system_menu != NULL &&
+        GetMenuStringW(system_menu, dxc_edit_menu_system_command(id), out, capacity, MF_BYCOMMAND) > 0) {
+        // An accelerator written after a tab is not part of the name.
+        WCHAR *tab = wcschr(out, L'\t');
+        if (tab != NULL) *tab = L'\0';
+        if (out[0] != L'\0') return;
+    }
+    wcsncpy(out, dxc_edit_menu_fallback_label(id), (size_t)capacity - 1);
+    out[capacity - 1] = L'\0';
+}
+
+/**
+ * Puts the edit menu up and hands the entry chosen to the field as its shortcut, Control and
+ * the entry's letter, pressed and let go. At [where] on the screen, or at the caret the
+ * input method was last told of ([at_caret]) for a menu asked for from the keyboard. Does
+ * nothing while no text field has focus.
+ *
+ * Returns when the menu closes. TrackPopupMenuEx runs the menu's own loop meanwhile, which
+ * dispatches this window's messages (paint among them) but not the application's frame loop,
+ * so the window shows its last frame until the menu is gone: a caret stops blinking for that
+ * long, as it does under any Windows menu.
+ */
+static void dxc_show_edit_menu(HWND window, int at_caret, POINT where) {
+    struct dxc_edit_entry entries[DXC_EDIT_ENTRY_COUNT];
+    int32_t count = dxc_edit_menu_entries(dxc_edit_menu,
+                                          IsClipboardFormatAvailable(CF_UNICODETEXT) ? 1 : 0, entries);
+    if (count == 0) return;
+    HMENU menu = CreatePopupMenu();
+    if (menu == NULL) return;
+    for (int32_t index = 0; index < count; index++) {
+        WCHAR label[128];
+        dxc_edit_menu_label(entries[index].id, label, (int)(sizeof label / sizeof *label));
+        if (entries[index].separator_before) AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(menu, MF_STRING | (entries[index].enabled ? MF_ENABLED : MF_GRAYED),
+                    (UINT_PTR)entries[index].id, label);
+    }
+    POINT at = where;
+    if (at_caret) {
+        if (dxc_ime_spot_x != 0 || dxc_ime_spot_y != 0) {
+            at.x = dxc_ime_spot_x;
+            at.y = dxc_ime_spot_y;
+            ClientToScreen(window, &at);
+        } else {
+            GetCursorPos(&at);
+        }
+    }
+    // Without the window in front the menu does not close when the reader clicks elsewhere;
+    // the posted message lets it finish closing (KB135788).
+    SetForegroundWindow(window);
+    UINT command = (UINT)TrackPopupMenuEx(
+        menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN,
+        at.x, at.y, window, NULL);
+    PostMessageW(window, WM_NULL, 0, 0);
+    DestroyMenu(menu);
+    int32_t key = dxc_edit_menu_key((int32_t)command);
+    // The window can have gone while the menu was up.
+    if (key == 0 || !IsWindow(window)) return;
+    // Control alone, whatever is still held: Shift from Shift and F10 would make it another
+    // shortcut.
+    dxc_push_key_held(DXC_EVENT_KEY_DOWN, (WPARAM)key, 2);
+    dxc_push_key_held(DXC_EVENT_KEY_UP, (WPARAM)key, 2);
+}
+
+/**
+ * Turns the window's edit menu on for a focused text field, or off (0). [flags] are the
+ * DXC_EDIT_MENU_* bits of win32_edit_menu.h: ON, and with KNOWN what the field allows.
+ */
+void dxc_native_set_edit_menu(void *window_pointer, int32_t flags) {
+    if (window_pointer == NULL) return;
+    dxc_select_handle(window_pointer);
+    dxc_edit_menu = flags;
 }
 
 static void dxc_push_text(int32_t kind, const uint16_t *text, size_t units) {
@@ -2683,6 +2783,13 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
     case WM_XBUTTONUP:
         ReleaseCapture();
         dxc_push_pointer(DXC_EVENT_POINTER_UP, lparam, dxc_event_button(message, wparam));
+        // A right click in a focused text field: the release is heard first, so the scene
+        // does not think the button is still held while the menu is up.
+        if (message == WM_RBUTTONUP && (dxc_edit_menu & DXC_EDIT_MENU_ON) != 0) {
+            POINT where = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            ClientToScreen(window, &where);
+            dxc_show_edit_menu(window, 0, where);
+        }
         return message == WM_XBUTTONUP ? TRUE : 0;
     case WM_MOUSEWHEEL:
     case WM_MOUSEHWHEEL: {
@@ -2702,9 +2809,31 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         // keystroke the scene was meant to read (win32_keys.h, where it is tested). Alt and
         // F4 together is the exception: it is how a window is closed from the keyboard, and
         // the handler that does that is the one being stepped around.
+        //
+        // While a text field has focus and the window's edit menu is on, the press of the
+        // Menu key, or of Shift and F10, puts that menu up at the caret instead, and goes no
+        // further (win32_edit_menu.h).
+        if (dxc_key_is_press(message) && (dxc_edit_menu & DXC_EDIT_MENU_ON) != 0 &&
+            dxc_edit_menu_key_opens((uint32_t)wparam, dxc_held_modifiers())) {
+            POINT none = {0, 0};
+            dxc_show_edit_menu(window, 1, none);
+            return 0;
+        }
         dxc_push_key(dxc_key_is_press(message) ? DXC_EVENT_KEY_DOWN : DXC_EVENT_KEY_UP, wparam);
         if (dxc_key_passes_to_system(message, wparam)) break;
         return 0;
+    case WM_CONTEXTMENU:
+        // Asked for some other way, a pen held down for one: at the point it names, or at
+        // the caret for the keyboard's (-1, -1). A right click on the caption arrives here
+        // from the default handler too, and that one is the window menu's, so a point
+        // outside the client area is passed on.
+        if ((dxc_edit_menu & DXC_EDIT_MENU_ON) != 0 &&
+            (lparam == (LPARAM)-1 || SendMessageW(window, WM_NCHITTEST, 0, lparam) == HTCLIENT)) {
+            POINT where = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            dxc_show_edit_menu(window, lparam == (LPARAM)-1, where);
+            return 0;
+        }
+        break;
     case WM_ENTERSIZEMOVE:
         // The reader has taken hold of an edge, or of the title bar. From here until the
         // matching message below, everything this window hears is dispatched from a loop

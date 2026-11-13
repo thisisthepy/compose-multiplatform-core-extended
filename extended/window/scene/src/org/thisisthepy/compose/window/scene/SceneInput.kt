@@ -14,10 +14,10 @@ import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.monotonicNanos
 
 // The bits a modifier flag word carries, as the window layers write them (NSEvent.h).
-private const val MODIFIER_SHIFT = 1 shl 17
-private const val MODIFIER_CONTROL = 1 shl 18
-private const val MODIFIER_OPTION = 1 shl 19
-private const val MODIFIER_COMMAND = 1 shl 20
+internal const val MODIFIER_SHIFT = 1 shl 17
+internal const val MODIFIER_CONTROL = 1 shl 18
+internal const val MODIFIER_OPTION = 1 shl 19
+internal const val MODIFIER_COMMAND = 1 shl 20
 
 /**
  * Hands one thing the window heard to the scene.
@@ -39,19 +39,13 @@ internal fun ComposeScene.receive(
     event: WindowEvent,
     keyOf: (Int) -> Key = ::composeKey,
     timeMillis: Long = monotonicNanos() / 1_000_000,
+    /** Hears a key the scene did not use, and answers whether it used it. */
+    unused: (KeyEvent) -> Boolean = { false },
 ) {
     when (event.kind) {
-        WindowEvent.KEY_DOWN, WindowEvent.KEY_UP -> sendKeyEvent(
-            KeyEvent(
-                key = keyOf(event.keyCode),
-                type = if (event.kind == WindowEvent.KEY_DOWN) KeyEventType.KeyDown else KeyEventType.KeyUp,
-                codePoint = event.codePoint,
-                isAltPressed = event.modifiers and MODIFIER_OPTION != 0,
-                isCtrlPressed = event.modifiers and MODIFIER_CONTROL != 0,
-                isMetaPressed = event.modifiers and MODIFIER_COMMAND != 0,
-                isShiftPressed = event.modifiers and MODIFIER_SHIFT != 0,
-            ),
-        )
+        WindowEvent.KEY_DOWN, WindowEvent.KEY_UP -> keyEventOf(event, keyOf).let { key ->
+            if (!sendKeyEvent(key)) unused(key)
+        }
 
         WindowEvent.POINTER_MOVE -> sendPointerEvent(
             eventType = PointerEventType.Move,
@@ -109,6 +103,17 @@ internal fun ComposeScene.receive(
         )
     }
 }
+
+/** The Compose key event for a key press or release a window heard. */
+internal fun keyEventOf(event: WindowEvent, keyOf: (Int) -> Key = ::composeKey): KeyEvent = KeyEvent(
+    key = keyOf(event.keyCode),
+    type = if (event.kind == WindowEvent.KEY_DOWN) KeyEventType.KeyDown else KeyEventType.KeyUp,
+    codePoint = event.codePoint,
+    isAltPressed = event.modifiers and MODIFIER_OPTION != 0,
+    isCtrlPressed = event.modifiers and MODIFIER_CONTROL != 0,
+    isMetaPressed = event.modifiers and MODIFIER_COMMAND != 0,
+    isShiftPressed = event.modifiers and MODIFIER_SHIFT != 0,
+)
 
 /** The Compose button a held bit stands for. */
 internal fun pointerButtonOf(heldBit: Int): PointerButton = when (heldBit) {

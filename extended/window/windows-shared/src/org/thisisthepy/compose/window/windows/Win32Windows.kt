@@ -3,6 +3,7 @@ package org.thisisthepy.compose.window.windows
 import org.thisisthepy.compose.window.CaptionAction
 import org.thisisthepy.compose.window.ContextMenuItem
 import org.thisisthepy.compose.window.DoubleClick
+import org.thisisthepy.compose.window.EditMenuState
 import org.thisisthepy.compose.window.FileDialogOutcome
 import org.thisisthepy.compose.window.FileDialogs
 import org.thisisthepy.compose.window.FramePresentRecord
@@ -19,6 +20,7 @@ import org.thisisthepy.compose.window.WindowListener
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.WindowPlatform
 import org.thisisthepy.compose.window.WindowVisibility
+import org.thisisthepy.compose.window.win32EditMenuFlags
 
 /**
  * One Win32 window as [Win32WindowPlatform] needs it. Every call is for that window alone;
@@ -49,6 +51,9 @@ interface Win32WindowBackend {
 
     /** Shows the menu and waits for the answer: the index in [items] chosen, or -1. */
     fun showContextMenu(items: List<ContextMenuItem>): Int
+
+    /** Turns the window's own edit menu on or off ([win32EditMenuFlags]). */
+    fun setEditMenu(flags: Int) {}
     fun performCaptionAction(action: CaptionAction)
 
     /** True while the window is maximised, which turns the maximise button the scene draws into restore. */
@@ -297,6 +302,22 @@ class Win32WindowPlatform internal constructor(
         val index = current.showContextMenu(items)
         val id = if (index in items.indices) items[index].id else -1
         listener?.onContextMenuChosen(id)
+    }
+
+    /**
+     * The text edit menu of the window itself, for an application that hosts Compose on this
+     * window: [state] says a text field has focus and what it allows, null that none has.
+     *
+     * While one has, a right click, the Menu key or Shift and F10 put up the system's popup
+     * menu, Cut, Copy, Paste and Select All, greyed where [state] or the clipboard says the
+     * entry cannot run, at the pointer or, from the keyboard, at the caret last given to
+     * [setImeSpot]. The entry chosen arrives as the shortcut it is named after, Control and
+     * X, C, V or A pressed and let go, among the window's events, so the field acts on it as
+     * on the keyboard. An application that draws a menu of its own leaves this off, or two
+     * come up for one click.
+     */
+    fun setEditMenu(state: EditMenuState?) {
+        window?.setEditMenu(win32EditMenuFlags(state))
     }
 
     override fun caption(): WindowCaption {

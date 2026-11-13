@@ -3,7 +3,6 @@
 package org.thisisthepy.compose.window.scene
 
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,6 +20,7 @@ import org.thisisthepy.compose.window.FrameRequestCoalescer
 import org.thisisthepy.compose.window.FramePresentLog
 import org.thisisthepy.compose.window.ImeSession
 import org.thisisthepy.compose.window.AccessibilityCache
+import org.thisisthepy.compose.window.CaretRect
 import org.thisisthepy.compose.window.EventClock
 import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.WindowCaption
@@ -130,13 +130,11 @@ class ComposeWindowHost(
     private var caption by mutableStateOf(WindowCaption.None)
     private var density = 1f
     private val semantics = SceneSemantics()
+    private val back = SceneBackInput()
+    private val fieldMenu = FieldMenuOpener()
     // Described only while a reader is listening: it costs about a third of a frame.
     private val accessibility = AccessibilityCache(describe = { semantics.describe(density) }, push = platform::setAccessibility)
     private var readerWasListening = false
-
-    /** Where the drawn edit menu is open, in pixels, or null while it is closed. */
-    internal var editMenuAt by mutableStateOf<IntOffset?>(null)
-        private set
     private var size = IntSize.Zero
     /** The operating system's text size, handed to Compose as `Density.fontScale`. */
     private var textScale = 1f
@@ -150,22 +148,13 @@ class ComposeWindowHost(
                 WindowEvent.PREEDIT_DONE -> ime.preeditDone()
                 WindowEvent.TEXT_COMMIT -> ime.commit(event.text)
                 WindowEvent.TEXT_SCALE_CHANGED -> textScale = event.textScale
-                else -> {
-                    // A platform with no menu of its own (showContextMenu answers -1) gets
-                    // the scene's: a secondary press opens it at the pointer.
-                    if (event.isSecondaryPress && !platform.hasNativeEditMenu()
-                    ) {
-                        editMenuAt = IntOffset(event.x.toInt(), event.y.toInt())
-                    } else if (event.kind == WindowEvent.POINTER_DOWN) {
-                        editMenuAt = null
-                    }
-                    log.heard(event)
-                }
+                // A secondary press goes to the scene like any other: a text field or a
+                // selection answers it with Compose's own menu (see SceneTextMenu.kt).
+                else -> log.heard(event)
             }
         }
 
         override fun onContextMenuChosen(id: Int) {
-            editMenuAt = null
             val chord = editChord(id, usesCommandKey(platform.name)) ?: return
             for (press in chord) scene?.sendKeyEvent(press)
         }
@@ -215,7 +204,7 @@ class ComposeWindowHost(
             density = Density(measured.scale, textScale),
             size = size,
             coroutineContext = work,
-            platformContext = ScenePlatformContext({ size }, textInput, semantics, platform.doubleClickMillis),
+            platformContext = ScenePlatformContext({ size }, textInput, semantics, platform.doubleClickMillis, back),
         )
         val cursorBlink = !isIdleSoakEnabled()
         created.setContent {
@@ -225,8 +214,9 @@ class ComposeWindowHost(
                 LocalWindowCaption provides caption,
             ) {
                 val body: @Composable () -> Unit = {
-                    WindowFrame(platform, caption, theme, config.resizable, padContentForCaption) { content() }
-                    DrawnEditMenu(editMenuAt, onChosen = { listener.onContextMenuChosen(it) }, onDismiss = { editMenuAt = null })
+                    fieldMenu.Provide {
+                        WindowFrame(platform, caption, theme, config.resizable, padContentForCaption) { content() }
+                    }
                 }
                 val locals = platform as? PlatformCompositionLocals
                 if (locals != null) locals.Provide(body) else body()
@@ -316,6 +306,19 @@ class ComposeWindowHost(
                 if (settleBetween) settle() else runPendingWork()
                 unsettled = Edit.NONE
             }
+            // The Menu key, or Shift and F10, over a focused field: the field is asked for its
+            // menu as a right click on its caret asks for it, and the key goes no further.
+            if (opensTextMenu(event)) {
+                val at = textMenuPoint(textInput.caret(), textInput.selection())
+                if (at != null) {
+                    if (!fieldMenu.open(at)) {
+                        val time = eventClock.timeOf(event.timeMillis)
+                        for (press in secondaryClickAt(at, event.timeMillis)) current.receive(press, timeMillis = time)
+                    }
+                    unsettled = Edit.POINTER
+                    continue
+                }
+            }
             // A key that moves the caret while a syllable is still marked: the field keeps
             // the syllable where it is and the input method is told to let go of its copy,
             // before the key is read. An input method that finishes the composition itself
@@ -327,7 +330,7 @@ class ComposeWindowHost(
                 platform.endComposition()
                 if (settleBetween) settle() else runPendingWork()
             }
-            current.receive(event, timeMillis = eventClock.timeOf(event.timeMillis))
+            current.receive(event, timeMillis = eventClock.timeOf(event.timeMillis), unused = ::keyLeftAlone)
             when (event.kind) {
                 WindowEvent.TEXT_COMMIT -> textInput.commit(event.text)
                 WindowEvent.TEXT_COMPOSE -> textInput.compose(event.text)
@@ -483,6 +486,22 @@ class ComposeWindowHost(
     /** Does what a reader asked of control [id]. */
     fun onAccessibilityAction(id: Int, action: Int, argument: String?): Boolean =
         semantics.perform(id, action, argument).also { if (it) requestFrame() }
+
+    /**
+     * A key the scene did not use: Escape goes back, which closes a popup or a menu, and an
+     * arrow in an open menu steps through it (see [menuStepFor]). Answers whether it was used.
+     */
+    private fun keyLeftAlone(key: androidx.compose.ui.input.key.KeyEvent): Boolean {
+        if (back.onKeyEvent(key)) return true
+        val steps = menuStepFor(key) ?: return false
+        if (!semantics.menuOpen()) return false
+        val current = scene ?: return false
+        for (step in steps) current.sendKeyEvent(step)
+        return true
+    }
+
+    /** Where the focused field's caret is, in window pixels, or null with none laid out. */
+    internal fun focusedCaret(): CaretRect? = textInput.caret()
 
     private fun placeInputMethod() {
         if (!textInput.isActive) return

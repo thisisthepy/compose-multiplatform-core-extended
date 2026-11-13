@@ -14,10 +14,12 @@ import org.graalvm.word.WordFactory
 import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.FrameClock
 import org.thisisthepy.compose.window.DoubleClick
+import org.thisisthepy.compose.window.EditMenuState
 import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.monotonicNanos
+import org.thisisthepy.compose.window.win32EditMenuFlags
 
 // A window that is ours on Windows, drawn into with Skia and with no toolkit in between.
 //
@@ -90,6 +92,9 @@ private external fun doubleClickMillisNative(): Long
 
 @CFunction("dxc_native_set_accessibility")
 private external fun setAccessibility(elements: Pointer?, count: Int, window: Pointer?)
+
+@CFunction("dxc_native_set_edit_menu")
+private external fun setEditMenuNative(window: Pointer?, flags: Int)
 
 /**
  * The five pointers a window is, once Win32 and DXGI have made one.
@@ -189,6 +194,15 @@ class Win32GraalWindow internal constructor(
 
     /** True once the window has been closed. */
     fun closed(): Boolean = windowClosed() != 0
+
+    /**
+     * The window's own text edit menu: [state] says a text field has focus and what it
+     * allows, null that none has. While one has, a right click, the Menu key or Shift and F10
+     * put up the system's popup menu, and the entry chosen arrives among [drainEvents] as the
+     * shortcut it is named after, Control and X, C, V or A, as on the Kotlin/Native window
+     * (`Win32WindowPlatform.setEditMenu`).
+     */
+    fun setEditMenu(state: EditMenuState?) = setEditMenuNative(WordFactory.pointer(window), win32EditMenuFlags(state))
 
     /**
      * Gives the window its turn, waiting up to [seconds] for something to happen.
