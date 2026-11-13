@@ -1652,6 +1652,15 @@ void dxc_native_set_title(void *window_pointer, const char *title) {
     dxc_on_main(^{ window.title = text; });
 }
 
+/** One is light (Aqua), two is dark (DarkAqua), anything else follows the system. */
+void dxc_native_set_appearance(void *window_pointer, int32_t scheme) {
+    NSWindow *window = (__bridge NSWindow *)window_pointer;
+    dxc_on_main(^{
+        window.appearance = scheme == 1 ? [NSAppearance appearanceNamed:NSAppearanceNameAqua]
+            : scheme == 2 ? [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua] : nil;
+    });
+}
+
 /** Changes the smallest size the content may be dragged to, in points. */
 void dxc_native_set_min_size(void *window_pointer, int32_t width, int32_t height) {
     NSWindow *window = (__bridge NSWindow *)window_pointer;

@@ -618,6 +618,9 @@ private external fun nativeSetMinSize(window: Pointer?, width: Int, height: Int)
 @CFunction("dxc_native_set_visibility")
 private external fun nativeSetVisibility(window: Pointer?, visibility: Int)
 
+@CFunction("dxc_native_set_appearance")
+private external fun nativeSetAppearance(window: Pointer?, scheme: Int)
+
 @CFunction("dxc_native_system_dark")
 private external fun nativeSystemDark(): Int
 
@@ -650,6 +653,10 @@ fun NativeWindow.setMinimumSize(width: Int, height: Int) =
 /** Zero hides, one shows, two minimizes, three enters full screen. */
 fun NativeWindow.setVisibilityCode(code: Int) =
     nativeSetVisibility(WordFactory.pointer(window), code)
+
+/** One is light, two is dark, anything else (zero, three) follows the system. */
+fun NativeWindow.setAppearanceCode(code: Int) =
+    nativeSetAppearance(WordFactory.pointer(window), code)
 
 /** True when the system is set to dark appearance. */
 fun isSystemDark(): Boolean = nativeSystemDark() != 0
