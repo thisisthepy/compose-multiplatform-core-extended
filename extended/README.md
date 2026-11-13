@@ -148,6 +148,20 @@ value), focus request and scroll arrive at `WindowListener.onAccessibilityAction
 argument)` on the thread that pumps. `accessibilityActive` turns true once a reader has asked the
 window anything or VoiceOver is on, so a scene can skip describing itself while nobody listens.
 
+### macOS window diagnostics
+
+`native/macos` reads these environment variables, all off by default. Each prints its readings
+as `compose-rust: ...` lines on standard error.
+
+| Variable | What it does |
+|---|---|
+| `DXC_RESIZE_SOAK` | Runs that many rounds of synthetic live resize and prints memory after each (`soak phase ...`). |
+| `DXC_RESIZE_SOAK_EVENTS` | Sizes per resize round, 100 by default. |
+| `DXC_SKIA_CACHE_MB` | Skia's resource cache limit, set before the first round. |
+| `DXC_WINDOW_IDLE_SOAK_SECONDS` | The window's own idle soak: after the window settles it samples memory every 10 s (`idle-soak phase ...`, with `metal_allocated_mb` and `heap_live_mb`) for that many seconds, then asks the window to close. It runs in one window per process, the first that takes a step. `DXC_IDLE_SOAK_SECONDS` no longer starts it; that variable is left to the embedding's own soak. Either one turns the caret's blink off. |
+| `DXC_SYNTH` | `none` skips the click and typed text the idle soak sends first. |
+| `DXC_METRICS_BREAKDOWN` | `1` adds the system's `footprint` breakdown to the settled readings. |
+
 ### Linux window chrome and accessibility
 
 Both Linux windows, `native/linux` and `graalvm/graalvm-linux`, take the chrome options from

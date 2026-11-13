@@ -243,22 +243,64 @@ class ComposeWindowHost(
      * what the window heard, then a frame if there is anything to draw.
      */
     fun turn(timeoutMillis: Long) {
-        val current = scene ?: return
-        // The one place the operating system is read. A frame drawn inside a resize must not
-        // read it again, or the rest of the drag is taken out of the queue unhandled.
-        log.read { platform.pump(timeoutMillis) }
-        if (closed) return
-        // Drain in bounded passes so a coroutine resumed through FlushCoroutineDispatcher
-        // drains both the outer launcher and its inner continuation in this turn rather
-        // than leaving hasImmediateTasks() true at current.hasInvalidations().
-        repeat(4) {
-            work.runPending()
-            sceneMainWork.runPending()
+        if (turning) return
+        turning = true
+        try {
+            turnOnce(timeoutMillis)
+        } finally {
+            turning = false
         }
-        heard.clear()
-        log.drain(heard)
+    }
+
+    private var turning = false
+    private var delivering = false
+    private val outside = ArrayList<WindowEvent>()
+
+    /**
+     * Hands the scene what the window heard since the last time, outside a [turn].
+     *
+     * For an embedding whose own run loop drives the application (`NSApplication.run`)
+     * and so never calls [turn]: the window calls this from its event handlers and its
+     * draw path, and the events reach the scene without a timer pumping the host.
+     *
+     * Does nothing inside a [turn], which drains the same log itself, and nothing when
+     * reached from inside a delivery (a listener that makes the window hear something):
+     * what that heard stays in the log and the running delivery takes it on its next
+     * pass. Every event is handed over exactly once. True when anything was delivered.
+     */
+    fun deliverHeard(): Boolean = deliverHeard(settleBetween = true)
+
+    private fun deliverHeard(settleBetween: Boolean): Boolean {
+        if (turning || delivering) return false
+        val current = scene ?: return false
+        delivering = true
+        var any = false
+        try {
+            while (true) {
+                outside.clear()
+                log.drain(outside)
+                if (outside.isEmpty()) break
+                any = true
+                receiveAll(current, outside, settleBetween)
+                work.runPending()
+                sceneMainWork.runPending()
+            }
+        } finally {
+            outside.clear()
+            delivering = false
+        }
+        if (any) requestFrame()
+        return any
+    }
+
+    /**
+     * Hands [events] to the scene in order. [settleBetween] lets it draw a frame between two
+     * field changes (see the loop); false on the draw path, where a frame is already being drawn,
+     * so the second change only runs the pending work there and the next frame composes it.
+     */
+    private fun receiveAll(current: ComposeScene, events: List<WindowEvent>, settleBetween: Boolean) {
         var unsettled = Edit.NONE
-        for (event in heard) {
+        for (event in events) {
             val edit = editOf(event.kind)
             // Two things that change a field, read in one turn. A field given its value by
             // the application has the new one only after it is composed again, so the second
@@ -266,7 +308,7 @@ class ComposeWindowHost(
             // key goes in at the old caret, and of two arrow keys one is lost. A frame
             // between them is what composes it.
             if (needsSettling(unsettled, edit)) {
-                settle()
+                if (settleBetween) settle() else runPendingWork()
                 unsettled = Edit.NONE
             }
             // A key that moves the caret while a syllable is still marked: the field keeps
@@ -278,7 +320,7 @@ class ComposeWindowHost(
             ) {
                 ime.discard()
                 platform.endComposition()
-                settle()
+                if (settleBetween) settle() else runPendingWork()
             }
             current.receive(event)
             when (event.kind) {
@@ -294,6 +336,24 @@ class ComposeWindowHost(
             }
             if (changed) unsettled = edit
         }
+    }
+
+    private fun turnOnce(timeoutMillis: Long) {
+        val current = scene ?: return
+        // The one place the operating system is read. A frame drawn inside a resize must not
+        // read it again, or the rest of the drag is taken out of the queue unhandled.
+        log.read { platform.pump(timeoutMillis) }
+        if (closed) return
+        // Drain in bounded passes so a coroutine resumed through FlushCoroutineDispatcher
+        // drains both the outer launcher and its inner continuation in this turn rather
+        // than leaving hasImmediateTasks() true at current.hasInvalidations().
+        repeat(4) {
+            work.runPending()
+            sceneMainWork.runPending()
+        }
+        heard.clear()
+        log.drain(heard)
+        receiveAll(current, heard, settleBetween = true)
         // The caption as it is now: a change of style, scale or full screen reaches the content
         // in this frame, as a state change the scene sees as an invalidation.
         val measuredCaption = platform.caption()
@@ -370,6 +430,9 @@ class ComposeWindowHost(
     /** Renders directly to [canvas] at the given pixel dimensions, using the host's clock and scene. */
     fun renderTo(canvas: org.jetbrains.skia.Canvas, widthInPixels: Int, heightInPixels: Int) {
         val current = scene ?: return
+        // A window drawn by its own run loop reaches here without a turn: what it heard
+        // is handed over first, so the frame shows it.
+        deliverHeard(settleBetween = false)
         work.runPending()
         sceneMainWork.runPending()
         val fitted = IntSize(widthInPixels, heightInPixels)
