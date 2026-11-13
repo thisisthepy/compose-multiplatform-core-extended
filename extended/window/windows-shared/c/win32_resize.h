@@ -128,4 +128,64 @@ static int dxc_resize_draw_here(const struct dxc_resize *resize) {
     return resize->dragging;
 }
 
+/**
+ * Whether a size the window is about to be given has to be drawn before it is given.
+ *
+ * Asked from WM_NCCALCSIZE, which knows the new client size before the window has it. A
+ * size given outside a drag (maximise, restore, a snap, any SetWindowPos) is applied to
+ * the window first and reaches WM_SIZE only afterwards, and whatever WM_SIZE then draws
+ * takes as long as a frame takes. For that long DWM can compose the new rectangle with
+ * the picture drawn for the old one: the swapchain's child window keeps its old size and
+ * is cut by the new rectangle, or the window's own surface keeps its old pixels in the
+ * top left. Drawing the frame here, before the rectangle changes, leaves WM_SIZE only the
+ * copy, which is short enough to land before DWM composes again.
+ *
+ * Only where the frame can be drawn on the CPU (raster: the renderer draws resize frames
+ * into the bitmap the window copies), only outside a drag (the drag draws in WM_SIZE, and
+ * a draw here would wait one composition per step), never while a frame is already being
+ * drawn, never for an empty client area (minimised), and only for a size that differs
+ * from the one the window has now and from the one last shown.
+ */
+static int dxc_resize_predraw_wanted(const struct dxc_resize *resize, int raster, int drawing,
+                                     int32_t width, int32_t height, int32_t current_width,
+                                     int32_t current_height, int32_t shown_width,
+                                     int32_t shown_height) {
+    if (!raster || drawing || resize->dragging || width <= 0 || height <= 0) {
+        return 0;
+    }
+    if (width == current_width && height == current_height) {
+        return 0;
+    }
+    return width != shown_width || height != shown_height;
+}
+
+/**
+ * A frame drawn ahead of a size change and waiting for the size to arrive, or nothing
+ * (both zero).
+ */
+struct dxc_predrawn {
+    int32_t width;
+    int32_t height;
+};
+
+/** Writes down that a frame of [width] by [height] is drawn and waiting to be shown. */
+static void dxc_predrawn_set(struct dxc_predrawn *predrawn, int32_t width, int32_t height) {
+    predrawn->width = width;
+    predrawn->height = height;
+}
+
+/**
+ * Takes the waiting frame for a size that has just arrived: one when it was drawn at
+ * exactly that size, so it is shown as it is, and zero otherwise, so a frame is drawn for
+ * the size as usual. The waiting frame is gone either way: a frame drawn for a size the
+ * window did not get is a frame nobody may show.
+ */
+static int dxc_predrawn_take(struct dxc_predrawn *predrawn, int32_t width, int32_t height) {
+    int match = predrawn->width > 0 && predrawn->height > 0 && predrawn->width == width &&
+                predrawn->height == height;
+    predrawn->width = 0;
+    predrawn->height = 0;
+    return match;
+}
+
 #endif

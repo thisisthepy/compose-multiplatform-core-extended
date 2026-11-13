@@ -78,6 +78,37 @@ static void first_window_placement(void) {
     CHECK(placement_is(dxc_placement_fit(scaled, 1222, 956, 0, 0, 0, 0, 0), 669, 218, 1891, 1174));
 }
 
+// A size given outside a drag is drawn before the window takes it (FR-19.8, compose-rust#684).
+static void resize_predraw_decisions(void) {
+    struct dxc_resize resize;
+    memset(&resize, 0, sizeof resize);
+    // Maximised from 624x472: drawn ahead, on the CPU.
+    CHECK(dxc_resize_predraw_wanted(&resize, 1, 0, 1024, 728, 624, 472, 624, 472) == 1);
+    // Not without CPU frames, not while a frame is being drawn, not for a minimised window.
+    CHECK(dxc_resize_predraw_wanted(&resize, 0, 0, 1024, 728, 624, 472, 624, 472) == 0);
+    CHECK(dxc_resize_predraw_wanted(&resize, 1, 1, 1024, 728, 624, 472, 624, 472) == 0);
+    CHECK(dxc_resize_predraw_wanted(&resize, 1, 0, 0, 0, 624, 472, 624, 472) == 0);
+    // A frame change that keeps the client size, or a size already on screen: nothing to draw.
+    CHECK(dxc_resize_predraw_wanted(&resize, 1, 0, 624, 472, 624, 472, 624, 472) == 0);
+    CHECK(dxc_resize_predraw_wanted(&resize, 1, 0, 496, 720, 624, 472, 496, 720) == 0);
+    // Inside a drag WM_SIZE draws each step.
+    dxc_resize_begin_drag(&resize);
+    CHECK(dxc_resize_predraw_wanted(&resize, 1, 0, 1024, 728, 624, 472, 624, 472) == 0);
+    dxc_resize_end_drag(&resize);
+
+    struct dxc_predrawn predrawn;
+    memset(&predrawn, 0, sizeof predrawn);
+    CHECK(dxc_predrawn_take(&predrawn, 1024, 728) == 0);
+    dxc_predrawn_set(&predrawn, 1024, 728);
+    CHECK(dxc_predrawn_take(&predrawn, 1024, 728) == 1);
+    // Shown once.
+    CHECK(dxc_predrawn_take(&predrawn, 1024, 728) == 0);
+    // Drawn for a size the window did not get: dropped, and the size is drawn as usual.
+    dxc_predrawn_set(&predrawn, 1024, 728);
+    CHECK(dxc_predrawn_take(&predrawn, 1008, 728) == 0);
+    CHECK(dxc_predrawn_take(&predrawn, 1024, 728) == 0);
+}
+
 static void resize_decisions(void) {
     struct dxc_resize resize;
     memset(&resize, 0, sizeof resize);
@@ -940,6 +971,7 @@ static void open_window_scheme(void) {
 
 int main(int argc, char **argv) {
     resize_decisions();
+    resize_predraw_decisions();
     pointer_buttons();
     first_window_placement();
     open_window_scheme();

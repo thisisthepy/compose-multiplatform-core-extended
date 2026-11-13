@@ -257,6 +257,10 @@ struct DxcWin {
     int32_t raster_height;
     int gpu_return_posted;
     int32_t mode_switches;
+    // A CPU frame drawn in WM_NCCALCSIZE for the size the window is about to be given,
+    // waiting in the bitmap for WM_SIZE to copy it; and set while that frame is drawn.
+    struct dxc_predrawn predrawn;
+    int predrawing;
 
     char dropped_paths[DXC_DROPPED_BYTES];
     int32_t dropped_length;
@@ -360,6 +364,8 @@ struct DxcWin {
 #define dxc_raster_height (dxc_w->raster_height)
 #define dxc_gpu_return_posted (dxc_w->gpu_return_posted)
 #define dxc_mode_switches (dxc_w->mode_switches)
+#define dxc_predrawn (dxc_w->predrawn)
+#define dxc_predrawing (dxc_w->predrawing)
 #define dxc_dropped_paths (dxc_w->dropped_paths)
 #define dxc_dropped_length (dxc_w->dropped_length)
 #define dxc_drag_has_files (dxc_w->drag_has_files)
@@ -424,6 +430,9 @@ static const IID dxc_iid_on12_device =
 // DXC_REPORT_LATENCY: each resize step prints how long the refit, the draw, the present
 // and the DwmFlush took together.
 static int dxc_report_latency;
+// DXC_RESIZE_PREDRAW=0: a size given outside a drag is drawn in WM_SIZE, after the window
+// has taken it, as before the frame was drawn ahead in WM_NCCALCSIZE. For comparing the two.
+static int dxc_predraw_off;
 /**
  * One line on stderr for every change of a state that decides how resize frames are
  * produced. On by default: these happen a handful of times a session, and they are what
@@ -2368,12 +2377,28 @@ int32_t dxc_native_raster_begin(void **pixels, int32_t *row_bytes, int32_t *widt
     return 0;
 }
 
-/** Copies the CPU frame into the window, 1:1, before the message that asked for it returns. */
+static void dxc_raster_copy(void);
+
+/**
+ * Copies the CPU frame into the window, 1:1, before the message that asked for it returns.
+ *
+ * Not while the frame is drawn ahead of a size change (dxc_predraw_resize): the window is
+ * still the old size then, so the frame waits in the bitmap and WM_SIZE copies it.
+ */
 void dxc_native_raster_end(void) {
     if (dxc_window == NULL || dxc_dib_dc == NULL) {
         return;
     }
     dxc_step_draw_ms = dxc_elapsed_ms(dxc_step_mark);
+    if (dxc_predrawing) {
+        dxc_predrawn_set(&dxc_predrawn, dxc_raster_width, dxc_raster_height);
+        return;
+    }
+    dxc_raster_copy();
+}
+
+/** The copy of the frame in the bitmap into the window, and the child hidden after it. */
+static void dxc_raster_copy(void) {
     LARGE_INTEGER copy_started;
     QueryPerformanceCounter(&copy_started);
     // Into the top-level window, through GDI, before the message that asked for it returns.
@@ -2423,11 +2448,19 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
         dxc_switch_frames(1, width, height, dxc_sizing.dragging ? "the edge is being dragged" : "the size changed");
     }
     dxc_resizing = 1;
-    dxc_step_gpu_idle_ms = dxc_step_refit_ms = dxc_step_draw_ms = dxc_step_present_ms = 0.0;
-    dxc_step_copy_ms = 0.0;
-    dxc_last_blit = 0;
-    dxc_last_validated = 0;
-    dxc_draw_one_frame();
+    if (!dxc_predrawn_take(&dxc_predrawn, width, height) || !dxc_cpu_mode || dxc_dib_dc == NULL) {
+        dxc_step_gpu_idle_ms = dxc_step_refit_ms = dxc_step_draw_ms = dxc_step_present_ms = 0.0;
+        dxc_step_copy_ms = 0.0;
+        dxc_last_blit = 0;
+        dxc_last_validated = 0;
+        dxc_draw_one_frame();
+    } else {
+        // Drawn in WM_NCCALCSIZE, before the window took this size: only the copy is left,
+        // and it lands before DWM composes the new rectangle again.
+        dxc_raster_width = width;
+        dxc_raster_height = height;
+        dxc_raster_copy();
+    }
     dxc_resizing = 0;
     if (dxc_cpu_mode) {
         // What this step put on screen and how, for the CI assertion over these lines.
@@ -2468,18 +2501,74 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
     }
 }
 
+/**
+ * Draws the frame for a size the window is about to be given, before it is given it.
+ *
+ * Called from WM_NCCALCSIZE with the client rectangle the window will have. Outside a drag
+ * the window takes a new rectangle (maximised, restored, snapped, any SetWindowPos) before
+ * WM_SIZE runs, and WM_SIZE drawing the frame then means DWM can compose the new
+ * rectangle, for as long as the draw takes, with the old picture in it: the swapchain's
+ * child window keeps its old size and is cut by the new rectangle, and the window's own
+ * surface keeps its old pixels in the top left (compose-rust#684). So the frame is drawn
+ * here, on the CPU into the bitmap, while the window still shows the old size with the old
+ * picture; WM_SIZE then only copies it, which takes far less than a composition. The wait
+ * for DWM to compose once more, last, puts that copy at the start of a composition
+ * interval rather than at a random point of one.
+ */
+static void dxc_predraw_resize(HWND window, const RECT *client) {
+    if (dxc_predraw_off || dxc_swapchain == NULL || dxc_draw_frame == NULL || IsIconic(window)) {
+        return;
+    }
+    RECT now;
+    if (!GetClientRect(window, &now)) {
+        return;
+    }
+    int32_t width = (int32_t)(client->right - client->left);
+    int32_t height = (int32_t)(client->bottom - client->top);
+    if (!dxc_resize_predraw_wanted(&dxc_sizing, dxc_raster_enabled, dxc_drawing, width, height,
+                                   (int32_t)(now.right - now.left), (int32_t)(now.bottom - now.top),
+                                   dxc_presented_width, dxc_presented_height)) {
+        return;
+    }
+    LARGE_INTEGER started;
+    QueryPerformanceCounter(&started);
+    dxc_switch_frames(1, width, height, "the size is about to change");
+    dxc_predrawn_set(&dxc_predrawn, 0, 0);
+    dxc_resize_target_width = width;
+    dxc_resize_target_height = height;
+    dxc_resizing = 1;
+    dxc_predrawing = 1;
+    dxc_draw_one_frame();
+    dxc_predrawing = 0;
+    dxc_resizing = 0;
+    int drawn = dxc_predrawn.width == width && dxc_predrawn.height == height;
+    double drawn_ms = dxc_elapsed_ms(started);
+    int flushed = drawn ? dxc_dwm_flush() : 0;
+    fprintf(stderr,
+            "compose-rust: resize-mode: drew %dx%d before the window took it (%s, draw %.2f ms, %s %.2f ms)\n",
+            (int)width, (int)height, drawn ? "waiting for WM_SIZE" : "not drawn", drawn_ms,
+            flushed ? "DwmFlush" : "no DwmFlush", dxc_elapsed_ms(started) - drawn_ms);
+}
+
 static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     if (dxc_trace_state >= 0 && dxc_trace_on()) dxc_trace_message(window, message, wparam, lparam);
     switch (message) {
     case WM_NCCALCSIZE: {
-        if (dxc_options.system_chrome || wparam != TRUE) {
+        if (wparam != TRUE) {
             break;
         }
         NCCALCSIZE_PARAMS *params = (NCCALCSIZE_PARAMS *)lparam;
+        if (dxc_options.system_chrome) {
+            LRESULT answer = DefWindowProcW(window, message, wparam, lparam);
+            dxc_predraw_resize(window, &params->rgrc[0]);
+            return answer;
+        }
         LONG requested_top = params->rgrc[0].top;
         DefWindowProcW(window, message, wparam, lparam);
         params->rgrc[0].top = IsZoomed(window) ? requested_top + dxc_maximised_overhang(window)
                                                : requested_top;
+        // rgrc[0] is now the client rectangle the window is about to have.
+        dxc_predraw_resize(window, &params->rgrc[0]);
         return 0;
     }
     case WM_NCHITTEST:
@@ -4478,6 +4567,10 @@ static int32_t dxc_open_window(
     // recognised as the size the swapchain already is.
     dxc_resize_fitted(&dxc_sizing, (int32_t)pixel_width, (int32_t)pixel_height);
     dxc_report_latency = getenv("DXC_REPORT_LATENCY") != NULL;
+    {
+        const char *predraw = getenv("DXC_RESIZE_PREDRAW");
+        dxc_predraw_off = predraw != NULL && strcmp(predraw, "0") == 0;
+    }
     dxc_log_monitor(window, "the window opened");
     dxc_memory_point("the window opened", adapter);
     dxc_presented_width = (int32_t)pixel_width;
