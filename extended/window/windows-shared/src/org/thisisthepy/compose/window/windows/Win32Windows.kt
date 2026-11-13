@@ -8,7 +8,10 @@ import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.ScreenPointer
 import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.TextScale
+import org.thisisthepy.compose.window.Win32Chrome
 import org.thisisthepy.compose.window.WindowBounds
+import org.thisisthepy.compose.window.WindowCaption
+import org.thisisthepy.compose.window.WindowChrome
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowListener
@@ -46,6 +49,9 @@ interface Win32WindowBackend {
     /** Shows the menu and waits for the answer: the index in [items] chosen, or -1. */
     fun showContextMenu(items: List<ContextMenuItem>): Int
     fun performCaptionAction(action: CaptionAction)
+
+    /** True while the window is maximised, which turns the maximise button the scene draws into restore. */
+    fun isMaximized(): Boolean = false
     fun systemDark(): Boolean
 
     /** The system's text size as a multiplier, 1 when unchanged (see [TextScale]). */
@@ -152,14 +158,18 @@ class Win32Windows(private val process: Win32ProcessBackend) {
  * [fileDialogs] shows the system's file dialogs on this window without stopping the pump; a
  * dialog still open when the window closes ends as cancelled.
  *
- * Until the renderer's own window moves here, a window keeps the system's caption
- * ([caption] answers none and [startMove] and [startResize] leave the move to the system).
+ * Under [WindowChrome.Modern], which is what a [WindowConfig] asks for when nothing is said,
+ * the window gives its caption strip to the content and [caption] tells the scene to draw the
+ * three buttons there ([Win32Chrome]); a caller that draws no buttons opens its window with
+ * [WindowChrome.System]. The frame is the system's under both, so [startMove] and
+ * [startResize] leave the move to the system.
  */
 class Win32WindowPlatform internal constructor(
     private val owner: Win32Windows,
     private val process: Win32ProcessBackend,
 ) : WindowPlatform {
     private var window: Win32WindowBackend? = null
+    private var config: WindowConfig? = null
     private var listener: WindowListener? = null
     private var reportedKey = false
     private var frameWanted = false
@@ -180,6 +190,7 @@ class Win32WindowPlatform internal constructor(
         if (window != null) return false
         val opened = process.openWindow(config) ?: return false
         window = opened
+        this.config = config
         this.listener = listener
         reportedKey = false
         dialogs = WindowsFileDialogs(owner.fileDialogs) { opened.handle.takeIf { it != 0L && window === opened } }
@@ -281,6 +292,13 @@ class Win32WindowPlatform internal constructor(
         listener?.onContextMenuChosen(id)
     }
 
+    override fun caption(): WindowCaption {
+        val current = window ?: return WindowCaption.None
+        val opened = config ?: return WindowCaption.None
+        if (Win32Chrome.systemCaption(opened)) return WindowCaption.None
+        return Win32Chrome.caption(opened, current.isMaximized())
+    }
+
     override fun performCaptionAction(action: CaptionAction) {
         window?.performCaptionAction(action)
     }
@@ -318,6 +336,7 @@ class Win32WindowPlatform internal constructor(
         dialogs?.cancelAll()
         dialogs = null
         window = null
+        config = null
         owner.unregister(this)
         current.destroy()
         current.release()

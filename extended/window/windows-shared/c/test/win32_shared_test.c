@@ -190,6 +190,53 @@ static void caption_zones(void) {
     }
 }
 
+// What the scene hears while the pointer crosses between the maximise button (non-client)
+// and the buttons beside it (client area): every hover ends, none ends twice, none ends
+// while a button is held (#171).
+static void caption_pointer_crossings(void) {
+    struct dxc_caption_pointer pointer = {0};
+    // Onto the maximise button and along it.
+    CHECK(dxc_caption_nc_move(&pointer, 1) == DXC_CAPTION_FORWARD_MOVE);
+    CHECK(dxc_caption_nc_move(&pointer, 1) == DXC_CAPTION_FORWARD_MOVE);
+    // Up onto the top band or left onto the caption: Windows sends no leave, the scene is told.
+    CHECK(dxc_caption_nc_move(&pointer, 0) == DXC_CAPTION_FORWARD_LEAVE);
+    // Further along the caption says nothing more, and neither does leaving the window from there.
+    CHECK(dxc_caption_nc_move(&pointer, 0) == DXC_CAPTION_FORWARD_NONE);
+    CHECK(dxc_caption_nc_leave(&pointer, 0) == DXC_CAPTION_FORWARD_NONE);
+
+    // Off the maximise button and out of the window.
+    CHECK(dxc_caption_nc_move(&pointer, 1) == DXC_CAPTION_FORWARD_MOVE);
+    CHECK(dxc_caption_nc_leave(&pointer, 0) == DXC_CAPTION_FORWARD_LEAVE);
+    CHECK(dxc_caption_nc_leave(&pointer, 0) == DXC_CAPTION_FORWARD_NONE);
+
+    // Maximise to close, the client move first: the late non-client leave must not end the
+    // hover the close button has just been given.
+    CHECK(dxc_caption_nc_move(&pointer, 1) == DXC_CAPTION_FORWARD_MOVE);
+    dxc_caption_client_move(&pointer);
+    CHECK(dxc_caption_nc_leave(&pointer, 0) == DXC_CAPTION_FORWARD_NONE);
+    // Close to maximise, the non-client move first: the late client leave is not passed on.
+    CHECK(dxc_caption_nc_move(&pointer, 1) == DXC_CAPTION_FORWARD_MOVE);
+    CHECK(dxc_caption_client_leave(&pointer, 0) == DXC_CAPTION_FORWARD_NONE);
+    CHECK(pointer.over_maximise == 1);
+    // The same crossings with the leave first: a leave, then the move that follows it.
+    CHECK(dxc_caption_nc_leave(&pointer, 0) == DXC_CAPTION_FORWARD_LEAVE);
+    dxc_caption_client_move(&pointer);
+    CHECK(dxc_caption_client_leave(&pointer, 0) == DXC_CAPTION_FORWARD_LEAVE);
+    CHECK(dxc_caption_nc_move(&pointer, 1) == DXC_CAPTION_FORWARD_MOVE);
+
+    // Pressed on the maximise button: the mouse is captured, Windows says the pointer left the
+    // non-client area, and the scene keeps its press.
+    CHECK(dxc_caption_nc_leave(&pointer, 1) == DXC_CAPTION_FORWARD_NONE);
+    CHECK(pointer.over_maximise == 0);
+    // A drag that leaves the window with a button down is not the end of the drag.
+    dxc_caption_client_move(&pointer);
+    CHECK(dxc_caption_client_leave(&pointer, 1) == DXC_CAPTION_FORWARD_NONE);
+    // Off the close button and out of the window with nothing held.
+    CHECK(dxc_caption_client_leave(&pointer, 0) == DXC_CAPTION_FORWARD_LEAVE);
+    // The point of a leave is outside every window, whatever its size.
+    CHECK(DXC_CAPTION_OUTSIDE < 0);
+}
+
 // ---- Several windows in one process (FR-53) -------------------------------------------------
 
 // The table finds the state of a window from its handle, and only that window's.
@@ -838,6 +885,7 @@ int main(int argc, char **argv) {
     wheel_direction();
     utf8_conversion();
     caption_zones();
+    caption_pointer_crossings();
     frame_time();
     x11_names();
     fr53_window_table_finds_state_by_handle();

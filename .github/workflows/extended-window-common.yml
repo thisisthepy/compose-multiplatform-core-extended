@@ -70,6 +70,11 @@ jobs:
         working-directory: extended/window
         run: ./scripts/check-button-constants.sh
 
+      - name: The Windows caption has the same metrics in C and in Kotlin
+        if: runner.os == 'Linux'
+        working-directory: extended/window
+        run: ./scripts/check-windows-caption-metrics.sh
+
       - name: Build all targets this host can build
         if: runner.os != 'Windows'
         working-directory: extended/window
