@@ -2256,18 +2256,6 @@ static int dxc_capture_failures;
 static void dxc_capture_step(HWND window);
 // When the last CPU frame was copied into the window.
 static int dxc_raster_enabled;
-// What the last Present answered.
-static HRESULT dxc_last_present;
-// Back to the GPU after a size change (dxc_return_to_gpu). The child window and its swapchain
-// are then refitted and shown at the last moment, in dxc_native_frame_end, right before the
-// present: a swapchain refitted early, or a child resized early, is shown by DWM with the
-// picture it held before, at its old size, until a present lands (compose-rust#684), and a
-// present to the hidden child never lands. pending: frame_begin left the refit to frame_end.
-static int dxc_refit_at_present;
-static int dxc_refit_pending;
-static int dxc_refit_shown;
-static int32_t dxc_refit_old_width;
-static int32_t dxc_refit_old_height;
 #define DXC_WM_GPU_RETURN (WM_APP + 2)
 
 void dxc_native_set_raster_resize(int32_t enabled) {
@@ -2284,37 +2272,21 @@ int32_t dxc_native_frame_mode(void) {
 static void dxc_draw_one_frame(void);
 
 /**
- * Back to the GPU once the size has settled: a frame at that size is drawn into the draw
- * texture while the child stays hidden and untouched, and dxc_native_frame_end then fits and
- * shows the child, refits the swapchain and presents, at once (dxc_refit_at_present).
+ * Back to the GPU once the size has settled: the hidden child is fitted to the client
+ * area, the swapchain is refitted and a frame at that size is drawn and presented to it
+ * while it is still hidden, and only then is it shown, so it appears with that frame.
  */
 static void dxc_return_to_gpu(HWND window, int32_t width, int32_t height) {
+    if (dxc_surface != NULL) {
+        SetWindowPos(dxc_surface, NULL, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE);
+    }
     dxc_resize_note(&dxc_sizing, width, height);
-    dxc_refit_at_present = 1;
-    dxc_refit_shown = 0;
-    dxc_last_present = S_OK;
     dxc_draw_one_frame();
-    dxc_refit_at_present = 0;
-    if (dxc_refit_pending) {
-        // Begun and never presented: the swapchain is still the old size, so it is written
-        // down again for the next frame to refit.
-        dxc_refit_pending = 0;
-        dxc_resize_fitted(&dxc_sizing, dxc_refit_old_width, dxc_refit_old_height);
-        dxc_resize_note(&dxc_sizing, width, height);
+    if (dxc_surface != NULL) {
+        ShowWindow(dxc_surface, SW_SHOWNA);
     }
-    if (dxc_surface != NULL && !dxc_refit_shown) {
-        // No frame reached the present: shown as before, at the size it has to have.
-        SetWindowPos(dxc_surface, NULL, 0, 0, width, height,
-                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE | SWP_SHOWWINDOW);
-    }
-    LARGE_INTEGER now, frequency;
-    QueryPerformanceCounter(&now);
-    QueryPerformanceFrequency(&frequency);
-    fprintf(stderr,
-            "compose-rust: resize-mode: surface shown at %dx%d %s (present 0x%08lx) at %.1f ms\n",
-            (int)width, (int)height,
-            dxc_refit_shown ? "with its frame, refitted and presented at once" : "without a frame",
-            (unsigned long)dxc_last_present, (double)now.QuadPart * 1000.0 / (double)frequency.QuadPart);
+    fprintf(stderr, "compose-rust: resize-mode: surface shown at %dx%d after its frame was presented\n",
+            (int)width, (int)height);
     (void)window;
 }
 
@@ -4749,19 +4721,7 @@ int32_t dxc_native_frame_begin(void *swapchain_pointer, void **texture_out) {
     }
     int32_t wanted_width = 0;
     int32_t wanted_height = 0;
-    if (dxc_refit_at_present && dxc_surface != NULL &&
-        dxc_resize_take(&dxc_sizing, &wanted_width, &wanted_height)) {
-        // Back to the GPU after a size change: the frame is drawn at the new size into the
-        // draw texture now, and the swapchain is refitted in dxc_native_frame_end, right
-        // before the present.
-        if (dxc_acquire_buffers(wanted_width, wanted_height) != 0) {
-            return 2;
-        }
-        dxc_refit_old_width = dxc_sizing.fitted_width;
-        dxc_refit_old_height = dxc_sizing.fitted_height;
-        dxc_refit_pending = 1;
-        dxc_resize_fitted(&dxc_sizing, wanted_width, wanted_height);
-    } else if (dxc_resize_take(&dxc_sizing, &wanted_width, &wanted_height)) {
+    if (dxc_resize_take(&dxc_sizing, &wanted_width, &wanted_height)) {
         // Refitted to exactly the size drawn, every step, so the buffer and the client
         // area always agree and STRETCH is always 1:1.
         //
@@ -4876,34 +4836,6 @@ void dxc_native_frame_end(void *queue_pointer) {
     }
     // The copy into the swapchain's buffer, on the same queue after the barrier above,
     // through Direct3D 11. One GPU copy of the frame per present.
-    if (dxc_refit_at_present && dxc_surface != NULL) {
-        // Back to the GPU after a size change. The frame is complete on the GPU first, DWM
-        // composes once, and then the child is fitted and shown, the swapchain refitted, the
-        // frame copied and presented without waiting for a vertical blank, all early in one
-        // composition interval, so the next composition shows the child with this frame.
-        dxc_wait_for_gpu();
-        dxc_dwm_flush();
-        SetWindowPos(dxc_surface, NULL, 0, 0, dxc_sizing.fitted_width, dxc_sizing.fitted_height,
-                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE | SWP_SHOWWINDOW);
-        dxc_refit_shown = 1;
-        if (dxc_refit_pending) {
-            dxc_refit_pending = 0;
-            dxc_release_buffers();
-            HRESULT refitted = IDXGISwapChain1_ResizeBuffers(
-                dxc_swapchain, DXC_BUFFER_COUNT, (UINT)dxc_sizing.fitted_width,
-                (UINT)dxc_sizing.fitted_height, DXC_SWAPCHAIN_FORMAT, dxc_swapchain_flags);
-            if (FAILED(refitted)) {
-                dxc_log_dxgi_failure("ResizeBuffers", refitted);
-                int32_t refused_width = dxc_sizing.fitted_width;
-                int32_t refused_height = dxc_sizing.fitted_height;
-                dxc_resize_fitted(&dxc_sizing, dxc_refit_old_width, dxc_refit_old_height);
-                if (dxc_resize_refused(&dxc_sizing, refused_width, refused_height)) {
-                    InvalidateRect(dxc_window, NULL, FALSE);
-                }
-                return;
-            }
-        }
-    }
     LARGE_INTEGER copy_started;
     QueryPerformanceCounter(&copy_started);
     ID3D11Resource *back = NULL;
@@ -4926,8 +4858,7 @@ void dxc_native_frame_end(void *queue_pointer) {
     // one, where the DwmFlush that follows paces it instead and a vertical blank waited
     // for first would hold the drag for one more frame.
     dxc_presents_in_change++;
-    HRESULT shown = IDXGISwapChain1_Present(dxc_swapchain, dxc_resizing || dxc_refit_at_present ? 0 : 1, 0);
-    dxc_last_present = shown;
+    HRESULT shown = IDXGISwapChain1_Present(dxc_swapchain, dxc_resizing ? 0 : 1, 0);
     if (FAILED(shown)) {
         dxc_log_dxgi_failure("Present", shown);
     }
