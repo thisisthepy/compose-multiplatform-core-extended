@@ -19,6 +19,11 @@ internal object X11Natives {
     @CFunction("dxc_native_window_open")
     external fun windowOpen(title: CCharPointer?, width: Int, height: Int, out: Pointer?): Int
 
+    /** GNOME's text-scaling-factor, 0 for none, for the scale to take out of Xft.dpi (see X11Scale.withoutTextScale). */
+    @JvmStatic
+    @CFunction("dxc_native_set_text_factor")
+    external fun setTextFactor(factor: Float)
+
     @JvmStatic
     @CFunction("dxc_native_window_size")
     external fun windowSize(window: Pointer?, width: CIntPointer?, height: CIntPointer?, scale: CFloatPointer?)

@@ -203,6 +203,11 @@ static struct {
 // whenever a desktop rewrites the root window's resources (dxc_rescale).
 static float dxc_scale = 1.0f;
 
+// GNOME's text-scaling-factor as the Kotlin side read it (dxc_native_set_text_factor), 0 where
+// nothing answers it. GNOME puts it into Xft.dpi, and the window reports it as its text scale,
+// so it is taken out of the scale here (dxc_dpi_without_text_factor).
+static float dxc_text_factor = 0.0f;
+
 // Atoms this file asks the server for once.
 static Atom dxc_a_clipboard, dxc_a_primary, dxc_a_utf8, dxc_a_targets, dxc_a_text,
     dxc_a_property, dxc_a_net_wm_name, dxc_a_net_wm_icon, dxc_a_net_wm_state,
@@ -865,6 +870,25 @@ void dxc_native_window_begin_drag_at(int32_t edge, float x, float y) {
 }
 
 /**
+ * Xft.dpi without GNOME's text size in it, the rule of X11Scale.withoutTextScale in common.
+ *
+ * GNOME's settings daemon writes Xft.dpi as 96 x the window scaling factor (a whole number on
+ * X11) x text-scaling-factor, cut to a whole DPI. Where dpi is, to within that one DPI, a whole
+ * multiple of 96 x factor, the multiple is the window scale and only it is kept; else dpi was
+ * not written from this factor and is returned as it is. A factor of 0 (unknown) or 1 takes
+ * nothing out.
+ */
+static double dxc_dpi_without_text_factor(double dpi, double factor) {
+    if (!(factor > 0.0) || factor == 1.0 || factor > 1000.0) return dpi;
+    double step = 96.0 * factor;
+    double whole = (double)(long)(dpi / step + 0.5);
+    double off = whole * step - dpi;
+    if (off < 0.0) off = -off;
+    if (whole < 1.0 || off > 1.0) return dpi;
+    return whole * 96.0;
+}
+
+/**
  * Reads how many pixels go to a point: the toolkit-independent settings desktops write.
  *
  * The resources are asked of the server every time rather than through
@@ -894,7 +918,7 @@ static float dxc_detect_scale(void) {
             char *type = NULL;
             XrmValue value;
             if (XrmGetResource(database, "Xft.dpi", "Xft.Dpi", &type, &value) && value.addr != NULL) {
-                double dpi = atof(value.addr);
+                double dpi = dxc_dpi_without_text_factor(atof(value.addr), (double)dxc_text_factor);
                 if (dpi >= 96.0) scale = (float)(dpi / 96.0);
             }
             XrmDestroyDatabase(database);
@@ -1487,6 +1511,16 @@ int32_t dxc_native_window_open(const char *title, int32_t width, int32_t height,
 // resize asks this, and taking the rest of that resize out of the queue in the middle of
 // handling one of them is how a size change ends up recorded and never painted. Events are
 // read in one place, which is dxc_native_pump.
+// GNOME's text-scaling-factor, 0 where there is none, for the scale to take out of Xft.dpi.
+// Told before the window opens and whenever the Kotlin side reads it again; with a window open,
+// the scale is read again at once.
+void dxc_native_set_text_factor(float factor) {
+    if (!(factor > 0.0f)) factor = 0.0f;
+    if (factor == dxc_text_factor) return;
+    dxc_text_factor = factor;
+    if (dxc_display != NULL && dxc_window != None) dxc_rescale();
+}
+
 void dxc_native_window_size(void *window_pointer, int32_t *width, int32_t *height, float *scale) {
     (void)window_pointer;
     *width = dxc_width;

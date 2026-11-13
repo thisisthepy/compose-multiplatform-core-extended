@@ -7,6 +7,15 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`, 0.1.0)
 
+- **Fix.** On GNOME, text was scaled twice by any text size other than 100%: the settings
+  daemon writes `Xft.dpi` as 96 x the window scaling factor x `text-scaling-factor`, the X11
+  windows took their scale from that, and they report `text-scaling-factor` as the text scale
+  (`Density.fontScale`) on top. Both X11 windows (Kotlin/Native and GraalVM) now take the
+  factor out of `Xft.dpi` where that DPI is a whole multiple of 96 x the factor, so the window
+  scale is the desktop's scaling factor and only text grows by the text size, as on macOS and
+  Windows. `GDK_SCALE`, desktops without GNOME's factor and DPIs it does not divide read as
+  before. The rule is `X11Scale.withoutTextScale` in `common`. (#156, #205,
+  DarkPyonix/compose-rust#18)
 - **Fix.** The Kotlin/Native X11 window drew at a scale of 1 whatever the display: it now
   measures at `Xft.dpi` / 96 from the root window's `RESOURCE_MANAGER` (or `GDK_SCALE`, as the
   GraalVM window reads it), opens at its size in points times that, takes and reports positions
