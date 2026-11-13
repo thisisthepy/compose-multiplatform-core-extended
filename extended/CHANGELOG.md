@@ -7,6 +7,20 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
+- **Fix.** A right click in a text field of a macOS window put up two menus. On Kotlin/Native,
+  `MacosWindowPlatform` put up an edit menu of its own beside the `NSMenu` Compose already puts
+  up there; `nativeEditMenu` is now off by default, as `MacosWindow.editMenuOnRightClick` was.
+  On the GraalVM window, `AppKitWindowPlatform` put up its own menu and the scene then drew
+  Compose's menu as well; the window now sets no menu of its own and says its menus are the
+  system's (`WindowPlatform.systemContextMenu`, new, false by default), and a JVM scene hands
+  such a platform what Compose's menu holds through `LocalContextMenuRepresentation`, entries
+  and greying as the field says, and draws none. On both, an application that gives its own
+  menu (a dropdown or toolbar provider on Kotlin/Native, `LocalContextMenuRepresentation` or
+  `LocalTextContextMenu` on the JVM) shows that one alone. Tests on real windows count the menus
+  that come up, and cover the editing shortcuts, the Control letters, the minimum size, the Dock
+  icon, dark mode followed while open and the clipboard. `MacosWindowPlatform.close()` on a
+  platform made with its own content no longer closes the scene twice, which threw.
+  (DarkPyonix/compose-rust#180, #146, FR-33.1)
 - **Fix.** After a change of scale (`Xft.dpi` rewritten in the root window's resources) the X11
   windows kept their size in pixels, so a 640x480 window at a scale of 1 was 320x240 points at
   2. Both X11 layers (Kotlin/Native and GraalVM) now keep the size in points, as the macOS and

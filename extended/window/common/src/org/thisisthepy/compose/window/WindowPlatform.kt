@@ -158,6 +158,17 @@ interface WindowPlatform {
     fun showContextMenu(items: List<ContextMenuItem>)
 
     /**
+     * True for a platform whose context menus are the system's own, put up through
+     * [showContextMenu]. A scene on the JVM then hands the platform what Compose's menu holds
+     * (a text field's Cut, Copy, Paste and Select All, as the field allows them) and draws no
+     * menu of its own, so a right click puts up one menu, the system's. An application that
+     * gives its own `LocalContextMenuRepresentation` or `LocalTextContextMenu` keeps its menu
+     * and the system's is not put up. False by default, for a platform with no menu of its
+     * own, where Compose draws the menu.
+     */
+    val systemContextMenu: Boolean get() = false
+
+    /**
      * The window's caption as it is now, in points: what the content steps clear of, and whether
      * the scene draws the buttons. Read by the scene before each frame, so a change of style,
      * scale or full screen reaches the content on the next one. The default is no caption.

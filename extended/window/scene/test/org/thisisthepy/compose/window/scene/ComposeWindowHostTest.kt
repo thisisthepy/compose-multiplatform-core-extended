@@ -119,7 +119,14 @@ internal class FakePlatform : WindowPlatform {
     override fun endComposition() {
         endedCompositions++
     }
-    override fun showContextMenu(items: List<ContextMenuItem>) {}
+    /** Whether this platform's menus are the system's ([WindowPlatform.systemContextMenu]). */
+    var systemMenu = false
+    override val systemContextMenu: Boolean get() = systemMenu
+    /** Every menu the scene asked the platform to put up. Answer one through [chosen]. */
+    val menusShown = ArrayList<List<ContextMenuItem>>()
+    override fun showContextMenu(items: List<ContextMenuItem>) {
+        menusShown += items
+    }
     override fun close() {
         closedCalls++
     }
