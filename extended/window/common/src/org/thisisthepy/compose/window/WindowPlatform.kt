@@ -226,6 +226,12 @@ interface WindowPlatform {
      */
     fun followPointer(anchorX: Float, anchorY: Float): Boolean = false
 
+    /**
+     * The platform views placed in this window, such as a web view the caller made, or null on
+     * a platform that cannot place one yet.
+     */
+    val nativeViews: NativeViews? get() = null
+
     /** Destroys the window and everything the layer holds for it. */
     fun close()
 }

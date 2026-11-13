@@ -127,7 +127,47 @@ data class WindowEvent(
             kind = TEXT_SCALE_CHANGED, x = scale, y = 0f, buttons = 0, modifiers = 0,
             keyCode = 0, codePoint = 0, text = "",
         )
+
+        /**
+         * A native view slot took keyboard focus (a click in it, or [NativeViews.focus]), or
+         * the window holding it became the key window again; the slot id is in `keyCode`. The
+         * scene lets go of its own focus, so no field keeps a caret.
+         */
+        const val NATIVE_VIEW_FOCUS_IN = 19
+
+        /**
+         * Keyboard focus left a native view slot: to the scene, to another slot, or to another
+         * window or application. The slot id is in `keyCode`.
+         */
+        const val NATIVE_VIEW_FOCUS_OUT = 20
+
+        /**
+         * The pointer came back to the scene at `x`, `y` from a place the scene does not get
+         * it, such as a native view slot.
+         */
+        const val POINTER_ENTER = 21
+
+        /**
+         * The pointer left the scene at `x`, `y` for a place the scene does not get it, such as
+         * a native view slot, so nothing in the scene stays hovered.
+         */
+        const val POINTER_EXIT = 22
+
+        @Suppress("FunctionName")
+        fun NativeViewFocusIn(id: Int): WindowEvent = WindowEvent(
+            kind = NATIVE_VIEW_FOCUS_IN, x = 0f, y = 0f, buttons = 0, modifiers = 0,
+            keyCode = id, codePoint = 0, text = "",
+        )
+
+        @Suppress("FunctionName")
+        fun NativeViewFocusOut(id: Int): WindowEvent = WindowEvent(
+            kind = NATIVE_VIEW_FOCUS_OUT, x = 0f, y = 0f, buttons = 0, modifiers = 0,
+            keyCode = id, codePoint = 0, text = "",
+        )
     }
+
+    /** The slot a [NATIVE_VIEW_FOCUS_IN] or [NATIVE_VIEW_FOCUS_OUT] event is about. */
+    val nativeViewId: Int get() = keyCode
 
     /** True for [TEXT_SCALE_CHANGED]. */
     val isTextScaleChanged: Boolean get() = kind == TEXT_SCALE_CHANGED

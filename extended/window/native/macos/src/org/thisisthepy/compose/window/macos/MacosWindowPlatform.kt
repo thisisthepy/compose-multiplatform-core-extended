@@ -259,6 +259,9 @@ class MacosWindowPlatform(
 
     override val isKey: Boolean get() = window?.window?.keyWindow == true
 
+    /** The native views of the window, beside the scene; null until [open] made the window. */
+    override val nativeViews: org.thisisthepy.compose.window.NativeViews? get() = window?.nativeViews
+
     override fun pointerOnScreen(): ScreenPointer? {
         val primaryHeight = primaryScreenHeight()
         val at = NSEvent.mouseLocation.useContents { flipPoint(x, y, primaryHeight) }
