@@ -234,12 +234,14 @@ class MetalSurface {
      * One frame a transaction, because the layer shows the first of two: a second one
      * presented before the commit is drawn and never seen, and the scene that drew it has
      * nothing left to ask for another with (measured with a number drawn on each frame and
-     * read back from the window's image: two displays in a row drew 4 and 5 and showed 4).
+     * read back from the window's image: a step of a resize drew 5 and 6 and showed 5).
      * So whoever is about to draw asks [frameAwaitsCommit] first.
      *
      * The note is a value of the transaction itself, which Core Animation drops with the
      * transaction when it commits, whoever commits it: the run loop, AppKit in a step of a
-     * resize, or [commitFrame].
+     * resize, or [commitFrame]. A value set inside a nested transaction goes when that one
+     * ends, which is before the frame is shown, so nothing is drawn where AppKit nests one
+     * (see the view's `setFrameSize`).
      */
     internal fun present(drawable: COpaquePointer) {
         sendForNothing(drawable, PRESENT)
@@ -247,7 +249,11 @@ class MetalSurface {
     }
 
     /** Whether a frame presented earlier is still waiting for its transaction to commit. */
-    internal fun frameAwaitsCommit(): Boolean = CATransaction.valueForKey(FRAME_AWAITS_COMMIT) != null
+    internal fun frameAwaitsCommit(): Boolean =
+        committing || CATransaction.valueForKey(FRAME_AWAITS_COMMIT) != null
+
+    /** True inside [commitFrame]: the display AppKit runs as part of a commit asks too. */
+    private var committing = false
 
     /**
      * Commits the transaction now, and with it the frame it carries.
@@ -258,7 +264,12 @@ class MetalSurface {
      * one not shown.
      */
     internal fun commitFrame() {
-        CATransaction.flush()
+        committing = true
+        try {
+            CATransaction.flush()
+        } finally {
+            committing = false
+        }
     }
 
     /** Runs [block] with no animation on anything the layer tree does inside it. */

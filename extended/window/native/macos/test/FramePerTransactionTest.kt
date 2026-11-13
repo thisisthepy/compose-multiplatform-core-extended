@@ -153,7 +153,6 @@ class FramePerTransactionTest {
             val after = drawn
 
             println("frame per transaction: drew ${after - before} frame(s), $inTheCall of them in the call, last=$after")
-            if (expected != null) assertEquals(expected, after - before, "frames drawn for the step")
             val scale = window.window.backingScaleFactor
             val windowHeight = kotlin.math.round(window.window.frame.useContents { size.height } * scale).toInt()
             assertEquals(windowHeight, drawnHeight, "the last frame was drawn at the window's height")
@@ -166,6 +165,8 @@ class FramePerTransactionTest {
             } else {
                 println("frame per transaction: no image of the window to read the frame's number from")
             }
+            // Last, so a run that draws too many frames still says which one the screen got.
+            if (expected != null) assertEquals(expected, after - before, "frames drawn for the step")
         } finally {
             window.metalSurface.overlay = null
             // Taken off the screen rather than closed: a closed window releases itself, and the
@@ -212,7 +213,8 @@ class FramePerTransactionTest {
         // What the host's turn does when it draws, without its pump: the run loop is not
         // turned between the step and this frame, so both are in one transaction.
         it.resizePainter?.invoke()
-        2
+        // The step itself draws nothing now, and its display finds the host's frame waiting.
+        1
     }
 
     private companion object {

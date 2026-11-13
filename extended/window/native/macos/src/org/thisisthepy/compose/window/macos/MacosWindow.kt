@@ -511,9 +511,8 @@ class MacosWindow(
 
         override fun updateLayer() {
             val scale = window?.backingScaleFactor ?: 1.0
-            // One frame a transaction (see [MetalSurface.present]). A step of a resize comes
-            // here twice, when the view is given its size and in the display that follows,
-            // and the frame drawn first is the one the screen gets.
+            // One frame a transaction (see [MetalSurface.present]): a display asked for twice
+            // before a commit, or one that runs while a frame the host drew is committing.
             if (metal.frameAwaitsCommit()) {
                 val fits = bounds.useContents {
                     kotlin.math.round(size.width * scale).toInt() == metal.widthInPixels &&
@@ -564,15 +563,17 @@ class MacosWindow(
             VerticalResizeProbe.setFrame(oldSize, size)
             val scale = window?.backingScaleFactor ?: 1.0
             resizeStats.step((size.first * scale).toInt(), (size.second * scale).toInt())
-            // The caption is not measured here: the window's frame is new and its content
-            // layout rect is not yet, so the strip would come out taller or shorter by the
-            // change in height. This frame is drawn with the last reading, which a change of
-            // size does not alter, and the platform reads it again on its next turn.
-            if (window != null) {
-                VerticalResizeProbe.via = "set-frame"
-                updateLayer()
-                VerticalResizeProbe.via = "loop"
-            }
+            // Nothing is drawn here. AppKit displays the view when the transaction this change
+            // of size is part of commits, and a frame drawn now would be presented in that same
+            // transaction ahead of the display's: the layer shows the first of two, so the
+            // screen kept this one, drawn before the title bar was laid out and before anything
+            // the scene took in since, and the display's frame was never seen (fork issue 192).
+            // The note [MetalSurface.present] leaves could not stop the second one either,
+            // because AppKit gives a view its size inside a transaction of its own, nested in
+            // the one that commits, and the note went with the inner one.
+            // The display is asked for by name, since a frame set without displaying
+            // (`setFrame(_:display: false)`) does not ask for it.
+            if (window != null) needsDisplay = true
         }
 
         override fun acceptsFirstResponder() = true
