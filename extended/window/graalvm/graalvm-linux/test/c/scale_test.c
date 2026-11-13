@@ -2,7 +2,8 @@
  * The scale follows Xft.dpi in the root window's RESOURCE_MANAGER, played against
  * x11_window.c itself: read when the window opens (the window is made at its size in points
  * times the scale) and read again when another client rewrites the property, as `xrdb -merge`
- * does, with the window keeping its size in pixels.
+ * does, with the window keeping its size in pixels. GNOME's text-scaling-factor, which GNOME
+ * also writes into Xft.dpi, is taken out of the scale.
  *
  * Needs a display (CI runs it under Xvfb). Exit status 0 means every check passed.
  */
@@ -76,6 +77,28 @@ int main(void) {
 
     set_resources("Xft.dpi:\t120\n");
     CHECK(pump_until_scale(1.25f), "a change of Xft.dpi to 120 was not read again");
+
+    // GNOME writes Xft.dpi as 96 x its window scale x text-scaling-factor; the factor is the
+    // text scale, so the window scale is what is left (X11Scale.withoutTextScale).
+    dxc_native_set_text_factor(1.25f);
+    CHECK(scale_now(&width, &height) == 1.0f,
+          "Xft.dpi 120 with a GNOME text factor of 1.25 is not a scale of 1 at once");
+    set_resources("Xft.antialias:\t1\nXft.dpi:\t240\n");
+    CHECK(pump_until_scale(2.0f), "Xft.dpi 240 with a text factor of 1.25 is not a scale of 2");
+    set_resources("Xft.dpi:\t144\n");
+    CHECK(pump_until_scale(1.5f), "Xft.dpi 144, no multiple of 120, did not stay a scale of 1.5");
+    set_resources("Xft.dpi:\t240\n");
+    CHECK(pump_until_scale(2.0f), "Xft.dpi 240 with a text factor of 1.25 is not a scale of 2 again");
+    dxc_native_set_text_factor(0.0f);
+    CHECK(scale_now(&width, &height) == 2.5f, "no text factor left Xft.dpi 240 short of a scale of 2.5");
+    // 96 x 2 x 1.1 is 211.2, which GNOME writes as 211.
+    dxc_native_set_text_factor(1.1f);
+    set_resources("Xft.dpi:\t211\n");
+    CHECK(pump_until_scale(2.0f), "Xft.dpi 211 with a text factor of 1.1 is not a scale of 2");
+    dxc_native_set_text_factor(1.0f);
+    CHECK(scale_now(&width, &height) > 2.19f && scale_now(&width, &height) < 2.2f,
+          "a text factor of 1 took something out of Xft.dpi 211");
+    dxc_native_set_text_factor(0.0f);
 
     XDeleteProperty(peer, DefaultRootWindow(peer), XA_RESOURCE_MANAGER);
     XFlush(peer);

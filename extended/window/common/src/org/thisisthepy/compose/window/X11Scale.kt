@@ -1,5 +1,8 @@
 package org.thisisthepy.compose.window
 
+import kotlin.math.abs
+import kotlin.math.floor
+
 /**
  * How many pixels go to a point on an X11 display, from what the desktop wrote down.
  *
@@ -51,13 +54,41 @@ object X11Scale {
 
     /**
      * The scale: `GDK_SCALE` ([gdkScale]) when it is set to 1 or more, else `Xft.dpi` over
-     * [BASE_DPI], else [DEFAULT]. A DPI under 96 is a scale of 1, as the GraalVM X11 window
-     * has always read it: a desktop that writes 72 or 90 means fonts, not a smaller window.
+     * [BASE_DPI] with GNOME's text size taken out of it (see [withoutTextScale]), else
+     * [DEFAULT]. A DPI under 96 is a scale of 1, as the GraalVM X11 window has always read it:
+     * a desktop that writes 72 or 90 means fonts, not a smaller window.
+     *
+     * [gnomeTextScale] is GNOME's `text-scaling-factor` ([TextScale.fromGnome]), null where
+     * nothing answers it. The window reports it as its text scale, so it must not be in the
+     * scale of the window as well, or text would grow by it twice.
      */
-    fun scaleOf(resources: String?, gdkScale: String? = null): Float {
+    fun scaleOf(resources: String?, gdkScale: String? = null, gnomeTextScale: Float? = null): Float {
         val forced = gdkScale?.trim()?.toDoubleOrNull()
         if (forced != null && !forced.isNaN() && !forced.isInfinite() && forced >= 1.0) return forced.toFloat()
-        val dpi = dpiOf(resources) ?: return DEFAULT
+        val dpi = withoutTextScale(dpiOf(resources) ?: return DEFAULT, gnomeTextScale)
         return if (dpi < BASE_DPI) DEFAULT else (dpi / BASE_DPI).toFloat()
+    }
+
+    /**
+     * [dpi] without GNOME's text size in it.
+     *
+     * GNOME's settings daemon writes `Xft.dpi` as 96 x the window scaling factor (a whole
+     * number on X11) x `text-scaling-factor`, cut to a whole DPI. So where [dpi] is, to within
+     * that one DPI, a whole multiple of 96 x [gnomeTextScale], that multiple is the window
+     * scale and it alone is kept: text keeps its size through the text scale, and layout gets
+     * the density the desktop's scaling factor asks for, which is how the macOS and Windows
+     * windows already split the two. Where it is not (no GNOME factor, a factor of 1, or a
+     * DPI another desktop or `xrdb` wrote that the factor does not divide), [dpi] is returned
+     * as it is: that `Xft.dpi` does not hold the text size, so nothing is taken out.
+     *
+     * x11_window.c of the GraalVM window follows the same rule (dxc_dpi_without_text_factor).
+     */
+    fun withoutTextScale(dpi: Double, gnomeTextScale: Float?): Double {
+        val factor = gnomeTextScale?.toDouble() ?: return dpi
+        if (factor.isNaN() || factor.isInfinite() || factor <= 0.0 || factor == 1.0) return dpi
+        val step = BASE_DPI * factor
+        val whole = floor(dpi / step + 0.5)
+        if (whole < 1.0 || abs(whole * step - dpi) > 1.0) return dpi
+        return whole * BASE_DPI
     }
 }

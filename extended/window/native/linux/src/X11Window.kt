@@ -569,6 +569,8 @@ class X11Window : WindowPlatform {
         val scale = LinuxTextScale.read()
         if (scale != lastTextScale) {
             lastTextScale = scale
+            // The window scale has GNOME's text size taken out of it, so it is read again too.
+            connection?.rescale()
             listener?.onTextScaleChanged(scale)
         }
     }
