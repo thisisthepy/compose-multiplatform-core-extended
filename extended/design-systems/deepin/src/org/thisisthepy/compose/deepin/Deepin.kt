@@ -394,6 +394,12 @@ class DeepinDesignSystem private constructor(
         ringWidth = 1.5.dp,
     )
 
+    /** The deepin editor: a faint rule beside the gutter and an accent wash on the current line. */
+    override fun codeEditor(): org.thisisthepy.compose.designsystem.CodeEditorStyle = super.codeEditor().copy(
+        gutterDivider = color(ColorRole.OutlineVariant).copy(alpha = 0.6f),
+        currentLine = color(ColorRole.Primary).copy(alpha = 0.08f),
+    )
+
     companion object {
         val Light: DeepinDesignSystem = DeepinDesignSystem(isDark = false)
         val Dark: DeepinDesignSystem = DeepinDesignSystem(isDark = true)

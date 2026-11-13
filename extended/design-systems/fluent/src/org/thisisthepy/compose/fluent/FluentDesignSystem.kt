@@ -270,6 +270,12 @@ class FluentDesignSystem private constructor(
         ringWidth = 0.dp,
     )
 
+    /** VS Code: a frame round the current line instead of a fill, and a squiggle for a problem. */
+    override fun codeEditor(): org.thisisthepy.compose.designsystem.CodeEditorStyle = super.codeEditor().copy(
+        currentLine = androidx.compose.ui.graphics.Color.Transparent,
+        currentLineBorder = color(ColorRole.OutlineVariant),
+    )
+
     companion object {
         val Light: FluentDesignSystem = FluentDesignSystem(FluentPalette.Light, isDark = false)
         val Dark: FluentDesignSystem = FluentDesignSystem(FluentPalette.Dark, isDark = true)
