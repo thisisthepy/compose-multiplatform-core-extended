@@ -11,6 +11,7 @@ import androidx.compose.ui.input.pointer.PointerButtons
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.scene.ComposeScene
 import org.thisisthepy.compose.window.WindowEvent
+import org.thisisthepy.compose.window.monotonicNanos
 
 // The bits a modifier flag word carries, as the window layers write them (NSEvent.h).
 private const val MODIFIER_SHIFT = 1 shl 17
@@ -28,8 +29,17 @@ private const val MODIFIER_COMMAND = 1 shl 20
  * Text is not handled here. It reaches a field through [SceneTextInput], never as keys,
  * because a key that types a character and the input method that also commits it would
  * type it twice.
+ *
+ * A pointer event reaches Compose at [timeMillis], which the host takes from when the
+ * platform says it happened (see [org.thisisthepy.compose.window.EventClock]); Compose counts
+ * a double click by the time between two presses, and the time the scene read the second
+ * one is late by however long the frame before it took.
  */
-internal fun ComposeScene.receive(event: WindowEvent, keyOf: (Int) -> Key = ::composeKey) {
+internal fun ComposeScene.receive(
+    event: WindowEvent,
+    keyOf: (Int) -> Key = ::composeKey,
+    timeMillis: Long = monotonicNanos() / 1_000_000,
+) {
     when (event.kind) {
         WindowEvent.KEY_DOWN, WindowEvent.KEY_UP -> sendKeyEvent(
             KeyEvent(
@@ -46,6 +56,7 @@ internal fun ComposeScene.receive(event: WindowEvent, keyOf: (Int) -> Key = ::co
         WindowEvent.POINTER_MOVE -> sendPointerEvent(
             eventType = PointerEventType.Move,
             position = Offset(event.x, event.y),
+            timeMillis = timeMillis,
             buttons = pointerButtonsOf(event.buttons and WindowEvent.ALL_HELD),
         )
 
@@ -55,6 +66,7 @@ internal fun ComposeScene.receive(event: WindowEvent, keyOf: (Int) -> Key = ::co
         WindowEvent.POINTER_DOWN -> sendPointerEvent(
             eventType = PointerEventType.Press,
             position = Offset(event.x, event.y),
+            timeMillis = timeMillis,
             button = pointerButtonOf(event.changedHeldBit),
             buttons = pointerButtonsOf((event.buttons and WindowEvent.ALL_HELD) or event.changedHeldBit),
         )
@@ -62,6 +74,7 @@ internal fun ComposeScene.receive(event: WindowEvent, keyOf: (Int) -> Key = ::co
         WindowEvent.POINTER_UP -> sendPointerEvent(
             eventType = PointerEventType.Release,
             position = Offset(event.x, event.y),
+            timeMillis = timeMillis,
             button = pointerButtonOf(event.changedHeldBit),
             buttons = pointerButtonsOf((event.buttons and WindowEvent.ALL_HELD) and event.changedHeldBit.inv()),
         )
@@ -71,12 +84,14 @@ internal fun ComposeScene.receive(event: WindowEvent, keyOf: (Int) -> Key = ::co
         WindowEvent.POINTER_EXIT -> sendPointerEvent(
             eventType = PointerEventType.Exit,
             position = Offset(event.x, event.y),
+            timeMillis = timeMillis,
             buttons = pointerButtonsOf(event.buttons and WindowEvent.ALL_HELD),
         )
 
         WindowEvent.POINTER_ENTER -> sendPointerEvent(
             eventType = PointerEventType.Enter,
             position = Offset(event.x, event.y),
+            timeMillis = timeMillis,
             buttons = pointerButtonsOf(event.buttons and WindowEvent.ALL_HELD),
         )
 
@@ -90,6 +105,7 @@ internal fun ComposeScene.receive(event: WindowEvent, keyOf: (Int) -> Key = ::co
             eventType = PointerEventType.Scroll,
             position = Offset.Zero,
             scrollDelta = Offset(event.x, event.y),
+            timeMillis = timeMillis,
         )
     }
 }

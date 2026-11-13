@@ -10,6 +10,7 @@ import org.thisisthepy.compose.window.scene.PlatformCompositionLocals
 import kotlinx.cinterop.useContents
 import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.DoubleClick
 import org.thisisthepy.compose.window.FramePresentLog
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.SystemTheme
@@ -95,6 +96,9 @@ class MacosWindowPlatform(
     private var follow: Pair<Float, Float>? = null
 
     override val supportsMultipleWindows: Boolean get() = true
+
+    // The interval set in System Settings, Desktop & Dock or Accessibility, Pointer Control.
+    override val doubleClickMillis: Long get() = DoubleClick.fromSeconds(NSEvent.doubleClickInterval)
 
     override fun open(config: WindowConfig, listener: WindowListener): Boolean {
         this.listener = listener

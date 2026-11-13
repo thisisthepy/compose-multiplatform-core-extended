@@ -61,6 +61,10 @@ struct dxc_event {
     // UTF-8, ending at the first zero. Empty for everything that is not text.
     //
     char text[DXC_TEXT_BYTES];
+    // When the system says a pointer message happened, GetMessageTime read unsigned, in
+    // milliseconds, so a press read after a slow frame still counts towards a double click by
+    // when it was made. Zero for everything else, which the scene times on arrival.
+    int64_t time_millis;
 };
 
 struct dxc_element {
@@ -162,6 +166,9 @@ int32_t dxc_native_poll_event(struct dxc_event *out);
 
 // The Text size slider as a percent (100 to 225), or 0 when it was never set.
 int32_t dxc_native_text_scale_percent(void);
+
+// The double-click interval set in the mouse settings, in milliseconds (GetDoubleClickTime).
+int64_t dxc_native_double_click_millis(void);
 
 // Input, text and the system's own services.
 void dxc_native_set_cursor(int32_t shape);

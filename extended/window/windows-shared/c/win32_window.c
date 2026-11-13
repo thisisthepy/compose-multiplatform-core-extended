@@ -115,6 +115,10 @@ struct dxc_event {
     // UTF-8, ending at the first zero. Empty for everything that is not text.
     //
     char text[DXC_TEXT_BYTES];
+    // When the system says a pointer message happened, GetMessageTime read unsigned, in
+    // milliseconds, so a press read after a slow frame still counts towards a double click by
+    // when it was made. Zero for everything else, which the scene times on arrival.
+    int64_t time_millis;
 };
 
 // Room for a burst rather than for a session. A queue that fills is a queue nobody is
@@ -1525,6 +1529,14 @@ static float dxc_wheel_lines(void) {
 }
 
 /*
+ * The double-click interval set in the mouse settings, in milliseconds. user32, which this
+ * file links already, answers it for the whole session.
+ */
+int64_t dxc_native_double_click_millis(void) {
+    return (int64_t)GetDoubleClickTime();
+}
+
+/*
  * The Text size slider in Settings > Accessibility, as a percent (100 to 225); 0 when the
  * user never moved it. This is the value UISettings.TextScaleFactor reports, read from the
  * registry because UISettings is a WinRT class and this file stays plain C. advapi32 is
@@ -1584,6 +1596,13 @@ static int32_t dxc_event_button(UINT message, WPARAM wparam) {
     }
 }
 
+// When the message being handled was posted, as GetMessageTime gives it: milliseconds since
+// the system started in a LONG that wraps after 49.7 days, read unsigned. The scene keeps only
+// the difference between two of these, and starts again from its own clock when it wraps.
+static int64_t dxc_message_time(void) {
+    return (int64_t)(uint32_t)GetMessageTime();
+}
+
 static void dxc_push_pointer(int32_t kind, LPARAM where, int32_t event_button) {
     struct dxc_event record;
     memset(&record, 0, sizeof record);
@@ -1592,6 +1611,7 @@ static void dxc_push_pointer(int32_t kind, LPARAM where, int32_t event_button) {
     record.y = (float)GET_Y_LPARAM(where);
     record.buttons = dxc_pointer_buttons(dxc_pressed_buttons(), event_button);
     record.modifiers = dxc_held_modifiers();
+    record.time_millis = dxc_message_time();
     dxc_push_event(record);
 }
 
@@ -1605,6 +1625,7 @@ static void dxc_push_scroll(float x, float y) {
     record.y = y;
     record.buttons = dxc_pressed_buttons();
     record.modifiers = dxc_held_modifiers();
+    record.time_millis = dxc_message_time();
     dxc_push_event(record);
 }
 

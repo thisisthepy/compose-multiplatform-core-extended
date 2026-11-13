@@ -149,7 +149,11 @@ internal object X11Layout {
     /** `struct dxc_native_window`: five pointer slots. */
     const val WINDOW_BYTES = 40
 
-    /** `struct dxc_event`: kind, x, y, buttons, modifiers, key_code, code_point, then text. */
+    /**
+     * `struct dxc_event`: kind, x, y, buttons, modifiers, key_code, code_point, then text, then
+     * the event time as an int64 aligned to 8 (28 + 96 is 124, padded to 128).
+     */
     const val EVENT_TEXT_BYTES = 96
-    const val EVENT_BYTES = 28 + EVENT_TEXT_BYTES
+    const val EVENT_TIME_OFFSET = 128
+    const val EVENT_BYTES = EVENT_TIME_OFFSET + 8
 }

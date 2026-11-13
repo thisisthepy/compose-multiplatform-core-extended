@@ -557,6 +557,9 @@ class X11Window : WindowPlatform {
 
     override fun textScale(): Float = LinuxTextScale.read()
 
+    // Read once: `gsettings` is a process start, and the scene asks when the window opens.
+    override val doubleClickMillis: Long by lazy { LinuxDoubleClick.read() }
+
     /**
      * Neither GNOME's nor KDE's setting is announced on the X connection, so it is read again
      * every few seconds, which is cheap enough (one `gsettings` run) and quick enough for a
@@ -1167,7 +1170,9 @@ class X11Window : WindowPlatform {
         y: Float = 0f,
         buttons: Int = 0,
         modifiers: Int = 0,
-    ) = WindowEvent(kind, x, y, buttons, modifiers, 0, 0, "")
+        // The X server's event time, a 32 bit count of milliseconds; 0 (CurrentTime) for none.
+        time: ULong = 0uL,
+    ) = WindowEvent(kind, x, y, buttons, modifiers, 0, 0, "", WindowEvent.timeFrom32Bits(time.toInt()))
 
     private fun resized() {
         // The painter, or else the listener, draws and presents inside this call. One that
@@ -1195,6 +1200,7 @@ class X11Window : WindowPlatform {
                         event.xmotion.y.toFloat(),
                         buttonsOf(event.xmotion.state),
                         modifiersOf(event.xmotion.state),
+                        event.xmotion.time,
                     ),
                 )
                 if (gesture.waiting) {
@@ -1227,6 +1233,7 @@ class X11Window : WindowPlatform {
                                 },
                                 0,
                                 modifiersOf(event.xbutton.state),
+                                event.xbutton.time,
                             ),
                         )
                     }
@@ -1244,6 +1251,7 @@ class X11Window : WindowPlatform {
                             event.xbutton.y.toFloat(),
                             pointerButtonsOf(event.xbutton.state, button, event.type == ButtonPress),
                             modifiersOf(event.xbutton.state),
+                            event.xbutton.time,
                         ),
                     )
                 }

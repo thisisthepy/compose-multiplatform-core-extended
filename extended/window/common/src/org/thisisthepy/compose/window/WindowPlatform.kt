@@ -119,6 +119,14 @@ interface WindowPlatform {
      */
     fun textScale(): Float = TextScale.DEFAULT
 
+    /**
+     * The operating system's double-click interval in milliseconds (see [DoubleClick]): how
+     * long after a press another press still counts towards a double click. The scene gives
+     * it to Compose as `ViewConfiguration.doubleTapTimeoutMillis`. Read when the window opens.
+     * The default is [DoubleClick.DEFAULT_MILLIS], for a platform that cannot ask.
+     */
+    val doubleClickMillis: Long get() = DoubleClick.DEFAULT_MILLIS
+
     fun setTitle(title: String)
 
     /** Applies a minimum size, in points, to the operating system. */

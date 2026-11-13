@@ -7,6 +7,17 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`, 0.1.0)
 
+- **Fix.** A double click after a slow frame counted as two single clicks: the scene gave
+  Compose each pointer event at the time it read it, not when it happened, and Compose's 300 ms
+  `doubleTapTimeoutMillis` instead of the system's interval. `WindowEvent` now carries
+  `timeMillis`, the platform's own event time (`NSEvent.timestamp` on macOS, `GetMessageTime`
+  on Windows, the X server's time on X11, in both the Kotlin/Native and GraalVM layers), which
+  `EventClock` puts on the scene's clock and the scene passes to `sendPointerEvent`; an event
+  with no time is timed on arrival as before. `WindowPlatform.doubleClickMillis` (default
+  500) is the system's interval (`NSEvent.doubleClickInterval`, `GetDoubleClickTime`, GNOME's
+  `double-click` or KDE's `DoubleClickInterval` on Linux) and the scene's
+  `ViewConfiguration.doubleTapTimeoutMillis`. The C event record grows by the time, to 136
+  bytes. (DarkPyonix/compose-rust Ember editor double click)
 - **Fix.** On KDE Plasma (X11), text was scaled twice whenever fonts DPI was forced, which
   Plasma's display settings also do themselves at any global scale other than 100%: Plasma
   writes `forceFontDPI` from `kcmfonts` into `Xft.dpi`, the X11 windows took their scale from

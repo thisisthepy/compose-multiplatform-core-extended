@@ -62,6 +62,18 @@ class Win32RecordsTest {
         assertEquals(WindowEvent.MIDDLE_HELD, middle.changedHeldBit)
     }
 
+    /** The message time the window wrote down reaches the scene as the event's own time. */
+    @Test
+    fun aPointerEventCarriesTheMessageTime() = memScoped {
+        val record = alloc<dxc_event>()
+        record.kind = WindowEvent.POINTER_DOWN
+        record.buttons = WindowEvent.PRIMARY_HELD
+        record.time_millis = 0xfffffff0L
+        assertEquals(0xfffffff0L, Win32Records.readEvent(record).timeMillis)
+        record.time_millis = 0L
+        assertEquals(WindowEvent.TIME_UNKNOWN, Win32Records.readEvent(record).timeMillis)
+    }
+
     @Test
     fun textScaleEventTurnsThePercentIntoAMultiplier() = memScoped {
         val record = alloc<dxc_event>()

@@ -2,6 +2,7 @@ package org.thisisthepy.compose.window.graalvm.linux
 
 import java.io.File
 import java.util.concurrent.TimeUnit
+import org.thisisthepy.compose.window.DoubleClick
 import org.thisisthepy.compose.window.TextScale
 
 /** Reads the desktop's text size: GNOME's `text-scaling-factor`, or KDE's forced font DPI over its global scale. */
@@ -20,8 +21,20 @@ internal object LinuxTextScale {
         currentDesktop = System.getenv("XDG_CURRENT_DESKTOP"),
     )
 
-    private fun gsettings(): String? = try {
-        val process = ProcessBuilder("gsettings", "get", "org.gnome.desktop.interface", "text-scaling-factor")
+    /**
+     * The desktop's double-click interval: GNOME's `double-click`, else KDE's
+     * `DoubleClickInterval` in `kdeglobals`, else [DoubleClick.DEFAULT_MILLIS].
+     */
+    fun doubleClickMillis(): Long = DoubleClick.resolveLinux(
+        gsettings("org.gnome.desktop.peripherals.mouse", "double-click"),
+        kdeConfig("kdeglobals"),
+    )
+
+    private fun gsettings(
+        schema: String = "org.gnome.desktop.interface",
+        key: String = "text-scaling-factor",
+    ): String? = try {
+        val process = ProcessBuilder("gsettings", "get", schema, key)
             .redirectErrorStream(false)
             .start()
         process.errorStream.close()

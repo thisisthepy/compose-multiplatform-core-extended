@@ -44,6 +44,7 @@ object Win32Records {
         keyCode = record.key_code,
         codePoint = record.code_point,
         text = readText(record.text),
+        timeMillis = record.time_millis,
     )
 
     /** One element of the accessibility tree, written into the record UI Automation reads. */

@@ -36,6 +36,7 @@ import org.thisisthepy.compose.window.windows.c.dxc_native_pump
 import org.thisisthepy.compose.window.windows.c.dxc_native_quit_posted
 import org.thisisthepy.compose.window.windows.c.dxc_native_ime_reset
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_ime_spot
+import org.thisisthepy.compose.window.windows.c.dxc_native_double_click_millis
 import org.thisisthepy.compose.window.windows.c.dxc_native_system_dark
 import org.thisisthepy.compose.window.windows.c.dxc_native_take_activation
 import org.thisisthepy.compose.window.windows.c.dxc_native_take_close_request
@@ -135,6 +136,8 @@ internal class Win32CWindowBackend(private val native: Win32NativeWindow) : Win3
     override fun systemDark(): Boolean = dxc_native_system_dark() != 0
 
     override fun textScale(): Float = on(TextScale.DEFAULT) { Win32Loop.textScale() }
+
+    override fun doubleClickMillis(): Long = dxc_native_double_click_millis()
 
     override fun setPosition(x: Int, y: Int) = on(Unit) { dxc_native_window_set_position(x, y) }
 

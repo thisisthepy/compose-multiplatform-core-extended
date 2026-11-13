@@ -5,8 +5,9 @@ import kotlin.test.assertEquals
 
 class X11LayoutTest {
     @Test
-    fun eventRecordHoldsSevenWordsThenText() {
-        assertEquals(124, X11Layout.EVENT_BYTES)
+    fun eventRecordHoldsSevenWordsThenTextThenTheEventTime() {
+        assertEquals(128, X11Layout.EVENT_TIME_OFFSET)
+        assertEquals(136, X11Layout.EVENT_BYTES)
     }
 
     @Test

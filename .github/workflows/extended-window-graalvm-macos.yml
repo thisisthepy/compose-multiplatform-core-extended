@@ -95,7 +95,7 @@ jobs:
         # function its reachable code names. These are the X11 calls it reaches; macOS binds
         # lazily, so one missing here is a crash at its first call rather than a link error.
         run: |
-          for name in wake window_origin window_focused ime_reset resize_serial window_server_size debug_resize; do
+          for name in wake window_origin window_focused ime_reset resize_serial window_server_size debug_resize double_click_millis; do
             nm build/native/libappkit_window.a | grep -q " T _dxc_native_$name\$" || {
               echo "appkit_window.m defines no dxc_native_$name" >&2
               exit 1

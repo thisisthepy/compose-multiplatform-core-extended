@@ -21,6 +21,7 @@
 #import <Metal/Metal.h>
 #import <CoreVideo/CoreVideo.h>
 #include <stdatomic.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -97,7 +98,14 @@ struct dxc_event {
     int32_t code_point;
     // UTF-8, ending at the first zero. Empty for everything that is not text.
     char text[DXC_TEXT_BYTES];
+    // When AppKit says the event happened, `NSEvent.timestamp` in milliseconds, so a press
+    // read after a slow frame still counts towards a double click by when it was made. Zero
+    // for an event that did not come from an NSEvent, which the scene times on arrival.
+    int64_t time_millis;
 };
+
+_Static_assert(offsetof(struct dxc_event, time_millis) == 128, "dxc_event time_millis starts at 128");
+_Static_assert(sizeof(struct dxc_event) == 136, "struct dxc_event is 136 bytes");
 
 /**
  * Runs a block on the main thread and waits for it.
@@ -695,6 +703,7 @@ void dxc_native_set_cursor(int32_t shape) {
                         : event.buttonNumber == 4 ? DXC_FORWARD_BUTTON : 0;
     }
     record.modifiers = (int32_t)event.modifierFlags;
+    record.time_millis = (int64_t)(event.timestamp * 1000.0);
     if (kind == DXC_EVENT_SCROLL) {
         // The wheel's travel rides in the same two fields the pointer uses, because a
         // scroll has no position of its own beyond where the pointer already is.
@@ -1709,6 +1718,14 @@ void dxc_native_set_visibility(void *window_pointer, int32_t visibility) {
         case 3: if (!full) [window toggleFullScreen:nil]; break;
         }
     });
+}
+
+/**
+ * The double-click interval set in System Settings, in milliseconds: how long after a press
+ * another one still counts towards a double click. A class property, readable on any thread.
+ */
+int64_t dxc_native_double_click_millis(void) {
+    return (int64_t)(NSEvent.doubleClickInterval * 1000.0);
 }
 
 /** One when the system is set to dark appearance, zero when light. */

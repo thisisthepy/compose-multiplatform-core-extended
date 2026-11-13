@@ -14,6 +14,7 @@ import org.thisisthepy.compose.window.macosCaption
 import org.thisisthepy.compose.window.editMenuItems
 import org.thisisthepy.compose.window.printableText
 import org.thisisthepy.compose.window.FramePresentRecord
+import org.thisisthepy.compose.window.DoubleClick
 import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
@@ -203,6 +204,8 @@ class AppKitWindowPlatform : WindowPlatform {
     }
 
     override fun systemTheme(): SystemTheme = if (isSystemDark()) SystemTheme.Dark else SystemTheme.Light
+
+    override val doubleClickMillis: Long get() = DoubleClick.clamp(systemDoubleClickMillis())
 
     override fun setTitle(title: String) {
         window?.setTitle(title)
