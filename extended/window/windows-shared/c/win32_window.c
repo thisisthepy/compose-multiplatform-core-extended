@@ -446,6 +446,9 @@ static int dxc_raster_present_off;
 // DXC_PREDRAW_FLUSH=1: the wait for one composition after the frame drawn ahead, also when it
 // is presented through the swapchain. For comparing the two.
 static int dxc_predraw_flush;
+// DXC_RESIZE_HIDE_EARLY=0: the swapchain's child stays visible until WM_SIZE, as before it
+// was hidden in WM_NCCALCSIZE, ahead of the size change. For comparing the two.
+static int dxc_hide_early_off;
 /**
  * One line on stderr for every change of a state that decides how resize frames are
  * produced. On by default: these happen a handful of times a session, and they are what
@@ -2139,6 +2142,14 @@ static double dxc_elapsed_ms(LARGE_INTEGER since) {
     return (double)(now.QuadPart - since.QuadPart) * 1000.0 / (double)frequency.QuadPart;
 }
 
+/** The performance counter in ms, the clock DXGI's present times are on, for the log lines. */
+static double dxc_now_ms(void) {
+    LARGE_INTEGER now, frequency;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&frequency);
+    return (double)now.QuadPart * 1000.0 / (double)frequency.QuadPart;
+}
+
 /*
  * Resize trace, for DXC_RESIZE_TRACE=1: when each message of a size change arrived and when
  * each step's frame was copied into the window, against DWM's own composition clock, so a
@@ -2393,8 +2404,8 @@ static void dxc_return_to_gpu(HWND window, int32_t width, int32_t height) {
     if (dxc_surface != NULL) {
         ShowWindow(dxc_surface, SW_SHOWNA);
     }
-    fprintf(stderr, "compose-rust: resize-mode: surface shown at %dx%d after its frame was presented\n",
-            (int)width, (int)height);
+    fprintf(stderr, "compose-rust: resize-mode: surface shown at %dx%d after its frame was presented (at %.1f ms)\n",
+            (int)width, (int)height, dxc_now_ms());
     (void)window;
 }
 
@@ -2632,9 +2643,10 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
     if (dxc_cpu_mode) {
         // What this step put on screen and how, for the CI assertion over these lines.
         fprintf(stderr,
-                "compose-rust: resize-proof step %dx%d presents=%d child_visible=%d blit=%d validated=%d\n",
+                "compose-rust: resize-proof step %dx%d presents=%d child_visible=%d blit=%d validated=%d at %.1f ms\n",
                 (int)width, (int)height, (int)dxc_presents_in_change,
-                dxc_surface != NULL && IsWindowVisible(dxc_surface) ? 1 : 0, dxc_last_blit, dxc_last_validated);
+                dxc_surface != NULL && IsWindowVisible(dxc_surface) ? 1 : 0, dxc_last_blit, dxc_last_validated,
+                dxc_now_ms());
         if (dxc_real_drag_active && getenv("DXC_CAPTURE_CHECK") != NULL) {
             dxc_capture_step(dxc_window);
         }
@@ -2682,6 +2694,7 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
  * for DWM to compose once more, last, puts that copy at the start of a composition
  * interval rather than at a random point of one.
  */
+static int dxc_hide_surface_early(HWND window, int32_t width, int32_t height);
 static void dxc_predraw_resize(HWND window, const RECT *client) {
     if (dxc_predraw_off || dxc_swapchain == NULL || dxc_draw_frame == NULL || IsIconic(window)) {
         return;
@@ -2699,6 +2712,7 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     }
     LARGE_INTEGER started;
     QueryPerformanceCounter(&started);
+    int hidden = dxc_hide_surface_early(window, (int32_t)(now.right - now.left), (int32_t)(now.bottom - now.top));
     dxc_switch_frames(1, width, height, "the size is about to change");
     dxc_predrawn_set(&dxc_predrawn, 0, 0);
     dxc_resize_target_width = width;
@@ -2712,11 +2726,121 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     double drawn_ms = dxc_elapsed_ms(started);
     // Only for the copy into the GDI surface. A frame presented through the swapchain is
     // waited for after its present, in WM_SIZE, like any GPU resize frame.
-    int flushed = drawn && (dxc_raster_present_off || dxc_predraw_flush) ? dxc_dwm_flush() : 0;
+    int flushed = drawn && (dxc_raster_present_off || dxc_predraw_flush || hidden) ? dxc_dwm_flush() : 0;
     fprintf(stderr,
-            "compose-rust: resize-mode: drew %dx%d before the window took it (%s, draw %.2f ms, %s %.2f ms)\n",
+            "compose-rust: resize-mode: drew %dx%d before the window took it (%s, draw %.2f ms, %s %.2f ms, at %.1f ms)\n",
             (int)width, (int)height, drawn ? "waiting for WM_SIZE" : "not drawn", drawn_ms,
-            flushed ? "DwmFlush" : "no DwmFlush", dxc_elapsed_ms(started) - drawn_ms);
+            flushed ? "DwmFlush" : "no DwmFlush", dxc_elapsed_ms(started) - drawn_ms, dxc_now_ms());
+}
+
+/**
+ * Copies the picture the swapchain's child shows into the window's own GDI surface, at
+ * width x height, the size both have now. One when it was copied.
+ *
+ * The swapchain is copy model with one buffer (DXGI_SWAP_EFFECT_SEQUENTIAL), so that buffer
+ * still holds the frame last presented. It is read back through a staging texture into the
+ * bitmap and copied into the window, under the child, where it changes nothing on screen
+ * until the child is hidden.
+ */
+static int dxc_copy_shown_to_window(int32_t width, int32_t height) {
+    if (dxc_swapchain == NULL || dxc_d3d11 == NULL || dxc_d3d11_context == NULL || dxc_window == NULL ||
+        width <= 0 || height <= 0 || !dxc_ensure_dib(width, height)) {
+        return 0;
+    }
+    ID3D11Texture2D *back = NULL;
+    HRESULT got = IDXGISwapChain1_GetBuffer(dxc_swapchain, 0, &IID_ID3D11Texture2D, (void **)&back);
+    if (FAILED(got)) {
+        dxc_log_dxgi_failure("GetBuffer", got);
+        return 0;
+    }
+    D3D11_TEXTURE2D_DESC described;
+    ID3D11Texture2D_GetDesc(back, &described);
+    if ((int32_t)described.Width < width || (int32_t)described.Height < height) {
+        ID3D11Texture2D_Release(back);
+        return 0;
+    }
+    D3D11_TEXTURE2D_DESC staging_described;
+    memset(&staging_described, 0, sizeof staging_described);
+    staging_described.Width = (UINT)width;
+    staging_described.Height = (UINT)height;
+    staging_described.MipLevels = 1;
+    staging_described.ArraySize = 1;
+    staging_described.Format = described.Format;
+    staging_described.SampleDesc.Count = 1;
+    staging_described.Usage = D3D11_USAGE_STAGING;
+    staging_described.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ID3D11Texture2D *staging = NULL;
+    if (FAILED(ID3D11Device_CreateTexture2D(dxc_d3d11, &staging_described, NULL, &staging))) {
+        ID3D11Texture2D_Release(back);
+        return 0;
+    }
+    D3D11_BOX shown = {0, 0, 0, (UINT)width, (UINT)height, 1};
+    ID3D11DeviceContext_CopySubresourceRegion(dxc_d3d11_context, (ID3D11Resource *)staging, 0, 0, 0, 0,
+                                              (ID3D11Resource *)back, 0, &shown);
+    ID3D11Texture2D_Release(back);
+    int read = 0;
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    if (SUCCEEDED(ID3D11DeviceContext_Map(dxc_d3d11_context, (ID3D11Resource *)staging, 0, D3D11_MAP_READ, 0,
+                                          &mapped))) {
+        GdiFlush();
+        for (int32_t y = 0; y < height; y++) {
+            memcpy((uint8_t *)dxc_dib_bits + (size_t)y * (size_t)dxc_dib_width * 4,
+                   (const uint8_t *)mapped.pData + (size_t)y * mapped.RowPitch, (size_t)width * 4);
+        }
+        ID3D11DeviceContext_Unmap(dxc_d3d11_context, (ID3D11Resource *)staging, 0);
+        read = 1;
+    }
+    ID3D11Texture2D_Release(staging);
+    ID3D11DeviceContext_Flush(dxc_d3d11_context);
+    if (!read) {
+        return 0;
+    }
+    int copied = 0;
+    HDC window_dc = GetDC(dxc_window);
+    if (window_dc != NULL) {
+        copied = BitBlt(window_dc, 0, 0, width, height, dxc_dib_dc, 0, 0, SRCCOPY) != 0;
+        GdiFlush();
+        ReleaseDC(dxc_window, window_dc);
+    }
+    return copied;
+}
+
+/**
+ * Hides the swapchain's child before a size given outside a drag reaches the window, with
+ * the picture it showed copied into the window's GDI surface first, so the screen does not
+ * change. One when the child was hidden.
+ *
+ * DWM resizes and composes the window's GDI surface together with the window, and the CPU
+ * frame WM_SIZE copies into it lands with the new size. The child is another surface: hidden
+ * only in WM_SIZE, after the window had taken the new size, it was still composed once with
+ * its old picture at its old size over the window, cut by a smaller one (restore, left-half
+ * snap and back; compose-rust#684). Hidden here, and composed hidden (the DwmFlush) before
+ * the window takes the size, it is not on screen when the window changes.
+ */
+static int dxc_hide_surface_early(HWND window, int32_t width, int32_t height) {
+    if (dxc_hide_early_off || dxc_surface == NULL || !IsWindowVisible(dxc_surface) ||
+        dxc_presented_width != width || dxc_presented_height != height ||
+        dxc_sizing.fitted_width != width || dxc_sizing.fitted_height != height) {
+        return 0;
+    }
+    LARGE_INTEGER started;
+    QueryPerformanceCounter(&started);
+    if (!dxc_copy_shown_to_window(width, height)) {
+        fprintf(stderr, "compose-rust: resize-mode: surface kept at %dx%d because its picture could not be copied\n",
+                (int)width, (int)height);
+        return 0;
+    }
+    double copied_ms = dxc_elapsed_ms(started);
+    ShowWindow(dxc_surface, SW_HIDE);
+    // Hiding the child asks the window to paint the area it uncovered, which already holds
+    // the same picture.
+    ValidateRect(window, NULL);
+    int flushed = dxc_dwm_flush();
+    fprintf(stderr,
+            "compose-rust: resize-mode: surface hidden at %dx%d before the size changed (copy %.2f ms, %s %.2f ms, at %.1f ms)\n",
+            (int)width, (int)height, copied_ms, flushed ? "DwmFlush" : "no DwmFlush",
+            dxc_elapsed_ms(started) - copied_ms, dxc_now_ms());
+    return 1;
 }
 
 static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -4768,6 +4892,8 @@ static int32_t dxc_open_window(
         dxc_raster_present_off = through != NULL && strcmp(through, "0") == 0;
         const char *flush = getenv("DXC_PREDRAW_FLUSH");
         dxc_predraw_flush = flush != NULL && strcmp(flush, "1") == 0;
+        const char *early = getenv("DXC_RESIZE_HIDE_EARLY");
+        dxc_hide_early_off = early != NULL && strcmp(early, "0") == 0;
     }
     dxc_log_monitor(window, "the window opened");
     dxc_memory_point("the window opened", adapter);

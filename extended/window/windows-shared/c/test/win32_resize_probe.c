@@ -15,6 +15,7 @@
 // PROBE_DRAW_MS=<n> makes every frame take n ms longer, for a renderer that is slow to draw.
 // PROBE_RASTER=0 draws resize frames on the GPU (the window's DXGI path) instead of the CPU.
 // PROBE_SAVE=<dir> writes the first faulty frames there as BMP files.
+// PROBE_VERBOSE=1 prints every composed frame judged, not only the faulty ones.
 // Exit status: 0 when no composed frame was faulty (states) or always (drag), 1 otherwise.
 #define COBJMACROS
 #include <stdint.h>
@@ -233,6 +234,7 @@ static int capture_frames, capture_faulty, capture_missed, capture_saved, captur
 static int capture_faulty_by_phase[PHASE_DONE + 1];
 static int capture_frames_by_phase[PHASE_DONE + 1];
 static const char *capture_save_dir;
+static int capture_verbose;
 
 static int is_backdrop(const uint8_t *bgra) {
     int b = bgra[0], g = bgra[1], r = bgra[2];
@@ -402,6 +404,11 @@ static DWORD WINAPI capture_thread(LPVOID unused) {
                     probe_phase_names[phase], right,
                     right_strip ? "with its strip" : "WITHOUT its strip", bottom,
                     bottom_strip ? "with its strip" : "WITHOUT its strip", saved);
+        } else if (capture_verbose) {
+            fprintf(stderr, "probe: frame %d presented at %.1f ms phase %s: right x=%d, bottom y=%d, both strips\n",
+                    capture_frames,
+                    (double)info.LastPresentTime.QuadPart * 1000.0 / (double)probe_frequency.QuadPart,
+                    probe_phase_names[phase], right, bottom);
         }
         if (frame != NULL) ID3D11Texture2D_Release(frame);
         IDXGIResource_Release(resource);
@@ -512,6 +519,7 @@ int main(int argc, char **argv) {
     QueryPerformanceFrequency(&probe_frequency);
     probe_draw_ms = getenv("PROBE_DRAW_MS") != NULL ? atoi(getenv("PROBE_DRAW_MS")) : 0;
     capture_save_dir = getenv("PROBE_SAVE");
+    capture_verbose = getenv("PROBE_VERBOSE") != NULL && strcmp(getenv("PROBE_VERBOSE"), "0") != 0;
     if (capture_save_dir != NULL) CreateDirectoryA(capture_save_dir, NULL);
     int raster = getenv("PROBE_RASTER") == NULL || strcmp(getenv("PROBE_RASTER"), "0") != 0;
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
