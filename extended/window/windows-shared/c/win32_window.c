@@ -266,6 +266,9 @@ struct DxcWin {
     // waiting in the bitmap for WM_SIZE to copy it; and set while that frame is drawn.
     struct dxc_predrawn predrawn;
     int predrawing;
+    // The size the hidden child was given and presented at for the frame drawn ahead.
+    int32_t surface_ready_width;
+    int32_t surface_ready_height;
 
     char dropped_paths[DXC_DROPPED_BYTES];
     int32_t dropped_length;
@@ -372,6 +375,8 @@ struct DxcWin {
 #define dxc_mode_switches (dxc_w->mode_switches)
 #define dxc_predrawn (dxc_w->predrawn)
 #define dxc_predrawing (dxc_w->predrawing)
+#define dxc_surface_ready_width (dxc_w->surface_ready_width)
+#define dxc_surface_ready_height (dxc_w->surface_ready_height)
 #define dxc_dropped_paths (dxc_w->dropped_paths)
 #define dxc_dropped_length (dxc_w->dropped_length)
 #define dxc_drag_has_files (dxc_w->drag_has_files)
@@ -2563,14 +2568,15 @@ static void dxc_raster_copy(void) {
  * (compose-rust#684). A child that stays visible takes its new picture the way it does when
  * every resize frame is drawn on the GPU, which never showed that frame.
  */
-static int dxc_raster_present(int32_t width, int32_t height) {
-    if (dxc_raster_present_off || dxc_sizing.dragging || dxc_swapchain == NULL || dxc_surface == NULL ||
-        !IsWindowVisible(dxc_surface) || dxc_d3d11_context == NULL || dxc_dib_bits == NULL ||
+/**
+ * Refits the swapchain to width x height where it is another size, copies the CPU frame in
+ * the bitmap into its buffer and presents it. One when it was presented.
+ */
+static int dxc_bitmap_to_swapchain(int32_t width, int32_t height) {
+    if (dxc_swapchain == NULL || dxc_d3d11_context == NULL || dxc_dib_bits == NULL ||
         width > dxc_dib_width || height > dxc_dib_height) {
         return 0;
     }
-    LARGE_INTEGER copy_started;
-    QueryPerformanceCounter(&copy_started);
     if (dxc_sizing.fitted_width != width || dxc_sizing.fitted_height != height) {
         dxc_wait_for_gpu();
         dxc_release_buffers();
@@ -2600,11 +2606,69 @@ static int dxc_raster_present(int32_t width, int32_t height) {
         dxc_log_dxgi_failure("Present", shown);
         return 0;
     }
+    return 1;
+}
+
+static int dxc_raster_present(int32_t width, int32_t height) {
+    if (dxc_raster_present_off || dxc_sizing.dragging || dxc_surface == NULL || !IsWindowVisible(dxc_surface)) {
+        return 0;
+    }
+    LARGE_INTEGER copy_started;
+    QueryPerformanceCounter(&copy_started);
+    if (!dxc_bitmap_to_swapchain(width, height)) {
+        return 0;
+    }
     dxc_presented_width = width;
     dxc_presented_height = height;
     dxc_step_copy_ms = dxc_elapsed_ms(copy_started);
     // Presented: the window is on the GPU again, and the child follows the size below.
     dxc_switch_frames(0, width, height, "the frame drawn ahead was presented through the swapchain");
+    return 1;
+}
+
+/**
+ * Readies the hidden child for the frame drawn ahead (dxc_predraw_resize), before the window
+ * takes its size: the child is given that size and the frame is presented to it, so WM_SIZE
+ * only has to show it. One when it is ready.
+ */
+static int dxc_ready_surface(int32_t width, int32_t height) {
+    dxc_surface_ready_width = 0;
+    dxc_surface_ready_height = 0;
+    if (dxc_surface == NULL || IsWindowVisible(dxc_surface)) {
+        return 0;
+    }
+    SetWindowPos(dxc_surface, NULL, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOREDRAW);
+    if (!dxc_bitmap_to_swapchain(width, height)) {
+        return 0;
+    }
+    dxc_surface_ready_width = width;
+    dxc_surface_ready_height = height;
+    return 1;
+}
+
+/**
+ * Shows the child readied for this size (dxc_ready_surface), with the frame drawn ahead in
+ * it, and goes back to the GPU. One when it was shown.
+ *
+ * The window's GDI surface, which WM_SIZE has just copied the same frame into, is not what
+ * DWM composes with the new size at once: after a size change it went on composing the
+ * window's earlier GDI picture, at the earlier size, until the child was shown again
+ * (compose-rust#684). A child shown with its frame already presented is composed with it.
+ */
+static int dxc_show_ready_surface(int32_t width, int32_t height) {
+    int ready = dxc_surface_ready_width == width && dxc_surface_ready_height == height &&
+                dxc_sizing.fitted_width == width && dxc_sizing.fitted_height == height;
+    dxc_surface_ready_width = 0;
+    dxc_surface_ready_height = 0;
+    if (!ready || dxc_surface == NULL || IsWindowVisible(dxc_surface)) {
+        return 0;
+    }
+    ShowWindow(dxc_surface, SW_SHOWNA);
+    dxc_presented_width = width;
+    dxc_presented_height = height;
+    dxc_switch_frames(0, width, height, "the frame drawn ahead was shown through the swapchain");
+    fprintf(stderr, "compose-rust: resize-mode: surface shown at %dx%d in WM_SIZE with the frame drawn ahead (at %.1f ms)\n",
+            (int)width, (int)height, dxc_now_ms());
     return 1;
 }
 
@@ -2637,6 +2701,7 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
         dxc_raster_height = height;
         if (!dxc_raster_present(width, height)) {
             dxc_raster_copy();
+            dxc_show_ready_surface(width, height);
         }
     }
     dxc_resizing = 0;
@@ -2723,13 +2788,15 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     dxc_predrawing = 0;
     dxc_resizing = 0;
     int drawn = dxc_predrawn.width == width && dxc_predrawn.height == height;
+    int ready = drawn && hidden && dxc_ready_surface(width, height);
     double drawn_ms = dxc_elapsed_ms(started);
     // Only for the copy into the GDI surface. A frame presented through the swapchain is
     // waited for after its present, in WM_SIZE, like any GPU resize frame.
     int flushed = drawn && (dxc_raster_present_off || dxc_predraw_flush || hidden) ? dxc_dwm_flush() : 0;
     fprintf(stderr,
-            "compose-rust: resize-mode: drew %dx%d before the window took it (%s, draw %.2f ms, %s %.2f ms, at %.1f ms)\n",
-            (int)width, (int)height, drawn ? "waiting for WM_SIZE" : "not drawn", drawn_ms,
+            "compose-rust: resize-mode: drew %dx%d before the window took it (%s%s, draw %.2f ms, %s %.2f ms, at %.1f ms)\n",
+            (int)width, (int)height, drawn ? "waiting for WM_SIZE" : "not drawn",
+            ready ? ", presented to the hidden surface" : "", drawn_ms,
             flushed ? "DwmFlush" : "no DwmFlush", dxc_elapsed_ms(started) - drawn_ms, dxc_now_ms());
 }
 
