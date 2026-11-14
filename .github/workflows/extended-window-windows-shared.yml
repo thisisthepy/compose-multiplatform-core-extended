@@ -162,6 +162,16 @@ jobs:
           DXC_RESIZE_HIDE_EARLY=0 DXC_RESIZE_SWAPCHAIN=0 PROBE_VERBOSE=1 PROBE_SAVE='out\frames-states-hidden' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-hidden.log || true
           DXC_RESIZE_HIDE_EARLY=0 DXC_RESIZE_SWAPCHAIN=0 PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-hidden-30ms.log || true
 
+      # For comparison, not a gate: other ways of bringing the child hidden ahead of the size
+      # change back with the frame drawn ahead (DXC_SURFACE_RETURN in win32_window.c).
+      - name: Resize probe, maximise, restore and snap, other returns of the child (comparison)
+        shell: bash
+        run: |
+          for way in nccalc showfirst posted; do
+            DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-return-$way.log || true
+            DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-return-$way-30ms.log || true
+          done
+
       # With a frame that costs nothing and with one that costs 30 ms, twice each. A gate: no composed
       # frame of maximise, restore, left-half snap or back may show another size's picture
       # (compose-rust#684).

@@ -454,6 +454,13 @@ static int dxc_predraw_flush;
 // DXC_RESIZE_HIDE_EARLY=0: the swapchain's child stays visible until WM_SIZE, as before it
 // was hidden in WM_NCCALCSIZE, ahead of the size change. For comparing the two.
 static int dxc_hide_early_off;
+// DXC_SURFACE_RETURN: how the child hidden ahead of the size change comes back with the frame
+// drawn ahead. wmsize (the default): WM_SIZE fits it, presents the frame and shows it;
+// nccalc: fitted and presented in WM_NCCALCSIZE, shown in WM_SIZE; showfirst: WM_SIZE fits
+// and shows it, then presents; posted: the GPU return after WM_SIZE draws a new frame first.
+enum { DXC_SURFACE_RETURN_WM_SIZE, DXC_SURFACE_RETURN_NCCALC, DXC_SURFACE_RETURN_SHOW_FIRST, DXC_SURFACE_RETURN_POSTED };
+static const char *const dxc_surface_return_names[] = {"wmsize", "nccalc", "showfirst", "posted"};
+static int dxc_surface_return;
 /**
  * One line on stderr for every change of a state that decides how resize frames are
  * produced. On by default: these happen a handful of times a session, and they are what
@@ -2660,15 +2667,27 @@ static int dxc_show_ready_surface(int32_t width, int32_t height) {
                 dxc_sizing.fitted_width == width && dxc_sizing.fitted_height == height;
     dxc_surface_ready_width = 0;
     dxc_surface_ready_height = 0;
-    if (!ready || dxc_surface == NULL || IsWindowVisible(dxc_surface)) {
+    if (dxc_surface == NULL || IsWindowVisible(dxc_surface) || dxc_surface_return == DXC_SURFACE_RETURN_POSTED) {
         return 0;
     }
-    ShowWindow(dxc_surface, SW_SHOWNA);
+    UINT fit = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE;
+    if (dxc_surface_return == DXC_SURFACE_RETURN_NCCALC) {
+        if (!ready) return 0;
+        ShowWindow(dxc_surface, SW_SHOWNA);
+    } else if (dxc_surface_return == DXC_SURFACE_RETURN_SHOW_FIRST) {
+        SetWindowPos(dxc_surface, NULL, 0, 0, width, height, fit);
+        ShowWindow(dxc_surface, SW_SHOWNA);
+        if (!dxc_bitmap_to_swapchain(width, height)) return 0;
+    } else {
+        SetWindowPos(dxc_surface, NULL, 0, 0, width, height, fit);
+        if (!dxc_bitmap_to_swapchain(width, height)) return 0;
+        ShowWindow(dxc_surface, SW_SHOWNA);
+    }
     dxc_presented_width = width;
     dxc_presented_height = height;
     dxc_switch_frames(0, width, height, "the frame drawn ahead was shown through the swapchain");
-    fprintf(stderr, "compose-rust: resize-mode: surface shown at %dx%d in WM_SIZE with the frame drawn ahead (at %.1f ms)\n",
-            (int)width, (int)height, dxc_now_ms());
+    fprintf(stderr, "compose-rust: resize-mode: surface shown at %dx%d in WM_SIZE with the frame drawn ahead (%s, at %.1f ms)\n",
+            (int)width, (int)height, dxc_surface_return_names[dxc_surface_return], dxc_now_ms());
     return 1;
 }
 
@@ -2788,7 +2807,7 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     dxc_predrawing = 0;
     dxc_resizing = 0;
     int drawn = dxc_predrawn.width == width && dxc_predrawn.height == height;
-    int ready = drawn && hidden && dxc_ready_surface(width, height);
+    int ready = drawn && hidden && dxc_surface_return == DXC_SURFACE_RETURN_NCCALC && dxc_ready_surface(width, height);
     double drawn_ms = dxc_elapsed_ms(started);
     // Only for the copy into the GDI surface. A frame presented through the swapchain is
     // waited for after its present, in WM_SIZE, like any GPU resize frame.
@@ -4961,6 +4980,10 @@ static int32_t dxc_open_window(
         dxc_predraw_flush = flush != NULL && strcmp(flush, "1") == 0;
         const char *early = getenv("DXC_RESIZE_HIDE_EARLY");
         dxc_hide_early_off = early != NULL && strcmp(early, "0") == 0;
+        const char *surface_return = getenv("DXC_SURFACE_RETURN");
+        for (int named = 0; surface_return != NULL && named < 4; named++) {
+            if (strcmp(surface_return, dxc_surface_return_names[named]) == 0) dxc_surface_return = named;
+        }
     }
     dxc_log_monitor(window, "the window opened");
     dxc_memory_point("the window opened", adapter);
