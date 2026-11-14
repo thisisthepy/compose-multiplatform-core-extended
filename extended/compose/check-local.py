@@ -27,8 +27,8 @@ import re
 import sys
 
 FORK = "org.thisisthepy.compose"
-# The window modules are built by Amper and checked by their own workflows, and skiko-awt
-# stands in for JetBrains' through a capability; neither is part of the Gradle build checked here.
+# The window modules are built by Amper and checked by their own workflows, and skiko-awt is
+# built by extended/skiko/build-skiko-awt.sh; neither is part of the Gradle build checked here.
 OWN_VERSIONED = ("org.thisisthepy.compose.window", "org.thisisthepy.compose.skiko")
 # JetBrains groups this fork's modules may depend on: compatibility stubs with no classes,
 # which point at the same androidx artifacts as this fork's own stubs do.

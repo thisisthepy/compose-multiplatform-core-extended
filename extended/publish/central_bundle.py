@@ -56,6 +56,12 @@ validate checks <dir> the way Central's validation does, and a little more:
          - every Gradle plugin a jar declares has its marker POM;
          - every POM beside a Gradle module carries the published-with-gradle-metadata
            comment, without which Gradle and Amper never read the module;
+         - every variant of a Gradle module declares no capability but the module's own
+           coordinate: Amper takes a variant only when its capabilities are exactly that, and
+           with a second one it finds no variant ("Platform is not supported by the library");
+         - no desktop (<name>-desktop) module's POM or Gradle module depends on JetBrains'
+           org.jetbrains.skiko:skiko or skiko-awt, which would put JetBrains' skiko-awt beside
+           this fork's on a class path;
          - every --require coordinate is present.
          With --verify-signatures each .asc is checked with gpg; with --unsigned no .asc is
          asked for. --dev=<suffix> checks a dev build instead of a release: every version ends
@@ -485,6 +491,9 @@ def validate(out, version, required, verify, dev=None, unsigned=False):
 
         for dependency in pom.findall(f"{q('dependencies')}/{q('dependency')}"):
             d_group, d_artifact, d_version = (text_of(dependency, k) for k in ("groupId", "artifactId", "version"))
+            if artifact.endswith("-desktop") and d_group == "org.jetbrains.skiko" and d_artifact in ("skiko", "skiko-awt"):
+                errors.append(f"{where}: the POM depends on JetBrains' org.jetbrains.skiko:{d_artifact}, not on "
+                              f"{PREFIX}.compose.skiko:skiko-awt (run repoint-desktop-skiko.py)")
             if d_group.startswith(PREFIX) and d_version and "${" not in d_version and not d_version.startswith(("[", "(")):
                 if not present(out, d_group, d_artifact, d_version):
                     errors.append(f"{where}: depends on {d_group}:{d_artifact}:{d_version}, which is not in the bundle")
@@ -529,6 +538,7 @@ def check_module(out, where, path, directory):
             metadata = json.load(f)
     except ValueError as error:
         return [f"{where}: {os.path.basename(path)} is not JSON ({error})"]
+    errors += check_capabilities(where, metadata)
     for variant in metadata.get("variants", []):
         at = variant.get("available-at")
         if at:
@@ -546,6 +556,40 @@ def check_module(out, where, path, directory):
                 if not present(out, group, dependency.get("module", ""), requires):
                     errors.append(f"{where}: variant {variant.get('name')} depends on "
                                   f"{group}:{dependency.get('module')}:{requires}, which is not in the bundle")
+    return errors
+
+
+def check_capabilities(where, metadata):
+    """Each variant's capabilities must be none or exactly the module's own coordinate.
+
+    <where> is group:artifact:version of the directory. A target module's component names its
+    Kotlin Multiplatform root, so the root's coordinate counts as its own too.
+
+    Amper takes a variant only when its capabilities are exactly the module's own coordinate
+    (or there are none, which means the same), so a variant with a second one is no variant
+    to it, and a module whose every variant has one stops an Amper build with "Platform is
+    not supported by the library". 1.11.1-ext.3's skiko-awt declared JetBrains'
+    org.jetbrains.skiko:skiko-awt beside its own. Also refuses a desktop module that still
+    depends on JetBrains' skiko, which repoint-desktop-skiko.py changes to this fork's
+    skiko-awt: without it JetBrains' skiko-awt reaches a class path beside the fork's.
+    """
+    errors = []
+    group, artifact = where.split(":")[:2]
+    component = metadata.get("component") or {}
+    own = {(group, artifact), (component.get("group"), component.get("module"))}
+    for variant in metadata.get("variants", []):
+        names = [(c.get("group"), c.get("name")) for c in variant.get("capabilities") or []]
+        if len(names) > 1 or any(name not in own for name in names):
+            others = ", ".join(f"{g}:{n}" for g, n in names if (g, n) not in own) or "its own twice"
+            errors.append(f"{where}: variant {variant.get('name')} declares the capability {others} "
+                          f"besides its own; Amper takes a variant only when its capabilities are "
+                          f"exactly {group}:{artifact}")
+        if artifact.endswith("-desktop"):
+            for dependency in variant.get("dependencies", []):
+                if dependency.get("group") == "org.jetbrains.skiko" and dependency.get("module") in ("skiko", "skiko-awt"):
+                    errors.append(f"{where}: variant {variant.get('name')} depends on JetBrains' "
+                                  f"org.jetbrains.skiko:{dependency.get('module')}, not on "
+                                  f"{PREFIX}.compose.skiko:skiko-awt (run repoint-desktop-skiko.py)")
     return errors
 
 

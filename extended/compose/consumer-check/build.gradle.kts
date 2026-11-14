@@ -78,11 +78,6 @@ kotlin {
 // the components (components-resources brings the rest with it).
 val forbidden = Regex("""^org\.jetbrains\.compose\.(foundation|ui|animation|material|material3|material3\.adaptive|components|desktop)(\..*)?$""")
 
-configurations.configureEach {
-    // The fork's skiko-awt stands in for JetBrains' (a capability of it); keep the higher one.
-    resolutionStrategy.capabilitiesResolution.withCapability("org.jetbrains.skiko", "skiko-awt") { selectHighestVersion() }
-}
-
 tasks.register("checkResolution") {
     val names = wantedTargets.flatMap { target ->
         when (target) {
@@ -105,6 +100,11 @@ tasks.register("checkResolution") {
             failures.forEach { problems += "$name: cannot resolve ${it.requested.displayName}: ${it.failure.message}" }
             components.mapNotNull { it.moduleVersion }.forEach { module ->
                 if (forbidden.matches(module.group)) problems += "$name: JetBrains' ${module.group}:${module.name}:${module.version}"
+                // The desktop modules depend on the fork's skiko-awt (repoint-desktop-skiko.py);
+                // JetBrains' beside it would put skiko's classes on the path twice.
+                if (module.group == "org.jetbrains.skiko" && module.name == "skiko-awt") {
+                    problems += "$name: JetBrains' org.jetbrains.skiko:skiko-awt:${module.version}, beside the fork's org.thisisthepy.compose.skiko:skiko-awt"
+                }
             }
             println("$name: ${components.size} components")
         }
