@@ -1,0 +1,46 @@
+# Fluent 2, implemented here rather than delegated.
+#
+# Microsoft ships no Compose implementation of Fluent, so unlike the Material module this
+# one resolves every role from the published Fluent 2 token set itself.
+# Konyaco/compose-fluent-ui is a useful cross check for the same values and is
+# deliberately not listed below: it describes its own API as experimental and subject to
+# change without notice, and this project has to keep every dependency reachable under
+# GraalVM native image.
+product:
+  type: kmp/lib
+  platforms: [ jvm, android, iosArm64, iosSimulatorArm64, macosArm64, linuxX64, wasmJs ]
+
+dependencies:
+  - //designsystem: exported
+  - $libs.compose.fork.runtime
+  - $libs.compose.fork.foundation
+  - $libs.compose.fork.ui
+
+test-dependencies:
+  - $kotlin.test
+
+apply:
+  - ../publish.module-template.yaml
+
+settings:
+  publishing:
+    artifactId: designsystem-fluent
+    pom:
+      name: "Design systems: Fluent 2"
+      description: "Fluent 2 as a design system for Compose, from the published Fluent 2 tokens."
+
+# A klib's unique_name defaults to the Amper module name, the directory name, which a
+# consumer's own module (or another library) can share; the Kotlin/Native linker refuses two
+# libraries with one unique_name. The Maven coordinates are globally unique. Native only:
+# the Wasm compiler takes no -module-name.
+settings@native:
+  kotlin:
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.designsystem:designsystem-fluent
+
+test-settings@native:
+  kotlin:
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.designsystem:designsystem-fluent-test

@@ -95,6 +95,39 @@ class LogicTest {
     }
 
     @Test
+    fun fr33_6_the_system_edit_menu_greys_paste_while_the_clipboard_holds_no_text() {
+        val empty = systemEditMenu(clipboardHasText = false)
+        assertEquals(listOf("Cut", "Copy", "Paste", "Select All"), empty.map { it.label })
+        assertEquals(listOf(true, true, false, true), empty.map { it.enabled })
+        assertTrue(systemEditMenu(clipboardHasText = true).all { it.enabled })
+        assertTrue(empty[2].separatorAfter, "Select All sits in a group of its own")
+    }
+
+    @Test
+    fun the_windows_edit_menu_is_told_what_the_focused_field_allows() {
+        // No field focused: no menu.
+        assertEquals(0, win32EditMenuFlags(null))
+        // A field nobody described: on, and nothing more is said (win32_edit_menu.h).
+        assertEquals(1, win32EditMenuFlags(EditMenuState.Undescribed))
+        // On, described, selection, editable, text: the bits the C side reads.
+        assertEquals(1 or 2 or 4 or 8 or 16, win32EditMenuFlags(EditMenuState()))
+        assertEquals(1 or 2 or 8 or 16, win32EditMenuFlags(EditMenuState(hasSelection = false)))
+        assertEquals(1 or 2 or 4 or 16, win32EditMenuFlags(EditMenuState(editable = false)))
+        assertEquals(1 or 2 or 8, win32EditMenuFlags(EditMenuState(hasSelection = false, hasText = false)))
+    }
+
+    @Test
+    fun fr5_printable_text_never_carries_a_control_character() {
+        assertEquals("", printableText("\u0001"), "Control A typed a box into the field")
+        assertEquals("", printableText("\u001b"))
+        assertEquals("", printableText("\u007f"))
+        assertEquals("ab", printableText("a\u0001b"))
+        assertEquals("a b", printableText("a b"), "a space is text")
+        assertEquals("한글", printableText("한글"), "composed text is untouched")
+        assertEquals("é", printableText("é"), "accented letters are not control")
+    }
+
+    @Test
     fun a_platform_clipboard_reads_as_a_pasteboard() {
         var stored: String? = null
         val platform = object : WindowPlatform by unsupported() {

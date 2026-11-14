@@ -52,6 +52,7 @@
 #include <d3d11on12.h>
 #include <ole2.h>
 #include <shellapi.h>
+#include <winreg.h>
 #include <psapi.h>
 #include <uiautomation.h>
 #include <uiautomationcoreapi.h>
@@ -63,8 +64,16 @@
 #include <stdlib.h>
 #include <stddef.h>
 
+#include "win32_buttons.h"
 #include "win32_resize.h"
+#include "win32_wheel.h"
+#include "win32_keys.h"
 #include "win32_ime_text.h"
+#include "win32_caption.h"
+#include "win32_multi.h"
+#include "win32_placement.h"
+#include "win32_scheme.h"
+#include "win32_edit_menu.h"
 
 // What happened in the window, waiting to be read.
 //
@@ -86,6 +95,7 @@ enum {
     DXC_EVENT_FILES_ENTERED = 10,
     DXC_EVENT_FILES_DROPPED = 11,
     DXC_EVENT_FILES_EXITED = 12,
+    DXC_EVENT_TEXT_SCALE_CHANGED = 18,
 };
 
 // Room for what an input method is composing, which is a syllable or a word and never a
@@ -107,6 +117,10 @@ struct dxc_event {
     // UTF-8, ending at the first zero. Empty for everything that is not text.
     //
     char text[DXC_TEXT_BYTES];
+    // When the system says a pointer message happened, GetMessageTime read unsigned, in
+    // milliseconds, so a press read after a slow frame still counts towards a double click by
+    // when it was made. Zero for everything else, which the scene times on arrival.
+    int64_t time_millis;
 };
 
 // Room for a burst rather than for a session. A queue that fills is a queue nobody is
@@ -126,63 +140,305 @@ struct dxc_event {
 // context for (DXGI_SWAP_CHAIN_FLAG_GDI_COMPATIBLE), which the CPU resize frames need.
 #define DXC_SWAPCHAIN_FORMAT DXGI_FORMAT_B8G8R8A8_UNORM
 
+// ---------------------------------------------------------------------------
+// Several windows in one process (FR-53)
+// ---------------------------------------------------------------------------
+//
+// Everything one window keeps lives in a DxcWin, allocated when the window is made and
+// found from its HWND (GWLP_USERDATA for the window's own messages, the table below for the
+// handle a caller holds). The code that follows reads and writes it under the names it has
+// always used: each `dxc_x` below is a macro for a field of the window the code is running
+// for, which is `dxc_w`. `dxc_w` is set on entry to everything that can run for a window (its
+// window procedure, its drop target, a call that names its window) and put back on the way
+// out, and it is per thread, so a thread that is not the window's never sees another's.
+//
+// What the process keeps once is not here: the window class, the draw callback the renderer
+// registered, the options the next window will open with, and the switches that turn
+// diagnostics on from the environment.
+
+#define DXC_MAX_ELEMENTS 256
+#define DXC_DROPPED_BYTES (64 * 1024)
+
+struct dxc_element {
+    int32_t role;
+    // In pixels from the top left of the client area, which is what the scene
+    // measures in on this platform.
+    float x;
+    float y;
+    float width;
+    float height;
+    char label[DXC_TEXT_BYTES];
+};
+
+/** How a window was asked to be made. Each window keeps the copy it opened with. */
+struct dxc_window_options {
+    int32_t resizable;
+    int32_t min_width;
+    int32_t min_height;
+    int32_t system_chrome;
+    int32_t backdrop;
+};
+
+typedef struct DxcRootProvider DxcRootProvider;
+typedef struct DxcWin DxcWin;
+
+/** The drop target OLE is given for one window; OLE hands the first member back to its methods. */
+struct dxc_drop_target {
+    IDropTarget iface;
+    DxcWin *win;
+};
+
+struct DxcWin {
+    struct dxc_event events[DXC_EVENT_CAPACITY];
+    int event_head;
+    int event_count;
+
+    HWND window;
+    HWND surface;
+    IDXGISwapChain1 *swapchain;
+    ID3D11Device *d3d11;
+    ID3D11DeviceContext *d3d11_context;
+    ID3D11On12Device *on12;
+    ID3D11Resource *wrapped;
+    UINT swapchain_flags;
+    HANDLE latency_wait;
+    int drawing;
+    ID3D12Device *device;
+    ID3D12CommandQueue *queue;
+    ID3D12Resource *buffers[DXC_BUFFER_COUNT];
+    ID3D12CommandAllocator *allocator;
+    ID3D12GraphicsCommandList *commands;
+    ID3D12Fence *fence;
+    HANDLE fence_signalled;
+    UINT64 fence_value;
+    UINT64 last_list_mark;
+    UINT frame_index;
+    struct dxc_resize sizing;
+    int window_gone;
+    int resizing;
+    int32_t resize_target_width;
+    int32_t resize_target_height;
+    int32_t presented_width;
+    int32_t presented_height;
+    int32_t texture_width;
+    int32_t texture_height;
+    IDXGIAdapter1 *adapter;
+    LUID device_luid;
+    HMONITOR last_monitor;
+    WPARAM last_size_kind;
+
+    int ime_composing;
+    // Set while a cancel this window asked of the input method is being answered.
+    int ime_cancelling;
+    WCHAR pending_high_surrogate;
+    LPCWSTR cursor;
+    LONG ime_spot_x;
+    LONG ime_spot_y;
+    // What dxc_native_set_edit_menu last said (DXC_EDIT_MENU_*): 0 while no text field has
+    // focus, and then a right click puts up no menu.
+    int32_t edit_menu;
+    // The text size percent this window last reported (read when it opened), plus one.
+    // Per window, because the settings broadcast reaches every window and each reports it.
+    int32_t text_scale_seen;
+
+    struct dxc_element a11y_elements[DXC_MAX_ELEMENTS];
+    int32_t a11y_count;
+    int a11y_dirty;
+    int a11y_update_posted;
+    DxcRootProvider *root_provider;
+
+    int32_t presents_in_change;
+    int last_blit;
+    int last_validated;
+    LARGE_INTEGER blit_time;
+    int cpu_mode;
+    HDC dib_dc;
+    HBITMAP dib;
+    HGDIOBJ dib_previous;
+    void *dib_bits;
+    int32_t dib_width;
+    int32_t dib_height;
+    int32_t raster_width;
+    int32_t raster_height;
+    int gpu_return_posted;
+    int32_t mode_switches;
+    // A CPU frame drawn in WM_NCCALCSIZE for the size the window is about to be given,
+    // waiting in the bitmap for WM_SIZE to copy it; and set while that frame is drawn.
+    struct dxc_predrawn predrawn;
+    int predrawing;
+
+    char dropped_paths[DXC_DROPPED_BYTES];
+    int32_t dropped_length;
+    int drag_has_files;
+    struct dxc_drop_target drop;
+
+    struct dxc_window_options options;
+
+    // Several windows. A close the system asked for waits for the application when
+    // close_deferred is set; active is what WM_ACTIVATE last said; the three pending flags are
+    // what the application has not been told yet and read once a turn.
+    int close_deferred;
+    int close_requested;
+    int active;
+    int activation_pending;
+    int moved_pending;
+    int destroyed;
+    int counted;          // holds a place in the process-wide state until it is destroyed
+    int has_position;     // the application named where the window opens
+    int32_t position_x;   // screen points
+    int32_t position_y;
+
+    // Following the pointer: the point of the content, in points, that stays under it.
+    int following;
+    float follow_anchor_x;
+    float follow_anchor_y;
+    int follow_ended;      // 0 running or idle, 1 released, 2 cancelled; read once
+    int follow_end_pending;
+
+    // The color scheme the application asked of this window's caption (FR-53): 0 follows the
+    // system, 1 light, 2 dark. scheme_applied is set once DWM took one; caption_dark is what
+    // it was told last.
+    int32_t color_scheme;
+    int32_t caption_dark;
+    int scheme_applied;
+
+    // Where the pointer is between the maximise button and the client area, for a window
+    // that draws its own caption (win32_caption.h).
+    struct dxc_caption_pointer caption_pointer;
+};
+
+#define dxc_events (dxc_w->events)
+#define dxc_event_head (dxc_w->event_head)
+#define dxc_event_count (dxc_w->event_count)
+#define dxc_window (dxc_w->window)
+#define dxc_surface (dxc_w->surface)
+#define dxc_swapchain (dxc_w->swapchain)
+#define dxc_d3d11 (dxc_w->d3d11)
+#define dxc_d3d11_context (dxc_w->d3d11_context)
+#define dxc_on12 (dxc_w->on12)
+#define dxc_wrapped (dxc_w->wrapped)
+#define dxc_swapchain_flags (dxc_w->swapchain_flags)
+#define dxc_latency_wait (dxc_w->latency_wait)
+#define dxc_drawing (dxc_w->drawing)
+#define dxc_device (dxc_w->device)
+#define dxc_queue (dxc_w->queue)
+#define dxc_buffers (dxc_w->buffers)
+#define dxc_allocator (dxc_w->allocator)
+#define dxc_commands (dxc_w->commands)
+#define dxc_fence (dxc_w->fence)
+#define dxc_fence_signalled (dxc_w->fence_signalled)
+#define dxc_fence_value (dxc_w->fence_value)
+#define dxc_last_list_mark (dxc_w->last_list_mark)
+#define dxc_frame_index (dxc_w->frame_index)
+#define dxc_sizing (dxc_w->sizing)
+#define dxc_window_gone (dxc_w->window_gone)
+#define dxc_resizing (dxc_w->resizing)
+#define dxc_resize_target_width (dxc_w->resize_target_width)
+#define dxc_resize_target_height (dxc_w->resize_target_height)
+#define dxc_presented_width (dxc_w->presented_width)
+#define dxc_presented_height (dxc_w->presented_height)
+#define dxc_texture_width (dxc_w->texture_width)
+#define dxc_texture_height (dxc_w->texture_height)
+#define dxc_adapter (dxc_w->adapter)
+#define dxc_device_luid (dxc_w->device_luid)
+#define dxc_last_monitor (dxc_w->last_monitor)
+#define dxc_last_size_kind (dxc_w->last_size_kind)
+#define dxc_ime_composing (dxc_w->ime_composing)
+#define dxc_ime_cancelling (dxc_w->ime_cancelling)
+#define dxc_pending_high_surrogate (dxc_w->pending_high_surrogate)
+#define dxc_cursor (dxc_w->cursor)
+#define dxc_ime_spot_x (dxc_w->ime_spot_x)
+#define dxc_ime_spot_y (dxc_w->ime_spot_y)
+#define dxc_edit_menu (dxc_w->edit_menu)
+#define dxc_a11y_elements (dxc_w->a11y_elements)
+#define dxc_a11y_count (dxc_w->a11y_count)
+#define dxc_a11y_dirty (dxc_w->a11y_dirty)
+#define dxc_a11y_update_posted (dxc_w->a11y_update_posted)
+#define dxc_root_provider (dxc_w->root_provider)
+#define dxc_presents_in_change (dxc_w->presents_in_change)
+#define dxc_last_blit (dxc_w->last_blit)
+#define dxc_last_validated (dxc_w->last_validated)
+#define dxc_blit_time (dxc_w->blit_time)
+#define dxc_cpu_mode (dxc_w->cpu_mode)
+#define dxc_dib_dc (dxc_w->dib_dc)
+#define dxc_dib (dxc_w->dib)
+#define dxc_dib_previous (dxc_w->dib_previous)
+#define dxc_dib_bits (dxc_w->dib_bits)
+#define dxc_dib_width (dxc_w->dib_width)
+#define dxc_dib_height (dxc_w->dib_height)
+#define dxc_raster_width (dxc_w->raster_width)
+#define dxc_raster_height (dxc_w->raster_height)
+#define dxc_gpu_return_posted (dxc_w->gpu_return_posted)
+#define dxc_mode_switches (dxc_w->mode_switches)
+#define dxc_predrawn (dxc_w->predrawn)
+#define dxc_predrawing (dxc_w->predrawing)
+#define dxc_dropped_paths (dxc_w->dropped_paths)
+#define dxc_dropped_length (dxc_w->dropped_length)
+#define dxc_drag_has_files (dxc_w->drag_has_files)
+#define dxc_options (dxc_w->options)
+
+// What a call that names no window runs for: the window the last select chose, or the one
+// being made, or the one whose message is being handled. Before any window exists it is a
+// record that says the window is gone, so a call made too early answers like one made too late.
+static DxcWin dxc_no_window = {.window_gone = 1, .destroyed = 1};
+static __declspec(thread) DxcWin *dxc_w = &dxc_no_window;
+
+// Process-wide, shared by every window and initialised once, counted by the windows that are
+// open: the window table (handle to state), the count that keeps the window class registered,
+// the window being made (its first messages arrive before the handle is known), where the next
+// window opens, whether a quit was asked for, and when the last pump ended.
+static struct dxc_window_table dxc_table;
+static struct dxc_shared dxc_shared_state;
+static DxcWin *dxc_creating;
+static struct {
+    int32_t has;
+    int32_t x;
+    int32_t y;
+} dxc_next_position;
+static int dxc_quit_seen;
+static int32_t dxc_quit_code;
+static int64_t dxc_last_pump_end_micros;
+static int dxc_class_registered;
+/** A second pump this close behind the last is the same turn of the caller's loop. */
+#define DXC_PUMP_QUIET_MICROS 2000
+static void dxc_uncount_window(DxcWin *win);
+static void dxc_follow_turn(void);
+static int64_t dxc_micros_now(void);
+static void dxc_select_handle(void *handle);
+static void dxc_select_swapchain(void *swapchain);
+static void dxc_select_queue(void *queue);
+
 // No lock. On macOS the events arrive on AppKit's thread and are read on the renderer's,
 // so that queue is guarded; here the window belongs to the thread that draws and the
 // message pump runs inside the read below, so one thread writes and the same one reads.
 // A modal loop (the user dragging the window's edge) dispatches on that thread too.
-static struct dxc_event dxc_events[DXC_EVENT_CAPACITY];
-static int dxc_event_head;
-static int dxc_event_count;
 
-static HWND dxc_window;
-static IDXGISwapChain1 *dxc_swapchain;
 // The Direct3D 11 device the swapchain belongs to, made on the renderer's Direct3D 12
 // device and queue through D3D11On12, and the texture Skia draws into, wrapped for it.
-static ID3D11Device *dxc_d3d11;
-static ID3D11DeviceContext *dxc_d3d11_context;
-static ID3D11On12Device *dxc_on12;
-static ID3D11Resource *dxc_wrapped;
 // ID3D11On12Device, named here because not every SDK's dxguid.lib carries it.
 static const IID dxc_iid_on12_device =
     {0x85611e73, 0x70a9, 0x490e, {0x96, 0x14, 0xa9, 0xe3, 0x02, 0x77, 0x79, 0x04}};
 // What the swapchain was made with, and what every later refit has to say again: a refit
 // that names other flags is refused.
-static UINT dxc_swapchain_flags;
 // Signalled when the swapchain will take another frame without queueing it. NULL where
 // the swapchain was made without the latency flag.
-static HANDLE dxc_latency_wait;
 // A frame is being drawn on this call stack. A resize message that arrives while it is
 // draws nothing: the frame in flight already reads the size that message wrote down.
-static int dxc_drawing;
-static ID3D12Device *dxc_device;
-static ID3D12CommandQueue *dxc_queue;
-static ID3D12Resource *dxc_buffers[DXC_BUFFER_COUNT];
-static ID3D12CommandAllocator *dxc_allocator;
-static ID3D12GraphicsCommandList *dxc_commands;
-static ID3D12Fence *dxc_fence;
-static HANDLE dxc_fence_signalled;
-static UINT64 dxc_fence_value;
 // The fence value signalled after the barrier list last executed.
-static UINT64 dxc_last_list_mark;
-static UINT dxc_frame_index;
 // The size the window has been given and the size it is drawn at, which are the same
 // except while a resize is being taken. A swapchain cannot be refitted while the buffer
 // being refitted is the one being drawn into, so the size is written down here and acted
 // on where a frame begins.
-static struct dxc_resize dxc_sizing;
 // Set when the window has gone, so the frame loop stops rather than drawing into nothing.
-static int dxc_window_gone;
 // A resize is being drawn: WM_SIZE has recorded a size and is drawing it before it
 // returns. The frame presents only if it was drawn at exactly that size, and only once.
-static int dxc_resizing;
-static int32_t dxc_resize_target_width;
-static int32_t dxc_resize_target_height;
 // The size last presented, so one size is never presented twice by a resize.
-static int32_t dxc_presented_width;
-static int32_t dxc_presented_height;
 // DXC_REPORT_LATENCY: each resize step prints how long the refit, the draw, the present
 // and the DwmFlush took together.
 static int dxc_report_latency;
+// DXC_RESIZE_PREDRAW=0: a size given outside a drag is drawn in WM_SIZE, after the window
+// has taken it, as before the frame was drawn ahead in WM_NCCALCSIZE. For comparing the two.
+static int dxc_predraw_off;
 /**
  * One line on stderr for every change of a state that decides how resize frames are
  * produced. On by default: these happen a handful of times a session, and they are what
@@ -210,11 +466,8 @@ static int dxc_priority(void) {
 static int dxc_thread_priority_before = THREAD_PRIORITY_ERROR_RETURN;
 
 // The draw texture's size, defined with the texture further down.
-static int32_t dxc_texture_width;
-static int32_t dxc_texture_height;
 
 // The adapter the device was made on, kept for asking it how much video memory is in use.
-static IDXGIAdapter1 *dxc_adapter;
 
 /** Megabytes of video memory this process uses in a segment group, or -1 where it cannot say. */
 static double dxc_video_mb(DXGI_MEMORY_SEGMENT_GROUP group) {
@@ -255,8 +508,6 @@ void dxc_native_report_metrics(const char *label) {
 }
 
 // The adapter the Direct3D 12 device was made on, and the monitor the window was last on.
-static LUID dxc_device_luid;
-static HMONITOR dxc_last_monitor;
 
 /**
  * Logs the window's monitor, its DPI, the adapter driving that monitor and the adapter
@@ -301,7 +552,6 @@ static void dxc_log_monitor(HWND window, const char *reason) {
 }
 
 // The last WM_SIZE kind, for logging maximise, minimise and restore.
-static WPARAM dxc_last_size_kind = SIZE_RESTORED;
 
 static const char *dxc_size_kind_name(WPARAM kind) {
     switch (kind) {
@@ -378,9 +628,6 @@ static void dxc_draw_one_frame(void) {
     }
 }
 
-static int dxc_ime_composing;
-static WCHAR dxc_pending_high_surrogate;
-static LPCWSTR dxc_cursor = IDC_ARROW;
 
 void dxc_native_set_cursor(int32_t shape) {
     switch (shape) {
@@ -419,17 +666,6 @@ static void dxc_push_event(struct dxc_event event) {
 // describes lives where the scene does. The scene pushes what it has whenever
 // it changes, and the window procedure answers from that.
 
-struct dxc_element {
-    int32_t role;
-    // In pixels from the top left of the client area, which is what the scene
-    // measures in on this platform.
-    float x;
-    float y;
-    float width;
-    float height;
-    char label[DXC_TEXT_BYTES];
-};
-
 // The roles a scene can describe, as numbers, because a name would be a string
 // crossing for every element on every push. Which UIA control type each one is
 // is decided here, in one place.
@@ -440,6 +676,15 @@ enum {
     DXC_ROLE_FIELD = 3,
     DXC_ROLE_CHECKBOX = 4,
     DXC_ROLE_IMAGE = 5,
+    // ElementRole's numbers; 6 to 13 are not told apart here yet and read as groups.
+    DXC_ROLE_TAB_GROUP = 14,
+    DXC_ROLE_OUTLINE = 15,
+    DXC_ROLE_OUTLINE_ROW = 16,
+    DXC_ROLE_MENU = 17,
+    DXC_ROLE_MENU_ITEM = 18,
+    DXC_ROLE_LIST = 19,
+    DXC_ROLE_LIST_ITEM = 20,
+    DXC_ROLE_NAVIGATION = 21,
 };
 
 static int dxc_uia_control_type(int32_t role) {
@@ -449,6 +694,14 @@ static int dxc_uia_control_type(int32_t role) {
         case DXC_ROLE_FIELD:    return UIA_EditControlTypeId;
         case DXC_ROLE_CHECKBOX: return UIA_CheckBoxControlTypeId;
         case DXC_ROLE_IMAGE:    return UIA_ImageControlTypeId;
+        case DXC_ROLE_TAB_GROUP:   return UIA_TabControlTypeId;
+        case DXC_ROLE_OUTLINE:     return UIA_TreeControlTypeId;
+        case DXC_ROLE_OUTLINE_ROW: return UIA_TreeItemControlTypeId;
+        case DXC_ROLE_MENU:        return UIA_MenuControlTypeId;
+        case DXC_ROLE_MENU_ITEM:   return UIA_MenuItemControlTypeId;
+        case DXC_ROLE_LIST:        return UIA_ListControlTypeId;
+        case DXC_ROLE_LIST_ITEM:   return UIA_ListItemControlTypeId;
+        // A navigation landmark is a group; UIA's landmark type property is not reported yet.
         default:                return UIA_GroupControlTypeId;
     }
 }
@@ -456,15 +709,10 @@ static int dxc_uia_control_type(int32_t role) {
 // How many things a screen may say it has. Enough for a screen and not for a
 // document, because a list of ten thousand rows is windowed before it reaches
 // the scene.
-#define DXC_MAX_ELEMENTS 256
 
 // The current accessibility snapshot. Written by the push and read by UIA
 // callbacks. Both happen on the same thread (the one that owns the window and
 // pumps its messages), so no lock is needed.
-static struct dxc_element dxc_a11y_elements[DXC_MAX_ELEMENTS];
-static int32_t dxc_a11y_count;
-static int dxc_a11y_dirty;
-static int dxc_a11y_update_posted;
 #define DXC_WM_ACCESSIBILITY_UPDATE (WM_APP + 1)
 
 // ---------------------------------------------------------------------------
@@ -484,7 +732,6 @@ static int dxc_a11y_update_posted;
 
 // Forward declarations so the vtables can refer to the types.
 typedef struct DxcProvider DxcProvider;
-typedef struct DxcRootProvider DxcRootProvider;
 
 // ---------------------------------------------------------------------------
 // DxcProvider: one element in the flat list
@@ -516,7 +763,6 @@ struct DxcRootProvider {
 
 // The one root. One window means one root, and the root lives as long as the
 // window does.
-static DxcRootProvider *dxc_root_provider;
 
 // Forward declarations of vtable functions.
 static HRESULT STDMETHODCALLTYPE dxc_provider_qi(IRawElementProviderSimple *self, REFIID riid, void **out);
@@ -1239,6 +1485,7 @@ void dxc_native_set_accessibility(const struct dxc_element *elements,
                                    void *window_pointer) {
     HWND window = (HWND)window_pointer;
     if (window == NULL) return;
+    dxc_select_handle(window_pointer);
     if (count < 0 || (count > 0 && elements == NULL)) return;
     // Cap to the maximum the static buffer can hold.
     if (count > DXC_MAX_ELEMENTS) count = DXC_MAX_ELEMENTS;
@@ -1256,12 +1503,14 @@ void dxc_native_set_accessibility(const struct dxc_element *elements,
     }
 }
 
-/** Which mouse buttons are down, as bit zero for the left one and bit one for the right. */
+/** Which mouse buttons are down, in the bits win32_buttons.h names. */
 static int32_t dxc_pressed_buttons(void) {
     int32_t buttons = 0;
-    if (GetKeyState(VK_LBUTTON) < 0) buttons |= 1;
-    if (GetKeyState(VK_RBUTTON) < 0) buttons |= 2;
-    if (GetKeyState(VK_MBUTTON) < 0) buttons |= 4;
+    if (GetKeyState(VK_LBUTTON) < 0) buttons |= DXC_PRIMARY_HELD;
+    if (GetKeyState(VK_RBUTTON) < 0) buttons |= DXC_SECONDARY_HELD;
+    if (GetKeyState(VK_MBUTTON) < 0) buttons |= DXC_MIDDLE_HELD;
+    if (GetKeyState(VK_XBUTTON1) < 0) buttons |= DXC_BACK_HELD;
+    if (GetKeyState(VK_XBUTTON2) < 0) buttons |= DXC_FORWARD_HELD;
     return buttons;
 }
 
@@ -1294,14 +1543,90 @@ static float dxc_wheel_lines(void) {
     return (float)lines;
 }
 
-static void dxc_push_pointer(int32_t kind, LPARAM where) {
+/*
+ * The double-click interval set in the mouse settings, in milliseconds. user32, which this
+ * file links already, answers it for the whole session.
+ */
+int64_t dxc_native_double_click_millis(void) {
+    return (int64_t)GetDoubleClickTime();
+}
+
+/*
+ * The Text size slider in Settings > Accessibility, as a percent (100 to 225); 0 when the
+ * user never moved it. This is the value UISettings.TextScaleFactor reports, read from the
+ * registry because UISettings is a WinRT class and this file stays plain C. advapi32 is
+ * loaded by name for the same reason dwmapi is: no extra import library to link.
+ */
+typedef LONG (WINAPI *dxc_reg_get_value_fn)(HKEY, LPCWSTR, LPCWSTR, DWORD, LPDWORD, PVOID, LPDWORD);
+
+int32_t dxc_native_text_scale_percent(void) {
+    static dxc_reg_get_value_fn reg_get_value = NULL;
+    static int resolved = 0;
+    if (!resolved) {
+        HMODULE advapi = LoadLibraryW(L"advapi32.dll");
+        if (advapi != NULL) {
+            reg_get_value = (dxc_reg_get_value_fn)(void *)GetProcAddress(advapi, "RegGetValueW");
+        }
+        resolved = 1;
+    }
+    if (reg_get_value == NULL) {
+        return 0;
+    }
+    DWORD value = 0;
+    DWORD size = sizeof value;
+    LONG status = reg_get_value(HKEY_CURRENT_USER, L"Software\\Microsoft\\Accessibility",
+                                L"TextScaleFactor", RRF_RT_REG_DWORD, NULL, &value, &size);
+    return status == ERROR_SUCCESS ? (int32_t)value : 0;
+}
+
+/* Queues a text scale event for the current window when the slider moved since its last look. */
+static void dxc_check_text_scale(void) {
+    int32_t percent = dxc_native_text_scale_percent();
+    int32_t seen = dxc_w->text_scale_seen;
+    dxc_w->text_scale_seen = percent + 1;
+    if (seen == percent + 1) {
+        return;
+    }
+    struct dxc_event record;
+    memset(&record, 0, sizeof record);
+    record.kind = DXC_EVENT_TEXT_SCALE_CHANGED;
+    record.x = (float)percent;
+    dxc_push_event(record);
+}
+
+/** The DXC_*_BUTTON flag of the button a WM_*BUTTONDOWN or WM_*BUTTONUP message is about. */
+static int32_t dxc_event_button(UINT message, WPARAM wparam) {
+    switch (message) {
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONUP:
+        return DXC_SECONDARY_BUTTON;
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONUP:
+        return DXC_MIDDLE_BUTTON;
+    case WM_XBUTTONDOWN:
+    case WM_XBUTTONUP:
+        return GET_XBUTTON_WPARAM(wparam) == XBUTTON1 ? DXC_BACK_BUTTON : DXC_FORWARD_BUTTON;
+    default:
+        return 0;
+    }
+}
+
+// When the message being handled was posted, as GetMessageTime gives it: milliseconds since
+// the system started in a LONG that wraps after 49.7 days, read unsigned. The scene keeps only
+// the difference between two of these, and starts again from its own clock when it wraps.
+static int64_t dxc_message_time(void) {
+    return (int64_t)(uint32_t)GetMessageTime();
+}
+
+static void dxc_push_pointer(int32_t kind, LPARAM where, int32_t event_button) {
     struct dxc_event record;
     memset(&record, 0, sizeof record);
     record.kind = kind;
     record.x = (float)GET_X_LPARAM(where);
     record.y = (float)GET_Y_LPARAM(where);
-    record.buttons = dxc_pressed_buttons();
+    record.buttons = dxc_pointer_buttons(dxc_pressed_buttons(), event_button);
     record.modifiers = dxc_held_modifiers();
+    record.time_millis = dxc_message_time();
     dxc_push_event(record);
 }
 
@@ -1315,15 +1640,16 @@ static void dxc_push_scroll(float x, float y) {
     record.y = y;
     record.buttons = dxc_pressed_buttons();
     record.modifiers = dxc_held_modifiers();
+    record.time_millis = dxc_message_time();
     dxc_push_event(record);
 }
 
-static void dxc_push_key(int32_t kind, WPARAM key) {
+static void dxc_push_key_held(int32_t kind, WPARAM key, int32_t modifiers) {
     struct dxc_event record;
     memset(&record, 0, sizeof record);
     record.kind = kind;
     record.buttons = dxc_pressed_buttons();
-    record.modifiers = dxc_held_modifiers();
+    record.modifiers = modifiers;
     record.key_code = (int32_t)key;
     // The character the key carries with no modifier applied, which is what the macOS
     // side puts here. Windows delivers typed text as a separate message, so it is asked
@@ -1332,6 +1658,101 @@ static void dxc_push_key(int32_t kind, WPARAM key) {
     UINT typed = MapVirtualKeyW((UINT)key, MAPVK_VK_TO_CHAR);
     record.code_point = (int32_t)(typed & 0x7fffffffu);
     dxc_push_event(record);
+}
+
+static void dxc_push_key(int32_t kind, WPARAM key) {
+    dxc_push_key_held(kind, key, dxc_held_modifiers());
+}
+
+// The window's own text edit menu (win32_edit_menu.h).
+
+/**
+ * The label of an entry in the language of the system, copied into [out]: the one the
+ * system's edit control puts in its own context menu, which is the first menu of user32. The
+ * menu is not a documented resource, so an entry it does not have, or a system without it,
+ * takes the English label.
+ */
+static void dxc_edit_menu_label(int32_t id, WCHAR *out, int capacity) {
+    static HMENU system_menu;
+    static int looked;
+    if (!looked) {
+        looked = 1;
+        HMODULE user32 = GetModuleHandleW(L"user32.dll");
+        HMENU loaded = user32 != NULL ? LoadMenuW(user32, MAKEINTRESOURCEW(1)) : NULL;
+        system_menu = loaded != NULL ? GetSubMenu(loaded, 0) : NULL;
+    }
+    out[0] = L'\0';
+    if (system_menu != NULL &&
+        GetMenuStringW(system_menu, dxc_edit_menu_system_command(id), out, capacity, MF_BYCOMMAND) > 0) {
+        // An accelerator written after a tab is not part of the name.
+        WCHAR *tab = wcschr(out, L'\t');
+        if (tab != NULL) *tab = L'\0';
+        if (out[0] != L'\0') return;
+    }
+    wcsncpy(out, dxc_edit_menu_fallback_label(id), (size_t)capacity - 1);
+    out[capacity - 1] = L'\0';
+}
+
+/**
+ * Puts the edit menu up and hands the entry chosen to the field as its shortcut, Control and
+ * the entry's letter, pressed and let go. At [where] on the screen, or at the caret the
+ * input method was last told of ([at_caret]) for a menu asked for from the keyboard. Does
+ * nothing while no text field has focus.
+ *
+ * Returns when the menu closes. TrackPopupMenuEx runs the menu's own loop meanwhile, which
+ * dispatches this window's messages (paint among them) but not the application's frame loop,
+ * so the window shows its last frame until the menu is gone: a caret stops blinking for that
+ * long, as it does under any Windows menu.
+ */
+static void dxc_show_edit_menu(HWND window, int at_caret, POINT where) {
+    struct dxc_edit_entry entries[DXC_EDIT_ENTRY_COUNT];
+    int32_t count = dxc_edit_menu_entries(dxc_edit_menu,
+                                          IsClipboardFormatAvailable(CF_UNICODETEXT) ? 1 : 0, entries);
+    if (count == 0) return;
+    HMENU menu = CreatePopupMenu();
+    if (menu == NULL) return;
+    for (int32_t index = 0; index < count; index++) {
+        WCHAR label[128];
+        dxc_edit_menu_label(entries[index].id, label, (int)(sizeof label / sizeof *label));
+        if (entries[index].separator_before) AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(menu, MF_STRING | (entries[index].enabled ? MF_ENABLED : MF_GRAYED),
+                    (UINT_PTR)entries[index].id, label);
+    }
+    POINT at = where;
+    if (at_caret) {
+        if (dxc_ime_spot_x != 0 || dxc_ime_spot_y != 0) {
+            at.x = dxc_ime_spot_x;
+            at.y = dxc_ime_spot_y;
+            ClientToScreen(window, &at);
+        } else {
+            GetCursorPos(&at);
+        }
+    }
+    // Without the window in front the menu does not close when the reader clicks elsewhere;
+    // the posted message lets it finish closing (KB135788).
+    SetForegroundWindow(window);
+    UINT command = (UINT)TrackPopupMenuEx(
+        menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN,
+        at.x, at.y, window, NULL);
+    PostMessageW(window, WM_NULL, 0, 0);
+    DestroyMenu(menu);
+    int32_t key = dxc_edit_menu_key((int32_t)command);
+    // The window can have gone while the menu was up.
+    if (key == 0 || !IsWindow(window)) return;
+    // Control alone, whatever is still held: Shift from Shift and F10 would make it another
+    // shortcut.
+    dxc_push_key_held(DXC_EVENT_KEY_DOWN, (WPARAM)key, 2);
+    dxc_push_key_held(DXC_EVENT_KEY_UP, (WPARAM)key, 2);
+}
+
+/**
+ * Turns the window's edit menu on for a focused text field, or off (0). [flags] are the
+ * DXC_EDIT_MENU_* bits of win32_edit_menu.h: ON, and with KNOWN what the field allows.
+ */
+void dxc_native_set_edit_menu(void *window_pointer, int32_t flags) {
+    if (window_pointer == NULL) return;
+    dxc_select_handle(window_pointer);
+    dxc_edit_menu = flags;
 }
 
 static void dxc_push_text(int32_t kind, const uint16_t *text, size_t units) {
@@ -1359,8 +1780,6 @@ static void dxc_read_ime_text(HIMC context, DWORD part, int32_t kind) {
 }
 
 // Where the caret is in the client area, in pixels, as the renderer last said.
-static LONG dxc_ime_spot_x;
-static LONG dxc_ime_spot_y;
 
 static void dxc_position_ime(HWND window) {
     HIMC context = ImmGetContext(window);
@@ -1383,19 +1802,16 @@ static void dxc_position_ime(HWND window) {
 }
 
 // What the application asked of its window, held until the window is made.
-static struct {
-    int32_t resizable;
-    int32_t min_width;
-    int32_t min_height;
-    int32_t system_chrome;
-    int32_t backdrop;
-} dxc_options = {1, 0, 0, 0, 0};
+static struct dxc_window_options dxc_next_options = {1, 0, 0, 1, 0};
 
 /**
  * Says how the next window should be made. Called once, before it is opened.
  *
  * `system_chrome` keeps the system's caption. Without it the caption strip becomes part of
- * the client area and the renderer draws the title and the three buttons in it. `backdrop`
+ * the client area and the renderer draws the title and the three buttons in it. A window
+ * nobody configured keeps the system's caption: taking the strip away is only safe for a
+ * caller that has said it draws the buttons, and a caller that never said so would
+ * otherwise get a window with no way to close it (thisisthepy/compose-multiplatform-core-extended#171). `backdrop`
  * means nothing here: this window has no material to put behind the page.
  */
 void dxc_native_window_configure(
@@ -1405,11 +1821,11 @@ void dxc_native_window_configure(
     int32_t system_chrome,
     int32_t backdrop
 ) {
-    dxc_options.resizable = resizable;
-    dxc_options.min_width = min_width;
-    dxc_options.min_height = min_height;
-    dxc_options.system_chrome = system_chrome;
-    dxc_options.backdrop = backdrop;
+    dxc_next_options.resizable = resizable;
+    dxc_next_options.min_width = min_width;
+    dxc_next_options.min_height = min_height;
+    dxc_next_options.system_chrome = system_chrome;
+    dxc_next_options.backdrop = backdrop;
 }
 
 // When the frame drawn now will be on the screen, in nanoseconds. The macOS window answers
@@ -1445,9 +1861,35 @@ int32_t dxc_native_window_focused(void) {
     return 0;
 }
 
+/*
+ * Not a stub like its neighbours: ends what the input method is composing where it stands,
+ * sending nothing, and copies what it was composing into out as UTF-8. Answers how many bytes
+ * that is, zero where there was nothing. Asked when a key moved the caret away from a syllable
+ * the field has already kept, so the input method must not go on composing it at the new
+ * caret. Cancelled rather than completed: completing would send the syllable as a result, and
+ * the field would hold it twice. The messages the cancel sends back find the composition
+ * already closed here and push nothing.
+ */
 int32_t dxc_native_ime_reset(char *out, int32_t capacity) {
     if (out != NULL && capacity > 0) out[0] = 0;
-    return 0;
+    if (dxc_window == NULL || !dxc_ime_composing) return 0;
+    HIMC context = ImmGetContext(dxc_window);
+    if (context == NULL) return 0;
+    int32_t written = 0;
+    if (out != NULL && capacity > 0) {
+        WCHAR wide[256];
+        LONG bytes = ImmGetCompositionStringW(context, GCS_COMPSTR, wide, (DWORD)sizeof wide);
+        if (bytes > 0 && bytes % sizeof(WCHAR) == 0) {
+            written = (int32_t)dxc_utf16_to_utf8((const uint16_t *)wide, (size_t)bytes / sizeof(WCHAR),
+                                                 out, (size_t)capacity);
+        }
+    }
+    dxc_ime_composing = 0;
+    dxc_ime_cancelling = 1;
+    ImmNotifyIME(context, NI_COMPOSITIONSTR, CPS_CANCEL, 0);
+    dxc_ime_cancelling = 0;
+    ImmReleaseContext(dxc_window, context);
+    return written;
 }
 
 int64_t dxc_native_resize_serial(void) {
@@ -1466,6 +1908,72 @@ static DWORD dxc_window_style(void) {
         style &= ~(DWORD)(WS_THICKFRAME | WS_MAXIMIZEBOX);
     }
     return style;
+}
+
+int32_t dxc_native_system_dark(void);
+
+typedef HRESULT(WINAPI *dxc_dwm_set_attribute_fn)(HWND, DWORD, LPCVOID, DWORD);
+
+/**
+ * Tells DWM whether the selected window's caption is dark, from its color scheme. Looked up
+ * at run time like DwmFlush. Tries DWMWA_USE_IMMERSIVE_DARK_MODE and then the number it had
+ * before Windows 10 2004. 1 when DWM took it.
+ */
+static int dxc_apply_color_scheme(HWND window) {
+    static int looked_up;
+    static dxc_dwm_set_attribute_fn set_attribute;
+    if (!looked_up) {
+        looked_up = 1;
+        HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
+        if (dwm != NULL) {
+            set_attribute = (dxc_dwm_set_attribute_fn)(void *)GetProcAddress(dwm, "DwmSetWindowAttribute");
+        }
+    }
+    if (set_attribute == NULL || window == NULL) return 0;
+    BOOL dark = dxc_scheme_caption_dark(dxc_w->color_scheme, dxc_native_system_dark()) ? TRUE : FALSE;
+    if (FAILED(set_attribute(window, DXC_SCHEME_DARK_ATTRIBUTE, &dark, sizeof dark)) &&
+        FAILED(set_attribute(window, DXC_SCHEME_DARK_ATTRIBUTE_OLD, &dark, sizeof dark))) {
+        return 0;
+    }
+    dxc_w->caption_dark = dark ? 1 : 0;
+    dxc_w->scheme_applied = 1;
+    SetWindowPos(window, NULL, 0, 0, 0, 0,
+                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    return 1;
+}
+
+/**
+ * Makes the selected window resizable or not after it opened. The style and the caption's
+ * hit test both read the option, so the frame and the top resize band change together.
+ * 0 when no window is selected.
+ */
+int32_t dxc_native_window_set_resizable(int32_t resizable) {
+    if (dxc_window == NULL) return 0;
+    dxc_options.resizable = resizable ? 1 : 0;
+    LONG_PTR style = GetWindowLongPtrW(dxc_window, GWL_STYLE);
+    style = (LONG_PTR)dxc_scheme_style((uint32_t)style, dxc_options.resizable);
+    SetWindowLongPtrW(dxc_window, GWL_STYLE, style);
+    SetWindowPos(dxc_window, NULL, 0, 0, 0, 0,
+                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    return 1;
+}
+
+/**
+ * Sets the selected window's caption to follow the system (0), stay light (1) or stay
+ * dark (2). A window that follows the system follows it on WM_SETTINGCHANGE. 1 when DWM
+ * took it; 0 with no window, a scheme it does not know, or a DWM that refused.
+ */
+int32_t dxc_native_window_set_color_scheme(int32_t scheme) {
+    if (dxc_window == NULL || !dxc_scheme_valid(scheme)) return 0;
+    dxc_w->color_scheme = scheme;
+    return dxc_apply_color_scheme(dxc_window);
+}
+
+/** What the selected window's caption was last told, for tests. 0 until a scheme was applied. */
+int32_t dxc_native_window_caption_dark(int32_t *dark) {
+    if (!dxc_w->scheme_applied) return 0;
+    if (dark != NULL) *dark = dxc_w->caption_dark;
+    return 1;
 }
 
 /*
@@ -1490,14 +1998,12 @@ static DWORD dxc_window_style(void) {
  * has to answer for it or the window becomes the one window on the desktop that cannot be
  * resized from the top.
  *
- * The geometry below is duplicated in Kotlin, which draws into the same strip.
- * scripts/tests/windows-caption-metrics.test.sh fails if the two stop agreeing.
+ * The geometry is duplicated in Kotlin (common's Win32Chrome), which the scene lays the
+ * buttons out with. scripts/check-windows-caption-metrics.sh fails if the two stop agreeing.
  */
 
-// Windows 11 caption metrics, in device independent pixels.
-#define DXC_CAPTION_HEIGHT_DIP 32
-#define DXC_CAPTION_BUTTON_WIDTH_DIP 46
-#define DXC_CAPTION_BUTTON_COUNT 3
+// Windows 11 caption metrics, in device independent pixels, are in win32_caption.h with
+// the hit test arithmetic, so the shared test can check them without a window.
 
 static int dxc_scaled(HWND window, int dip) {
     UINT dpi = GetDpiForWindow(window);
@@ -1526,28 +2032,65 @@ static LRESULT dxc_caption_hit_test(HWND window, LPARAM lparam) {
         return where;
     }
     POINT point = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-    RECT frame;
-    if (!GetWindowRect(window, &frame)) {
+    RECT client;
+    if (!ScreenToClient(window, &point) || !GetClientRect(window, &client)) {
         return where;
     }
-    // The top resize band was in the non-client area this window gave up, so nothing else
-    // will answer for it. A window that cannot be resized has no such band.
-    int band = dxc_maximised_overhang(window);
-    if (dxc_options.resizable && !IsZoomed(window) && point.y < frame.top + band) {
+    // Measured in the client area: a maximised window's top edge hangs off the monitor and
+    // the client area is inset from it, which is where the renderer draws the buttons.
+    switch (dxc_caption_zone_at(point.x, point.y, client.right, (int32_t)GetDpiForWindow(window),
+                                dxc_maximised_overhang(window), dxc_options.resizable,
+                                IsZoomed(window) ? 1 : 0)) {
+    case DXC_CAPTION_ZONE_TOP:
         return HTTOP;
-    }
-    if (point.y >= frame.top + dxc_scaled(window, DXC_CAPTION_HEIGHT_DIP)) {
+    case DXC_CAPTION_ZONE_CAPTION:
+        // Drags the window, and brings back double click to maximise and the system menu
+        // on right click.
+        return HTCAPTION;
+    case DXC_CAPTION_ZONE_MAXIMISE:
+        // Snap Layouts appears only over a window's HTMAXBUTTON. The press and the moves
+        // that land here are non-client messages, forwarded to the scene below so the
+        // renderer's button still hovers, presses and toggles.
+        return HTMAXBUTTON;
+    default:
+        // Minimise and close are drawn by the renderer and take ordinary mouse input.
         return HTCLIENT;
     }
-    // The buttons are drawn by Kotlin and have to receive ordinary mouse input, so the
-    // strip they occupy stays client area. Everything else in the caption drags the
-    // window, which also brings back double click to maximise and the system menu on
-    // right click.
-    int buttons = dxc_scaled(window, DXC_CAPTION_BUTTON_WIDTH_DIP * DXC_CAPTION_BUTTON_COUNT);
-    if (point.x >= frame.right - buttons) {
-        return HTCLIENT;
+}
+
+/**
+ * Hands a non-client mouse message over the maximise button to the scene as the client
+ * pointer event it would have been, with the point moved into client coordinates.
+ */
+static void dxc_push_caption_pointer(HWND window, int32_t kind, LPARAM screen) {
+    POINT point = {GET_X_LPARAM(screen), GET_Y_LPARAM(screen)};
+    ScreenToClient(window, &point);
+    dxc_push_pointer(kind, MAKELPARAM(point.x, point.y), 0);
+}
+
+/** Tells the scene what win32_caption.h decided about a move or a leave. `screen` is read only for a move. */
+static void dxc_forward_caption(HWND window, enum dxc_caption_forward forward, LPARAM screen) {
+    switch (forward) {
+    case DXC_CAPTION_FORWARD_MOVE:
+        dxc_push_caption_pointer(window, DXC_EVENT_POINTER_MOVE, screen);
+        break;
+    case DXC_CAPTION_FORWARD_LEAVE:
+        // Over nothing the scene draws, so it drops the hover it was showing.
+        dxc_push_pointer(DXC_EVENT_POINTER_MOVE, MAKELPARAM(DXC_CAPTION_OUTSIDE, DXC_CAPTION_OUTSIDE), 0);
+        break;
+    default:
+        break;
     }
-    return HTCAPTION;
+}
+
+/** Whether a mouse button is down or this window has the mouse, so a leave is not the end of anything. */
+static int32_t dxc_pointer_held(HWND window) {
+    return dxc_pressed_buttons() != 0 || GetCapture() == window ? 1 : 0;
+}
+
+/** True while the window is maximised, for the renderer's maximise or restore glyph. */
+int32_t dxc_native_window_is_zoomed(void) {
+    return dxc_window != NULL && IsZoomed(dxc_window) ? 1 : 0;
 }
 
 // Named apart from the one in `renderer_entry.c`, which subclasses the toolkit's frame
@@ -1803,11 +2346,7 @@ static int32_t dxc_acquire_buffers(int32_t width, int32_t height);
 // The child window the swapchain presents to. During a size change it is hidden and the
 // top-level window shows its own GDI redirection surface, into which each step's CPU frame is
 // copied before WM_SIZE returns; nothing is presented until the size has settled.
-static HWND dxc_surface;
 // Presents since the current size change began, for the per-step proof line.
-static int32_t dxc_presents_in_change;
-static int dxc_last_blit;
-static int dxc_last_validated;
 // A real drag driven by the test hook is running; see dxc_native_debug_resize.
 static int dxc_real_drag_active;
 // A drag driven from another process (DXC_REAL_DRAG=external), and the size changes it made.
@@ -1817,19 +2356,7 @@ static int dxc_capture_steps;
 static int dxc_capture_failures;
 static void dxc_capture_step(HWND window);
 // When the last CPU frame was copied into the window.
-static LARGE_INTEGER dxc_blit_time;
 static int dxc_raster_enabled;
-static int dxc_cpu_mode;
-static HDC dxc_dib_dc;
-static HBITMAP dxc_dib;
-static HGDIOBJ dxc_dib_previous;
-static void *dxc_dib_bits;
-static int32_t dxc_dib_width;
-static int32_t dxc_dib_height;
-static int32_t dxc_raster_width;
-static int32_t dxc_raster_height;
-static int dxc_gpu_return_posted;
-static int32_t dxc_mode_switches;
 #define DXC_WM_GPU_RETURN (WM_APP + 2)
 
 void dxc_native_set_raster_resize(int32_t enabled) {
@@ -1951,12 +2478,28 @@ int32_t dxc_native_raster_begin(void **pixels, int32_t *row_bytes, int32_t *widt
     return 0;
 }
 
-/** Copies the CPU frame into the window, 1:1, before the message that asked for it returns. */
+static void dxc_raster_copy(void);
+
+/**
+ * Copies the CPU frame into the window, 1:1, before the message that asked for it returns.
+ *
+ * Not while the frame is drawn ahead of a size change (dxc_predraw_resize): the window is
+ * still the old size then, so the frame waits in the bitmap and WM_SIZE copies it.
+ */
 void dxc_native_raster_end(void) {
     if (dxc_window == NULL || dxc_dib_dc == NULL) {
         return;
     }
     dxc_step_draw_ms = dxc_elapsed_ms(dxc_step_mark);
+    if (dxc_predrawing) {
+        dxc_predrawn_set(&dxc_predrawn, dxc_raster_width, dxc_raster_height);
+        return;
+    }
+    dxc_raster_copy();
+}
+
+/** The copy of the frame in the bitmap into the window, and the child hidden after it. */
+static void dxc_raster_copy(void) {
     LARGE_INTEGER copy_started;
     QueryPerformanceCounter(&copy_started);
     // Into the top-level window, through GDI, before the message that asked for it returns.
@@ -2006,11 +2549,19 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
         dxc_switch_frames(1, width, height, dxc_sizing.dragging ? "the edge is being dragged" : "the size changed");
     }
     dxc_resizing = 1;
-    dxc_step_gpu_idle_ms = dxc_step_refit_ms = dxc_step_draw_ms = dxc_step_present_ms = 0.0;
-    dxc_step_copy_ms = 0.0;
-    dxc_last_blit = 0;
-    dxc_last_validated = 0;
-    dxc_draw_one_frame();
+    if (!dxc_predrawn_take(&dxc_predrawn, width, height) || !dxc_cpu_mode || dxc_dib_dc == NULL) {
+        dxc_step_gpu_idle_ms = dxc_step_refit_ms = dxc_step_draw_ms = dxc_step_present_ms = 0.0;
+        dxc_step_copy_ms = 0.0;
+        dxc_last_blit = 0;
+        dxc_last_validated = 0;
+        dxc_draw_one_frame();
+    } else {
+        // Drawn in WM_NCCALCSIZE, before the window took this size: only the copy is left,
+        // and it lands before DWM composes the new rectangle again.
+        dxc_raster_width = width;
+        dxc_raster_height = height;
+        dxc_raster_copy();
+    }
     dxc_resizing = 0;
     if (dxc_cpu_mode) {
         // What this step put on screen and how, for the CI assertion over these lines.
@@ -2051,18 +2602,74 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
     }
 }
 
-static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+/**
+ * Draws the frame for a size the window is about to be given, before it is given it.
+ *
+ * Called from WM_NCCALCSIZE with the client rectangle the window will have. Outside a drag
+ * the window takes a new rectangle (maximised, restored, snapped, any SetWindowPos) before
+ * WM_SIZE runs, and WM_SIZE drawing the frame then means DWM can compose the new
+ * rectangle, for as long as the draw takes, with the old picture in it: the swapchain's
+ * child window keeps its old size and is cut by the new rectangle, and the window's own
+ * surface keeps its old pixels in the top left (compose-rust#684). So the frame is drawn
+ * here, on the CPU into the bitmap, while the window still shows the old size with the old
+ * picture; WM_SIZE then only copies it, which takes far less than a composition. The wait
+ * for DWM to compose once more, last, puts that copy at the start of a composition
+ * interval rather than at a random point of one.
+ */
+static void dxc_predraw_resize(HWND window, const RECT *client) {
+    if (dxc_predraw_off || dxc_swapchain == NULL || dxc_draw_frame == NULL || IsIconic(window)) {
+        return;
+    }
+    RECT now;
+    if (!GetClientRect(window, &now)) {
+        return;
+    }
+    int32_t width = (int32_t)(client->right - client->left);
+    int32_t height = (int32_t)(client->bottom - client->top);
+    if (!dxc_resize_predraw_wanted(&dxc_sizing, dxc_raster_enabled, dxc_drawing, width, height,
+                                   (int32_t)(now.right - now.left), (int32_t)(now.bottom - now.top),
+                                   dxc_presented_width, dxc_presented_height)) {
+        return;
+    }
+    LARGE_INTEGER started;
+    QueryPerformanceCounter(&started);
+    dxc_switch_frames(1, width, height, "the size is about to change");
+    dxc_predrawn_set(&dxc_predrawn, 0, 0);
+    dxc_resize_target_width = width;
+    dxc_resize_target_height = height;
+    dxc_resizing = 1;
+    dxc_predrawing = 1;
+    dxc_draw_one_frame();
+    dxc_predrawing = 0;
+    dxc_resizing = 0;
+    int drawn = dxc_predrawn.width == width && dxc_predrawn.height == height;
+    double drawn_ms = dxc_elapsed_ms(started);
+    int flushed = drawn ? dxc_dwm_flush() : 0;
+    fprintf(stderr,
+            "compose-rust: resize-mode: drew %dx%d before the window took it (%s, draw %.2f ms, %s %.2f ms)\n",
+            (int)width, (int)height, drawn ? "waiting for WM_SIZE" : "not drawn", drawn_ms,
+            flushed ? "DwmFlush" : "no DwmFlush", dxc_elapsed_ms(started) - drawn_ms);
+}
+
+static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     if (dxc_trace_state >= 0 && dxc_trace_on()) dxc_trace_message(window, message, wparam, lparam);
     switch (message) {
     case WM_NCCALCSIZE: {
-        if (dxc_options.system_chrome || wparam != TRUE) {
+        if (wparam != TRUE) {
             break;
         }
         NCCALCSIZE_PARAMS *params = (NCCALCSIZE_PARAMS *)lparam;
+        if (dxc_options.system_chrome) {
+            LRESULT answer = DefWindowProcW(window, message, wparam, lparam);
+            dxc_predraw_resize(window, &params->rgrc[0]);
+            return answer;
+        }
         LONG requested_top = params->rgrc[0].top;
         DefWindowProcW(window, message, wparam, lparam);
         params->rgrc[0].top = IsZoomed(window) ? requested_top + dxc_maximised_overhang(window)
                                                : requested_top;
+        // rgrc[0] is now the client rectangle the window is about to have.
+        dxc_predraw_resize(window, &params->rgrc[0]);
         return 0;
     }
     case WM_NCHITTEST:
@@ -2070,6 +2677,55 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
             break;
         }
         return dxc_caption_hit_test(window, lparam);
+    case WM_NCMOUSEMOVE:
+        if (!dxc_options.system_chrome) {
+            int over_maximise = wparam == HTMAXBUTTON;
+            if (over_maximise) {
+                // Asked for, because a pointer leaving a non-client button sends nothing else.
+                TRACKMOUSEEVENT track = {sizeof track, TME_LEAVE | TME_NONCLIENT, window, 0};
+                TrackMouseEvent(&track);
+            }
+            // A move from the button onto the caption or the top band is no leave to
+            // Windows, so the scene is told here that the button is not under the pointer.
+            dxc_forward_caption(window, dxc_caption_nc_move(&dxc_w->caption_pointer, over_maximise), lparam);
+            if (over_maximise) {
+                return 0;
+            }
+        }
+        break;
+    case WM_NCMOUSELEAVE:
+        if (!dxc_options.system_chrome) {
+            dxc_forward_caption(window, dxc_caption_nc_leave(&dxc_w->caption_pointer, dxc_pointer_held(window)), 0);
+        }
+        break;
+    case WM_MOUSELEAVE:
+        // Only a window that draws its own caption asks for this message (WM_MOUSEMOVE
+        // below): its minimise and close buttons are at the window's edge, where the
+        // pointer leaves without another move, and would stay lit.
+        if (!dxc_options.system_chrome) {
+            dxc_forward_caption(window, dxc_caption_client_leave(&dxc_w->caption_pointer, dxc_pointer_held(window)), 0);
+            return 0;
+        }
+        break;
+    case WM_NCLBUTTONDOWN:
+    case WM_NCLBUTTONDBLCLK:
+        if (!dxc_options.system_chrome && wparam == HTMAXBUTTON) {
+            // Swallowed, or the default handler runs its own button loop and toggles the
+            // window itself; the renderer's button is the one that acts on the release.
+            // Captured like a press in the client area: the release then arrives as
+            // WM_LBUTTONUP wherever the pointer is, over the button, over the caption or
+            // off the window, so the scene never keeps a button it was told is down.
+            SetCapture(window);
+            dxc_push_caption_pointer(window, DXC_EVENT_POINTER_DOWN, lparam);
+            return 0;
+        }
+        break;
+    case WM_NCLBUTTONUP:
+        if (!dxc_options.system_chrome && wparam == HTMAXBUTTON) {
+            dxc_push_caption_pointer(window, DXC_EVENT_POINTER_UP, lparam);
+            return 0;
+        }
+        break;
     case WM_GETMINMAXINFO:
         if (dxc_options.min_width > 0 || dxc_options.min_height > 0) {
             UINT dpi = GetDpiForWindow(window);
@@ -2092,7 +2748,18 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
         // No tracking area. Windows delivers a move whenever the pointer is over the
         // client area, so hover, which is half of what a desktop control does, arrives
         // without having to be asked for.
-        dxc_push_pointer(DXC_EVENT_POINTER_MOVE, lparam);
+        if (!dxc_options.system_chrome) {
+            // The end of the hover does have to be asked for, each time the pointer comes
+            // back: a leave ends the request. Not while the mouse is captured, when a move
+            // arrives from anywhere and asking from outside the client area is answered
+            // with a leave at once.
+            if (GetCapture() != window) {
+                TRACKMOUSEEVENT track = {sizeof track, TME_LEAVE, window, 0};
+                TrackMouseEvent(&track);
+            }
+            dxc_caption_client_move(&dxc_w->caption_pointer);
+        }
+        dxc_push_pointer(DXC_EVENT_POINTER_MOVE, lparam, 0);
         return 0;
     case WM_SETCURSOR:
         if (LOWORD(lparam) == HTCLIENT) {
@@ -2103,42 +2770,70 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
     case WM_LBUTTONDOWN:
     case WM_RBUTTONDOWN:
     case WM_MBUTTONDOWN:
+    case WM_XBUTTONDOWN:
         // Held so that a drag leaving the window still reports where it went, and so the
         // release that ends it is heard at all.
         SetCapture(window);
-        dxc_push_pointer(DXC_EVENT_POINTER_DOWN, lparam);
-        return 0;
+        dxc_push_pointer(DXC_EVENT_POINTER_DOWN, lparam, dxc_event_button(message, wparam));
+        // WM_XBUTTONDOWN asks for TRUE, where the other button messages ask for zero.
+        return message == WM_XBUTTONDOWN ? TRUE : 0;
     case WM_LBUTTONUP:
     case WM_RBUTTONUP:
     case WM_MBUTTONUP:
+    case WM_XBUTTONUP:
         ReleaseCapture();
-        dxc_push_pointer(DXC_EVENT_POINTER_UP, lparam);
-        return 0;
+        dxc_push_pointer(DXC_EVENT_POINTER_UP, lparam, dxc_event_button(message, wparam));
+        // A right click in a focused text field: the release is heard first, so the scene
+        // does not think the button is still held while the menu is up.
+        if (message == WM_RBUTTONUP && (dxc_edit_menu & DXC_EDIT_MENU_ON) != 0) {
+            POINT where = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            ClientToScreen(window, &where);
+            dxc_show_edit_menu(window, 0, where);
+        }
+        return message == WM_XBUTTONUP ? TRUE : 0;
     case WM_MOUSEWHEEL:
-        dxc_push_scroll(0.0f,
-            (float)GET_WHEEL_DELTA_WPARAM(wparam) / (float)WHEEL_DELTA * dxc_wheel_lines());
+    case WM_MOUSEHWHEEL: {
+        // The sign of each axis is decided in win32_wheel.h, where it is tested.
+        float scroll_x = 0.0f, scroll_y = 0.0f;
+        dxc_wheel_to_scroll(GET_WHEEL_DELTA_WPARAM(wparam), message == WM_MOUSEHWHEEL,
+            dxc_wheel_lines(), &scroll_x, &scroll_y);
+        dxc_push_scroll(scroll_x, scroll_y);
         return 0;
-    case WM_MOUSEHWHEEL:
-        dxc_push_scroll(
-            (float)GET_WHEEL_DELTA_WPARAM(wparam) / (float)WHEEL_DELTA * dxc_wheel_lines(),
-            0.0f);
-        return 0;
+    }
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
-        // Anything held with alt, and F10, arrive as a system key. Answered here rather
-        // than passed on, because the default handler puts the window into menu mode on a
-        // keystroke the scene was meant to read. Alt and F4 together is the exception: it
-        // is how a window is closed from the keyboard, and the handler that does that is
-        // the one being stepped around.
-        dxc_push_key(DXC_EVENT_KEY_DOWN, wparam);
-        if (message == WM_SYSKEYDOWN && wparam == VK_F4) {
-            break;
-        }
-        return 0;
     case WM_KEYUP:
     case WM_SYSKEYUP:
-        dxc_push_key(DXC_EVENT_KEY_UP, wparam);
+        // Anything held with alt, and F10, arrive as a system key. Answered here rather
+        // than passed on, because the default handler puts the window into menu mode on a
+        // keystroke the scene was meant to read (win32_keys.h, where it is tested). Alt and
+        // F4 together is the exception: it is how a window is closed from the keyboard, and
+        // the handler that does that is the one being stepped around.
+        //
+        // While a text field has focus and the window's edit menu is on, the press of the
+        // Menu key, or of Shift and F10, puts that menu up at the caret instead, and goes no
+        // further (win32_edit_menu.h).
+        if (dxc_key_is_press(message) && (dxc_edit_menu & DXC_EDIT_MENU_ON) != 0 &&
+            dxc_edit_menu_key_opens((uint32_t)wparam, dxc_held_modifiers())) {
+            POINT none = {0, 0};
+            dxc_show_edit_menu(window, 1, none);
+            return 0;
+        }
+        dxc_push_key(dxc_key_is_press(message) ? DXC_EVENT_KEY_DOWN : DXC_EVENT_KEY_UP, wparam);
+        if (dxc_key_passes_to_system(message, wparam)) break;
         return 0;
+    case WM_CONTEXTMENU:
+        // Asked for some other way, a pen held down for one: at the point it names, or at
+        // the caret for the keyboard's (-1, -1). A right click on the caption arrives here
+        // from the default handler too, and that one is the window menu's, so a point
+        // outside the client area is passed on.
+        if ((dxc_edit_menu & DXC_EDIT_MENU_ON) != 0 &&
+            (lparam == (LPARAM)-1 || SendMessageW(window, WM_NCHITTEST, 0, lparam) == HTCLIENT)) {
+            POINT where = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            dxc_show_edit_menu(window, lparam == (LPARAM)-1, where);
+            return 0;
+        }
+        break;
     case WM_ENTERSIZEMOVE:
         // The reader has taken hold of an edge, or of the title bar. From here until the
         // matching message below, everything this window hears is dispatched from a loop
@@ -2191,6 +2886,9 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
         dxc_position_ime(window);
         return 0;
     case WM_IME_COMPOSITION: {
+        // The cancel dxc_native_ime_reset asked for, coming back: the field kept the text,
+        // so nothing is said about it.
+        if (dxc_ime_cancelling) return 0;
         if (lparam == 0) {
             dxc_push_text(DXC_EVENT_TEXT_COMPOSE, NULL, 0);
             return 0;
@@ -2263,13 +2961,26 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
             dxc_log_monitor(window, "WM_DISPLAYCHANGE");
         }
         break;
+    case WM_ACTIVATE:
+        // The window gained or lost the keyboard: what the application is told as focus. The
+        // default handler still runs (it gives the window the focus).
+        dxc_w->active = LOWORD(wparam) != WA_INACTIVE;
+        dxc_w->activation_pending = 1;
+        break;
+    case WM_WINDOWPOSCHANGED:
+        // Moved or resized, by the user or by SetWindowPos. The default handler turns it into
+        // WM_MOVE and WM_SIZE.
+        dxc_w->moved_pending = 1;
+        break;
     case WM_MOVE:
+        dxc_w->moved_pending = 1;
         if (dxc_swapchain != NULL &&
             MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) != dxc_last_monitor) {
             dxc_log_monitor(window, "the window moved to another monitor");
         }
         break;
     case WM_SIZE:
+        dxc_w->moved_pending = 1;
         if (wparam != dxc_last_size_kind &&
             (wparam == SIZE_MAXIMIZED || wparam == SIZE_MINIMIZED || wparam == SIZE_RESTORED)) {
             dxc_mode("window", dxc_size_kind_name(dxc_last_size_kind), dxc_size_kind_name(wparam),
@@ -2308,10 +3019,27 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
         // Answered so the window is never painted white between frames. Every pixel of
         // the client area comes from the swapchain.
         return 1;
+    case WM_SETTINGCHANGE:
+        // Any settings broadcast may be the Text size slider, so look rather than parse lparam.
+        dxc_check_text_scale();
+        // A window that follows the system's scheme follows it when the user changes it.
+        if (dxc_w->scheme_applied && dxc_w->color_scheme == DXC_SCHEME_SYSTEM &&
+            dxc_scheme_is_theme_change((const uint16_t *)lparam)) {
+            dxc_apply_color_scheme(window);
+        }
+        break;
     case WM_CLOSE:
+        // The application decides when a window goes where it has asked to be told: it hears
+        // the request, and closes the window itself or leaves it open. A window nobody asked
+        // that of closes, as it always has.
+        if (dxc_w->close_deferred) {
+            dxc_w->close_requested = 1;
+            return 0;
+        }
         DestroyWindow(window);
         return 0;
     case WM_DESTROY:
+        RevokeDragDrop(window);
         if (dxc_root_provider != NULL && dxc_root_provider->window == window) {
             dxc_release_children(dxc_root_provider);
             dxc_root_provider->window = NULL;
@@ -2321,7 +3049,11 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
         dxc_a11y_update_posted = 0;
         dxc_window = NULL;
         dxc_window_gone = 1;
-        PostQuitMessage(0);
+        dxc_w->destroyed = 1;
+        dxc_w->following = 0;
+        // Destroying a window ends that window and nothing else: whether the process quits
+        // is the application's to say (dxc_native_post_quit), as it may still have windows.
+        dxc_uncount_window(dxc_w);
         return 0;
     case DXC_WM_GPU_RETURN:
         dxc_gpu_return_posted = 0;
@@ -2364,6 +3096,31 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
 }
 
 /**
+ * Every window of the class lands here. The state record of the window the message is for
+ * is found from the handle, becomes the current one for the length of the message, and is
+ * put back after, so a message handled inside another's (a nested loop, a draw callback)
+ * leaves the outer one as it found it.
+ */
+static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_NCCREATE) {
+        const CREATESTRUCTW *created = (const CREATESTRUCTW *)lparam;
+        if (created != NULL && created->lpCreateParams != NULL) {
+            SetWindowLongPtrW(window, GWLP_USERDATA, (LONG_PTR)created->lpCreateParams);
+        }
+    }
+    DxcWin *win = (DxcWin *)GetWindowLongPtrW(window, GWLP_USERDATA);
+    // WM_GETMINMAXINFO comes before WM_NCCREATE, from inside CreateWindowEx, for the window
+    // being made.
+    if (win == NULL) win = dxc_creating;
+    if (win == NULL) return DefWindowProcW(window, message, wparam, lparam);
+    DxcWin *outer = dxc_w;
+    dxc_w = win;
+    LRESULT result = dxc_window_message(window, message, wparam, lparam);
+    dxc_w = outer;
+    return result;
+}
+
+/**
  * Hands Windows the messages it has been holding.
  *
  * Here rather than in a loop of its own because Windows delivers messages to the thread
@@ -2374,6 +3131,12 @@ static LRESULT CALLBACK dxc_native_window_proc(HWND window, UINT message, WPARAM
 static void dxc_pump_messages(void) {
     MSG message;
     while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE)) {
+        if (message.message == WM_QUIT) {
+            // PostQuitMessage from the application: written down for it to read, not acted on.
+            dxc_quit_seen = 1;
+            dxc_quit_code = (int32_t)message.wParam;
+            continue;
+        }
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
@@ -2391,7 +3154,12 @@ static void dxc_pump_messages(void) {
  * and comes back the moment anything is pressed.
  */
 void dxc_native_pump(double seconds) {
-    if (dxc_window != NULL && seconds > 0.0) {
+    // With several windows the caller pumps once a turn on any one of them, and this serves
+    // the process's queue, so a second pump in the same turn finds it empty and must not
+    // wait for a frame again.
+    if ((dxc_window != NULL || dxc_table.count > 0) && seconds > 0.0 &&
+        dxc_pump_waits(dxc_table.count, dxc_micros_now(), dxc_last_pump_end_micros,
+                       DXC_PUMP_QUIET_MICROS)) {
         DWORD wait = (DWORD)(seconds * 1000.0 + 0.5);
         if (wait > 0) {
             // Returns at once where something is already waiting, which is what the last
@@ -2401,6 +3169,8 @@ void dxc_native_pump(double seconds) {
         }
     }
     dxc_pump_messages();
+    dxc_follow_turn();
+    dxc_last_pump_end_micros = dxc_micros_now();
 }
 
 /** True once the reader has closed the window. */
@@ -2568,10 +3338,6 @@ void dxc_native_clipboard_write(const char *text) {
  * Files dragged over the window, through OLE, which is what says where they are and when
  * they leave. WM_DROPFILES says only that they were dropped.
  */
-#define DXC_DROPPED_BYTES (64 * 1024)
-static char dxc_dropped_paths[DXC_DROPPED_BYTES];
-static int32_t dxc_dropped_length;
-static int dxc_drag_has_files;
 
 /** The paths of the files last dragged over the window, NUL between them, and the length. */
 int32_t dxc_native_dropped_paths(char *out, int32_t capacity) {
@@ -2606,12 +3372,15 @@ static void dxc_read_dragged_files(IDataObject *data) {
         wchar_t wide[MAX_PATH * 4];
         UINT units = DragQueryFileW(drop, index, wide, (UINT)(sizeof wide / sizeof *wide));
         if (units == 0) continue;
-        int bytes = WideCharToMultiByte(CP_UTF8, 0, wide, (int)units, NULL, 0, NULL, NULL);
+        // A name with an unpaired surrogate has no UTF-8 form. The file is left out and the
+        // others are kept, instead of being handed on with a replacement character that
+        // names a file that does not exist.
+        int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide, (int)units, NULL, 0, NULL, NULL);
         // Room for the separator as well, and a path that does not fit is left out rather
         // than cut in half.
         if (bytes <= 0 || used + bytes + 1 > DXC_DROPPED_BYTES) continue;
         if (used > 0) dxc_dropped_paths[used++] = '\0';
-        WideCharToMultiByte(CP_UTF8, 0, wide, (int)units, dxc_dropped_paths + used, bytes, NULL, NULL);
+        WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide, (int)units, dxc_dropped_paths + used, bytes, NULL, NULL);
         used += bytes;
     }
     dxc_dropped_length = used;
@@ -2642,7 +3411,7 @@ static HRESULT STDMETHODCALLTYPE dxc_drop_query(IDropTarget *self, REFIID id, vo
 static ULONG STDMETHODCALLTYPE dxc_drop_add_ref(IDropTarget *self) { (void)self; return 1; }
 static ULONG STDMETHODCALLTYPE dxc_drop_release(IDropTarget *self) { (void)self; return 1; }
 
-static HRESULT STDMETHODCALLTYPE dxc_drop_enter(
+static HRESULT STDMETHODCALLTYPE dxc_drop_enter_for(
     IDropTarget *self, IDataObject *data, DWORD keys, POINTL where, DWORD *effect) {
     (void)self;
     (void)keys;
@@ -2658,7 +3427,7 @@ static HRESULT STDMETHODCALLTYPE dxc_drop_enter(
     return S_OK;
 }
 
-static HRESULT STDMETHODCALLTYPE dxc_drop_over(
+static HRESULT STDMETHODCALLTYPE dxc_drop_over_for(
     IDropTarget *self, DWORD keys, POINTL where, DWORD *effect) {
     (void)self;
     (void)keys;
@@ -2671,7 +3440,7 @@ static HRESULT STDMETHODCALLTYPE dxc_drop_over(
     return S_OK;
 }
 
-static HRESULT STDMETHODCALLTYPE dxc_drop_leave(IDropTarget *self) {
+static HRESULT STDMETHODCALLTYPE dxc_drop_leave_for(IDropTarget *self) {
     (void)self;
     if (dxc_drag_has_files) {
         struct dxc_event record;
@@ -2683,7 +3452,7 @@ static HRESULT STDMETHODCALLTYPE dxc_drop_leave(IDropTarget *self) {
     return S_OK;
 }
 
-static HRESULT STDMETHODCALLTYPE dxc_drop_drop(
+static HRESULT STDMETHODCALLTYPE dxc_drop_drop_for(
     IDropTarget *self, IDataObject *data, DWORD keys, POINTL where, DWORD *effect) {
     (void)self;
     (void)keys;
@@ -2698,16 +3467,56 @@ static HRESULT STDMETHODCALLTYPE dxc_drop_drop(
     return S_OK;
 }
 
+static DxcWin *dxc_drop_window(IDropTarget *self) {
+    return ((struct dxc_drop_target *)self)->win;
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_drop_enter(
+    IDropTarget *self, IDataObject *data, DWORD keys, POINTL where, DWORD *effect) {
+    DxcWin *outer = dxc_w;
+    dxc_w = dxc_drop_window(self);
+    HRESULT result = dxc_drop_enter_for(self, data, keys, where, effect);
+    dxc_w = outer;
+    return result;
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_drop_over(
+    IDropTarget *self, DWORD keys, POINTL where, DWORD *effect) {
+    DxcWin *outer = dxc_w;
+    dxc_w = dxc_drop_window(self);
+    HRESULT result = dxc_drop_over_for(self, keys, where, effect);
+    dxc_w = outer;
+    return result;
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_drop_leave(IDropTarget *self) {
+    DxcWin *outer = dxc_w;
+    dxc_w = dxc_drop_window(self);
+    HRESULT result = dxc_drop_leave_for(self);
+    dxc_w = outer;
+    return result;
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_drop_drop(
+    IDropTarget *self, IDataObject *data, DWORD keys, POINTL where, DWORD *effect) {
+    DxcWin *outer = dxc_w;
+    dxc_w = dxc_drop_window(self);
+    HRESULT result = dxc_drop_drop_for(self, data, keys, where, effect);
+    dxc_w = outer;
+    return result;
+}
+
 static IDropTargetVtbl dxc_drop_vtable = {
     dxc_drop_query, dxc_drop_add_ref, dxc_drop_release,
     dxc_drop_enter, dxc_drop_over, dxc_drop_leave, dxc_drop_drop,
 };
-static IDropTarget dxc_drop_target = {&dxc_drop_vtable};
 
 /** Lets the window be dropped on. Drag and drop is OLE's, which needs a single threaded apartment. */
 static void dxc_accept_files(HWND window) {
     OleInitialize(NULL);
-    RegisterDragDrop(window, &dxc_drop_target);
+    dxc_w->drop.iface.lpVtbl = &dxc_drop_vtable;
+    dxc_w->drop.win = dxc_w;
+    RegisterDragDrop(window, &dxc_w->drop.iface);
 }
 
 /*
@@ -3016,7 +3825,7 @@ void dxc_native_debug_hit_test(void *window_pointer) {
     struct { const char *where; int x; int y; LRESULT expected; } points[] = {
         {"caption", (outer.left + outer.right) / 2, caption_middle, HTCAPTION},
         {"close", outer.right - button / 2 - 8, caption_middle, dxc_options.system_chrome ? HTCLOSE : HTCLIENT},
-        {"maximise", outer.right - button * 3 / 2 - 8, caption_middle, dxc_options.system_chrome ? HTMAXBUTTON : HTCLIENT},
+        {"maximise", outer.right - button * 3 / 2 - 8, caption_middle, HTMAXBUTTON},
         {"minimise", outer.right - button * 5 / 2 - 8, caption_middle, dxc_options.system_chrome ? HTMINBUTTON : HTCLIENT},
         {"client", origin.x + client.right / 2, origin.y + client.bottom / 2, HTCLIENT},
         {"left edge", outer.left + 2, (outer.top + outer.bottom) / 2, HTLEFT},
@@ -3347,8 +4156,6 @@ static void dxc_wait_for_gpu(void) {
 // resource and a new Direct3D 11 wrapper on every drag step are work the step pays for
 // before anything is presented. Skia is told the drawn size, and only that top-left
 // region is copied into the swapchain.
-static int32_t dxc_texture_width;
-static int32_t dxc_texture_height;
 
 static void dxc_release_texture(void) {
     if (dxc_wrapped != NULL) {
@@ -3494,9 +4301,22 @@ static LRESULT CALLBACK dxc_surface_proc(HWND window, UINT message, WPARAM wpara
     }
 }
 
+/** Takes a window out of the count that keeps the process-wide state alive; the last one takes it down. */
+static void dxc_uncount_window(DxcWin *win) {
+    if (win == NULL || !win->counted) return;
+    win->counted = 0;
+    if (dxc_shared_release(&dxc_shared_state)) {
+        // The last window. The class stays registered while a window of it is still being
+        // destroyed, in which case this fails and the next window registers it again over
+        // the existing one (see dxc_register_class).
+        UnregisterClassW(DXC_SURFACE_CLASS, GetModuleHandleW(NULL));
+        UnregisterClassW(DXC_WINDOW_CLASS, GetModuleHandleW(NULL));
+        dxc_class_registered = 0;
+    }
+}
+
 static int32_t dxc_register_class(void) {
-    static int registered;
-    if (registered) {
+    if (dxc_class_registered) {
         return 0;
     }
     WNDCLASSEXW description;
@@ -3512,16 +4332,16 @@ static int32_t dxc_register_class(void) {
     // the first frame lands, which reads as a white flash on a dark scene.
     description.hbrBackground = NULL;
     description.lpszClassName = DXC_WINDOW_CLASS;
-    if (RegisterClassExW(&description) == 0) {
+    if (RegisterClassExW(&description) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         return 1;
     }
     description.style = 0;
     description.lpfnWndProc = dxc_surface_proc;
     description.lpszClassName = DXC_SURFACE_CLASS;
-    if (RegisterClassExW(&description) == 0) {
+    if (RegisterClassExW(&description) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         return 1;
     }
-    registered = 1;
+    dxc_class_registered = 1;
     return 0;
 }
 
@@ -3584,7 +4404,7 @@ static void dxc_memory_point(const char *where, IDXGIAdapter1 *adapter) {
     fflush(stderr);
 }
 
-int32_t dxc_native_window_open(
+static int32_t dxc_open_window(
     const char *title,
     int32_t width,
     int32_t height,
@@ -3614,8 +4434,10 @@ int32_t dxc_native_window_open(
         DXC_WINDOW_CLASS,
         wide_title,
         dxc_window_style(),
-        CW_USEDEFAULT, CW_USEDEFAULT, width, height,
-        NULL, NULL, GetModuleHandleW(NULL), NULL);
+        dxc_w->has_position ? dxc_points_to_pixels(dxc_w->position_x, GetDpiForSystem()) : CW_USEDEFAULT,
+        dxc_w->has_position ? dxc_points_to_pixels(dxc_w->position_y, GetDpiForSystem()) : CW_USEDEFAULT,
+        width, height,
+        NULL, NULL, GetModuleHandleW(NULL), dxc_w);
     if (window == NULL) {
         return 2;
     }
@@ -3637,16 +4459,52 @@ int32_t dxc_native_window_open(
     // Without the system caption the content starts at the top of the window, so the
     // frame above it is not part of the outside.
     int outer_height = dxc_options.system_chrome ? wanted.bottom - wanted.top : wanted.bottom;
-    // Centred on the part of the screen a window is meant to sit in. Where that cannot be
-    // asked for, the window keeps the place Windows chose for it rather than being moved
-    // to a corner that was never a position.
-    RECT work;
+    // The outside is never larger than the work area of the monitor the window is on, and
+    // never reaches past it, so the caption stays where it can be grabbed. Without a
+    // position it is centred there. Where that monitor cannot be asked about, the window
+    // keeps the place Windows chose for it rather than being moved to a corner that was
+    // never a position.
+    int min_outer_width = 0;
+    int min_outer_height = 0;
+    if (dxc_options.min_width > 0 || dxc_options.min_height > 0) {
+        RECT least = {0, 0, MulDiv(dxc_options.min_width, (int)dpi, USER_DEFAULT_SCREEN_DPI),
+            MulDiv(dxc_options.min_height, (int)dpi, USER_DEFAULT_SCREEN_DPI)};
+        AdjustWindowRectExForDpi(&least, dxc_window_style(), FALSE, 0, dpi);
+        min_outer_width = least.right - least.left;
+        min_outer_height = dxc_options.system_chrome ? least.bottom - least.top : least.bottom;
+    }
     UINT placement = SWP_NOZORDER | SWP_NOMOVE;
     int left = 0;
     int top = 0;
-    if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
-        left = work.left + ((work.right - work.left) - outer_width) / 2;
-        top = work.top + ((work.bottom - work.top) - outer_height) / 2;
+    // Where the application said, in points converted at the DPI the window was created at
+    // (the DPI of the monitor Windows first put it on), so a position on a monitor with a
+    // different scale can be off by that ratio until the window is moved there.
+    int wanted_x = dxc_w->has_position ? dxc_points_to_pixels(dxc_w->position_x, dpi) : 0;
+    int wanted_y = dxc_w->has_position ? dxc_points_to_pixels(dxc_w->position_y, dpi) : 0;
+    // With a position, the monitor is the one at that position, not the one Windows first
+    // placed the new window on, so a window asked for on a secondary monitor stays there.
+    HMONITOR monitor;
+    if (dxc_w->has_position) {
+        RECT asked = {wanted_x, wanted_y, wanted_x + outer_width, wanted_y + outer_height};
+        monitor = MonitorFromRect(&asked, MONITOR_DEFAULTTONEAREST);
+    } else {
+        monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    }
+    MONITORINFO monitor_info;
+    monitor_info.cbSize = sizeof monitor_info;
+    if (monitor != NULL && GetMonitorInfoW(monitor, &monitor_info)) {
+        struct dxc_placement_rect work = {monitor_info.rcWork.left, monitor_info.rcWork.top,
+            monitor_info.rcWork.right, monitor_info.rcWork.bottom};
+        struct dxc_placement_rect outer = dxc_placement_fit(work, outer_width, outer_height,
+            min_outer_width, min_outer_height, dxc_w->has_position, wanted_x, wanted_y);
+        left = outer.left;
+        top = outer.top;
+        outer_width = outer.right - outer.left;
+        outer_height = outer.bottom - outer.top;
+        placement = SWP_NOZORDER;
+    } else if (dxc_w->has_position) {
+        left = wanted_x;
+        top = wanted_y;
         placement = SWP_NOZORDER;
     }
     SetWindowPos(window, NULL, left, top, outer_width, outer_height, placement | SWP_FRAMECHANGED);
@@ -3835,6 +4693,10 @@ int32_t dxc_native_window_open(
     // recognised as the size the swapchain already is.
     dxc_resize_fitted(&dxc_sizing, (int32_t)pixel_width, (int32_t)pixel_height);
     dxc_report_latency = getenv("DXC_REPORT_LATENCY") != NULL;
+    {
+        const char *predraw = getenv("DXC_RESIZE_PREDRAW");
+        dxc_predraw_off = predraw != NULL && strcmp(predraw, "0") == 0;
+    }
     dxc_log_monitor(window, "the window opened");
     dxc_memory_point("the window opened", adapter);
     dxc_presented_width = (int32_t)pixel_width;
@@ -3872,6 +4734,8 @@ int32_t dxc_native_window_open(
     ShowWindow(window, SW_SHOW);
     SetForegroundWindow(window);
     SetFocus(window);
+    dxc_w->active = GetForegroundWindow() == window;
+    dxc_w->moved_pending = 0;
 
     out->window = (void *)window;
     out->device = (void *)device;
@@ -3890,8 +4754,53 @@ int32_t dxc_native_window_open(
  * Skia as bigger than it is would be painted past its end. The client area answers only
  * before there is a swapchain to ask.
  */
+/**
+ * Opens a window with a state record of its own. The record is the one the window's messages
+ * run against from the first of them, it is chosen for the calls that name no window, and
+ * the window is found from its handle until dxc_native_window_release.
+ */
+int32_t dxc_native_window_open(
+    const char *title,
+    int32_t width,
+    int32_t height,
+    struct dxc_native_window *out
+) {
+    if (dxc_table.count >= DXC_MAX_WINDOWS) {
+        return 12;
+    }
+    DxcWin *win = (DxcWin *)calloc(1, sizeof *win);
+    if (win == NULL) {
+        return 12;
+    }
+    win->options = dxc_next_options;
+    win->cursor = IDC_ARROW;
+    // The size the window opens with, so the first move of the slider is reported.
+    win->text_scale_seen = dxc_native_text_scale_percent() + 1;
+    win->has_position = dxc_next_position.has;
+    win->position_x = dxc_next_position.x;
+    win->position_y = dxc_next_position.y;
+    dxc_next_position.has = 0;
+    DxcWin *outer = dxc_w;
+    DxcWin *outer_creating = dxc_creating;
+    dxc_w = win;
+    dxc_creating = win;
+    dxc_shared_acquire(&dxc_shared_state);
+    win->counted = 1;
+    int32_t result = dxc_open_window(title, width, height, out);
+    dxc_creating = outer_creating;
+    if (result != 0) {
+        dxc_uncount_window(win);
+        dxc_w = outer;
+        free(win);
+        return result;
+    }
+    dxc_table_add(&dxc_table, win->window, win);
+    return 0;
+}
+
 void dxc_native_window_size(void *window_pointer, int32_t *width, int32_t *height, float *scale) {
     HWND window = (HWND)window_pointer;
+    dxc_select_handle(window_pointer);
     *width = 0;
     *height = 0;
     *scale = 1.0f;
@@ -3921,6 +4830,7 @@ void dxc_native_window_size(void *window_pointer, int32_t *width, int32_t *heigh
  */
 int32_t dxc_native_frame_begin(void *swapchain_pointer, void **texture_out) {
     IDXGISwapChain1 *swapchain = (IDXGISwapChain1 *)swapchain_pointer;
+    dxc_select_swapchain(swapchain_pointer);
     if (swapchain == NULL || dxc_window == NULL) {
         return 1;
     }
@@ -3952,12 +4862,17 @@ int32_t dxc_native_frame_begin(void *swapchain_pointer, void **texture_out) {
             swapchain, DXC_BUFFER_COUNT, (UINT)wanted_width, (UINT)wanted_height,
             DXC_SWAPCHAIN_FORMAT, dxc_swapchain_flags);
         // A refusal leaves the swapchain the size it was, so the old buffers are taken
-        // back and the window carries on drawing at the size it had. Losing this frame
-        // is a stretched image for a moment; not taking them back is a window that
-        // stays black from here on.
+        // back; not taking them back is a window that stays black from here on. This frame
+        // is skipped rather than drawn at the old size, which DXGI_SCALING_STRETCH would show
+        // stretched over the new client area. The size is asked for again by the next
+        // frame, which is asked for now (WM_PAINT draws one), a few times in a row at most
+        // (dxc_resize_refused).
         if (FAILED(resized)) {
             dxc_log_dxgi_failure("ResizeBuffers", resized);
             dxc_acquire_buffers(dxc_sizing.fitted_width, dxc_sizing.fitted_height);
+            if (dxc_resize_refused(&dxc_sizing, wanted_width, wanted_height)) {
+                InvalidateRect(dxc_window, NULL, FALSE);
+            }
             return 2;
         }
         if (dxc_acquire_buffers(wanted_width, wanted_height) != 0) {
@@ -3988,6 +4903,7 @@ int32_t dxc_native_frame_begin(void *swapchain_pointer, void **texture_out) {
 /** Puts the painted buffer on the screen. */
 void dxc_native_frame_end(void *queue_pointer) {
     ID3D12CommandQueue *queue = (ID3D12CommandQueue *)queue_pointer;
+    dxc_select_queue(queue_pointer);
     if (queue == NULL || dxc_swapchain == NULL || dxc_buffers[dxc_frame_index] == NULL ||
         dxc_allocator == NULL || dxc_commands == NULL) {
         return;
@@ -4143,4 +5059,355 @@ int32_t dxc_native_ax_api_probe(int32_t *trusted, int32_t *windows) {
     *trusted = -1;
     *windows = -1;
     return -1;
+}
+
+// ---------------------------------------------------------------------------
+// Several windows in one process (FR-53)
+// ---------------------------------------------------------------------------
+//
+// The calls that name no window run for the selected one: the window the last
+// dxc_native_window_select named, or the one opened last. A caller with several windows
+// selects before it calls. The calls that name a window or one of its parts choose it
+// themselves.
+
+static int64_t dxc_micros_now(void) {
+    static LARGE_INTEGER frequency;
+    LARGE_INTEGER now;
+    if (frequency.QuadPart == 0) {
+        QueryPerformanceFrequency(&frequency);
+    }
+    QueryPerformanceCounter(&now);
+    return (int64_t)(now.QuadPart / frequency.QuadPart) * 1000000LL +
+           (int64_t)(now.QuadPart % frequency.QuadPart) * 1000000LL / frequency.QuadPart;
+}
+
+static void dxc_select_handle(void *handle) {
+    DxcWin *win = (DxcWin *)dxc_table_find(&dxc_table, handle);
+    if (win != NULL) {
+        dxc_w = win;
+    }
+}
+
+static void dxc_select_swapchain(void *swapchain) {
+    if (swapchain == NULL) return;
+    for (int32_t index = 0; index < DXC_MAX_WINDOWS; index++) {
+        DxcWin *win = (DxcWin *)dxc_table.states[index];
+        if (win != NULL && (void *)win->swapchain == swapchain) {
+            dxc_w = win;
+            return;
+        }
+    }
+}
+
+static void dxc_select_queue(void *queue) {
+    if (queue == NULL) return;
+    for (int32_t index = 0; index < DXC_MAX_WINDOWS; index++) {
+        DxcWin *win = (DxcWin *)dxc_table.states[index];
+        if (win != NULL && (void *)win->queue == queue) {
+            dxc_w = win;
+            return;
+        }
+    }
+}
+
+void dxc_native_window_select(void *window) {
+    dxc_select_handle(window);
+}
+
+/** The handle of the window whose message is being handled (or the selected one), 0 if none. */
+int64_t dxc_native_current_window(void) {
+    return (int64_t)(intptr_t)dxc_w->window;
+}
+
+/** How many windows are open: made, and not yet destroyed. */
+int32_t dxc_native_window_count(void) {
+    return dxc_shared_state.users;
+}
+
+/**
+ * Where the next window opens, in screen points. Called before dxc_native_window_open and
+ * used by that one window; without it the system chooses.
+ */
+void dxc_native_window_configure_position(int32_t has_position, int32_t x, int32_t y) {
+    dxc_next_position.has = has_position != 0;
+    dxc_next_position.x = x;
+    dxc_next_position.y = y;
+}
+
+/**
+ * When deferred, the system's request to close the selected window (its close button, Alt+F4,
+ * the system menu) is kept for dxc_native_take_close_request and the window stays open until
+ * dxc_native_window_destroy. Off, the request closes the window, as it always has.
+ */
+void dxc_native_window_set_close_deferred(int32_t deferred) {
+    dxc_w->close_deferred = deferred != 0;
+}
+
+int32_t dxc_native_take_close_request(void) {
+    int32_t asked = dxc_w->close_requested ? 1 : 0;
+    dxc_w->close_requested = 0;
+    return asked;
+}
+
+/** Destroys the window. The others, and the process, carry on. */
+void dxc_native_window_destroy(void *window) {
+    dxc_select_handle(window);
+    if (dxc_window != NULL) {
+        DestroyWindow(dxc_window);
+    }
+}
+
+/**
+ * Gives back everything the window held, once it is destroyed and nothing draws into it any
+ * more: the GPU objects, the bitmap and the state record. The handle is not valid after this.
+ */
+void dxc_native_window_release(void *window) {
+    DxcWin *win = (DxcWin *)dxc_table_find(&dxc_table, window);
+    if (win == NULL) return;
+    DxcWin *outer = dxc_w;
+    dxc_w = win;
+    dxc_wait_for_gpu();
+    IDXGIAdapter1 *adapter = dxc_adapter;
+    dxc_adapter = NULL;
+    dxc_abandon_window(adapter);
+    if (dxc_dib_dc != NULL) {
+        if (dxc_dib != NULL) {
+            SelectObject(dxc_dib_dc, dxc_dib_previous);
+            DeleteObject(dxc_dib);
+            dxc_dib = NULL;
+        }
+        DeleteDC(dxc_dib_dc);
+        dxc_dib_dc = NULL;
+    }
+    dxc_uncount_window(win);
+    dxc_table_remove(&dxc_table, window);
+    dxc_w = outer == win ? &dxc_no_window : outer;
+    free(win);
+}
+
+/** Asks the thread's message loop to end with [code]. Whether the process quits is the application's to decide. */
+void dxc_native_post_quit(int32_t code) {
+    PostQuitMessage(code);
+}
+
+/** 1 once a quit posted by dxc_native_post_quit has come through the pump, with its code. */
+int32_t dxc_native_quit_posted(int32_t *code) {
+    if (code != NULL) *code = dxc_quit_code;
+    return dxc_quit_seen ? 1 : 0;
+}
+
+static UINT dxc_dpi_of(HWND window) {
+    UINT dpi = window != NULL ? GetDpiForWindow(window) : 0;
+    return dpi == 0 ? USER_DEFAULT_SCREEN_DPI : dpi;
+}
+
+/** The size of the window's outer frame for content of [width] by [height] points, in pixels. */
+static void dxc_outer_size(int32_t width, int32_t height, UINT dpi, int32_t *outer_width, int32_t *outer_height) {
+    RECT wanted;
+    wanted.left = 0;
+    wanted.top = 0;
+    wanted.right = dxc_points_to_pixels(width, dpi);
+    wanted.bottom = dxc_points_to_pixels(height, dpi);
+    AdjustWindowRectExForDpi(&wanted, dxc_window_style(), FALSE, 0, dpi);
+    *outer_width = wanted.right - wanted.left;
+    *outer_height = dxc_options.system_chrome ? wanted.bottom - wanted.top : wanted.bottom;
+}
+
+void dxc_native_window_set_position(int32_t x, int32_t y) {
+    if (dxc_window == NULL) return;
+    UINT dpi = dxc_dpi_of(dxc_window);
+    SetWindowPos(dxc_window, NULL, dxc_points_to_pixels(x, dpi), dxc_points_to_pixels(y, dpi), 0, 0,
+                 SWP_NOZORDER | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
+void dxc_native_window_set_content_size(int32_t width, int32_t height) {
+    if (dxc_window == NULL) return;
+    int32_t outer_width = 0, outer_height = 0;
+    dxc_outer_size(width, height, dxc_dpi_of(dxc_window), &outer_width, &outer_height);
+    SetWindowPos(dxc_window, NULL, 0, 0, outer_width, outer_height,
+                 SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
+}
+
+/** The outer frame in screen points. 0 where the window is gone. */
+int32_t dxc_native_window_bounds(int32_t *x, int32_t *y, int32_t *width, int32_t *height) {
+    RECT rect;
+    if (dxc_window == NULL || !GetWindowRect(dxc_window, &rect)) return 0;
+    UINT dpi = dxc_dpi_of(dxc_window);
+    *x = dxc_pixels_to_points(rect.left, dpi);
+    *y = dxc_pixels_to_points(rect.top, dpi);
+    *width = dxc_pixels_to_points(rect.right - rect.left, dpi);
+    *height = dxc_pixels_to_points(rect.bottom - rect.top, dpi);
+    return 1;
+}
+
+void dxc_native_window_set_title(const char *title) {
+    if (dxc_window == NULL || title == NULL) return;
+    wchar_t wide[256];
+    if (MultiByteToWideChar(CP_UTF8, 0, title, -1, wide, (int)(sizeof wide / sizeof *wide)) == 0) {
+        wide[0] = L'\0';
+    }
+    SetWindowTextW(dxc_window, wide);
+}
+
+void dxc_native_window_set_min_size(int32_t width, int32_t height) {
+    dxc_options.min_width = width;
+    dxc_options.min_height = height;
+}
+
+/** 0 hidden, 1 shown, 2 minimised, 3 full screen (maximised here). */
+void dxc_native_window_set_visibility(int32_t visibility) {
+    if (dxc_window == NULL) return;
+    switch (visibility) {
+    case 0: ShowWindow(dxc_window, SW_HIDE); break;
+    case 2: ShowWindow(dxc_window, SW_MINIMIZE); break;
+    case 3: ShowWindow(dxc_window, SW_MAXIMIZE); break;
+    default: ShowWindow(dxc_window, IsIconic(dxc_window) ? SW_RESTORE : SW_SHOW); break;
+    }
+}
+
+/** 1 when the user's apps theme is the dark one. */
+int32_t dxc_native_system_dark(void) {
+    DWORD light = 1;
+    DWORD size = sizeof light;
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                     L"AppsUseLightTheme", RRF_RT_REG_DWORD, NULL, &light, &size) != ERROR_SUCCESS) {
+        return 0;
+    }
+    return light == 0 ? 1 : 0;
+}
+
+static int dxc_take_foreground(HWND window) {
+    if (GetForegroundWindow() == window) return 1;
+    SetForegroundWindow(window);
+    if (GetForegroundWindow() == window) return 1;
+    // The system lets the process that owns the foreground window give it away. Joining that
+    // thread's input for a moment makes this process look like it.
+    HWND foreground = GetForegroundWindow();
+    DWORD current = GetCurrentThreadId();
+    DWORD other = foreground != NULL ? GetWindowThreadProcessId(foreground, NULL) : 0;
+    BOOL attached = other != 0 && other != current && AttachThreadInput(current, other, TRUE);
+    BringWindowToTop(window);
+    SetForegroundWindow(window);
+    if (attached) AttachThreadInput(current, other, FALSE);
+    if (GetForegroundWindow() == window) return 1;
+    // A synthetic Alt press counts as input from the user, which is what the lock waits for.
+    keybd_event(VK_MENU, 0, 0, 0);
+    keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
+    SetForegroundWindow(window);
+    return GetForegroundWindow() == window;
+}
+
+/**
+ * Brings the window to the front and gives it the keyboard. 1 when it has it. 0 when the
+ * foreground lock refused: the window's taskbar button flashes instead, and no activation
+ * is reported because none happened.
+ */
+int32_t dxc_native_window_focus(void) {
+    if (dxc_window == NULL) return 0;
+    if (IsIconic(dxc_window)) ShowWindow(dxc_window, SW_RESTORE);
+    if (dxc_take_foreground(dxc_window)) {
+        SetFocus(dxc_window);
+        return 1;
+    }
+    FLASHWINFO flash;
+    memset(&flash, 0, sizeof flash);
+    flash.cbSize = sizeof flash;
+    flash.hwnd = dxc_window;
+    flash.dwFlags = FLASHW_TRAY | FLASHW_TIMERNOFG;
+    flash.uCount = 3;
+    FlashWindowEx(&flash);
+    return 0;
+}
+
+/** 1 while the window is the active one, as WM_ACTIVATE last said. */
+int32_t dxc_native_window_is_active(void) {
+    return dxc_w->active ? 1 : 0;
+}
+
+/** 1 once for each change of activation since the last call, with the state now. */
+int32_t dxc_native_take_activation(int32_t *active) {
+    if (!dxc_w->activation_pending) return 0;
+    dxc_w->activation_pending = 0;
+    *active = dxc_w->active ? 1 : 0;
+    return 1;
+}
+
+/** 1 once if the window moved or changed size since the last call, with its outer frame in points. */
+int32_t dxc_native_take_moved(int32_t *x, int32_t *y, int32_t *width, int32_t *height) {
+    if (!dxc_w->moved_pending) return 0;
+    dxc_w->moved_pending = 0;
+    return dxc_native_window_bounds(x, y, width, height);
+}
+
+static int dxc_primary_down(void) {
+    // The primary button is the one the user's settings call primary: a swapped mouse has it on the right.
+    int key = GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON;
+    return (GetAsyncKeyState(key) & 0x8000) != 0;
+}
+
+/** The pointer in the selected window's points, and whether the primary button is down. 0 where unknown. */
+int32_t dxc_native_pointer_on_screen(float *x, float *y, int32_t *primary_down) {
+    POINT pointer;
+    if (!GetCursorPos(&pointer)) return 0;
+    UINT dpi = dxc_window != NULL ? dxc_dpi_of(dxc_window) : GetDpiForSystem();
+    *x = (float)pointer.x * 96.0f / (float)dpi;
+    *y = (float)pointer.y * 96.0f / (float)dpi;
+    *primary_down = dxc_primary_down() ? 1 : 0;
+    return 1;
+}
+
+/**
+ * Starts moving the selected window under the pointer on every pump turn, keeping the point
+ * ([anchor_x], [anchor_y]) of its content, in points, under it. 0 when the button is not down.
+ */
+int32_t dxc_native_follow_start(float anchor_x, float anchor_y) {
+    if (dxc_window == NULL || !dxc_primary_down()) return 0;
+    dxc_w->following = 1;
+    dxc_w->follow_anchor_x = anchor_x;
+    dxc_w->follow_anchor_y = anchor_y;
+    dxc_w->follow_end_pending = 0;
+    return 1;
+}
+
+/** 1 once when a follow ended, with whether it was cancelled (Escape). */
+int32_t dxc_native_take_follow_end(int32_t *cancelled) {
+    if (!dxc_w->follow_end_pending) return 0;
+    dxc_w->follow_end_pending = 0;
+    *cancelled = dxc_w->follow_ended == DXC_FOLLOW_CANCELLED ? 1 : 0;
+    return 1;
+}
+
+static void dxc_follow_step(DxcWin *win) {
+    if (!win->following || win->window == NULL) return;
+    int32_t decision = dxc_follow_decide(dxc_primary_down() ? 1 : 0,
+                                         (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0 ? 1 : 0);
+    if (decision != DXC_FOLLOW_KEEP) {
+        win->following = 0;
+        win->follow_ended = decision;
+        win->follow_end_pending = 1;
+        return;
+    }
+    POINT pointer;
+    RECT rect;
+    POINT content = {0, 0};
+    if (!GetCursorPos(&pointer) || !GetWindowRect(win->window, &rect) ||
+        !ClientToScreen(win->window, &content)) {
+        return;
+    }
+    UINT dpi = dxc_dpi_of(win->window);
+    int left = dxc_follow_origin(pointer.x, win->follow_anchor_x, dpi, content.x - rect.left);
+    int top = dxc_follow_origin(pointer.y, win->follow_anchor_y, dpi, content.y - rect.top);
+    if (left != rect.left || top != rect.top) {
+        SetWindowPos(win->window, NULL, left, top, 0, 0, SWP_NOZORDER | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+}
+
+/** Once a pump turn, for every window that is following the pointer. */
+static void dxc_follow_turn(void) {
+    for (int32_t index = 0; index < DXC_MAX_WINDOWS; index++) {
+        DxcWin *win = (DxcWin *)dxc_table.states[index];
+        if (win != NULL) {
+            dxc_follow_step(win);
+        }
+    }
 }

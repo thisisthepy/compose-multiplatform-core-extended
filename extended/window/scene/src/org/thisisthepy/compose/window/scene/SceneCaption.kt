@@ -5,6 +5,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
@@ -16,18 +19,23 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.thisisthepy.compose.window.CaptionAction
 import org.thisisthepy.compose.window.SystemTheme
@@ -59,6 +67,11 @@ fun Modifier.windowCaptionPadding(): Modifier = composed {
  * moves the window, a press at an edge resizes it, and where the platform draws no buttons
  * ([WindowCaption.buttonsDrawnByScene]) the minimise, maximise and close buttons are drawn here,
  * with their roles and labels, so a reader finds them.
+ *
+ * Where the frame is still the system's ([WindowCaption.frameBySystem], Windows) the buttons
+ * are all that is drawn: the system resizes at the edges and moves the window from the strip,
+ * and a resize edge of the scene's would lie over the corner of the close button and take its
+ * presses.
  */
 @Composable
 internal fun WindowFrame(
@@ -84,7 +97,7 @@ internal fun WindowFrame(
         Box(if (padContent) Modifier.fillMaxSize().windowCaptionPadding() else Modifier.fillMaxSize(), content = content)
         if (caption.buttonsDrawnByScene) {
             CaptionButtons(platform, caption, theme, Modifier.align(if (caption.buttonsAtStart) Alignment.TopStart else Alignment.TopEnd))
-            if (resizable) ResizeEdges(platform)
+            if (resizable && !caption.frameBySystem) ResizeEdges(platform)
         }
     }
 }
@@ -101,18 +114,59 @@ private fun Modifier.pressed(onPress: () -> Unit): Modifier = pointerInput(Unit)
     }
 }
 
+/** What a caption button is doing, for [captionButtonFill] and [captionGlyphColor]. */
+internal enum class CaptionButtonState { Idle, Hovered, Pressed }
+
+/** The red Windows puts behind the close button under the pointer. */
+private val CLOSE_FILL = Color(0xFFC42B1C)
+
+/**
+ * What a caption button is filled with behind its glyph: nothing while idle, a faint wash
+ * of the glyph's color under the pointer and a stronger one while pressed. [closeIsRed] is the
+ * close button of a Windows caption, which turns red instead.
+ */
+internal fun captionButtonFill(state: CaptionButtonState, theme: SystemTheme, closeIsRed: Boolean): Color = when (state) {
+    CaptionButtonState.Idle -> Color.Transparent
+    CaptionButtonState.Hovered -> if (closeIsRed) CLOSE_FILL else glyphColor(theme).copy(alpha = 0.09f)
+    CaptionButtonState.Pressed -> if (closeIsRed) CLOSE_FILL.copy(alpha = 0.9f) else glyphColor(theme).copy(alpha = 0.2f)
+}
+
+/** The glyph's color: white on the red close button, the caption's text color otherwise. */
+internal fun captionGlyphColor(state: CaptionButtonState, theme: SystemTheme, closeIsRed: Boolean): Color =
+    if (closeIsRed && state != CaptionButtonState.Idle) Color.White else glyphColor(theme)
+
 @Composable
 private fun CaptionButtons(platform: WindowPlatform, caption: WindowCaption, theme: SystemTheme, modifier: Modifier) {
     val each = if (caption.buttonsWidth > 0f) (caption.buttonsWidth / 3f).dp else 46.dp
-    val color = glyphColor(theme)
     Row(modifier.padding(top = caption.insetTop.dp).height(caption.height.dp)) {
-        CaptionButton("Minimize", each, { platform.performCaptionAction(CaptionAction.Minimize) }) { size ->
+        CaptionButton("Minimize", each, theme, false, { platform.performCaptionAction(CaptionAction.Minimize) }) { size, color ->
             drawLine(color, Offset(size * 0.35f, size * 0.5f), Offset(size * 0.65f, size * 0.5f), strokeWidth = 1.dp.toPx())
         }
-        CaptionButton("Maximize", each, { platform.performCaptionAction(CaptionAction.ToggleMaximize) }) { size ->
-            drawRect(color, Offset(size * 0.36f, size * 0.36f), androidx.compose.ui.geometry.Size(size * 0.28f, size * 0.28f), style = Stroke(1.dp.toPx()))
+        // One button, so a reader and the pointer keep it across the change: the window is
+        // maximised by it and restored by it, and its label and glyph say which is next.
+        CaptionButton(
+            if (caption.maximized) "Restore" else "Maximize",
+            each,
+            theme,
+            false,
+            { platform.performCaptionAction(CaptionAction.ToggleMaximize) },
+        ) { size, color ->
+            if (caption.maximized) {
+                // The window in front, and the corner of the one behind it.
+                val side = size * 0.24f
+                val stroke = Stroke(1.dp.toPx())
+                drawRect(color, Offset(size * 0.36f, size * 0.42f), Size(side, side), style = stroke)
+                val back = size * 0.06f
+                val left = size * 0.36f + back
+                val top = size * 0.42f - back
+                drawLine(color, Offset(left, top), Offset(left + side, top), strokeWidth = stroke.width)
+                drawLine(color, Offset(left + side, top), Offset(left + side, top + side), strokeWidth = stroke.width)
+            } else {
+                drawRect(color, Offset(size * 0.36f, size * 0.36f), Size(size * 0.28f, size * 0.28f), style = Stroke(1.dp.toPx()))
+            }
         }
-        CaptionButton("Close", each, { platform.performCaptionAction(CaptionAction.Close) }) { size ->
+        // Red is what the close button of a Windows caption does, and the system's frame is how a Windows caption is known.
+        CaptionButton("Close", each, theme, caption.frameBySystem, { platform.performCaptionAction(CaptionAction.Close) }) { size, color ->
             drawLine(color, Offset(size * 0.36f, size * 0.36f), Offset(size * 0.64f, size * 0.64f), strokeWidth = 1.dp.toPx())
             drawLine(color, Offset(size * 0.64f, size * 0.36f), Offset(size * 0.36f, size * 0.64f), strokeWidth = 1.dp.toPx())
         }
@@ -122,22 +176,37 @@ private fun CaptionButtons(platform: WindowPlatform, caption: WindowCaption, the
 @Composable
 private fun CaptionButton(
     label: String,
-    width: androidx.compose.ui.unit.Dp,
+    width: Dp,
+    theme: SystemTheme,
+    closeIsRed: Boolean,
     onClick: () -> Unit,
-    glyph: androidx.compose.ui.graphics.drawscope.DrawScope.(Float) -> Unit,
+    glyph: DrawScope.(Float, Color) -> Unit,
 ) {
+    // The button shows where the pointer is and that it is held, as the system's buttons do.
+    // On Windows the maximise button is not client area, and the window passes its moves and
+    // its press on as the pointer events these states come from.
+    val interactions = remember { MutableInteractionSource() }
+    val hovered by interactions.collectIsHoveredAsState()
+    val pressed by interactions.collectIsPressedAsState()
+    val state = when {
+        pressed -> CaptionButtonState.Pressed
+        hovered -> CaptionButtonState.Hovered
+        else -> CaptionButtonState.Idle
+    }
+    val color = captionGlyphColor(state, theme, closeIsRed)
     Box(
         Modifier
             .width(width)
             .fillMaxHeight()
+            .background(captionButtonFill(state, theme, closeIsRed))
             .semantics {
                 role = Role.Button
                 contentDescription = label
             }
-            .clickable(onClick = onClick),
+            .clickable(interactionSource = interactions, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(Modifier.size(minOf(width, 32.dp))) { glyph(size.minDimension) }
+        Canvas(Modifier.size(minOf(width, 32.dp))) { glyph(size.minDimension, color) }
     }
 }
 

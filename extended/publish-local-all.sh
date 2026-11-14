@@ -5,7 +5,7 @@
 #
 # Usage: extended/publish-local-all.sh <work-dir> [--targets "<publish-local.sh targets>"]
 #
-# The version is gradle.properties' (jetbrains.publication.version.COMPOSE, 1.11.1-ext.2), and
+# The version is gradle.properties' (jetbrains.publication.version.COMPOSE, 1.11.1-ext.3), and
 # every artifact below is published at it, so a consumer pins one set:
 #
 #   org.thisisthepy.compose.<group>:<artifact>        extended/compose/publish-local.sh
@@ -13,6 +13,8 @@
 #   org.thisisthepy.compose.skiko:skiko-mingwx64      extended/skiko/build-skiko-mingw.sh, then
 #                                                     republish-skiko-mingw.py (mingwX64)
 #   org.thisisthepy.compose.window:<module>           extended/window, the modules this host builds
+#   org.thisisthepy.compose.designsystem:<module>     extended/design-systems (macOS), for the targets
+#                                                     Compose was published for here, and Android
 #   org.thisisthepy.compose:compose-gradle-plugin     the plugins, at PLUGIN_REVISION: Compose's, and
 #   org.thisisthepy.kotlin:kotlin-native-desktop-...  the one that links a Windows executable with MSVC
 #
@@ -106,7 +108,7 @@ case "$os" in
                 "'xwin --accept-license splat --output $xwin' (or set XWIN_DIR), or pass --targets" \
                 "without mingwX64 for a local build of fewer targets."
         fi
-        window_modules=(common graalvm/graalvm-macos graalvm/graalvm-linux native/macos scene) ;;
+        window_modules=(common graalvm/graalvm-macos graalvm/graalvm-linux graalvm/graalvm-windows native/macos scene) ;;
     Linux)
         [[ "$arch" == x86_64 ]] || die "native/linux is built on Linux x86-64; Kotlin/Native has no arm64 Linux host"
         native_linux=1
@@ -172,6 +174,37 @@ echo "==> 3. the window modules: ${window_modules[*]}"
 fi
 if [[ $native_linux -eq 1 ]]; then
     "$here/window/scripts/publish-native-linux.sh"
+fi
+
+if [[ $full_host -eq 1 ]]; then
+    # Built against the Compose step 1 published, so only for its targets: a root this host
+    # wrote lists those and no others. Android always, since the fork's roots send it to
+    # androidx. The release builds every target (extended-publish.yml).
+    platforms="android"
+    for target in $targets; do
+        case "$target" in
+            desktop) platforms="$platforms, jvm" ;;
+            macosArm64|linuxX64|iosArm64|iosSimulatorArm64|wasmJs) platforms="$platforms, $target" ;;
+        esac
+    done
+    echo "==> 3b. the design systems: $platforms"
+    (
+        cd "$here/design-systems"
+        scripts/check-version.sh "$root/gradle.properties"
+        saved="$work/design-systems-modules"
+        rm -rf "$saved"
+        mkdir -p "$saved"
+        for yaml in */module.yaml; do
+            mkdir -p "$saved/$(dirname "$yaml")"
+            cp "$yaml" "$saved/$yaml"
+        done
+        trap 'for yaml in */module.yaml; do cp "$saved/$yaml" "$yaml"; done' EXIT
+        for yaml in */module.yaml; do
+            perl -pi -e "s/^  platforms: \\[.*\\]\$/  platforms: [ $platforms ]/" "$yaml"
+            grep -qx "  platforms: \\[ $platforms \\]" "$yaml" || die "could not narrow the platforms of $yaml"
+        done
+        ./kotlin publish mavenLocal
+    )
 fi
 
 if [[ $full_host -eq 0 ]]; then

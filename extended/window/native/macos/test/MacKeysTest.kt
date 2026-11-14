@@ -28,6 +28,16 @@ class MacKeysTest {
     private val option = MacModifiers.OPTION
 
     @Test
+    fun shift_f10_arrives_as_f10_with_shift_and_is_not_an_editing_shortcut() {
+        val event = macKeyEvent(0x6D, shift, KeyEventType.KeyDown)
+        assertEquals(Key.F10, event.key)
+        assertTrue(event.isShiftPressed)
+        assertFalse(event.isMetaPressed)
+        assertFalse(isEditingShortcut(0x6D, shift))
+        assertEquals(Key.Menu, macKeyEvent(0x6E, 0L, KeyEventType.KeyDown).key)
+    }
+
+    @Test
     fun fr5_command_letters_arrive_as_meta_for_the_editing_shortcuts() {
         // Key number, then what it must be. Compose's macOS mapping matches copy, paste,
         // cut, select all and undo on these keys with `isMetaPressed`.
@@ -114,5 +124,16 @@ class MacKeysTest {
             assertEquals(shift, event.isShiftPressed, "Shift on $key")
             assertFalse(event.isAltPressed)
         }
+    }
+
+    @Test
+    fun a_key_pressed_while_composing_is_the_scenes_only_when_the_input_method_gives_it_back() {
+        // An arrow with a Korean syllable marked: the syllable is committed and the arrow
+        // comes back as a command.
+        assertTrue(keyIsLeftForScene(handled = true, command = true))
+        // The next letter of the syllable, or an arrow inside a Japanese conversion: kept.
+        assertFalse(keyIsLeftForScene(handled = true, command = false))
+        // A key the input method did not take at all.
+        assertTrue(keyIsLeftForScene(handled = false, command = false))
     }
 }

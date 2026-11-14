@@ -7,9 +7,11 @@
 #include <X11/keysym.h>
 #include <X11/Xresource.h>
 #include <X11/extensions/sync.h>
+#include "x11_buttons.h"
 #include <GL/gl.h>
 #include <GL/glx.h>
 #include <locale.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,7 +70,14 @@ struct dxc_event {
     int32_t key_code;
     int32_t code_point;
     char text[DXC_TEXT_BYTES];
+    // The X server's time of a pointer event, a 32 bit count of milliseconds, so a press read
+    // after a slow frame still counts towards a double click by when it was made. Zero for
+    // everything else, which the scene times on arrival.
+    int64_t time_millis;
 };
+
+_Static_assert(offsetof(struct dxc_event, time_millis) == 128, "dxc_event time_millis starts at 128");
+_Static_assert(sizeof(struct dxc_event) == 136, "struct dxc_event is 136 bytes");
 
 // One thing in the window, as a reader who cannot see it would meet it. The same fields
 // and the same order as the other two windows declare, because the renderer writes the
@@ -198,8 +207,21 @@ static struct {
     int32_t backdrop;
 } dxc_options = {1, 0, 0, 0, 0};
 
-// How many pixels go to a point on this display, read once when the window is made.
+// How many pixels go to a point on this display, read when the window is made and again
+// whenever a desktop rewrites the root window's resources (dxc_rescale).
 static float dxc_scale = 1.0f;
+
+// Whether the window was last asked to be fullscreen (dxc_set_fullscreen), when it keeps the
+// screen's size through a change of scale rather than its own size in points.
+static int dxc_fullscreen;
+
+// The desktop's text size as the Kotlin side read it (dxc_native_set_text_factor_for), 0 where
+// nothing answers it: GNOME's text-scaling-factor, or KDE's forced font DPI over its global
+// scale. The desktop puts it into Xft.dpi, and the window reports it as its text scale, so it
+// is taken out of the scale here (dxc_dpi_without_text_factor). dxc_text_desktop_scale is the
+// scale the desktop says it multiplied it with (KDE's global scale), 0 where it names none.
+static float dxc_text_factor = 0.0f;
+static float dxc_text_desktop_scale = 0.0f;
 
 // Atoms this file asks the server for once.
 static Atom dxc_a_clipboard, dxc_a_primary, dxc_a_utf8, dxc_a_targets, dxc_a_text,
@@ -244,12 +266,6 @@ static void dxc_push_event(struct dxc_event event) {
     }
     dxc_events[(dxc_event_head + dxc_event_count) % DXC_EVENT_CAPACITY] = event;
     dxc_event_count++;
-}
-
-static int32_t dxc_buttons(unsigned int state) {
-    return ((state & Button1Mask) ? 1 : 0) |
-           ((state & Button3Mask) ? 2 : 0) |
-           ((state & Button2Mask) ? 4 : 0);
 }
 
 // Keys and modifiers cross as the server wrote them: a keysym and a state word. Turning
@@ -868,11 +884,55 @@ void dxc_native_window_begin_drag_at(int32_t edge, float x, float y) {
     dxc_move_resize(edge, root_x, root_y, x, y);
 }
 
-/** Reads how many pixels go to a point: the toolkit-independent settings desktops write. */
+/**
+ * Xft.dpi without the desktop's text size in it, the rule of X11Scale.withoutTextScale in common.
+ *
+ * Where the desktop names its scale (desktop_scale above 0, KDE's global scale) and dpi is, to
+ * within one DPI, 96 x desktop_scale x factor, the DPI is 96 x desktop_scale: Plasma writes its
+ * forced font DPI into Xft.dpi. Else GNOME's settings daemon writes Xft.dpi as 96 x the window
+ * scaling factor (a whole number on X11) x text-scaling-factor, cut to a whole DPI: where dpi
+ * is, to within that one DPI, a whole multiple of 96 x factor, the multiple is the window scale
+ * and only it is kept. Otherwise dpi was not written from this factor and is returned as it is.
+ * A factor of 0 (unknown) or 1 takes nothing out.
+ */
+static double dxc_dpi_without_text_factor(double dpi, double factor, double desktop_scale) {
+    if (!(factor > 0.0) || factor == 1.0 || factor > 1000.0) return dpi;
+    if (desktop_scale > 0.0 && desktop_scale <= 1000.0) {
+        double off = 96.0 * desktop_scale * factor - dpi;
+        if (off < 0.0) off = -off;
+        return off <= 1.0 ? 96.0 * desktop_scale : dpi;
+    }
+    double step = 96.0 * factor;
+    double whole = (double)(long)(dpi / step + 0.5);
+    double off = whole * step - dpi;
+    if (off < 0.0) off = -off;
+    if (whole < 1.0 || off > 1.0) return dpi;
+    return whole * 96.0;
+}
+
+/**
+ * Reads how many pixels go to a point: the toolkit-independent settings desktops write.
+ *
+ * The resources are asked of the server every time rather than through
+ * XResourceManagerString, which is the copy Xlib took when the connection opened and never
+ * changes after, so a change of Xft.dpi would not be seen.
+ */
 static float dxc_detect_scale(void) {
     const char *forced = getenv("GDK_SCALE");
     if (forced != NULL && atof(forced) >= 1.0) return (float)atof(forced);
-    char *resources = XResourceManagerString(dxc_display);
+    Atom actual = None;
+    int format = 0;
+    unsigned long count = 0, after = 0;
+    unsigned char *data = NULL;
+    char *resources = NULL;
+    if (XGetWindowProperty(dxc_display, DefaultRootWindow(dxc_display), XA_RESOURCE_MANAGER, 0,
+                           1 << 20, False, XA_STRING, &actual, &format, &count, &after,
+                           &data) == Success &&
+        data != NULL && format == 8 && count > 0) {
+        // Xlib ends what it returns with a zero byte past the data.
+        resources = (char *)data;
+    }
+    float scale = 1.0f;
     if (resources != NULL) {
         XrmInitialize();
         XrmDatabase database = XrmGetStringDatabase(resources);
@@ -880,16 +940,86 @@ static float dxc_detect_scale(void) {
             char *type = NULL;
             XrmValue value;
             if (XrmGetResource(database, "Xft.dpi", "Xft.Dpi", &type, &value) && value.addr != NULL) {
-                double dpi = atof(value.addr);
-                if (dpi >= 96.0) {
-                    XrmDestroyDatabase(database);
-                    return (float)(dpi / 96.0);
-                }
+                double dpi = dxc_dpi_without_text_factor(
+                    atof(value.addr), (double)dxc_text_factor, (double)dxc_text_desktop_scale);
+                if (dpi >= 96.0) scale = (float)(dpi / 96.0);
             }
             XrmDestroyDatabase(database);
         }
     }
-    return 1.0f;
+    if (data != NULL) XFree(data);
+    return scale;
+}
+
+/** Tells the manager the smallest size, and for a window that cannot be resized the only one, in pixels. */
+static void dxc_apply_size_hints(int32_t width, int32_t height) {
+    XSizeHints hints;
+    memset(&hints, 0, sizeof hints);
+    if (dxc_options.min_width > 0 || dxc_options.min_height > 0) {
+        hints.flags |= PMinSize;
+        hints.min_width = (int)((float)dxc_options.min_width * dxc_scale + 0.5f);
+        hints.min_height = (int)((float)dxc_options.min_height * dxc_scale + 0.5f);
+    }
+    if (!dxc_options.resizable) {
+        hints.flags |= PMinSize | PMaxSize;
+        hints.min_width = hints.max_width = width;
+        hints.min_height = hints.max_height = height;
+    }
+    if (hints.flags != 0) XSetWMNormalHints(dxc_display, dxc_window, &hints);
+}
+
+/**
+ * The pixels a length of [pixels] at scale [from] comes to at scale [to]: the same length in
+ * points times the new scale, rounded to the nearest pixel (a half up) and at least 1. A scale
+ * that is not a positive number leaves the pixels as they are. The rule of
+ * X11Scale.pixelsAtScale in common.
+ */
+static int32_t dxc_pixels_at_scale(int32_t pixels, float from, float to) {
+    if (!(from > 0.0f) || !(to > 0.0f) || from > 1.0e30f || to > 1.0e30f || from == to) return pixels;
+    double rescaled = (double)pixels / (double)from * (double)to + 0.5;
+    if (rescaled < 1.0) return 1;
+    if (rescaled > 2147483647.0) return 2147483647;
+    return (int32_t)(long)rescaled;
+}
+
+/**
+ * A desktop rewrote the root window's resources, which is how a change of Xft.dpi in its
+ * settings arrives (and what `xrdb -merge` does). The scale is read again; when it changed,
+ * the window keeps its size in points, as the macOS and Windows windows do: it is resized to
+ * that size times the new scale (dxc_pixels_at_scale), its top left staying where it is, its
+ * size hints are told again in the new pixels and a frame is drawn at the new size and scale.
+ * A fullscreen window keeps the screen's size. The new size is what dxc_native_window_size
+ * answers at once, so the Kotlin side sees the new size with the new scale on its next turn
+ * and reports it as a scale change; where the window manager answers with another size, its
+ * ConfigureNotify corrects it.
+ */
+static void dxc_rescale(void) {
+    float scale = dxc_detect_scale();
+    if (scale == dxc_scale) return;
+    float before = dxc_scale;
+    dxc_scale = scale;
+    if (dxc_fullscreen || dxc_width <= 0 || dxc_height <= 0) {
+        // Only a minimum depends on the scale here: a window that cannot be resized stays held
+        // to the pixels it has, which its hints already say.
+        if (dxc_options.resizable && (dxc_options.min_width > 0 || dxc_options.min_height > 0)) {
+            dxc_apply_size_hints(dxc_width, dxc_height);
+            XFlush(dxc_display);
+        }
+        dxc_request_frame();
+        return;
+    }
+    int32_t width = dxc_pixels_at_scale(dxc_width, before, scale);
+    int32_t height = dxc_pixels_at_scale(dxc_height, before, scale);
+    // Before the resize, so that a window held to its size by its hints is let take the new one.
+    dxc_apply_size_hints(width, height);
+    if (width != dxc_width || height != dxc_height) {
+        dxc_width = width;
+        dxc_height = height;
+        XResizeWindow(dxc_display, dxc_window, (unsigned)width, (unsigned)height);
+        dxc_detail("rescale", dxc_width, dxc_height);
+    }
+    XFlush(dxc_display);
+    dxc_request_frame();
 }
 
 static void dxc_pump_events(void) {
@@ -928,10 +1058,12 @@ static void dxc_pump_events(void) {
                 record.y = (float)event.xmotion.y;
                 record.buttons = dxc_buttons(event.xmotion.state);
                 record.modifiers = (int32_t)event.xmotion.state;
+                record.time_millis = (int64_t)(uint32_t)event.xmotion.time;
                 break;
             case ButtonPress:
             case ButtonRelease: {
                 unsigned int button = event.xbutton.button;
+                record.time_millis = (int64_t)(uint32_t)event.xbutton.time;
                 if (button >= 4 && button <= 7) {
                     if (event.type == ButtonRelease) continue;
                     record.kind = DXC_EVENT_SCROLL;
@@ -944,10 +1076,7 @@ static void dxc_pump_events(void) {
                     record.kind = event.type == ButtonPress ? DXC_EVENT_POINTER_DOWN : DXC_EVENT_POINTER_UP;
                     record.x = (float)event.xbutton.x;
                     record.y = (float)event.xbutton.y;
-                    record.buttons = dxc_buttons(event.xbutton.state);
-                    int32_t bit = button == 1 ? 1 : button == 3 ? 2 : button == 2 ? 4 : 0;
-                    if (event.type == ButtonPress) record.buttons |= bit;
-                    else record.buttons &= ~bit;
+                    record.buttons = dxc_pointer_buttons(event.xbutton.state, button, event.type == ButtonPress);
                     if (event.type == ButtonPress && button == 2) {
                         // The middle button pastes the primary selection, the way every X
                         // program does: what was last selected, with no copy asked for.
@@ -1072,6 +1201,12 @@ static void dxc_pump_events(void) {
             case DestroyNotify:
                 dxc_closed = 1;
                 continue;
+            case PropertyNotify:
+                if (event.xproperty.window == DefaultRootWindow(dxc_display) &&
+                    event.xproperty.atom == XA_RESOURCE_MANAGER) {
+                    dxc_rescale();
+                }
+                continue;
             default:
                 continue;
         }
@@ -1105,6 +1240,15 @@ int32_t dxc_native_context_menu(void *view, const char *items) {
     (void)view;
     (void)items;
     return -1;
+}
+
+/*
+ * The Windows window's own edit menu, which this window has not got: the scene draws the
+ * text context menu here. Answered for the same reason as the menu above.
+ */
+void dxc_native_set_edit_menu(void *window_pointer, int32_t flags) {
+    (void)window_pointer;
+    (void)flags;
 }
 
 /*
@@ -1381,21 +1525,10 @@ int32_t dxc_native_window_open(const char *title, int32_t width, int32_t height,
                     (const unsigned char *)title, (int)strlen(title));
     // Sizes the window may take, in pixels. A window that cannot be resized is held to the
     // size it opened at; otherwise only the minimum is stated.
-    {
-        XSizeHints hints;
-        memset(&hints, 0, sizeof hints);
-        if (dxc_options.min_width > 0 || dxc_options.min_height > 0) {
-            hints.flags |= PMinSize;
-            hints.min_width = (int)((float)dxc_options.min_width * dxc_scale + 0.5f);
-            hints.min_height = (int)((float)dxc_options.min_height * dxc_scale + 0.5f);
-        }
-        if (!dxc_options.resizable) {
-            hints.flags |= PMinSize | PMaxSize;
-            hints.min_width = hints.max_width = width;
-            hints.min_height = hints.max_height = height;
-        }
-        if (hints.flags != 0) XSetWMNormalHints(dxc_display, dxc_window, &hints);
-    }
+    dxc_apply_size_hints(width, height);
+    // Only this client's interest in the root window: a change of the resources there is a
+    // change of Xft.dpi (dxc_rescale).
+    XSelectInput(dxc_display, DefaultRootWindow(dxc_display), PropertyChangeMask);
     if (!dxc_options.system_chrome) {
         // No frame of the manager's: the renderer draws the caption and the edges. The
         // fields are flags, functions, decorations, input mode and status; only the
@@ -1409,6 +1542,22 @@ int32_t dxc_native_window_open(const char *title, int32_t width, int32_t height,
         long version = 5;
         XChangeProperty(dxc_display, dxc_window, dxc_a_xdnd_aware, XA_ATOM, 32, PropModeReplace,
                         (unsigned char *)&version, 1);
+    }
+    {
+        // Which process on which machine owns the window, before it is mapped, so a tool
+        // that looks a window up by process (`xdotool search --pid`) finds it. The pid only
+        // means something together with the machine, which is why EWMH asks for both.
+        long pid = (long)getpid();
+        XChangeProperty(dxc_display, dxc_window, XInternAtom(dxc_display, "_NET_WM_PID", False),
+                        XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&pid, 1);
+        char host[256];
+        if (gethostname(host, sizeof host) == 0) {
+            host[sizeof host - 1] = '\0';
+            if (host[0] != '\0') {
+                XChangeProperty(dxc_display, dxc_window, XA_WM_CLIENT_MACHINE, XA_STRING, 8,
+                                PropModeReplace, (unsigned char *)host, (int)strlen(host));
+            }
+        }
     }
     dxc_open_input_method();
     XMapWindow(dxc_display, dxc_window);
@@ -1430,6 +1579,24 @@ int32_t dxc_native_window_open(const char *title, int32_t width, int32_t height,
 // resize asks this, and taking the rest of that resize out of the queue in the middle of
 // handling one of them is how a size change ends up recorded and never painted. Events are
 // read in one place, which is dxc_native_pump.
+// The desktop's text size, 0 where there is none, for the scale to take out of Xft.dpi, and
+// the desktop scale it is relative to, 0 where the desktop names none (GNOME). Told before the
+// window opens and whenever the Kotlin side reads it again; with a window open, the scale is
+// read again at once.
+void dxc_native_set_text_factor_for(float factor, float desktop_scale) {
+    if (!(factor > 0.0f)) factor = 0.0f;
+    if (!(desktop_scale > 0.0f)) desktop_scale = 0.0f;
+    if (factor == dxc_text_factor && desktop_scale == dxc_text_desktop_scale) return;
+    dxc_text_factor = factor;
+    dxc_text_desktop_scale = desktop_scale;
+    if (dxc_display != NULL && dxc_window != None) dxc_rescale();
+}
+
+// GNOME's text-scaling-factor alone: a desktop that names no scale of its own.
+void dxc_native_set_text_factor(float factor) {
+    dxc_native_set_text_factor_for(factor, 0.0f);
+}
+
 void dxc_native_window_size(void *window_pointer, int32_t *width, int32_t *height, float *scale) {
     (void)window_pointer;
     *width = dxc_width;
@@ -1711,6 +1878,7 @@ void dxc_native_set_min_size(int32_t width, int32_t height) {
  * 3 fullscreen. Fullscreen is the window manager's own state, asked through the root window.
  */
 static void dxc_set_fullscreen(int on) {
+    dxc_fullscreen = on ? 1 : 0;
     XEvent message;
     memset(&message, 0, sizeof message);
     message.xclient.type = ClientMessage;

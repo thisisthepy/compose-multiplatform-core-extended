@@ -3,7 +3,6 @@
 package org.thisisthepy.compose.window.scene
 
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,6 +20,8 @@ import org.thisisthepy.compose.window.FrameRequestCoalescer
 import org.thisisthepy.compose.window.FramePresentLog
 import org.thisisthepy.compose.window.ImeSession
 import org.thisisthepy.compose.window.AccessibilityCache
+import org.thisisthepy.compose.window.CaretRect
+import org.thisisthepy.compose.window.EventClock
 import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.WindowCaption
 import org.thisisthepy.compose.window.WindowConfig
@@ -30,6 +31,15 @@ import org.thisisthepy.compose.window.WindowFrames
 import org.thisisthepy.compose.window.WindowListener
 import org.thisisthepy.compose.window.WindowPlatform
 import org.thisisthepy.compose.window.candidateSpot
+
+/**
+ * Implemented by a [WindowPlatform] that provides composition locals of its own to the
+ * content, such as the system's clipboard, rather than leaving them to Compose's default.
+ */
+interface PlatformCompositionLocals {
+    @Composable
+    fun Provide(content: @Composable () -> Unit)
+}
 
 /** The system appearance the window reported, for content that follows it. */
 val LocalSystemTheme = staticCompositionLocalOf { SystemTheme.Light }
@@ -107,6 +117,10 @@ class ComposeWindowHost(
     // The platform's account of when each frame reaches the screen, so an animation moves at
     // the speed of the wall clock whatever the display's refresh rate and however late a frame.
     private val clock = FrameClock(platform::frameTimeNanos)
+    // When each pointer event happened, by the platform's account, on one clock: a press read
+    // after a slow frame is still dated when it was made, so two presses of a double click
+    // stay as far apart as they were.
+    internal var eventClock = EventClock()
     private val heard = ArrayList<WindowEvent>()
     private val ime = ImeSession { event -> log.heard(event) }
     private var scene: ComposeScene? = null
@@ -116,14 +130,16 @@ class ComposeWindowHost(
     private var caption by mutableStateOf(WindowCaption.None)
     private var density = 1f
     private val semantics = SceneSemantics()
+    private val back = SceneBackInput()
+    private val fieldMenu = FieldMenuOpener()
+    // The menu Compose asked the platform to put up, where its menus are the system's.
+    private val systemMenus = SystemMenus()
     // Described only while a reader is listening: it costs about a third of a frame.
     private val accessibility = AccessibilityCache(describe = { semantics.describe(density) }, push = platform::setAccessibility)
     private var readerWasListening = false
-
-    /** Where the drawn edit menu is open, in pixels, or null while it is closed. */
-    internal var editMenuAt by mutableStateOf<IntOffset?>(null)
-        private set
     private var size = IntSize.Zero
+    /** The operating system's text size, handed to Compose as `Density.fontScale`. */
+    private var textScale = 1f
     private var painted = false
 
     private val listener = object : WindowListener {
@@ -133,25 +149,25 @@ class ComposeWindowHost(
                 WindowEvent.PREEDIT_DRAW -> ime.preeditDraw(event.keyCode, event.codePoint, event.text, event.x.toInt())
                 WindowEvent.PREEDIT_DONE -> ime.preeditDone()
                 WindowEvent.TEXT_COMMIT -> ime.commit(event.text)
-                else -> {
-                    // A platform with no menu of its own (showContextMenu answers -1) gets
-                    // the scene's: a secondary press opens it at the pointer.
-                    if (event.kind == WindowEvent.POINTER_DOWN && event.buttons and 2 != 0 &&
-                        !platform.hasNativeEditMenu()
-                    ) {
-                        editMenuAt = IntOffset(event.x.toInt(), event.y.toInt())
-                    } else if (event.kind == WindowEvent.POINTER_DOWN) {
-                        editMenuAt = null
-                    }
-                    log.heard(event)
-                }
+                WindowEvent.TEXT_SCALE_CHANGED -> textScale = event.textScale
+                // A secondary press goes to the scene like any other: a text field or a
+                // selection answers it with Compose's own menu (see SceneTextMenu.kt).
+                else -> log.heard(event)
             }
         }
 
         override fun onContextMenuChosen(id: Int) {
-            editMenuAt = null
+            // The answer to a menu of Compose's that the platform put up for it.
+            if (systemMenus.answer(id)) {
+                requestFrame()
+                return
+            }
             val chord = editChord(id, usesCommandKey(platform.name)) ?: return
             for (press in chord) scene?.sendKeyEvent(press)
+        }
+
+        override fun onTextScaleChanged(scale: Float) {
+            textScale = scale
         }
 
         override fun onThemeChanged(theme: SystemTheme) {
@@ -183,6 +199,7 @@ class ComposeWindowHost(
         }
         surface = drawable
         theme = platform.systemTheme()
+        textScale = platform.textScale()
         caption = platform.caption()
         val measured = platform.measure()
         density = measured.scale
@@ -191,10 +208,10 @@ class ComposeWindowHost(
         // main dispatcher, which Compose asks for once.
         useAsComposeMainDispatcher(sceneMainWork)
         val created = CanvasLayersComposeScene(
-            density = Density(measured.scale),
+            density = Density(measured.scale, textScale),
             size = size,
             coroutineContext = work,
-            platformContext = ScenePlatformContext({ size }, textInput, semantics),
+            platformContext = ScenePlatformContext({ size }, textInput, semantics, platform.doubleClickMillis, back),
         )
         val cursorBlink = !isIdleSoakEnabled()
         created.setContent {
@@ -203,8 +220,18 @@ class ComposeWindowHost(
                 LocalSystemTheme provides theme,
                 LocalWindowCaption provides caption,
             ) {
-                WindowFrame(platform, caption, theme, config.resizable, padContentForCaption) { content() }
-                DrawnEditMenu(editMenuAt, onChosen = { listener.onContextMenuChosen(it) }, onDismiss = { editMenuAt = null })
+                val body: @Composable () -> Unit = {
+                    val frame: @Composable () -> Unit = {
+                        fieldMenu.Provide {
+                            WindowFrame(platform, caption, theme, config.resizable, padContentForCaption) { content() }
+                        }
+                    }
+                    // A platform whose menus are the system's puts up Compose's menu itself, so
+                    // a right click shows one menu and not the system's beside a drawn one.
+                    if (platform.systemContextMenu) ProvideSystemContextMenu(systemMenus, frame) else frame()
+                }
+                val locals = platform as? PlatformCompositionLocals
+                if (locals != null) locals.Provide(body) else body()
             }
         }
         scene = created
@@ -223,6 +250,115 @@ class ComposeWindowHost(
      * what the window heard, then a frame if there is anything to draw.
      */
     fun turn(timeoutMillis: Long) {
+        if (turning) return
+        turning = true
+        try {
+            turnOnce(timeoutMillis)
+        } finally {
+            turning = false
+        }
+    }
+
+    private var turning = false
+    private var delivering = false
+    private val outside = ArrayList<WindowEvent>()
+
+    /**
+     * Hands the scene what the window heard since the last time, outside a [turn].
+     *
+     * For an embedding whose own run loop drives the application (`NSApplication.run`)
+     * and so never calls [turn]: the window calls this from its event handlers and its
+     * draw path, and the events reach the scene without a timer pumping the host.
+     *
+     * Does nothing inside a [turn], which drains the same log itself, and nothing when
+     * reached from inside a delivery (a listener that makes the window hear something):
+     * what that heard stays in the log and the running delivery takes it on its next
+     * pass. Every event is handed over exactly once. True when anything was delivered.
+     */
+    fun deliverHeard(): Boolean = deliverHeard(settleBetween = true)
+
+    private fun deliverHeard(settleBetween: Boolean): Boolean {
+        if (turning || delivering) return false
+        val current = scene ?: return false
+        delivering = true
+        var any = false
+        try {
+            while (true) {
+                outside.clear()
+                log.drain(outside)
+                if (outside.isEmpty()) break
+                any = true
+                receiveAll(current, outside, settleBetween)
+                work.runPending()
+                sceneMainWork.runPending()
+            }
+        } finally {
+            outside.clear()
+            delivering = false
+        }
+        if (any) requestFrame()
+        return any
+    }
+
+    /**
+     * Hands [events] to the scene in order. [settleBetween] lets it draw a frame between two
+     * field changes (see the loop); false on the draw path, where a frame is already being drawn,
+     * so the second change only runs the pending work there and the next frame composes it.
+     */
+    private fun receiveAll(current: ComposeScene, events: List<WindowEvent>, settleBetween: Boolean) {
+        var unsettled = Edit.NONE
+        for (event in events) {
+            val edit = editOf(event.kind)
+            // Two things that change a field, read in one turn. A field given its value by
+            // the application has the new one only after it is composed again, so the second
+            // would be worked out from the value before the first: a commit after an arrow
+            // key goes in at the old caret, and of two arrow keys one is lost. A frame
+            // between them is what composes it.
+            if (needsSettling(unsettled, edit)) {
+                if (settleBetween) settle() else runPendingWork()
+                unsettled = Edit.NONE
+            }
+            // The Menu key, or Shift and F10, over a focused field: the field is asked for its
+            // menu as a right click on its caret asks for it, and the key goes no further.
+            if (opensTextMenu(event)) {
+                val at = textMenuPoint(textInput.caret(), textInput.selection())
+                if (at != null) {
+                    if (!fieldMenu.open(at)) {
+                        val time = eventClock.timeOf(event.timeMillis)
+                        for (press in secondaryClickAt(at, event.timeMillis)) current.receive(press, timeMillis = time)
+                    }
+                    unsettled = Edit.POINTER
+                    continue
+                }
+            }
+            // A key that moves the caret while a syllable is still marked: the field keeps
+            // the syllable where it is and the input method is told to let go of its copy,
+            // before the key is read. An input method that finishes the composition itself
+            // when it sees such a key has already said so, and nothing is composing here.
+            if (event.kind == WindowEvent.KEY_DOWN && movesCaret(composeKey(event.keyCode)) &&
+                textInput.finishComposition()
+            ) {
+                ime.discard()
+                platform.endComposition()
+                if (settleBetween) settle() else runPendingWork()
+            }
+            current.receive(event, timeMillis = eventClock.timeOf(event.timeMillis), unused = ::keyLeftAlone)
+            when (event.kind) {
+                WindowEvent.TEXT_COMMIT -> textInput.commit(event.text)
+                WindowEvent.TEXT_COMPOSE -> textInput.compose(event.text)
+            }
+            // Only what left the scene with something to compose has to be waited for. A
+            // letter key changes nothing, the text it typed arrives beside it, and a frame
+            // between the two would be a frame for every letter typed.
+            val changed = edit != Edit.NONE && run {
+                runPendingWork()
+                current.hasInvalidations()
+            }
+            if (changed) unsettled = edit
+        }
+    }
+
+    private fun turnOnce(timeoutMillis: Long) {
         val current = scene ?: return
         // The one place the operating system is read. A frame drawn inside a resize must not
         // read it again, or the rest of the drag is taken out of the queue unhandled.
@@ -237,13 +373,7 @@ class ComposeWindowHost(
         }
         heard.clear()
         log.drain(heard)
-        for (event in heard) {
-            current.receive(event)
-            when (event.kind) {
-                WindowEvent.TEXT_COMMIT -> textInput.commit(event.text)
-                WindowEvent.TEXT_COMPOSE -> textInput.compose(event.text)
-            }
-        }
+        receiveAll(current, heard, settleBetween = true)
         // The caption as it is now: a change of style, scale or full screen reaches the content
         // in this frame, as a state change the scene sees as an invalidation.
         val measuredCaption = platform.caption()
@@ -255,6 +385,26 @@ class ComposeWindowHost(
         }
         placeInputMethod()
         describeForReaders(drew)
+        showSystemMenu()
+    }
+
+    /**
+     * Puts up the menu Compose asked for, after the frame that shows what it is for. Its loop
+     * runs until it closes, which is why it is not put up from inside Compose's own work.
+     */
+    private fun showSystemMenu() {
+        val request = systemMenus.take() ?: return
+        platform.showContextMenu(request.items)
+    }
+
+    /**
+     * Lets the scene take in what it was just given: its pending work, then a frame, which
+     * is what composes the content again, then the work that frame started.
+     */
+    private fun settle() {
+        runPendingWork()
+        frames?.draw()
+        runPendingWork()
     }
 
     /** Runs [turn] until the window closes, then releases everything. */
@@ -289,7 +439,9 @@ class ComposeWindowHost(
         // into a corner of its new one.
         val fitted = IntSize(width, height)
         if (current.size != fitted) current.size = fitted
-        if (current.density.density != scale) current.density = Density(scale)
+        if (current.density.density != scale || current.density.fontScale != textScale) {
+            current.density = Density(scale, textScale)
+        }
         size = fitted
         density = scale
         try {
@@ -305,13 +457,24 @@ class ComposeWindowHost(
         drewLast = true
     }
 
-    /** Renders directly to [canvas] at the given pixel dimensions, using the host's clock and scene. */
-    fun renderTo(canvas: org.jetbrains.skia.Canvas, widthInPixels: Int, heightInPixels: Int) {
+    /**
+     * Renders directly to [canvas] at the given pixel dimensions, using the host's clock and
+     * scene. A [scale] other than the scene's density (the window moved to a screen of another
+     * density) lays the content out again at that one; null keeps the density.
+     */
+    fun renderTo(canvas: org.jetbrains.skia.Canvas, widthInPixels: Int, heightInPixels: Int, scale: Float? = null) {
         val current = scene ?: return
+        // A window drawn by its own run loop reaches here without a turn: what it heard
+        // is handed over first, so the frame shows it.
+        deliverHeard(settleBetween = false)
         work.runPending()
         sceneMainWork.runPending()
         val fitted = IntSize(widthInPixels, heightInPixels)
         if (current.size != fitted) current.size = fitted
+        if (scale != null && scale > 0f && (current.density.density != scale || current.density.fontScale != textScale)) {
+            current.density = Density(scale, textScale)
+            density = scale
+        }
         current.render(canvas.asComposeCanvas(), clock.frameNanos())
         work.runPending()
         sceneMainWork.runPending()
@@ -346,6 +509,22 @@ class ComposeWindowHost(
     fun onAccessibilityAction(id: Int, action: Int, argument: String?): Boolean =
         semantics.perform(id, action, argument).also { if (it) requestFrame() }
 
+    /**
+     * A key the scene did not use: Escape goes back, which closes a popup or a menu, and an
+     * arrow in an open menu steps through it (see [menuStepFor]). Answers whether it was used.
+     */
+    private fun keyLeftAlone(key: androidx.compose.ui.input.key.KeyEvent): Boolean {
+        if (back.onKeyEvent(key)) return true
+        val steps = menuStepFor(key) ?: return false
+        if (!semantics.menuOpen()) return false
+        val current = scene ?: return false
+        for (step in steps) current.sendKeyEvent(step)
+        return true
+    }
+
+    /** Where the focused field's caret is, in window pixels, or null with none laid out. */
+    internal fun focusedCaret(): CaretRect? = textInput.caret()
+
     private fun placeInputMethod() {
         if (!textInput.isActive) return
         val spot = candidateSpot(textInput.caret(), 1f) ?: return
@@ -355,6 +534,30 @@ class ComposeWindowHost(
     private companion object {
         const val FRAME_MILLIS = 16L
     }
+}
+
+/** What an event may change in a field: nothing, or the kind of thing that changes it. */
+internal enum class Edit { NONE, KEY, TEXT, POINTER }
+
+internal fun editOf(kind: Int): Edit = when (kind) {
+    WindowEvent.KEY_DOWN -> Edit.KEY
+    WindowEvent.TEXT_COMMIT, WindowEvent.TEXT_COMPOSE -> Edit.TEXT
+    WindowEvent.POINTER_DOWN, WindowEvent.POINTER_UP -> Edit.POINTER
+    else -> Edit.NONE
+}
+
+/**
+ * Whether the scene has to compose again between a change of kind [before], already made in
+ * this turn, and one of kind [next].
+ *
+ * Text after text does not: the commands go through one editing buffer, which has the first
+ * when the second arrives. A press and its release do not either. Everything else does,
+ * because a key is worked out from the value the field was last composed with.
+ */
+internal fun needsSettling(before: Edit, next: Edit): Boolean = when {
+    before == Edit.NONE || next == Edit.NONE -> false
+    before == next && before != Edit.KEY -> false
+    else -> true
 }
 
 /**

@@ -23,6 +23,16 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Retry transient dependency download failures (TLS handshake resets, timeouts) with
+  # backoff. These are JVM system properties read by Gradle's repository transport, so
+  # they must reach the daemon and Amper's JVMs; JAVA_TOOL_OPTIONS is inherited by all.
+  JAVA_TOOL_OPTIONS: >-
+    -Dorg.gradle.internal.repository.max.retries=6
+    -Dorg.gradle.internal.repository.initial.backoff=1000
+    -Dorg.gradle.internal.http.connectionTimeout=120000
+    -Dorg.gradle.internal.http.socketTimeout=120000
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -52,6 +62,12 @@ jobs:
         run: |
           mkdir -p build
           cc -c -O2 -fPIC -Wall -o build/x11_window.o c/x11_window.c
+
+      - name: The buttons of a pointer event use the encoding common names
+        working-directory: extended/window/graalvm/graalvm-linux
+        run: |
+          cc -O1 -Wall -o build/buttons_test test/c/buttons_test.c
+          ./build/buttons_test
 
       # The renderer's one native image carries the macOS window's calls on every desktop and
       # links every C function its reachable code names, so the X11 library defines them too.
@@ -88,6 +104,12 @@ jobs:
         run: |
           cc -O1 -Wall -o build/resize_test test/c/resize_test.c -lX11 -lXext -lGL
           xvfb-run -a -s "-screen 0 1280x800x24" ./build/resize_test
+
+      - name: The scale follows Xft.dpi on the root window (under a virtual display)
+        working-directory: extended/window/graalvm/graalvm-linux
+        run: |
+          cc -O1 -Wall -o build/scale_test test/c/scale_test.c -lX11 -lXext -lGL
+          xvfb-run -a -s "-screen 0 1280x800x24" ./build/scale_test
 
       - name: A resize through a window manager that honours the sync counter (openbox, under a virtual display)
         working-directory: extended/window/graalvm/graalvm-linux

@@ -11,8 +11,9 @@ import org.thisisthepy.compose.window.parseMacosAxSnapshot
 import org.thisisthepy.compose.window.WindowCaption
 import org.thisisthepy.compose.window.WindowChrome
 import org.thisisthepy.compose.window.macosCaption
-import org.thisisthepy.compose.window.editMenuItems
+import org.thisisthepy.compose.window.printableText
 import org.thisisthepy.compose.window.FramePresentRecord
+import org.thisisthepy.compose.window.DoubleClick
 import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
@@ -76,7 +77,10 @@ class AppKitWindowPlatform : WindowPlatform {
             titleHidden = bar.titleHidden,
             unifiedToolbar = bar.unifiedToolbar,
         )
-        setTextMenu(packMenu(textEditMenu()))
+        // No menu of the window's own on a right click: Compose's menu is put up as the
+        // system's through showContextMenu (systemContextMenu), and a second one from the
+        // window would come up beside it or beside the one an application gave.
+        setTextMenu(null)
         val opened = openNativeWindow(config.title, config.width, config.height) ?: return false
         window = opened
         this.listener = listener
@@ -153,7 +157,7 @@ class AppKitWindowPlatform : WindowPlatform {
             val scale = current.measure().scale.coerceAtLeast(1f)
             val x = 80f * scale
             val y = 80f * scale
-            sink.onEvent(WindowEvent(WindowEvent.POINTER_DOWN, x, y, 1, 0, 0, 0, ""))
+            sink.onEvent(WindowEvent(WindowEvent.POINTER_DOWN, x, y, WindowEvent.PRIMARY_HELD, 0, 0, 0, ""))
             sink.onEvent(WindowEvent(WindowEvent.POINTER_UP, x, y, 0, 0, 0, 0, ""))
             sink.onEvent(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "abcde"))
         }
@@ -203,6 +207,8 @@ class AppKitWindowPlatform : WindowPlatform {
 
     override fun systemTheme(): SystemTheme = if (isSystemDark()) SystemTheme.Dark else SystemTheme.Light
 
+    override val doubleClickMillis: Long get() = DoubleClick.clamp(systemDoubleClickMillis())
+
     override fun setTitle(title: String) {
         window?.setTitle(title)
     }
@@ -227,6 +233,14 @@ class AppKitWindowPlatform : WindowPlatform {
     override fun writeClipboardText(text: String) = writeClipboard(text)
 
     override fun setImeSpot(x: Int, y: Int) = setNativeImeSpot(x.toFloat(), y.toFloat())
+
+    override fun endComposition() = endNativeComposition()
+
+    /**
+     * Compose's context menus are the system's here: the scene hands [showContextMenu] what a
+     * field's menu holds, and draws none of its own.
+     */
+    override val systemContextMenu: Boolean get() = true
 
     override fun showContextMenu(items: List<ContextMenuItem>) {
         val current = window ?: return
@@ -280,14 +294,6 @@ class AppKitWindowPlatform : WindowPlatform {
 
     companion object {
         /**
-         * The entries of the menu a right click puts up. Cut and Copy cannot be judged from
-         * outside the field, which owns the selection; Paste is greyed out by the window
-         * while the clipboard holds no text.
-         */
-        fun textEditMenu(): List<ContextMenuItem> =
-            editMenuItems(canCut = true, canCopy = true, canPaste = true, canSelectAll = true)
-
-        /**
          * Hands one event the window wrote down to [sink]. A chosen menu entry goes to
          * [WindowListener.onContextMenuChosen] and a reader's request to
          * [WindowListener.onAccessibilityAction], not to [WindowListener.onEvent], as they do
@@ -301,6 +307,14 @@ class AppKitWindowPlatform : WindowPlatform {
                 ACCESSIBILITY_ACTION_EVENT -> {
                     val value = if (event.codePoint == AccessibleAction.SET_VALUE) argument() else null
                     sink.onAccessibilityAction(event.keyCode, event.codePoint, value)
+                }
+                // Control A has a character of its own, and an input method with no binding
+                // for it can hand that over as text. Never text anybody meant to type.
+                WindowEvent.TEXT_COMMIT -> {
+                    val text = printableText(event.text)
+                    if (text.isNotEmpty()) {
+                        sink.onEvent(if (text == event.text) event else event.copy(text = text))
+                    }
                 }
                 else -> sink.onEvent(event)
             }

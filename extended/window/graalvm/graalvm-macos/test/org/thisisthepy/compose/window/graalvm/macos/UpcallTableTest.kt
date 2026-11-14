@@ -58,16 +58,10 @@ class UpcallTableTest {
     }
 
     @Test
-    fun fr33_6_the_text_menu_a_right_click_puts_up_is_cut_copy_paste_and_select_all() {
-        val items = AppKitWindowPlatform.textEditMenu()
-        assertEquals(
-            listOf(EditMenuId.CUT, EditMenuId.COPY, EditMenuId.PASTE, EditMenuId.SELECT_ALL),
-            items.map { it.id },
-        )
-        assertEquals(
-            "1\t1\t0\tCut\n2\t1\t0\tCopy\n3\t1\t1\tPaste\n4\t1\t0\tSelect All",
-            AppKitWindowPlatform.packMenu(items),
-        )
+    fun fr33_1_compose_s_menu_is_the_system_s_and_the_window_adds_none() {
+        // The scene hands Compose's own entries to showContextMenu and draws no menu; the
+        // window's own text menu stays off, or a right click would put up two.
+        assertTrue(AppKitWindowPlatform().systemContextMenu)
     }
 
     @Test
@@ -82,6 +76,23 @@ class UpcallTableTest {
         AppKitWindowPlatform.deliver(key, recorder)
         assertEquals(listOf(key), recorder.events)
         assertEquals(listOf(EditMenuId.COPY), recorder.chosen)
+    }
+
+    @Test
+    fun fr5_a_control_character_the_input_context_hands_over_is_not_committed_as_text() {
+        val recorder = Recorder()
+        // Control A, when the input method has no binding for it, comes back as U+0001.
+        val control = WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "\u0001")
+        AppKitWindowPlatform.deliver(control, recorder)
+        assertTrue(recorder.events.isEmpty(), "nothing is typed into the field")
+
+        val mixed = WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "a\u0001b")
+        AppKitWindowPlatform.deliver(mixed, recorder)
+        assertEquals(listOf("ab"), recorder.events.map { it.text })
+
+        val composed = WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "한글")
+        AppKitWindowPlatform.deliver(composed, recorder)
+        assertEquals("한글", recorder.events.last().text)
     }
 
     @Test

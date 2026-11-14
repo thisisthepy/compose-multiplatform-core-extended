@@ -5,14 +5,21 @@
 # possible is to build them somewhere the renderer's internals are not on the classpath.
 # Nothing here may depend on the wire protocol, the node table or anything else from
 # renderer (SPEC FR-14).
+#
+# Each directory is named as its Maven artifact (org.thisisthepy.compose.designsystem:<dir>),
+# because Amper names a module's klibs after its directory: the shared source sets'
+# metadata as <dir>_commonMain, the Wasm klib as <dir>. A bare `material3` would make
+# material3_commonMain, which is also the unique_name of the fork's own Material 3, and a
+# consumer's shared source set that sees two klibs of one unique_name keeps only one of them.
+# The Kotlin/Native klibs take the full coordinates (`-module-name` in each module.yaml).
 
 modules:
-  - core
-  - liquid-glass
+  - designsystem
+  - designsystem-liquid-glass
   # The six systems `adaptive` can pick (SPEC FR-14.3).
-  - material3
-  - cupertino
-  - fluent
-  - gnome
-  - breeze
-  - deepin
+  - designsystem-material3
+  - designsystem-cupertino
+  - designsystem-fluent
+  - designsystem-gnome
+  - designsystem-breeze
+  - designsystem-deepin

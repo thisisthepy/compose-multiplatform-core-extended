@@ -27,6 +27,7 @@ fun x11KeyNumber(keysym: Long): Int {
     if (keysym in XK_LOWER_A..XK_LOWER_Z) return X11_LETTERS[(keysym - XK_LOWER_A).toInt()]
     if (keysym in XK_UPPER_A..XK_UPPER_Z) return X11_LETTERS[(keysym - XK_UPPER_A).toInt()]
     if (keysym in XK_ZERO..XK_NINE) return X11_DIGITS[(keysym - XK_ZERO).toInt()]
+    if (keysym in XK_F1..XK_F12) return X11_FUNCTION_KEYS[(keysym - XK_F1).toInt()]
     return when (keysym) {
         XK_RETURN, XK_KP_ENTER -> 0x24
         XK_TAB, XK_ISO_LEFT_TAB -> 0x30
@@ -43,6 +44,8 @@ fun x11KeyNumber(keysym: Long): Int {
         XK_END -> 0x77
         XK_PRIOR -> 0x74
         XK_NEXT -> 0x79
+        // The key beside the right Control on a PC board, which asks for the context menu.
+        XK_MENU -> 0x6E
         else -> NO_KEY
     }
 }
@@ -90,6 +93,18 @@ class X11Events(private val resetInput: () -> String) {
         }
         return ArrayList(pending)
     }
+
+    /**
+     * Makes the input method let go of what it is composing and produces no event, for a
+     * field that has kept the text already ([WindowPlatform.endComposition]). The run is
+     * forgotten before the method is reset, so a callback it makes from inside the reset to
+     * say it is done finds nothing to end, and what it kept is not committed a second time.
+     */
+    fun endComposition() {
+        if (!ime.composing) return
+        ime.discard()
+        resetInput()
+    }
 }
 
 /**
@@ -135,6 +150,9 @@ private const val XK_KP_ENTER = 0xFF8DL
 private const val XK_DELETE = 0xFFFFL
 private const val XK_INSERT = 0xFF63L
 private const val XK_ISO_LEFT_TAB = 0xFE20L
+private const val XK_MENU = 0xFF67L
+private const val XK_F1 = 0xFFBEL
+private const val XK_F12 = 0xFFC9L
 
 // a to z, then 0 to 9, each as the board numbers them.
 private val X11_LETTERS = intArrayOf(
@@ -142,3 +160,8 @@ private val X11_LETTERS = intArrayOf(
     0x2D, 0x1F, 0x23, 0x0C, 0x0F, 0x01, 0x11, 0x20, 0x09, 0x0D, 0x07, 0x10, 0x06,
 )
 private val X11_DIGITS = intArrayOf(0x1D, 0x12, 0x13, 0x14, 0x15, 0x17, 0x16, 0x1A, 0x1C, 0x19)
+
+// F1 to F12. The keysyms run in order and the board's numbers do not.
+private val X11_FUNCTION_KEYS = intArrayOf(
+    0x7A, 0x78, 0x63, 0x76, 0x60, 0x61, 0x62, 0x64, 0x65, 0x6D, 0x67, 0x6F,
+)

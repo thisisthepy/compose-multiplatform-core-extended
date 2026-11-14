@@ -97,7 +97,7 @@ static float last_caption_x, last_caption_y;
 static void heard(const struct dxc_event *event) {
     switch (event->kind) {
     case DXC_EVENT_POINTER_DOWN: {
-        if (!(event->buttons & 1)) return;
+        if (!(event->buttons & DXC_PRIMARY_HELD)) return;
         press_x = event->x;
         press_y = event->y;
         int edge = edge_at(event->x, event->y);
@@ -123,7 +123,7 @@ static void heard(const struct dxc_event *event) {
     }
     case DXC_EVENT_POINTER_MOVE:
         if (pending < 0) return;
-        if (!(event->buttons & 1)) {
+        if (!(event->buttons & DXC_PRIMARY_HELD)) {
             pending = -1;
         } else if (fabsf(event->x - press_x) >= THRESHOLD || fabsf(event->y - press_y) >= THRESHOLD) {
             dxc_native_window_begin_drag_at(pending, press_x, press_y);
@@ -131,7 +131,7 @@ static void heard(const struct dxc_event *event) {
         }
         break;
     case DXC_EVENT_POINTER_UP:
-        if (!(event->buttons & 1)) pending = -1;
+        if (!(event->buttons & DXC_PRIMARY_HELD)) pending = -1;
         break;
     default:
         break;

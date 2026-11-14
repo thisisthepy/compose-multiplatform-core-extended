@@ -19,6 +19,14 @@ internal object X11Natives {
     @CFunction("dxc_native_window_open")
     external fun windowOpen(title: CCharPointer?, width: Int, height: Int, out: Pointer?): Int
 
+    /**
+     * The desktop's text size, 0 for none, and the desktop scale it is relative to, 0 where the
+     * desktop names none (GNOME), for the scale to take out of Xft.dpi (see X11Scale.withoutTextScale).
+     */
+    @JvmStatic
+    @CFunction("dxc_native_set_text_factor_for")
+    external fun setTextFactorFor(factor: Float, desktopScale: Float)
+
     @JvmStatic
     @CFunction("dxc_native_window_size")
     external fun windowSize(window: Pointer?, width: CIntPointer?, height: CIntPointer?, scale: CFloatPointer?)
@@ -141,7 +149,11 @@ internal object X11Layout {
     /** `struct dxc_native_window`: five pointer slots. */
     const val WINDOW_BYTES = 40
 
-    /** `struct dxc_event`: kind, x, y, buttons, modifiers, key_code, code_point, then text. */
+    /**
+     * `struct dxc_event`: kind, x, y, buttons, modifiers, key_code, code_point, then text, then
+     * the event time as an int64 aligned to 8 (28 + 96 is 124, padded to 128).
+     */
     const val EVENT_TEXT_BYTES = 96
-    const val EVENT_BYTES = 28 + EVENT_TEXT_BYTES
+    const val EVENT_TIME_OFFSET = 128
+    const val EVENT_BYTES = EVENT_TIME_OFFSET + 8
 }

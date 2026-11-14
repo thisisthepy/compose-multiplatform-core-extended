@@ -85,6 +85,8 @@ enum {
     DXC_STATE_ENABLED = 1 << 0,
     DXC_STATE_FOCUSED = 1 << 2,
     DXC_STATE_SELECTED = 1 << 6,
+    DXC_STATE_EXPANDABLE = 1 << 11,
+    DXC_STATE_EXPANDED = 1 << 12,
 };
 enum {
     DXC_ACTION_PRESS = 1 << 0,
@@ -95,6 +97,8 @@ enum {
     DXC_ACTION_SCROLL_FORWARD = 1 << 5,
     DXC_ACTION_SCROLL_BACKWARD = 1 << 6,
     DXC_ACTION_SHOW_MENU = 1 << 7,
+    DXC_ACTION_EXPAND = 1 << 8,
+    DXC_ACTION_COLLAPSE = 1 << 9,
 };
 
 // The event a reader's request is written down as: `key_code` is the element's id and
@@ -164,6 +168,18 @@ static BOOL dxc_ax_request(int32_t key, int32_t action, NSString *argument) {
 - (BOOL)isAccessibilityEnabled { return (self.states & DXC_STATE_ENABLED) != 0; }
 - (BOOL)isAccessibilityFocused { return (self.states & DXC_STATE_FOCUSED) != 0; }
 - (BOOL)isAccessibilitySelected { return (self.states & DXC_STATE_SELECTED) != 0; }
+- (BOOL)isAccessibilityExpanded {
+    return (self.states & DXC_STATE_EXPANDABLE) != 0 && (self.states & DXC_STATE_EXPANDED) != 0;
+}
+
+// A reader opened or closed it through AXExpanded: the scene runs the expand or collapse.
+// The same rule as macosAxExpandAction in the common module.
+- (void)setAccessibilityExpanded:(BOOL)expanded {
+    if ((self.states & DXC_STATE_EXPANDABLE) == 0) return;
+    if (expanded == [self isAccessibilityExpanded]) return;
+    int32_t action = expanded ? DXC_ACTION_EXPAND : DXC_ACTION_COLLAPSE;
+    if ((self.actions & action) != 0) dxc_ax_request(self.key, action, nil);
+}
 - (id)accessibilityParent { return self.up; }
 - (NSArray *)accessibilityChildren { return self.kids ?: @[]; }
 - (NSArray *)accessibilityChildrenInNavigationOrder { return self.accessibilityChildren; }
@@ -213,6 +229,10 @@ static BOOL dxc_ax_request(int32_t key, int32_t action, NSString *argument) {
     if (selector == @selector(accessibilityPerformShowMenu)) return (self.actions & DXC_ACTION_SHOW_MENU) != 0;
     if (selector == @selector(setAccessibilityValue:)) return (self.flags & DXC_AX_VALUE_SETTABLE) != 0;
     if (selector == @selector(setAccessibilityFocused:)) return (self.flags & DXC_AX_FOCUS_SETTABLE) != 0;
+    if (selector == @selector(setAccessibilityExpanded:)) {
+        return (self.states & DXC_STATE_EXPANDABLE) != 0 &&
+            (self.actions & (DXC_ACTION_EXPAND | DXC_ACTION_COLLAPSE)) != 0;
+    }
     return [super isAccessibilitySelectorAllowed:selector];
 }
 
@@ -229,6 +249,16 @@ static BOOL dxc_ax_request(int32_t key, int32_t action, NSString *argument) {
     if ((self.actions & DXC_ACTION_SCROLL_BACKWARD) != 0) {
         [found addObject:[[NSAccessibilityCustomAction alloc] initWithName:@"Scroll backward" handler:^BOOL {
             return dxc_ax_request(key, DXC_ACTION_SCROLL_BACKWARD, nil);
+        }]];
+    }
+    if ((self.actions & DXC_ACTION_EXPAND) != 0) {
+        [found addObject:[[NSAccessibilityCustomAction alloc] initWithName:@"Expand" handler:^BOOL {
+            return dxc_ax_request(key, DXC_ACTION_EXPAND, nil);
+        }]];
+    }
+    if ((self.actions & DXC_ACTION_COLLAPSE) != 0) {
+        [found addObject:[[NSAccessibilityCustomAction alloc] initWithName:@"Collapse" handler:^BOOL {
+            return dxc_ax_request(key, DXC_ACTION_COLLAPSE, nil);
         }]];
     }
     return found;

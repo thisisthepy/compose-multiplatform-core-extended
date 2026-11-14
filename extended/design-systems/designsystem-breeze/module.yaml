@@ -1,0 +1,42 @@
+# KDE Breeze.
+#
+# What `adaptive` picks on Linux when the session is KDE (SPEC FR-14.3).
+
+product:
+  type: kmp/lib
+  platforms: [ jvm, android, iosArm64, iosSimulatorArm64, macosArm64, linuxX64, wasmJs ]
+
+dependencies:
+  - //designsystem: exported
+  - $libs.compose.fork.runtime
+  - $libs.compose.fork.foundation
+  - $libs.compose.fork.ui
+
+test-dependencies:
+  - $kotlin.test
+
+apply:
+  - ../publish.module-template.yaml
+
+settings:
+  publishing:
+    artifactId: designsystem-breeze
+    pom:
+      name: "Design systems: KDE Breeze"
+      description: "KDE Breeze as a design system for Compose."
+
+# A klib's unique_name defaults to the Amper module name, the directory name, which a
+# consumer's own module (or another library) can share; the Kotlin/Native linker refuses two
+# libraries with one unique_name. The Maven coordinates are globally unique. Native only:
+# the Wasm compiler takes no -module-name.
+settings@native:
+  kotlin:
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.designsystem:designsystem-breeze
+
+test-settings@native:
+  kotlin:
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.designsystem:designsystem-breeze-test

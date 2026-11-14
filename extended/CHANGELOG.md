@@ -5,8 +5,98 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ## Unreleased
 
+### Window modules (`org.thisisthepy.compose.window`)
+
+- **Fix.** A right click in a text field of a macOS window put up two menus. On Kotlin/Native,
+  `MacosWindowPlatform` put up an edit menu of its own beside the `NSMenu` Compose already puts
+  up there; `nativeEditMenu` is now off by default, as `MacosWindow.editMenuOnRightClick` was.
+  On the GraalVM window, `AppKitWindowPlatform` put up its own menu and the scene then drew
+  Compose's menu as well; the window now sets no menu of its own and says its menus are the
+  system's (`WindowPlatform.systemContextMenu`, new, false by default), and a JVM scene hands
+  such a platform what Compose's menu holds through `LocalContextMenuRepresentation`, entries
+  and greying as the field says, and draws none. On both, an application that gives its own
+  menu (a dropdown or toolbar provider on Kotlin/Native, `LocalContextMenuRepresentation` or
+  `LocalTextContextMenu` on the JVM) shows that one alone. Tests on real windows count the menus
+  that come up, and cover the editing shortcuts, the Control letters, the minimum size, the Dock
+  icon, dark mode followed while open and the clipboard. `MacosWindowPlatform.close()` on a
+  platform made with its own content no longer closes the scene twice, which threw.
+  (DarkPyonix/compose-rust#180, #146, FR-33.1)
+- **Fix.** After a change of scale (`Xft.dpi` rewritten in the root window's resources) the X11
+  windows kept their size in pixels, so a 640x480 window at a scale of 1 was 320x240 points at
+  2. Both X11 layers (Kotlin/Native and GraalVM) now keep the size in points, as the macOS and
+  Windows windows do: the window is resized to its size in points times the new scale
+  (`X11Scale.sizeAtScale` in `common`, `dxc_pixels_at_scale` in `x11_window.c`), its top left
+  staying put, its size hints are told again in the new pixels, and it measures at the new size
+  and scale before the frame it asks for. A fullscreen window keeps the screen's size.
+  (DarkPyonix/compose-rust#18, FR-82)
+- **Fix.** A right click in a text field of a scene with no menu of its own (the X11 windows)
+  put up two menus: Compose's own text context menu and one the scene drew beside it with
+  every entry enabled. The scene's is gone; the menu is Compose's, with the entries the field
+  allows, in the platform's language. The scene adds the keyboard's way to it: the Menu key or
+  Shift and F10 over a focused field open the field's menu at the caret, keeping the selection
+  (on the JVM through the menu's own state, on Kotlin/Native by a secondary press inside the
+  selection). Escape closes a popup or a menu (the scene's own back dispatcher), and on
+  Kotlin/Native, whose menu moves only with Tab, the arrow keys step through an open menu.
+  (DarkPyonix/compose-rust#142)
+- **New.** The Windows window has a text edit menu of its own, the system's popup menu, for an
+  application that hosts Compose on it: `Win32WindowPlatform.setEditMenu` and
+  `Win32GraalWindow.setEditMenu` (`dxc_native_set_edit_menu`) turn it on while a text field has
+  focus, with what the field allows (`EditMenuState` in `common`). A right click, the Menu
+  key or Shift and F10 put up Cut, Copy, Paste and Select All, greyed where they cannot run,
+  labelled by the system's edit control, at the pointer or at the caret; the entry chosen
+  arrives as Control and X, C, V or A. (DarkPyonix/compose-rust#142)
+
+## 1.11.1-ext.3 (2026-11-13)
+
 ### Window modules (`org.thisisthepy.compose.window`, 0.1.0)
 
+- **Fix.** A double click after a slow frame counted as two single clicks: the scene gave
+  Compose each pointer event at the time it read it, not when it happened, and Compose's 300 ms
+  `doubleTapTimeoutMillis` instead of the system's interval. `WindowEvent` now carries
+  `timeMillis`, the platform's own event time (`NSEvent.timestamp` on macOS, `GetMessageTime`
+  on Windows, the X server's time on X11, in both the Kotlin/Native and GraalVM layers), which
+  `EventClock` puts on the scene's clock and the scene passes to `sendPointerEvent`; an event
+  with no time is timed on arrival as before. `WindowPlatform.doubleClickMillis` (default
+  500) is the system's interval (`NSEvent.doubleClickInterval`, `GetDoubleClickTime`, GNOME's
+  `double-click` or KDE's `DoubleClickInterval` on Linux) and the scene's
+  `ViewConfiguration.doubleTapTimeoutMillis`. The C event record grows by the time, to 136
+  bytes. (DarkPyonix/compose-rust Ember editor double click)
+- **Fix.** On KDE Plasma (X11), text was scaled twice whenever fonts DPI was forced, which
+  Plasma's display settings also do themselves at any global scale other than 100%: Plasma
+  writes `forceFontDPI` from `kcmfonts` into `Xft.dpi`, the X11 windows took their scale from
+  that, and they reported `forceFontDPI` / 96 as the text scale on top (so 100% with fonts at
+  120 DPI was 1.25 x 1.25, and 200% without forcing anything was 2 x 2). The text scale is now
+  `forceFontDPI` / (96 x the global scale of `kdeglobals` `[KScreen] ScaleFactor`), and both X11
+  windows take it out of `Xft.dpi` with the GNOME rule of `X11Scale.withoutTextScale`, given
+  that global scale, so the window scale is Plasma's global scale (fractional ones too) and
+  text is scaled once. On a KDE session (`XDG_CURRENT_DESKTOP`) KDE's setting now comes before
+  `gsettings`, which is often installed there and answers its default. `GDK_SCALE` still wins.
+  (#210, DarkPyonix/compose-rust#18)
+- **Fix.** On GNOME, text was scaled twice by any text size other than 100%: the settings
+  daemon writes `Xft.dpi` as 96 x the window scaling factor x `text-scaling-factor`, the X11
+  windows took their scale from that, and they report `text-scaling-factor` as the text scale
+  (`Density.fontScale`) on top. Both X11 windows (Kotlin/Native and GraalVM) now take the
+  factor out of `Xft.dpi` where that DPI is a whole multiple of 96 x the factor, so the window
+  scale is the desktop's scaling factor and only text grows by the text size, as on macOS and
+  Windows. `GDK_SCALE`, desktops without GNOME's factor and DPIs it does not divide read as
+  before. The rule is `X11Scale.withoutTextScale` in `common`. (#156, #205,
+  DarkPyonix/compose-rust#18)
+- **Fix.** The Kotlin/Native X11 window drew at a scale of 1 whatever the display: it now
+  measures at `Xft.dpi` / 96 from the root window's `RESOURCE_MANAGER` (or `GDK_SCALE`, as the
+  GraalVM window reads it), opens at its size in points times that, takes and reports positions
+  and sizes in points, and follows a change of the resources with `onScaleChanged` and a frame.
+  The parsing is `X11Scale` in `common`. (DarkPyonix/compose-rust#18)
+- **Fix.** The GraalVM X11 window read `Xft.dpi` once, from Xlib's copy of the resources taken
+  when the connection opened: it now asks the root window for them and reads them again when
+  they change, so the scale it measures (and reports through `onScaleChanged`) follows the
+  desktop's setting. (DarkPyonix/compose-rust#18)
+- **Fix.** The Windows mouse wheel scrolled in reverse on both the GraalVM and Kotlin/Native
+  paths: `WM_MOUSEWHEEL` now negates its delta, because Win32 counts a turn away from the reader
+  as positive and Compose reads a positive `scrollDelta.y` as a scroll down. (#169)
+- **Fix.** On Windows, a refused `ResizeBuffers` lost the new size, so the old frame stayed
+  stretched over the new client area (`DXGI_SCALING_STRETCH`) until the window was given
+  another size. The frame is still skipped, and the size is now asked for again by the next
+  frame, which is asked for at once, up to three refusals in a row. (DarkPyonix/compose-rust#18)
 - **Breaking default.** `WindowConfig` gains `chrome` and `titleBar`, defaulting to
   `WindowChrome.Modern` and `TitleBarStyle.Normal`: the content runs to the top of the window.
   On Linux that means no system title bar; the scene draws the caption and its buttons. Pass
@@ -25,6 +115,10 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   `linuxArm64`. (#146)
 - `scene`: Compose's main-thread work runs on a dispatcher every host shares, so it keeps running
   while any window is open. (#142, #143)
+- `graalvm-windows`: the Win32 window for a native image (`Win32GraalWindow`, `Win32Frames`, and the
+  upcall a resize draws through), moved from compose-rust. `frameTimeNanos()` reads a
+  `FrameClock` on the monotonic clock, so a frame is timed by the wall clock and not by a count
+  of 16 ms steps.
 - `graalvm-macos` and `graalvm-linux`: `appKitWindowSurface` and `x11WindowSurface`, the surfaces
   `runComposeWindow` draws into. (#138)
 - `native/linux` and `graalvm-linux`: the chrome API. Under `WindowChrome.Modern` (the default)

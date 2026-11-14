@@ -29,6 +29,16 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Retry transient dependency download failures (TLS handshake resets, timeouts) with
+  # backoff. These are JVM system properties read by Gradle's repository transport, so
+  # they must reach the daemon and Amper's JVMs; JAVA_TOOL_OPTIONS is inherited by all.
+  JAVA_TOOL_OPTIONS: >-
+    -Dorg.gradle.internal.repository.max.retries=6
+    -Dorg.gradle.internal.repository.initial.backoff=1000
+    -Dorg.gradle.internal.http.connectionTimeout=120000
+    -Dorg.gradle.internal.http.socketTimeout=120000
+
 jobs:
   publish:
     strategy:
@@ -36,14 +46,14 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            modules: "common scene native/macos graalvm/graalvm-macos graalvm/graalvm-linux"
+            modules: "common scene native/macos graalvm/graalvm-macos graalvm/graalvm-linux graalvm/graalvm-windows"
             compose: "desktop macosArm64"
           # The scene is published from macOS only: it compiles against this fork's Compose
           # for macosArm64 as well as the JVM, and only a Mac builds the former. The GraalVM
           # modules compile their window surfaces against it, so on Linux it is in the project
           # as a JVM module (scene_jvm_only) with its Linux targets, and what it publishes stays on this runner.
           - os: ubuntu-24.04
-            modules: "common scene graalvm/graalvm-macos graalvm/graalvm-linux"
+            modules: "common scene graalvm/graalvm-macos graalvm/graalvm-linux graalvm/graalvm-windows"
             compose: "desktop linuxX64 linuxArm64"
             compose_linux: true
             scene_jvm_only: true
@@ -129,13 +139,13 @@ jobs:
           base=~/.m2/repository/org/thisisthepy/compose/window
           for artifact in native-linux native-linux-scene; do
             for arch in linuxx64 linuxarm64; do
-              dir="$base/$artifact-$arch/1.11.1-ext.2"
-              for file in "$artifact-$arch-1.11.1-ext.2.klib" "$artifact-$arch-1.11.1-ext.2.module" "$artifact-$arch-1.11.1-ext.2.pom"; do
+              dir="$base/$artifact-$arch/1.11.1-ext.3"
+              for file in "$artifact-$arch-1.11.1-ext.3.klib" "$artifact-$arch-1.11.1-ext.3.module" "$artifact-$arch-1.11.1-ext.3.pom"; do
                 test -s "$dir/$file" || { echo "missing $dir/$file" >&2; exit 1; }
               done
               echo "ok    $artifact-$arch is published as its own coordinate"
             done
-            root="$base/$artifact/1.11.1-ext.2/$artifact-1.11.1-ext.2.module"
+            root="$base/$artifact/1.11.1-ext.3/$artifact-1.11.1-ext.3.module"
             test -s "$root" || { echo "missing the root module $root" >&2; exit 1; }
             cat "$root"
             for arch in linuxx64 linuxarm64; do

@@ -26,12 +26,22 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Retry transient dependency download failures (TLS handshake resets, timeouts) with
+  # backoff. These are JVM system properties read by Gradle's repository transport, so
+  # they must reach the daemon and Amper's JVMs; JAVA_TOOL_OPTIONS is inherited by all.
+  JAVA_TOOL_OPTIONS: >-
+    -Dorg.gradle.internal.repository.max.retries=6
+    -Dorg.gradle.internal.repository.initial.backoff=1000
+    -Dorg.gradle.internal.http.connectionTimeout=120000
+    -Dorg.gradle.internal.http.socketTimeout=120000
+
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-24.04, macos-14, windows-2022 ]
+        os: [ ubuntu-24.04, macos-15, windows-2022 ]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     defaults:
@@ -54,6 +64,16 @@ jobs:
             echo "common must not name a platform, a toolkit or Compose" >&2
             exit 1
           fi
+
+      - name: Pointer buttons are read through the named constants
+        if: runner.os == 'Linux'
+        working-directory: extended/window
+        run: ./scripts/check-button-constants.sh
+
+      - name: The Windows caption has the same metrics in C and in Kotlin
+        if: runner.os == 'Linux'
+        working-directory: extended/window
+        run: ./scripts/check-windows-caption-metrics.sh
 
       - name: Build all targets this host can build
         if: runner.os != 'Windows'

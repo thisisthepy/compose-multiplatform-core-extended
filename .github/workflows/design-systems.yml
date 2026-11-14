@@ -1,8 +1,11 @@
 # The design systems under extended/design-systems: build every platform, run the tests.
 #
 # A standalone Amper project with its own wrapper, unrelated to the Gradle build at the root
-# of this repository, so only that directory is checked out. The rest of this repository's
-# workflows are upstream's and do not build it.
+# of this repository. It is built against this fork's Compose at the fork's version line
+# (libs.versions.toml, compose-fork), which a release has before any public repository does, so
+# each job publishes that Compose for its platform to the local Maven repository first
+# (.github/actions/fork-compose, cached, as the window workflows do) and narrows every module
+# to its one platform, since the roots a one-target Compose build writes list that target only.
 
 name: Design systems
 
@@ -12,12 +15,16 @@ on:
     paths:
       - extended/design-systems/**
       - .github/workflows/design-systems.yml
+      - .github/actions/fork-compose/**
+      - extended/compose/**
   push:
     branches:
       - extended
     paths:
       - extended/design-systems/**
       - .github/workflows/design-systems.yml
+      - .github/actions/fork-compose/**
+      - extended/compose/**
 
 concurrency:
   group: design-systems-${{ github.ref }}
@@ -26,25 +33,48 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Retry transient dependency download failures (TLS handshake resets, timeouts) with
+  # backoff. These are JVM system properties read by Gradle's repository transport, so
+  # they must reach the daemon and Amper's JVMs; JAVA_TOOL_OPTIONS is inherited by all.
+  JAVA_TOOL_OPTIONS: >-
+    -Dorg.gradle.internal.repository.max.retries=6
+    -Dorg.gradle.internal.repository.initial.backoff=1000
+    -Dorg.gradle.internal.http.connectionTimeout=120000
+    -Dorg.gradle.internal.http.socketTimeout=120000
+
 jobs:
   build:
     name: Design systems (${{ matrix.platform }})
     runs-on: ${{ matrix.runs-on }}
-    timeout-minutes: 90
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: jvm
             runs-on: macos-latest
+            compose: desktop
             test: true
           - platform: iosSimulatorArm64
             runs-on: macos-latest
+            compose: iosSimulatorArm64
             test: true
           # The device slice is linked, never run: running it needs a signed app on real
           # hardware.
           - platform: iosArm64
             runs-on: macos-latest
+            compose: iosArm64
+            test: false
+          - platform: macosArm64
+            runs-on: macos-latest
+            compose: macosArm64
+            test: true
+          # Compiled, not run: a Linux test binary links GL, fontconfig and FreeType, which the
+          # runner does not have installed for this job.
+          - platform: linuxX64
+            runs-on: ubuntu-latest
+            compose: linuxX64
             test: false
           # Compiled, not run: a browser test loads skiko's wasm module, which arrives
           # truncated on this runner. Built one module at a time, because every module's
@@ -52,10 +82,14 @@ jobs:
           # doing it at once fail with FileAlreadyExistsException.
           - platform: wasmJs
             runs-on: ubuntu-latest
+            compose: wasmJs
             test: false
             one-module-at-a-time: true
+          # The fork publishes no Android artifact: its roots send Android to androidx, and any
+          # target's build writes them.
           - platform: android
             runs-on: ubuntu-latest
+            compose: desktop
             test: true
     defaults:
       run:
@@ -63,8 +97,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: extended/design-systems
+          sparse-checkout: |
+            extended/design-systems
+            .github/actions
           filter: blob:none
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: The version line
+        run: scripts/check-version.sh
 
       - name: Cache the Kotlin toolchain, konan and Maven dependencies
         uses: actions/cache@v4
@@ -77,6 +121,20 @@ jobs:
           key: design-systems-${{ matrix.platform }}-${{ runner.os }}-${{ hashFiles('extended/design-systems/**/module.yaml', 'extended/design-systems/libs.versions.toml', 'extended/design-systems/kotlin') }}
           restore-keys: |
             design-systems-${{ matrix.platform }}-${{ runner.os }}-
+
+      - name: This fork's Compose for ${{ matrix.platform }}
+        uses: ./.github/actions/fork-compose
+        with:
+          targets: ${{ matrix.compose }}
+
+      - name: Every module on ${{ matrix.platform }} only
+        shell: bash
+        run: |
+          set -euo pipefail
+          for yaml in */module.yaml; do
+            perl -pi -e 's/^  platforms: \[.*\]$/  platforms: [ ${{ matrix.platform }} ]/' "$yaml"
+            grep -qx '  platforms: \[ ${{ matrix.platform }} \]' "$yaml"
+          done
 
       - name: Build
         run: |

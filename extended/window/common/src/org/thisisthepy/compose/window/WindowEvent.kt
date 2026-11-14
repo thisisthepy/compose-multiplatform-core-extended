@@ -17,9 +17,51 @@ data class WindowEvent(
     val codePoint: Int,
     /** What an input method produced, and empty for everything that is not text. */
     val text: String,
+    /**
+     * When the operating system says the event happened, in milliseconds on the platform's
+     * own monotonic event clock (`NSEvent.timestamp`, Win32 `GetMessageTime`, the X11 event
+     * time), or [TIME_UNKNOWN] where the platform layer did not say. Only the difference
+     * between two of these means anything; [EventClock] puts them on the scene's clock.
+     */
+    val timeMillis: Long = TIME_UNKNOWN,
 ) {
 
+    /**
+     * Whether this is the press of the secondary button. Read through [SECONDARY_BUTTON],
+     * which every platform layer sets, and not through the held bits, which a control-click
+     * on macOS does not carry.
+     */
+    val isSecondaryPress: Boolean
+        get() = kind == POINTER_DOWN && buttons and SECONDARY_BUTTON != 0
+
+    /**
+     * The held bit ([PRIMARY_HELD] and the others) of the button this press or release is
+     * about. The event's own button flag names it, and an event with none is the primary
+     * button's, which is the one a platform has no reason to flag.
+     */
+    val changedHeldBit: Int
+        get() = when {
+            buttons and SECONDARY_BUTTON != 0 -> SECONDARY_HELD
+            buttons and MIDDLE_BUTTON != 0 -> MIDDLE_HELD
+            buttons and BACK_BUTTON != 0 -> BACK_HELD
+            buttons and FORWARD_BUTTON != 0 -> FORWARD_HELD
+            else -> PRIMARY_HELD
+        }
+
     companion object {
+        /** The [timeMillis] of an event the platform layer did not time; the scene times it on arrival. */
+        const val TIME_UNKNOWN = 0L
+
+        /**
+         * A 32 bit event time (Win32 `GetMessageTime`, X11 `Time`) as a [timeMillis]: read
+         * unsigned, so it counts up to 49 days before it wraps rather than turning negative
+         * after 24.
+         */
+        fun timeFrom32Bits(time: Int): Long = time.toLong() and 0xffffffffL
+
+        /** `NSEvent.timestamp`, seconds since the system started, as a [timeMillis]. */
+        fun timeFromSeconds(seconds: Double): Long = (seconds * 1000).toLong()
+
         const val POINTER_MOVE = 1
         const val POINTER_DOWN = 2
         const val POINTER_UP = 3
@@ -54,9 +96,102 @@ data class WindowEvent(
          */
         const val SECONDARY_BUTTON = 1 shl 16
 
+        /** Like [SECONDARY_BUTTON], for the middle button. */
+        const val MIDDLE_BUTTON = 1 shl 17
+
+        /** Like [SECONDARY_BUTTON], for the back button. */
+        const val BACK_BUTTON = 1 shl 18
+
+        /** Like [SECONDARY_BUTTON], for the forward button. */
+        const val FORWARD_BUTTON = 1 shl 19
+
+        /**
+         * The buttons held down, in the low bits of [buttons]: primary, secondary, middle,
+         * back and forward.
+         */
+        const val PRIMARY_HELD = 1
+        const val SECONDARY_HELD = 2
+        const val MIDDLE_HELD = 4
+        const val BACK_HELD = 8
+        const val FORWARD_HELD = 16
+
+        /** Every held bit. */
+        const val ALL_HELD = PRIMARY_HELD or SECONDARY_HELD or MIDDLE_HELD or BACK_HELD or FORWARD_HELD
+
+        /**
+         * The [buttons] of a pointer event: the buttons [held] and, when the event is the
+         * press or release of the secondary button, [SECONDARY_BUTTON]. Every platform layer
+         * builds the field through this, so the scene reads one encoding.
+         */
+        fun pointerButtons(held: Int, secondaryEvent: Boolean): Int =
+            if (secondaryEvent) held or SECONDARY_BUTTON else held
+
+        /**
+         * The [buttons] of a pointer event whose own button is [eventButton]: one of
+         * [SECONDARY_BUTTON], [MIDDLE_BUTTON], [BACK_BUTTON], [FORWARD_BUTTON], or 0 for the
+         * primary button.
+         */
+        fun pointerButtons(held: Int, eventButton: Int): Int = held or eventButton
+
         // An entry of the text edit menu the window put up itself on a right click was
         // chosen; `keyCode` is its [EditMenuId]. Platform layers hand it to
         // [WindowListener.onContextMenuChosen] and do not pass it on as an event.
         const val MENU_COMMAND = 17
+
+        /** The operating system's text size changed; the new multiplier is in `x`. */
+        const val TEXT_SCALE_CHANGED = 18
+
+        /** The event a platform layer queues when the text size becomes [scale]. */
+        @Suppress("FunctionName")
+        fun TextScaleChanged(scale: Float): WindowEvent = WindowEvent(
+            kind = TEXT_SCALE_CHANGED, x = scale, y = 0f, buttons = 0, modifiers = 0,
+            keyCode = 0, codePoint = 0, text = "",
+        )
+
+        /**
+         * A native view slot took keyboard focus (a click in it, or [NativeViews.focus]), or
+         * the window holding it became the key window again; the slot id is in `keyCode`. The
+         * scene lets go of its own focus, so no field keeps a caret.
+         */
+        const val NATIVE_VIEW_FOCUS_IN = 19
+
+        /**
+         * Keyboard focus left a native view slot: to the scene, to another slot, or to another
+         * window or application. The slot id is in `keyCode`.
+         */
+        const val NATIVE_VIEW_FOCUS_OUT = 20
+
+        /**
+         * The pointer came back to the scene at `x`, `y` from a place the scene does not get
+         * it, such as a native view slot.
+         */
+        const val POINTER_ENTER = 21
+
+        /**
+         * The pointer left the scene at `x`, `y` for a place the scene does not get it, such as
+         * a native view slot, so nothing in the scene stays hovered.
+         */
+        const val POINTER_EXIT = 22
+
+        @Suppress("FunctionName")
+        fun NativeViewFocusIn(id: Int): WindowEvent = WindowEvent(
+            kind = NATIVE_VIEW_FOCUS_IN, x = 0f, y = 0f, buttons = 0, modifiers = 0,
+            keyCode = id, codePoint = 0, text = "",
+        )
+
+        @Suppress("FunctionName")
+        fun NativeViewFocusOut(id: Int): WindowEvent = WindowEvent(
+            kind = NATIVE_VIEW_FOCUS_OUT, x = 0f, y = 0f, buttons = 0, modifiers = 0,
+            keyCode = id, codePoint = 0, text = "",
+        )
     }
+
+    /** The slot a [NATIVE_VIEW_FOCUS_IN] or [NATIVE_VIEW_FOCUS_OUT] event is about. */
+    val nativeViewId: Int get() = keyCode
+
+    /** True for [TEXT_SCALE_CHANGED]. */
+    val isTextScaleChanged: Boolean get() = kind == TEXT_SCALE_CHANGED
+
+    /** The multiplier a [TEXT_SCALE_CHANGED] event carries. */
+    val textScale: Float get() = x
 }

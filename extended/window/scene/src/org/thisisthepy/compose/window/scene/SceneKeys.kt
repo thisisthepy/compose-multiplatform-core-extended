@@ -68,6 +68,7 @@ internal fun composeKey(platformKey: Int): Key = when (platformKey) {
     0x33 -> Key.Backspace
     0x35 -> Key.Escape
     0x75 -> Key.Delete
+    0x72 -> Key.Insert
     0x7B -> Key.DirectionLeft
     0x7C -> Key.DirectionRight
     0x7D -> Key.DirectionDown
@@ -76,5 +77,33 @@ internal fun composeKey(platformKey: Int): Key = when (platformKey) {
     0x77 -> Key.MoveEnd
     0x74 -> Key.PageUp
     0x79 -> Key.PageDown
+    // The function keys and the menu key, which mean the same on every board. Shift with F10
+    // and the menu key are how a context menu is asked for from the keyboard.
+    0x7A -> Key.F1
+    0x78 -> Key.F2
+    0x63 -> Key.F3
+    0x76 -> Key.F4
+    0x60 -> Key.F5
+    0x61 -> Key.F6
+    0x62 -> Key.F7
+    0x64 -> Key.F8
+    0x65 -> Key.F9
+    0x6D -> Key.F10
+    0x67 -> Key.F11
+    0x6F -> Key.F12
+    0x6E -> Key.Menu
     else -> Key.Unknown
+}
+
+/**
+ * Whether [key] moves the caret or the selection in a text field: the arrows, Home, End and
+ * the page keys, with or without a modifier.
+ *
+ * These are the keys that must not find a composition still open. See
+ * [SceneTextInput.finishComposition].
+ */
+internal fun movesCaret(key: Key): Boolean = when (key) {
+    Key.DirectionLeft, Key.DirectionRight, Key.DirectionUp, Key.DirectionDown,
+    Key.MoveHome, Key.MoveEnd, Key.PageUp, Key.PageDown -> true
+    else -> false
 }

@@ -1,6 +1,7 @@
 package org.thisisthepy.compose.window.scene
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
@@ -52,6 +53,8 @@ internal class FakePlatform : WindowPlatform {
     var scale = 1f
     var listening = false
     var captionNow = WindowCaption.None
+    var doubleClick = 500L
+    override val doubleClickMillis: Long get() = doubleClick
     val pushed = ArrayList<List<AccessibleElement>>()
     val captionActions = ArrayList<CaptionAction>()
     var moves = 0
@@ -111,7 +114,19 @@ internal class FakePlatform : WindowPlatform {
     override fun readClipboardText(): String? = null
     override fun writeClipboardText(text: String) {}
     override fun setImeSpot(x: Int, y: Int) {}
-    override fun showContextMenu(items: List<ContextMenuItem>) {}
+    /** How many times the scene asked the input method to let go of its composition. */
+    var endedCompositions = 0
+    override fun endComposition() {
+        endedCompositions++
+    }
+    /** Whether this platform's menus are the system's ([WindowPlatform.systemContextMenu]). */
+    var systemMenu = false
+    override val systemContextMenu: Boolean get() = systemMenu
+    /** Every menu the scene asked the platform to put up. Answer one through [chosen]. */
+    val menusShown = ArrayList<List<ContextMenuItem>>()
+    override fun showContextMenu(items: List<ContextMenuItem>) {
+        menusShown += items
+    }
     override fun close() {
         closedCalls++
     }
@@ -210,7 +225,7 @@ class ComposeWindowHostTest {
         }
         assertTrue(host.open())
         host.turn(0)
-        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, 1, 0, 0, 0, ""))
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, WindowEvent.PRIMARY_HELD, 0, 0, 0, ""))
         platform.queued.add(WindowEvent(WindowEvent.POINTER_UP, 10f, 10f, 0, 0, 0, 0, ""))
         repeat(6) { host.turn(0) }
         platform.queued.add(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "가"))
@@ -252,7 +267,7 @@ class ComposeWindowHostTest {
         }
         assertTrue(host.open())
         host.turn(0)
-        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, 1, 0, 0, 0, ""))
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, WindowEvent.PRIMARY_HELD, 0, 0, 0, ""))
         platform.queued.add(WindowEvent(WindowEvent.POINTER_UP, 10f, 10f, 0, 0, 0, 0, ""))
         repeat(6) { host.turn(0) }
         heard.clear()
@@ -260,33 +275,6 @@ class ComposeWindowHostTest {
         repeat(3) { host.turn(0) }
         assertEquals(listOf(KeyEventType.KeyDown, KeyEventType.KeyUp), heard.map { it.type })
         assertTrue(heard.all { it.key == Key.C && it.isMetaPressed })
-        host.close()
-    }
-
-    @Test
-    fun fr33_6_a_platform_with_no_native_menu_gets_the_scenes_menu_on_a_right_press() {
-        val platform = FakePlatform().also { it.name = "graalvm-linux-x11" }
-        val host = host(platform, FakeSurface()) { Box(Modifier.fillMaxSize()) }
-        assertTrue(host.open())
-        host.turn(0)
-        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 30f, 20f, 2, 0, 0, 0, ""))
-        host.turn(0)
-        assertEquals(androidx.compose.ui.unit.IntOffset(30, 20), host.editMenuAt)
-        platform.chosen.add(EditMenuId.SELECT_ALL)
-        host.turn(0)
-        assertEquals(null, host.editMenuAt, "a choice closes the menu")
-        host.close()
-    }
-
-    @Test
-    fun fr33_6_a_platform_with_its_own_menu_does_not_get_a_second_one() {
-        val platform = FakePlatform().also { it.name = "appkit-graalvm" }
-        val host = host(platform, FakeSurface()) { Box(Modifier.fillMaxSize()) }
-        assertTrue(host.open())
-        host.turn(0)
-        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 30f, 20f, 2, 0, 0, 0, ""))
-        host.turn(0)
-        assertEquals(null, host.editMenuAt)
         host.close()
     }
 
@@ -306,7 +294,7 @@ class ComposeWindowHostTest {
         }
         assertTrue(host.open())
         host.turn(0)
-        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, 1, 0, 0, 0, ""))
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, WindowEvent.PRIMARY_HELD, 0, 0, 0, ""))
         platform.queued.add(WindowEvent(WindowEvent.POINTER_UP, 10f, 10f, 0, 0, 0, 0, ""))
         repeat(4) { host.turn(0) }
         platform.queued.add(WindowEvent(WindowEvent.TEXT_COMMIT, 0f, 0f, 0, 0, 0, 0, "hello"))
@@ -315,6 +303,58 @@ class ComposeWindowHostTest {
         val settledFrames = host.presentLog.frames
         repeat(60) { host.turn(0) }
         assertEquals(settledFrames, host.presentLog.frames, "idle turns must not redraw")
+        host.close()
+    }
+
+    @Test
+    fun events_heard_outside_a_turn_reach_the_scene_once() {
+        val platform = FakePlatform()
+        val surface = FakeSurface()
+        var clicks = 0
+        val host = host(platform, surface) { Box(Modifier.size(100.dp).clickable { clicks++ }) }
+        assertTrue(host.open())
+        host.turn(0)
+        // What a window driven by NSApplication.run does: the event arrives from the run
+        // loop, not from a turn, and the window hands it over itself.
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, WindowEvent.PRIMARY_HELD, 0, 0, 0, ""))
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_UP, 10f, 10f, 0, 0, 0, 0, ""))
+        platform.pump(0)
+        assertTrue(host.deliverHeard())
+        assertEquals(1, clicks)
+        // Nothing is left for a turn or a second delivery to hand over again.
+        assertTrue(!host.deliverHeard())
+        repeat(4) { host.turn(0) }
+        assertEquals(1, clicks)
+        host.close()
+    }
+
+    @Test
+    fun a_delivery_asked_for_inside_a_turn_leaves_the_events_to_the_turn() {
+        val platform = FakePlatform()
+        val surface = FakeSurface()
+        var clicks = 0
+        lateinit var host: ComposeWindowHost
+        val delivered = ArrayList<Boolean>()
+        val inner = object : WindowPlatform by platform {
+            override fun open(config: WindowConfig, listener: WindowListener): Boolean =
+                platform.open(config, object : WindowListener by listener {
+                    override fun onEvent(event: WindowEvent) {
+                        listener.onEvent(event)
+                        // The window's event handler, reached from the turn's own pump.
+                        delivered += host.deliverHeard()
+                    }
+                })
+        }
+        host = ComposeWindowHost(inner, WindowConfig("test", 200, 100), { surface }) {
+            Box(Modifier.size(100.dp).clickable { clicks++ })
+        }
+        assertTrue(host.open())
+        host.turn(0)
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_DOWN, 10f, 10f, WindowEvent.PRIMARY_HELD, 0, 0, 0, ""))
+        platform.queued.add(WindowEvent(WindowEvent.POINTER_UP, 10f, 10f, 0, 0, 0, 0, ""))
+        repeat(4) { host.turn(0) }
+        assertEquals(listOf(false, false), delivered)
+        assertEquals(1, clicks)
         host.close()
     }
 }

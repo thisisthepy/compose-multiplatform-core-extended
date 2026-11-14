@@ -1,0 +1,549 @@
+package org.thisisthepy.compose.window.windows
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import org.thisisthepy.compose.window.CaptionAction
+import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.EditMenuState
+import org.thisisthepy.compose.window.FileDialogKind
+import org.thisisthepy.compose.window.FileDialogOutcome
+import org.thisisthepy.compose.window.FileDialogRequest
+import org.thisisthepy.compose.window.ScreenPointer
+import org.thisisthepy.compose.window.Win32Chrome
+import org.thisisthepy.compose.window.WindowBounds
+import org.thisisthepy.compose.window.WindowCaption
+import org.thisisthepy.compose.window.WindowChrome
+import org.thisisthepy.compose.window.WindowConfig
+import org.thisisthepy.compose.window.WindowEvent
+import org.thisisthepy.compose.window.WindowListener
+import org.thisisthepy.compose.window.WindowMeasurement
+import org.thisisthepy.compose.window.WindowVisibility
+
+// The platform over a backend that is a few fields. Nothing here reaches the C window, whose
+// object is linked by MSVC into applications and never by this toolchain; the C side of the
+// same requirements is checked by c/test/win32_shared_test.c with real windows.
+
+private class FakeWindow(val config: WindowConfig) : Win32WindowBackend {
+    var destroyed = false
+    var released = false
+    var pointerDown = true
+    var focusGranted = true
+    var currentBounds = WindowBounds(config.x ?: 100, config.y ?: 100, config.width, config.height)
+    val events = ArrayList<WindowEvent>()
+    var activation: Boolean? = null
+    var moved: WindowBounds? = null
+    var followEnd: Boolean? = null
+    var closeRequests = 0
+    var active = false
+    var followAnchor: Pair<Float, Float>? = null
+    var focusCalls = 0
+
+    var scale = 1f
+    var handleValue = 0L
+
+    override val closed: Boolean get() = destroyed
+    override val handle: Long get() = if (destroyed) 0L else handleValue
+    override fun textScale(): Float = scale
+    var doubleClick = 500L
+    override fun doubleClickMillis(): Long = doubleClick
+    override fun measure() = WindowMeasurement(config.width, config.height, 1f)
+    override fun drainEvents(): List<WindowEvent> {
+        val out = events.toList()
+        events.clear()
+        return out
+    }
+    override fun setTitle(title: String) {}
+    override fun setMinimumSize(width: Int, height: Int) {}
+    override fun setVisibility(visibility: WindowVisibility) {}
+    override fun readClipboardText(): String? = null
+    override fun writeClipboardText(text: String) {}
+    override fun setImeSpot(x: Int, y: Int) {}
+    var endedCompositions = 0
+    override fun endComposition() {
+        endedCompositions++
+    }
+    override fun showContextMenu(items: List<ContextMenuItem>): Int = if (items.isEmpty()) -1 else items.size - 1
+    val editMenus = ArrayList<Int>()
+    override fun setEditMenu(flags: Int) {
+        editMenus += flags
+    }
+    val captionActions = ArrayList<CaptionAction>()
+    var maximized = false
+    override fun performCaptionAction(action: CaptionAction) {
+        captionActions += action
+        if (action == CaptionAction.ToggleMaximize) maximized = !maximized
+    }
+    override fun isMaximized(): Boolean = maximized
+    override fun systemDark(): Boolean = false
+
+    override fun setPosition(x: Int, y: Int) {
+        currentBounds = currentBounds.copy(x = x, y = y)
+        moved = currentBounds
+    }
+
+    override fun setContentSize(width: Int, height: Int) {
+        currentBounds = currentBounds.copy(width = width, height = height)
+        moved = currentBounds
+    }
+
+    override fun bounds(): WindowBounds? = currentBounds
+
+    override fun focus(): Boolean {
+        focusCalls++
+        if (focusGranted) {
+            active = true
+            activation = true
+        }
+        return focusGranted
+    }
+
+    override val isActive: Boolean get() = active
+    override fun pointerOnScreen(): ScreenPointer? = ScreenPointer(10f, 20f, pointerDown)
+    override fun followStart(anchorX: Float, anchorY: Float): Boolean {
+        if (!pointerDown) return false
+        followAnchor = anchorX to anchorY
+        return true
+    }
+    override fun takeActivation(): Boolean? = activation.also { activation = null }
+    override fun takeMoved(): WindowBounds? = moved.also { moved = null }
+    override fun takeFollowEnd(): Boolean? = followEnd.also { followEnd = null }
+    override fun takeCloseRequest(): Boolean {
+        val asked = closeRequests > 0
+        closeRequests = 0
+        return asked
+    }
+    override fun destroy() {
+        destroyed = true
+    }
+    override fun release() {
+        released = true
+    }
+}
+
+private class FakeProcess : Win32ProcessBackend {
+    val windows = ArrayList<FakeWindow>()
+    var pumps = 0
+    var quit: Int? = null
+    var refuse = false
+    val dialogs = FakeDialogs()
+
+    override val fileDialogs: Win32FileDialogBackend get() = dialogs
+
+    override fun openWindow(config: WindowConfig): Win32WindowBackend? {
+        if (refuse) return null
+        val window = FakeWindow(config)
+        window.handleValue = 0x100L * (windows.size + 1)
+        windows.add(window)
+        return window
+    }
+
+    override fun pump(seconds: Double) {
+        pumps++
+    }
+
+    override fun postQuit(code: Int) {
+        quit = code
+    }
+
+    override fun quitPosted(): Int? = quit
+}
+
+private class Recorder : WindowListener {
+    val events = ArrayList<WindowEvent>()
+    val focus = ArrayList<Boolean>()
+    val moves = ArrayList<WindowBounds>()
+    val follows = ArrayList<Boolean>()
+    var closeAsked = 0
+    var allowClose = true
+    override fun onEvent(event: WindowEvent) {
+        events.add(event)
+    }
+    override fun onFocusChanged(focused: Boolean) {
+        focus.add(focused)
+    }
+    override fun onMoved(bounds: WindowBounds) {
+        moves.add(bounds)
+    }
+    override fun onFollowEnded(cancelled: Boolean) {
+        follows.add(cancelled)
+    }
+    override fun onCloseRequested(): Boolean {
+        closeAsked++
+        return allowClose
+    }
+}
+
+private fun move(x: Float) = WindowEvent(WindowEvent.POINTER_MOVE, x, 0f, 0, 0, 0, 0, "")
+
+private fun config(title: String, x: Int? = null, y: Int? = null) =
+    WindowConfig(title = title, width = 300, height = 200, x = x, y = y)
+
+class Win32WindowsTest {
+
+    @Test
+    fun fr19_4_a_modern_window_tells_the_scene_to_draw_the_buttons_in_its_caption_strip() {
+        val process = FakeProcess()
+        val platform = Win32Windows(process).newPlatform()
+        assertEquals(WindowCaption.None, platform.caption(), "a window that is not open has no caption")
+        assertTrue(platform.open(config("modern"), Recorder()))
+
+        val caption = platform.caption()
+        assertEquals(Win32Chrome.caption(config("modern")), caption)
+        assertTrue(caption.buttonsDrawnByScene)
+        assertTrue(caption.frameBySystem)
+        assertFalse(caption.maximized)
+
+        // The maximise button the scene drew toggles the window, and the caption says which glyph is next.
+        platform.performCaptionAction(CaptionAction.ToggleMaximize)
+        assertEquals(listOf(CaptionAction.ToggleMaximize), process.windows[0].captionActions)
+        assertTrue(platform.caption().maximized)
+        platform.performCaptionAction(CaptionAction.ToggleMaximize)
+        assertFalse(platform.caption().maximized)
+
+        platform.close()
+        assertEquals(WindowCaption.None, platform.caption())
+    }
+
+    @Test
+    fun fr19_4_a_window_with_the_systems_caption_leaves_the_scene_nothing_to_draw() {
+        val process = FakeProcess()
+        val platform = Win32Windows(process).newPlatform()
+        assertTrue(platform.open(config("system").copy(chrome = WindowChrome.System), Recorder()))
+        process.windows[0].maximized = true
+        assertEquals(WindowCaption.None, platform.caption())
+        platform.close()
+    }
+
+    @Test
+    fun the_windows_own_edit_menu_follows_what_the_focused_field_allows() {
+        val process = FakeProcess()
+        val platform = Win32Windows(process).newPlatform()
+        platform.setEditMenu(EditMenuState())
+        assertTrue(platform.open(config("edit"), Recorder()))
+        val window = process.windows[0]
+        assertTrue(window.editMenus.isEmpty(), "a window that was not open was told nothing")
+        platform.setEditMenu(EditMenuState(hasSelection = false))
+        platform.setEditMenu(EditMenuState.Undescribed)
+        platform.setEditMenu(null)
+        assertEquals(listOf(1 or 2 or 8 or 16, 1, 0), window.editMenus)
+        platform.close()
+    }
+
+    @Test
+    fun fr53_each_window_answers_the_text_scale_its_backend_reads() {
+        val process = FakeProcess()
+        val windows = Win32Windows(process)
+        val platform = windows.newPlatform()
+        assertEquals(1f, platform.textScale(), "no window yet answers the default")
+        assertTrue(platform.open(config("a"), Recorder()))
+        process.windows[0].scale = 1.5f
+        assertEquals(1.5f, platform.textScale())
+    }
+
+    @Test
+    fun the_double_click_interval_is_the_one_the_backend_reads() {
+        val process = FakeProcess()
+        val platform = Win32Windows(process).newPlatform()
+        assertEquals(500L, platform.doubleClickMillis, "no window yet answers the default")
+        assertTrue(platform.open(config("a"), Recorder()))
+        process.windows[0].doubleClick = 400L
+        assertEquals(400L, platform.doubleClickMillis)
+        process.windows[0].doubleClick = 0L
+        assertEquals(500L, platform.doubleClickMillis, "an unset interval is the default")
+    }
+
+    @Test
+    fun fr53_two_windows_have_independent_state() {
+        val process = FakeProcess()
+        val windows = Win32Windows(process)
+        val first = windows.newPlatform()
+        val second = windows.newPlatform()
+        val firstListener = Recorder()
+        val secondListener = Recorder()
+        assertTrue(first.open(config("a", 10, 20), firstListener))
+        assertTrue(second.open(config("b", 400, 300), secondListener))
+        assertTrue(first.supportsMultipleWindows)
+        assertEquals(2, windows.openCount)
+
+        process.windows[0].events.add(move(1f))
+        process.windows[1].events.add(move(2f))
+        process.windows[1].events.add(move(3f))
+        // Pumping on either window reaches both.
+        second.pump(0)
+        assertEquals(listOf(1f), firstListener.events.map { it.x })
+        assertEquals(listOf(2f, 3f), secondListener.events.map { it.x })
+
+        first.setPosition(50, 60)
+        assertEquals(WindowBounds(50, 60, 300, 200), first.bounds())
+        assertEquals(WindowBounds(400, 300, 300, 200), second.bounds())
+
+        process.windows[1].events.add(move(4f))
+        first.pump(0)
+        assertEquals(1, firstListener.events.size)
+        assertEquals(3, secondListener.events.size)
+    }
+
+    @Test
+    fun ending_a_composition_is_asked_of_the_window_it_was_asked_on() {
+        val process = FakeProcess()
+        val windows = Win32Windows(process)
+        val first = windows.newPlatform()
+        val second = windows.newPlatform()
+        first.open(config("a"), Recorder())
+        second.open(config("b"), Recorder())
+        second.endComposition()
+        assertEquals(0, process.windows[0].endedCompositions)
+        assertEquals(1, process.windows[1].endedCompositions)
+    }
+
+    @Test
+    fun fr53_second_pump_in_the_same_turn_delivers_nothing_twice() {
+        val process = FakeProcess()
+        val windows = Win32Windows(process)
+        val platform = windows.newPlatform()
+        val listener = Recorder()
+        platform.open(config("a"), listener)
+        process.windows[0].events.add(move(1f))
+        process.windows[0].moved = WindowBounds(1, 2, 3, 4)
+        process.windows[0].activation = true
+        platform.pump(0)
+        platform.pump(0)
+        assertEquals(1, listener.events.size)
+        assertEquals(listOf(WindowBounds(1, 2, 3, 4)), listener.moves)
+        assertEquals(listOf(true), listener.focus)
+    }
+
+    @Test
+    fun fr53_destroying_one_window_does_not_quit() {
+        val process = FakeProcess()
+        val windows = Win32Windows(process)
+        val first = windows.newPlatform()
+        val second = windows.newPlatform()
+        val secondListener = Recorder()
+        first.open(config("a"), Recorder())
+        second.open(config("b"), secondListener)
+
+        first.close()
+        assertTrue(process.windows[0].destroyed)
+        assertTrue(process.windows[0].released)
+        assertEquals(1, windows.openCount)
+        assertNull(windows.quitPosted())
+
+        // The other window still hears its own events.
+        process.windows[1].events.add(move(7f))
+        second.pump(0)
+        assertEquals(1, secondListener.events.size)
+        assertFalse(process.windows[1].destroyed)
+
+        // Closing twice is harmless, and the last window going leaves the process to the application.
+        first.close()
+        second.close()
+        assertEquals(0, windows.openCount)
+        assertNull(windows.quitPosted())
+        windows.postQuit(3)
+        assertEquals(3, windows.quitPosted())
+    }
+
+    @Test
+    fun fr53_close_request_reaches_only_its_window() {
+        val process = FakeProcess()
+        val windows = Win32Windows(process)
+        val first = windows.newPlatform()
+        val second = windows.newPlatform()
+        val firstListener = Recorder()
+        val secondListener = Recorder()
+        first.open(config("a"), firstListener)
+        second.open(config("b"), secondListener)
+
+        secondListener.allowClose = false
+        process.windows[1].closeRequests = 1
+        first.pump(0)
+        assertEquals(0, firstListener.closeAsked)
+        assertEquals(1, secondListener.closeAsked)
+        // Refused: the window stays, and is closed later by the application.
+        assertFalse(process.windows[1].destroyed)
+        assertEquals(2, windows.openCount)
+
+        secondListener.allowClose = true
+        process.windows[1].closeRequests = 1
+        first.pump(0)
+        assertEquals(2, secondListener.closeAsked)
+        assertTrue(process.windows[1].destroyed)
+        assertFalse(process.windows[0].destroyed)
+        assertEquals(1, windows.openCount)
+    }
+
+    @Test
+    fun fr53_window_position_round_trips() {
+        val process = FakeProcess()
+        val windows = Win32Windows(process)
+        val platform = windows.newPlatform()
+        // Where the window opens is the configured position; none leaves the choice to the system.
+        platform.open(config("a", 37, 91), Recorder())
+        assertEquals(37, process.windows[0].config.x)
+        assertEquals(91, process.windows[0].config.y)
+        for ((x, y) in listOf(0 to 0, 120 to 140, -30 to 60)) {
+            platform.setPosition(x, y)
+            val bounds = assertNotNull(platform.bounds())
+            assertEquals(x, bounds.x)
+            assertEquals(y, bounds.y)
+        }
+        platform.setContentSize(410, 270)
+        val sized = assertNotNull(platform.bounds())
+        assertEquals(410, sized.width)
+        assertEquals(270, sized.height)
+    }
+
+    @Test
+    fun fr53_move_is_reported_once_per_turn() {
+        val process = FakeProcess()
+        val windows = Win32Windows(process)
+        val platform = windows.newPlatform()
+        val listener = Recorder()
+        platform.open(config("a"), listener)
+        platform.setPosition(1, 1)
+        platform.setPosition(2, 2)
+        platform.setPosition(3, 3)
+        platform.pump(0)
+        assertEquals(1, listener.moves.size)
+        assertEquals(3, listener.moves[0].x)
+        platform.pump(0)
+        assertEquals(1, listener.moves.size)
+    }
+
+    @Test
+    fun fr53_follow_pointer_ends_with_the_button_or_escape() {
+        val process = FakeProcess()
+        val windows = Win32Windows(process)
+        val platform = windows.newPlatform()
+        val listener = Recorder()
+        platform.open(config("a"), listener)
+
+        process.windows[0].pointerDown = false
+        assertFalse(platform.followPointer(5f, 6f))
+        assertNull(process.windows[0].followAnchor)
+
+        process.windows[0].pointerDown = true
+        assertTrue(platform.followPointer(5f, 6f))
+        assertEquals(5f to 6f, process.windows[0].followAnchor)
+        process.windows[0].followEnd = false
+        platform.pump(0)
+        assertEquals(listOf(false), listener.follows)
+
+        assertTrue(platform.followPointer(1f, 2f))
+        process.windows[0].followEnd = true
+        platform.pump(0)
+        assertEquals(listOf(false, true), listener.follows)
+    }
+
+    @Test
+    fun fr53_activate_reports_focus() {
+        val process = FakeProcess()
+        val windows = Win32Windows(process)
+        val platform = windows.newPlatform()
+        val listener = Recorder()
+        platform.open(config("a"), listener)
+        val window = process.windows[0]
+
+        window.active = true
+        window.activation = true
+        platform.pump(0)
+        assertEquals(listOf(true), listener.focus)
+        assertTrue(platform.isKey)
+
+        // The same state again is not a change.
+        window.activation = true
+        platform.pump(0)
+        assertEquals(listOf(true), listener.focus)
+
+        window.active = false
+        window.activation = false
+        platform.pump(0)
+        assertEquals(listOf(true, false), listener.focus)
+        assertFalse(platform.isKey)
+
+        // A focus the system grants is reported by the activation that follows it.
+        platform.focus()
+        platform.pump(0)
+        assertEquals(listOf(true, false, true), listener.focus)
+
+        // A focus the foreground lock refuses reports nothing.
+        window.active = false
+        window.activation = false
+        platform.pump(0)
+        window.focusGranted = false
+        val before = listener.focus.size
+        platform.focus()
+        platform.pump(0)
+        assertEquals(before, listener.focus.size)
+        assertEquals(2, window.focusCalls)
+    }
+
+    @Test
+    fun fr53_a_machine_without_a_window_refuses_to_open() {
+        val process = FakeProcess()
+        process.refuse = true
+        val windows = Win32Windows(process)
+        val platform = windows.newPlatform()
+        assertFalse(platform.open(config("a"), Recorder()))
+        assertEquals(0, windows.openCount)
+        assertNull(platform.bounds())
+        assertFalse(platform.isKey)
+    }
+
+    @Test
+    fun fr72_a_window_shows_its_dialog_and_hears_the_result_from_the_pump() {
+        val process = FakeProcess()
+        val windows = Win32Windows(process)
+        val first = windows.newPlatform()
+        val second = windows.newPlatform()
+        val outcomes = ArrayList<FileDialogOutcome>()
+        // No window yet, so no dialog.
+        first.fileDialogs.show(FileDialogRequest(FileDialogKind.OpenFile)) { outcomes.add(it) }
+        assertEquals(listOf<FileDialogOutcome>(FileDialogOutcome.Unavailable), outcomes)
+        assertTrue(first.open(config("a"), Recorder()))
+        assertTrue(second.open(config("b"), Recorder()))
+
+        second.fileDialogs.show(FileDialogRequest(FileDialogKind.OpenFile)) { outcomes.add(it) }
+        assertEquals(listOf(0x200L), process.dialogs.started.map { it.window })
+        process.dialogs.choose(process.dialogs.started[0].id, "C:\\picked.txt")
+        assertEquals(1, outcomes.size)
+        // Pumping on any window delivers.
+        first.pump(0)
+        assertEquals(listOf("C:\\picked.txt"), (outcomes[1] as FileDialogOutcome.Chosen).paths)
+    }
+
+    @Test
+    fun fr72_closing_a_window_cancels_its_dialogs_and_not_another_windows() {
+        val process = FakeProcess()
+        val windows = Win32Windows(process)
+        val first = windows.newPlatform()
+        val second = windows.newPlatform()
+        assertTrue(first.open(config("a"), Recorder()))
+        assertTrue(second.open(config("b"), Recorder()))
+        val firstOutcomes = ArrayList<FileDialogOutcome>()
+        val secondOutcomes = ArrayList<FileDialogOutcome>()
+        first.fileDialogs.show(FileDialogRequest(FileDialogKind.OpenFile)) { firstOutcomes.add(it) }
+        first.fileDialogs.show(FileDialogRequest(FileDialogKind.Save)) { firstOutcomes.add(it) }
+        second.fileDialogs.show(FileDialogRequest(FileDialogKind.OpenFolder)) { secondOutcomes.add(it) }
+        assertEquals(2, process.dialogs.started.size)
+
+        first.close()
+        // The open dialog was told to close while its window still existed.
+        assertEquals(listOf(process.dialogs.started[0].id), process.dialogs.cancelled)
+        assertEquals(listOf<FileDialogOutcome>(FileDialogOutcome.Cancelled, FileDialogOutcome.Cancelled), firstOutcomes)
+        assertTrue(secondOutcomes.isEmpty())
+        second.pump(0)
+        assertEquals(2, firstOutcomes.size)
+        first.fileDialogs.show(FileDialogRequest(FileDialogKind.OpenFile)) { firstOutcomes.add(it) }
+        assertEquals(FileDialogOutcome.Unavailable, firstOutcomes[2])
+
+        process.dialogs.choose(process.dialogs.started[1].id, "C:\\dir")
+        second.pump(0)
+        assertEquals(listOf("C:\\dir"), (secondOutcomes[0] as FileDialogOutcome.Chosen).paths)
+    }
+}

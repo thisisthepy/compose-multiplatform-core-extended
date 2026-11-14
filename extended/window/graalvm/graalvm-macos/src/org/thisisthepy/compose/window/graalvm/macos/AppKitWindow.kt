@@ -246,6 +246,7 @@ fun drainWindowEvents(): List<WindowEvent> {
                 keyCode = record.readInt(20),
                 codePoint = record.readInt(24),
                 text = if (length == 0) "" else String(bytes, 0, length, Charsets.UTF_8),
+                timeMillis = record.readLong(TIME_OFFSET),
             ),
         )
     }
@@ -561,7 +562,9 @@ object PointerShape {
 private const val ZERO: Byte = 0
 private const val TEXT_OFFSET = 28
 private const val TEXT_BYTES = 96
-private const val EVENT_STRUCT_BYTES = 124
+// The int64 after the text, aligned to 8: 28 + 96 is 124, padded to 128.
+private const val TIME_OFFSET = 128
+private const val EVENT_STRUCT_BYTES = 136
 
 /**
  * Opens a window, or null where this machine has no Metal device.
@@ -618,11 +621,20 @@ private external fun nativeSetMinSize(window: Pointer?, width: Int, height: Int)
 @CFunction("dxc_native_set_visibility")
 private external fun nativeSetVisibility(window: Pointer?, visibility: Int)
 
+@CFunction("dxc_native_set_appearance")
+private external fun nativeSetAppearance(window: Pointer?, scheme: Int)
+
 @CFunction("dxc_native_system_dark")
 private external fun nativeSystemDark(): Int
 
+@CFunction("dxc_native_double_click_millis")
+private external fun nativeDoubleClickMillis(): Long
+
 @CFunction("dxc_native_set_ime_spot")
 private external fun nativeSetImeSpot(x: Float, y: Float)
+
+@CFunction("dxc_native_ime_reset")
+private external fun nativeImeReset(out: CCharPointer?, capacity: Int): Int
 
 @CFunction("dxc_native_context_menu")
 private external fun nativeContextMenu(view: Pointer?, items: CCharPointer?): Int
@@ -648,11 +660,26 @@ fun NativeWindow.setMinimumSize(width: Int, height: Int) =
 fun NativeWindow.setVisibilityCode(code: Int) =
     nativeSetVisibility(WordFactory.pointer(window), code)
 
+/** One is light, two is dark, anything else (zero, three) follows the system. */
+fun NativeWindow.setAppearanceCode(code: Int) =
+    nativeSetAppearance(WordFactory.pointer(window), code)
+
 /** True when the system is set to dark appearance. */
 fun isSystemDark(): Boolean = nativeSystemDark() != 0
 
+/** The system's double-click interval in milliseconds, `NSEvent.doubleClickInterval`. */
+fun systemDoubleClickMillis(): Long = nativeDoubleClickMillis()
+
 /** Tells the input method where the caret is, in points from the top left of the view. */
 fun setNativeImeSpot(x: Float, y: Float) = nativeSetImeSpot(x, y)
+
+/**
+ * Makes the input method let go of what it is composing, sending nothing. What it held is
+ * not asked for: the caller has kept the text already.
+ */
+fun endNativeComposition() {
+    nativeImeReset(WordFactory.nullPointer(), 0)
+}
 
 /**
  * Shows a context menu at the pointer and answers with the id chosen, or -1.

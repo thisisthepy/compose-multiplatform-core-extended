@@ -24,6 +24,11 @@ kotlin {
     sourceSets {
         jvmMain.dependencies { implementation(providers.gradleProperty("jvm").get()) }
         linuxX64Main.dependencies { implementation(providers.gradleProperty("linuxX64").get()) }
+        // A design system's root, which each target finds its own component of through the
+        // root's Gradle module metadata, and the fork's Compose under it.
+        providers.gradleProperty("designSystem").orNull?.let { coordinate ->
+            commonMain.dependencies { implementation(coordinate) }
+        }
     }
 }
 

@@ -18,6 +18,7 @@ import org.thisisthepy.compose.window.atspi.AtspiWindow
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.ResizeStats
 import org.thisisthepy.compose.window.SystemTheme
+import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowListener
@@ -49,6 +50,8 @@ class X11Window : WindowPlatform {
     private var frameWanted = false
     private var lastScale = 0f
     private var lastTheme: SystemTheme? = null
+    private var lastTextScale = TextScale.DEFAULT
+    private var nextTextScaleCheck = 0L
 
     // What the C window records, a key as a keysym, a state word and the text it typed and the
     // preedit callbacks as they came, turned into events by the same code the Kotlin/Native X11
@@ -113,6 +116,10 @@ class X11Window : WindowPlatform {
         )
         accessibility.listener = listener
         accessibility.setTitle(config.title)
+        // The desktop's text size (GNOME's factor, KDE's forced font DPI) is in Xft.dpi too, and
+        // this window reports it as its text scale, so the C side takes it out of the scale the
+        // window opens at.
+        tellTextFactor()
         val title = CTypeConversion.toCString(config.title)
         val out = UnmanagedMemory.calloc<Pointer>(X11Layout.WINDOW_BYTES)
         try {
@@ -144,16 +151,16 @@ class X11Window : WindowPlatform {
             }
             for (event in x11Events.heard(read(eventBuffer))) {
                 when (event.kind) {
-                    WindowEvent.POINTER_DOWN -> if (event.buttons and PRIMARY != 0 &&
-                        event.buttons and WindowEvent.SECONDARY_BUTTON == 0
+                    WindowEvent.POINTER_DOWN -> if (event.buttons and WindowEvent.PRIMARY_HELD != 0 &&
+                        !event.isSecondaryPress
                     ) {
                         pressX = event.x
                         pressY = event.y
                         pressNanos = System.nanoTime()
                     }
-                    WindowEvent.POINTER_UP -> if (event.buttons and PRIMARY == 0) gesture.released()
+                    WindowEvent.POINTER_UP -> if (event.buttons and WindowEvent.PRIMARY_HELD == 0) gesture.released()
                     WindowEvent.POINTER_MOVE -> if (gesture.waiting) {
-                        if (event.buttons and PRIMARY == 0) {
+                        if (event.buttons and WindowEvent.PRIMARY_HELD == 0) {
                             gesture.released()
                         } else {
                             val direction = gesture.moved(event.x, event.y)
@@ -164,11 +171,18 @@ class X11Window : WindowPlatform {
                 listener?.onEvent(event)
             }
         }
-        val scale = measure().scale
+        var scale = measure().scale
+        if (scale != lastScale) {
+            // The desktop rewrites Xft.dpi when its text size changes, before this window's next
+            // read of the factor: read it now, so the new DPI is not taken for a new scale.
+            tellTextFactor()
+            scale = measure().scale
+        }
         if (scale != lastScale) {
             lastScale = scale
             listener?.onScaleChanged(scale)
         }
+        checkTextScale()
         val theme = systemTheme()
         if (theme != lastTheme) {
             lastTheme = theme
@@ -249,6 +263,7 @@ class X11Window : WindowPlatform {
             keyCode = record.readInt(20),
             codePoint = record.readInt(24),
             text = bytes.decodeToString(0, length),
+            timeMillis = record.readLong(X11Layout.EVENT_TIME_OFFSET),
         )
     }
 
@@ -344,6 +359,31 @@ class X11Window : WindowPlatform {
     }
 
     /** Read the way the Kotlin/Native X11 window reads it: from `GTK_THEME`. */
+    override fun textScale(): Float = LinuxTextScale.read()
+
+    /** GNOME's, else KDE's, else 500 ms. Read once: `gsettings` is a process start. */
+    override val doubleClickMillis: Long by lazy { LinuxTextScale.doubleClickMillis() }
+
+    /** Read again every few seconds: neither GNOME nor KDE announces the change on the X connection. */
+    private fun checkTextScale() {
+        val now = System.nanoTime()
+        if (now < nextTextScaleCheck) return
+        nextTextScaleCheck = now + 3_000_000_000L
+        // Scale changes it makes are told on the next turn, with the others.
+        val scale = tellTextFactor()?.factor ?: TextScale.DEFAULT
+        if (scale != lastTextScale) {
+            lastTextScale = scale
+            listener?.onTextScaleChanged(scale)
+        }
+    }
+
+    /** Reads the desktop's text size and tells the C side, which takes it out of Xft.dpi. */
+    private fun tellTextFactor(): TextScale.LinuxTextFactor? {
+        val text = LinuxTextScale.factor()
+        X11Natives.setTextFactorFor(text?.factor ?: 0f, text?.desktopScale ?: 0f)
+        return text
+    }
+
     override fun systemTheme(): SystemTheme = X11Theme.fromGtkTheme(System.getenv("GTK_THEME"))
 
     /**
@@ -466,6 +506,8 @@ class X11Window : WindowPlatform {
 
     override fun setImeSpot(x: Int, y: Int) = X11Natives.setImeSpot(x.toFloat(), y.toFloat())
 
+    override fun endComposition() = x11Events.endComposition()
+
     /**
      * Bare X11 has no native context menu, and the Kotlin/Native X11 window does not draw
      * one either: the items are not shown and the listener hears the menu was dismissed, so
@@ -503,9 +545,6 @@ class X11Window : WindowPlatform {
         const val ACTION_MINIMIZE = 0
         const val ACTION_TOGGLE_MAXIMIZE = 1
         const val ACTION_CLOSE = 2
-
-        /** The primary button's bit in an event's buttons. */
-        const val PRIMARY = 1
 
         /**
          * dxc_native_window_begin_drag's number for a `_NET_WM_MOVERESIZE` direction: 0 moves,

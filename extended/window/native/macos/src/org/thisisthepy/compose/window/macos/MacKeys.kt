@@ -59,6 +59,30 @@ internal fun reachesInputMethod(modifierFlags: Long): Boolean =
     modifierFlags and MacModifiers.COMMAND == 0L
 
 /**
+ * The character a key hands the scene with it, from its `charactersIgnoringModifiers`.
+ *
+ * None when the key also goes to the input method ([toInputMethod]). Compose on this
+ * platform types a key down that carries a printable character, and the input method puts
+ * the same text in through `insertText`, so a letter carried both ways is typed twice and
+ * a syllable being built is pushed along. The input method is what types; the key is only
+ * read for what it is (an arrow, Backspace, Enter, a Control chord), which Compose takes
+ * from the key number. A Command key never reaches the input method and keeps its
+ * character: Compose does not type it, because Command is held.
+ */
+internal fun keyCodePoint(charactersIgnoringModifiers: String?, toInputMethod: Boolean): Int =
+    if (toInputMethod) 0 else charactersIgnoringModifiers?.firstOrNull()?.code ?: 0
+
+/**
+ * Whether a key pressed while the input method was composing is the scene's to read, once
+ * the input method has seen it.
+ *
+ * It is when the input method did not take it ([handled] false) or handed it back as a
+ * command ([command]), which is what it does with an arrow or Enter after committing a
+ * Korean syllable. A key it kept and answered only with text is part of the composition.
+ */
+internal fun keyIsLeftForScene(handled: Boolean, command: Boolean): Boolean = !handled || command
+
+/**
  * Whether this key is one of the text editing shortcuts: Command with A, C, V, X or Z,
  * and Shift as well for redo.
  *
@@ -141,17 +165,10 @@ internal val MAC_KEY_CODES: Map<Key, Int> = mapOf(
 )
 
 /**
- * What of an input method's text goes into a field.
- *
- * Everything but the control characters. A Control letter has a character of its own,
- * Control A is U+0001, and an input method that has no binding for it can hand that over
- * as text. It is never text anybody meant to type: a field that took it drew a box where
- * the caret was. Line breaks and tabs are keys, and arrive as keys, so nothing is lost.
+ * What of an input method's text goes into a field: everything but the control characters.
+ * The rule is shared with the GraalVM window, see [org.thisisthepy.compose.window.printableText].
  */
-internal fun insertableText(text: String): String {
-    if (text.none { it.isMacControl() }) return text
-    return text.filterNot { it.isMacControl() }
-}
+internal fun insertableText(text: String): String = org.thisisthepy.compose.window.printableText(text)
 
 private fun Char.isMacControl(): Boolean = code < 0x20 || code == 0x7F
 
