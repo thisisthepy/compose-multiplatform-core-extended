@@ -469,21 +469,14 @@ static int dxc_surface_return;
 // When each step of a size change outside a drag ran, on the performance counter in ms: the
 // frame drawn ahead was ready (WM_NCCALCSIZE about to return), WM_WINDOWPOSCHANGED and WM_SIZE
 // arrived, the frame was copied into the window, the child was fitted, and it was shown. A
-// composed frame with the new size and the old picture falls between two of these, and the
-// log line that prints them says which.
+// composed frame with the new size and the old picture falls between the window taking its
+// rectangle and the present landing (about 1.4 ms, most of it before WM_WINDOWPOSCHANGED
+// arrives), and the present then waits for that composition: the log line shows it.
 enum {
     DXC_STATE_READY, DXC_STATE_CHANGED, DXC_STATE_SIZE, DXC_STATE_COPIED, DXC_STATE_FITTED, DXC_STATE_SHOWN,
     DXC_STATE_MARK_COUNT
 };
 static double dxc_state_marks[DXC_STATE_MARK_COUNT];
-// DXC_STATE_SETTLE_MS: how long the frame drawn ahead waits after its DwmFlush before
-// WM_NCCALCSIZE returns and the window takes the size. The window's new rectangle, the copy
-// into it, the child's show and the present to it are four steps DWM can compose between.
-// DwmFlush returns as a composition ends, and DWM reads the windows for the next one a
-// millisecond or so later: the steps, begun at once, ran into that read in 3 of 208 size
-// changes (the present then waited 15 to 30 ms for DWM) and one was composed half done.
-// Begun after the read, they have the rest of the interval to themselves.
-static double dxc_state_settle_ms = 4.0;
 /**
  * One line on stderr for every change of a state that decides how resize frames are
  * produced. On by default: these happen a handful of times a session, and they are what
@@ -2185,16 +2178,6 @@ static double dxc_now_ms(void) {
     return (double)now.QuadPart * 1000.0 / (double)frequency.QuadPart;
 }
 
-/** Waits out DWM's read of the windows after a DwmFlush (dxc_state_settle_ms), without sleeping. */
-static double dxc_state_settle(void) {
-    double began = dxc_now_ms();
-    // Not Sleep: its shortest wait is a timer tick, which can be a whole composition.
-    while (dxc_now_ms() - began < dxc_state_settle_ms) {
-        SwitchToThread();
-    }
-    return dxc_now_ms() - began;
-}
-
 /*
  * Resize trace, for DXC_RESIZE_TRACE=1: when each message of a size change arrived and when
  * each step's frame was copied into the window, against DWM's own composition clock, so a
@@ -2884,11 +2867,6 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
             (int)width, (int)height, drawn ? "waiting for WM_SIZE" : "not drawn",
             ready ? ", presented to the hidden surface" : "", drawn_ms,
             flushed ? "DwmFlush" : "no DwmFlush", dxc_elapsed_ms(started) - drawn_ms, dxc_now_ms());
-    if (flushed && ready) {
-        double settled_ms = dxc_state_settle();
-        fprintf(stderr, "compose-rust: resize-mode: waited %.2f ms after the DwmFlush before the window takes %dx%d\n",
-                settled_ms, (int)width, (int)height);
-    }
     dxc_state_marks[DXC_STATE_READY] = dxc_now_ms();
 }
 
@@ -5053,11 +5031,6 @@ static int32_t dxc_open_window(
         dxc_raster_present_off = through != NULL && strcmp(through, "0") == 0;
         const char *flush = getenv("DXC_PREDRAW_FLUSH");
         dxc_predraw_flush = flush != NULL && strcmp(flush, "1") == 0;
-        const char *settle = getenv("DXC_STATE_SETTLE_MS");
-        if (settle != NULL) {
-            double asked = atof(settle);
-            if (asked >= 0.0 && asked <= 100.0) dxc_state_settle_ms = asked;
-        }
         const char *early = getenv("DXC_RESIZE_HIDE_EARLY");
         dxc_hide_early_off = early != NULL && strcmp(early, "0") == 0;
         const char *surface_return = getenv("DXC_SURFACE_RETURN");
