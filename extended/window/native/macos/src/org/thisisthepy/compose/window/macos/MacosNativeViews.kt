@@ -17,6 +17,8 @@ import org.thisisthepy.compose.window.WindowEvent
 import platform.AppKit.NSEvent
 import platform.AppKit.NSView
 import platform.AppKit.NSViewMinYMargin
+import platform.AppKit.NSVisualEffectState
+import platform.AppKit.NSVisualEffectView
 import platform.Foundation.CFBridgingRelease
 import platform.CoreGraphics.CGBitmapContextCreate
 import platform.CoreGraphics.CGBitmapContextCreateImage
@@ -154,6 +156,32 @@ class MacosNativeViews internal constructor(
         if (!visible && focus.focused == id) focusScene()
         slot.visible = visible
         slot.container.hidden = !visible
+        backdropFollowsSlots()
+    }
+
+    /**
+     * Holds the backdrop's blur still while a slot shows, and gives it back to the window's
+     * active state when none does.
+     *
+     * The backdrop is an NSVisualEffectView that follows the window's active state, so in a key
+     * window it is live, blurring what is behind the window. While it is, the window server
+     * does not always composite the layer tree and the Metal drawable of one commit together:
+     * a slot moved in the same turn as the frame drawn under it reached the screen a frame
+     * ahead of that frame in 2 to 14 of about 90 pictures, with or without a scene, against
+     * none with the window not key or the backdrop inactive (NativeViewSameFrameTest). Moving
+     * the Metal view and the slots out of the effect view, as its siblings above it, still left
+     * 2 to 4 apart, and a within-window effect 7, so it is the live effect anywhere in the
+     * window, not where the views sit. The inactive state draws the material without sampling
+     * what is behind the window, which is how the window looks when it is not key.
+     */
+    private fun backdropFollowsSlots() {
+        val effect = backdrop as? NSVisualEffectView ?: return
+        val state = if (slots.values.any { it.visible }) {
+            NSVisualEffectState.NSVisualEffectStateInactive
+        } else {
+            NSVisualEffectState.NSVisualEffectStateFollowsWindowActiveState
+        }
+        if (effect.state != state) effect.state = state
     }
 
     override fun focus(id: Int) {
@@ -172,6 +200,7 @@ class MacosNativeViews internal constructor(
         slots.remove(id)
         slot.view.removeFromSuperview()
         slot.container.removeFromSuperview()
+        backdropFollowsSlots()
         // The first responder may have been inside the view without the window making it so
         // through makeFirstResponder; whatever it is now is reported.
         firstResponderChanged()

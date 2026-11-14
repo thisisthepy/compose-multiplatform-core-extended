@@ -15,6 +15,17 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   transaction, so the view and the frame reach the screen in the same composition. A test reads
   what the window server composited through ScreenCaptureKit: 31 to 44 of about 112 pictures of
   a moving slot had the two apart before, none after. (#233)
+- **Fix.** On the Kotlin/Native macOS window, a native view could still reach the screen a
+  frame ahead of the frame drawn under it in a key window. The window's content view is an
+  `NSVisualEffectView` that follows the window's active state, and in a key window its blur of
+  what is behind the window is live; while it is, the window server does not always composite
+  the layer tree and the Metal drawable of one commit together. The slot test had passed
+  because its window was never key. `MacosNativeViews` now holds the effect view inactive while
+  any slot is shown, and hands it back to the window's active state when none is, so a window
+  with a native view shows the material as a window that is not key does. The same-frame test
+  now runs in a key window, without a scene, with an idle scene and with a scene that places
+  the view itself: 1 to 7 of 82 to 94 pictures had the two apart before, none of 77 to 94
+  after. (#233)
 
 ## 1.11.1-ext.4 (2026-11-14)
 

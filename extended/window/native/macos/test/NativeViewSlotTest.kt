@@ -316,6 +316,24 @@ class NativeViewSlotTest {
     }
 
     @Test
+    fun the_backdrop_blur_is_held_still_while_a_view_shows() = withSlot { f, _ ->
+        val backdrop = f.window.window.contentView as platform.AppKit.NSVisualEffectView
+        val inactive = platform.AppKit.NSVisualEffectState.NSVisualEffectStateInactive
+        val follows = platform.AppKit.NSVisualEffectState.NSVisualEffectStateFollowsWindowActiveState
+        assertEquals(inactive, backdrop.state, "a live blur would let the view reach the screen apart from its frame")
+        f.views.setVisible(1, false)
+        assertEquals(follows, backdrop.state, "with no view showing it follows the window again")
+        val second = SolidView()
+        assertTrue(f.views.attach(2, second.objcPtr().toLong()))
+        f.views.setVisible(2, true)
+        f.views.setVisible(1, true)
+        f.views.detach(2)
+        assertEquals(inactive, backdrop.state, "one view still shows")
+        f.views.detach(1)
+        assertEquals(follows, backdrop.state, "none left")
+    }
+
+    @Test
     fun a_click_in_the_view_gives_it_the_keyboard_and_focus_scene_takes_it_back() = withSlot { f, view ->
         if (!f.window.window.keyWindow) {
             // No key window to be had (the process is not the active one): the window is told

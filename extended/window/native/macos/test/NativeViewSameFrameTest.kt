@@ -2,6 +2,26 @@
 
 package org.thisisthepy.compose.window.macos
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.UByteVar
 import kotlinx.cinterop.get
@@ -69,11 +89,22 @@ private class RedView : NSView(NSMakeRect(0.0, 0.0, 10.0, 10.0)) {
  * A native view moved in the same turn as the Metal frame drawn under it reaches the screen in
  * the same picture as that frame.
  *
- * No Compose: each turn of a 60 Hz timer does what a scene's frame does, in the same order. It
- * takes a drawable through [MetalWindowSurface], moves the slot with [MacosNativeViews.setFrame]
- * as a scene's layout does, spends [DRAWING_MICROS] drawing as a scene does, draws a green page
- * with two blue bars the slot's height apart, the slot exactly between them, and presents. The
- * bars and the slot move together by [STEP] points a turn.
+ * Three ways of moving it. Without Compose, each turn of a 60 Hz timer does what a scene's frame
+ * does, in the same order: it takes a drawable through [MetalWindowSurface], moves the slot with
+ * [MacosNativeViews.setFrame] as a scene's layout does, spends [DRAWING_MICROS] drawing as a scene
+ * does, draws a green page with two blue bars the slot's height apart, the slot exactly between
+ * them, and presents. That turn runs in a window with no scene and in one whose scene was set
+ * with [MacosWindow.setContent] and left idle. Then the real thing: a scene that draws the page
+ * and the bars and moves them, and places the slot from `onGloballyPositioned` in the frame it
+ * draws, pumped by a timer as an application pumps it. The bars and the slot move together by
+ * [STEP] points a frame.
+ *
+ * The window is key, as an application's window in front is. Its content view is an
+ * NSVisualEffectView that follows the window's active state, and only a key window's is live,
+ * blurring what is behind the window. While it was, the window server put the view a frame
+ * ahead of the drawing in 2 to 14 of about 90 pictures, with or without a scene; with the same
+ * window not key, in none. A test process is not the active application and cannot take the
+ * front by asking, so the window is told it is key, as AppKit tells it.
  *
  * What the screen shows is read from ScreenCaptureKit, one picture for each time the window
  * server composited the window, down one column. A view a frame ahead of the drawing leaves
@@ -90,17 +121,69 @@ private class RedView : NSView(NSMakeRect(0.0, 0.0, 10.0, 10.0)) {
  */
 class NativeViewSameFrameTest {
     @Test
-    fun the_view_and_the_frame_drawn_in_one_turn_show_in_the_same_picture() {
-        if (!CGPreflightScreenCaptureAccess()) {
-            println("native view: this process may not record the screen, so what it shows cannot be looked at; skipped")
-            return
-        }
-        val application = NSApplication.sharedApplication()
-        application.setActivationPolicy(NSApplicationActivationPolicy.NSApplicationActivationPolicyRegular)
-        application.finishLaunching()
+    fun the_view_and_the_frame_drawn_in_one_turn_show_in_the_same_picture() = sameTurn(withScene = false)
+
+    @Test
+    fun the_view_and_the_frame_drawn_in_one_turn_show_in_the_same_picture_in_a_window_with_a_scene() =
+        sameTurn(withScene = true)
+
+    @Test
+    fun the_view_placed_by_the_scene_shows_in_the_same_picture_as_the_frame_that_placed_it() {
+        val label = "native view, placed by the scene"
+        if (!launch(label)) return
         val window = MacosWindow(name = "native view same frame", width = 360, height = 360)
-        // The window and its views, with no scene: this test draws every frame itself.
-        window.initWindow()
+        val views = window.nativeViews
+        val view = RedView()
+        val moving = mutableStateOf(false)
+        var frames = 0
+        window.setContent {
+            var top by remember { mutableStateOf(FIRST) }
+            LaunchedEffect(Unit) {
+                var direction = 1
+                while (true) {
+                    withFrameNanos { }
+                    frames++
+                    if (moving.value) {
+                        top += STEP * direction
+                        if (top >= LAST) direction = -1
+                        if (top <= FIRST) direction = 1
+                    }
+                }
+            }
+            Box(Modifier.fillMaxSize().background(Color(GREEN))) {
+                Column(Modifier.offset { IntOffset((LEFT * density).toInt(), (top * density).toInt()) }.width(WIDTH.dp)) {
+                    Box(Modifier.fillMaxWidth().height(BAR.dp).background(Color(BLUE)))
+                    Box(
+                        Modifier.fillMaxWidth().height(VIEW.dp).onGloballyPositioned { coordinates ->
+                            val r = coordinates.boundsInWindow()
+                            views.setFrame(1, r.left.toInt(), r.top.toInt(), r.width.toInt(), r.height.toInt())
+                        },
+                    )
+                    Box(Modifier.fillMaxWidth().height(BAR.dp).background(Color(BLUE)))
+                }
+            }
+        }
+        assertTrue(views.attach(1, view.objcPtr().toLong()), "a plain view can be attached")
+        views.setVisible(1, true)
+        val pump = NSTimer.timerWithTimeInterval(1.0 / 60.0, repeats = true) { _: NSTimer? -> window.pumpHost(0L) }
+        try {
+            NSRunLoop.mainRunLoop.addTimer(pump, forMode = NSRunLoopCommonModes)
+            watch(label, window, { moving.value = it }) { "$frames frames" }
+        } finally {
+            pump.invalidate()
+            views.detach(1)
+            window.host?.close()
+            window.window.orderOut(null)
+        }
+    }
+
+    private fun sameTurn(withScene: Boolean) {
+        val label = if (withScene) "native view, with a scene" else "native view"
+        if (!launch(label)) return
+        val window = MacosWindow(name = "native view same frame", width = 360, height = 360)
+        // The window and its views. With a scene, it is set as an application sets one, and
+        // left idle: this test draws every frame itself either way.
+        if (withScene) window.setContent {} else window.initWindow()
         val surface = MetalWindowSurface(window)
         val views = window.nativeViews
         val view = RedView()
@@ -139,13 +222,49 @@ class NativeViewSameFrameTest {
         }
 
         val timer = NSTimer.timerWithTimeInterval(1.0 / 60.0, repeats = true) { _: NSTimer? -> turn() }
-        val screen = Screen()
         try {
             NSRunLoop.mainRunLoop.addTimer(timer, forMode = NSRunLoopCommonModes)
+            watch(label, window, { moving = it }) { "$turns turns" }
+        } finally {
+            timer.invalidate()
+            views.detach(1)
+            window.host?.close()
+            window.window.orderOut(null)
+        }
+    }
+
+    /** Readies the application for a window; false when the screen may not be recorded. */
+    private fun launch(label: String): Boolean {
+        if (!CGPreflightScreenCaptureAccess()) {
+            println("$label: this process may not record the screen, so what it shows cannot be looked at; skipped")
+            return false
+        }
+        val application = NSApplication.sharedApplication()
+        application.setActivationPolicy(NSApplicationActivationPolicy.NSApplicationActivationPolicyRegular)
+        application.finishLaunching()
+        return true
+    }
+
+    /**
+     * Shows [window] as the key window, checks the view sits between the bars while nothing
+     * moves, then has [move] start the bars and the view moving and checks every picture taken
+     * meanwhile has the two together.
+     */
+    private fun watch(
+        label: String,
+        window: MacosWindow,
+        move: (Boolean) -> Unit,
+        drawn: () -> String,
+    ) {
+        val screen = Screen()
+        try {
             window.window.makeKeyAndOrderFront(null)
             spin(0.6)
+            // What AppKit does when the window becomes key, done here when this process cannot
+            // take the front: the window and its effect view go into their key state.
+            if (!window.window.keyWindow) window.window.becomeKeyWindow()
             screen.start(window)?.let { why ->
-                println("native view: $why; skipped")
+                println("$label: $why; skipped")
                 return
             }
             spin(0.4)
@@ -156,23 +275,20 @@ class NativeViewSameFrameTest {
                 "standing still, the view sits between the two bars: $rest (columns: ${screen.lastColumn})",
             )
 
-            moving = true
+            move(true)
             spin(1.5)
-            moving = false
+            move(false)
             val apart = screen.pictures.toList()
-            assertTrue(apart.size >= 20, "the moving view was seen in ${apart.size} pictures over $turns turns")
+            assertTrue(apart.size >= 20, "the moving view was seen in ${apart.size} pictures over ${drawn()}")
             val off = apart.count { kotlin.math.abs(it) > 1 }
-            println("native view: $off of ${apart.size} pictures on the screen had the view apart from the frame: $apart")
+            println("$label: $off of ${apart.size} pictures on the screen had the view apart from the frame: $apart")
             assertTrue(
                 off == 0,
                 "in $off of ${apart.size} pictures on the screen the view was not where the frame drawn " +
-                    "in the same turn put it (pixels, positive when the view is lower): $apart",
+                    "for it put it (pixels, positive when the view is lower): $apart",
             )
         } finally {
             screen.stop()
-            timer.invalidate()
-            views.detach(1)
-            window.window.orderOut(null)
         }
     }
 
