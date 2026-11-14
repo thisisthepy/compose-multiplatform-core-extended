@@ -466,6 +466,21 @@ enum {
 };
 static const char *const dxc_surface_return_names[] = {"staged", "wmsize", "nccalc", "showfirst", "posted"};
 static int dxc_surface_return;
+// When each step of a size change outside a drag ran, on the performance counter in ms: the
+// frame drawn ahead was ready (WM_NCCALCSIZE about to return), WM_WINDOWPOSCHANGED and WM_SIZE
+// arrived, the frame was copied into the window, the child was fitted, and it was shown. A
+// composed frame with the new size and the old picture falls between two of these, and the
+// log line that prints them says which.
+enum {
+    DXC_STATE_READY, DXC_STATE_CHANGED, DXC_STATE_SIZE, DXC_STATE_COPIED, DXC_STATE_FITTED, DXC_STATE_SHOWN,
+    DXC_STATE_MARK_COUNT
+};
+static double dxc_state_marks[DXC_STATE_MARK_COUNT];
+// DXC_STATE_PRIORITY=1: the UI thread runs at time-critical priority from the frame drawn
+// ahead until WM_SIZE has put it on screen, so it does not lose the CPU between the window
+// taking its size and the frame landing. For comparing the two.
+static int dxc_state_priority;
+static int dxc_state_priority_before = THREAD_PRIORITY_ERROR_RETURN;
 /**
  * One line on stderr for every change of a state that decides how resize frames are
  * produced. On by default: these happen a handful of times a session, and they are what
@@ -2167,6 +2182,26 @@ static double dxc_now_ms(void) {
     return (double)now.QuadPart * 1000.0 / (double)frequency.QuadPart;
 }
 
+/** Raises the UI thread for a size change outside a drag (DXC_STATE_PRIORITY=1). */
+static void dxc_state_priority_raise(void) {
+    if (!dxc_state_priority || dxc_state_priority_before != THREAD_PRIORITY_ERROR_RETURN) {
+        return;
+    }
+    dxc_state_priority_before = GetThreadPriority(GetCurrentThread());
+    if (dxc_state_priority_before != THREAD_PRIORITY_ERROR_RETURN) {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    }
+}
+
+/** Gives the UI thread the priority it had before dxc_state_priority_raise. */
+static void dxc_state_priority_restore(void) {
+    if (dxc_state_priority_before == THREAD_PRIORITY_ERROR_RETURN) {
+        return;
+    }
+    SetThreadPriority(GetCurrentThread(), dxc_state_priority_before);
+    dxc_state_priority_before = THREAD_PRIORITY_ERROR_RETURN;
+}
+
 /*
  * Resize trace, for DXC_RESIZE_TRACE=1: when each message of a size change arrived and when
  * each step's frame was copied into the window, against DWM's own composition clock, so a
@@ -2698,8 +2733,17 @@ static int dxc_show_ready_surface(int32_t width, int32_t height) {
         ShowWindow(dxc_surface, SW_SHOWNA);
     } else if (dxc_surface_return == DXC_SURFACE_RETURN_STAGED && ready) {
         SetWindowPos(dxc_surface, NULL, 0, 0, width, height, fit);
+        dxc_state_marks[DXC_STATE_FITTED] = dxc_now_ms();
         ShowWindow(dxc_surface, SW_SHOWNA);
+        dxc_state_marks[DXC_STATE_SHOWN] = dxc_now_ms();
         if (!dxc_present_staged()) return 0;
+        double ready_at = dxc_state_marks[DXC_STATE_READY];
+        fprintf(stderr,
+                "compose-rust: resize-mode: steps after the frame was ready at %.1f ms: WM_WINDOWPOSCHANGED +%.2f, "
+                "WM_SIZE +%.2f, copied +%.2f, child fitted +%.2f, shown +%.2f, presented +%.2f ms\n",
+                ready_at, dxc_state_marks[DXC_STATE_CHANGED] - ready_at, dxc_state_marks[DXC_STATE_SIZE] - ready_at,
+                dxc_state_marks[DXC_STATE_COPIED] - ready_at, dxc_state_marks[DXC_STATE_FITTED] - ready_at,
+                dxc_state_marks[DXC_STATE_SHOWN] - ready_at, dxc_now_ms() - ready_at);
     } else if (dxc_surface_return == DXC_SURFACE_RETURN_WM_SIZE) {
         SetWindowPos(dxc_surface, NULL, 0, 0, width, height, fit);
         if (!dxc_bitmap_to_swapchain(width, height)) return 0;
@@ -2747,10 +2791,12 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
         dxc_raster_height = height;
         if (!dxc_raster_present(width, height)) {
             dxc_raster_copy();
+            dxc_state_marks[DXC_STATE_COPIED] = dxc_now_ms();
             dxc_show_ready_surface(width, height);
         }
     }
     dxc_resizing = 0;
+    dxc_state_priority_restore();
     if (dxc_cpu_mode) {
         // What this step put on screen and how, for the CI assertion over these lines.
         fprintf(stderr,
@@ -2823,6 +2869,7 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     }
     LARGE_INTEGER started;
     QueryPerformanceCounter(&started);
+    dxc_state_priority_raise();
     int hidden = dxc_hide_surface_early(window, (int32_t)(now.right - now.left), (int32_t)(now.bottom - now.top));
     dxc_switch_frames(1, width, height, "the size is about to change");
     dxc_predrawn_set(&dxc_predrawn, 0, 0);
@@ -2846,6 +2893,11 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
             (int)width, (int)height, drawn ? "waiting for WM_SIZE" : "not drawn",
             ready ? ", presented to the hidden surface" : "", drawn_ms,
             flushed ? "DwmFlush" : "no DwmFlush", dxc_elapsed_ms(started) - drawn_ms, dxc_now_ms());
+    if (!drawn) {
+        // No WM_SIZE will take this frame, so nothing else gives the priority back.
+        dxc_state_priority_restore();
+    }
+    dxc_state_marks[DXC_STATE_READY] = dxc_now_ms();
 }
 
 /**
@@ -3278,6 +3330,7 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         // Moved or resized, by the user or by SetWindowPos. The default handler turns it into
         // WM_MOVE and WM_SIZE.
         dxc_w->moved_pending = 1;
+        dxc_state_marks[DXC_STATE_CHANGED] = dxc_now_ms();
         break;
     case WM_MOVE:
         dxc_w->moved_pending = 1;
@@ -3288,6 +3341,7 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         break;
     case WM_SIZE:
         dxc_w->moved_pending = 1;
+        dxc_state_marks[DXC_STATE_SIZE] = dxc_now_ms();
         if (wparam != dxc_last_size_kind &&
             (wparam == SIZE_MAXIMIZED || wparam == SIZE_MINIMIZED || wparam == SIZE_RESTORED)) {
             dxc_mode("window", dxc_size_kind_name(dxc_last_size_kind), dxc_size_kind_name(wparam),
@@ -5007,6 +5061,8 @@ static int32_t dxc_open_window(
         dxc_raster_present_off = through != NULL && strcmp(through, "0") == 0;
         const char *flush = getenv("DXC_PREDRAW_FLUSH");
         dxc_predraw_flush = flush != NULL && strcmp(flush, "1") == 0;
+        const char *state_priority = getenv("DXC_STATE_PRIORITY");
+        dxc_state_priority = state_priority != NULL && strcmp(state_priority, "1") == 0;
         const char *early = getenv("DXC_RESIZE_HIDE_EARLY");
         dxc_hide_early_off = early != NULL && strcmp(early, "0") == 0;
         const char *surface_return = getenv("DXC_SURFACE_RETURN");

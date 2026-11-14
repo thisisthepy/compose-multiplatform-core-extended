@@ -172,7 +172,21 @@ jobs:
             DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-return-$way-30ms.log || true
           done
 
-      # With a frame that costs nothing and with one that costs 30 ms, three times each. A gate: no composed
+      # For comparison, not a gate: the UI thread at time-critical priority for the length of
+      # the size change (DXC_STATE_PRIORITY in win32_window.c), over enough runs to tell a
+      # rare faulty frame from none.
+      - name: Resize probe, maximise, restore and snap, time-critical thread (comparison)
+        shell: bash
+        run: |
+          for run in 1 2 3 4 5 6 7 8; do
+            DXC_STATE_PRIORITY=1 PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-states-priority-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-priority-$run.log || true
+          done
+          for run in 1 2; do
+            DXC_STATE_PRIORITY=1 PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-priority-30ms-$run.log || true
+          done
+          grep -h 'verdict' out/probe-states-priority-*.log || true
+
+      # With a frame that costs nothing, eight times, and with one that costs 30 ms, three times. A gate: no composed
       # frame of maximise, restore, left-half snap or back may show another size's picture
       # (compose-rust#684).
       - name: Resize probe, maximise, restore and snap
@@ -180,8 +194,10 @@ jobs:
         run: |
           set -o pipefail
           status=0
-          for run in 1 2 3; do
+          for run in 1 2 3 4 5 6 7 8; do
             PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-states-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-$run.log || status=1
+          done
+          for run in 1 2 3; do
             PROBE_VERBOSE=1 PROBE_DRAW_MS=30 PROBE_SAVE="out\\frames-states-30ms-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-30ms-$run.log || status=1
           done
           exit $status
