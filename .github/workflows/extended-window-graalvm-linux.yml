@@ -3,22 +3,7 @@
 name: extended window graalvm linux
 
 on:
-  workflow_dispatch:
-  pull_request:
-    paths:
-      - extended/window/**
-      - .github/actions/fork-compose/**
-      - .github/workflows/extended-window-graalvm-linux.yml
-  push:
-    branches: [ extended ]
-    paths:
-      - extended/window/**
-      - .github/actions/fork-compose/**
-      - .github/workflows/extended-window-graalvm-linux.yml
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  workflow_call: {}
 
 permissions:
   contents: read

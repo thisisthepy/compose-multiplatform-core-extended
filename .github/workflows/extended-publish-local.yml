@@ -12,27 +12,35 @@ on:
   workflow_dispatch:
     inputs:
       mac_run:
-        description: >-
-          Take the Mac's repository from this earlier run of this workflow and run only the Windows
-          program against it (empty: publish everything)
-        required: false
+        description: 'Take the Mac''s repository from this earlier run of this workflow
+          and run only the Windows program against it (empty: publish everything)'
+        required: 'false'
         default: ''
       plugin_ref:
-        description: >-
-          With mac_run: publish org.thisisthepy.kotlin.native.desktop from this ref of
-          thisisthepy/compose-multiplatform-extended over the one in that repository
+        description: 'With mac_run: publish org.thisisthepy.kotlin.native.desktop
+          from this ref of thisisthepy/compose-multiplatform-extended over the one
+          in that repository'
+        required: 'false'
+        default: ''
+  workflow_call:
+    inputs:
+      mac_run:
+        description: 'Take the Mac''s repository from this earlier run of this workflow
+          and run only the Windows program against it (empty: publish everything)'
         required: false
         default: ''
-  pull_request:
-    paths:
-      - extended/publish-local-all.sh
-      - extended/compose/**
-      - extended/skiko/**
-      - .github/workflows/extended-publish-local.yml
+        type: string
+      plugin_ref:
+        description: 'With mac_run: publish org.thisisthepy.kotlin.native.desktop
+          from this ref of thisisthepy/compose-multiplatform-extended over the one
+          in that repository'
+        required: false
+        default: ''
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.event_name == 'push' && format('publish-{0}', github.ref) || (github.workflow == 'CI' && format('called-extended-publish-local-{0}', github.run_id) || 'dev-ci') }}
+  cancel-in-progress: false
 
 permissions:
   contents: read

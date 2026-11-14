@@ -9,35 +9,7 @@
 name: Extended window linux
 
 on:
-  workflow_dispatch:
-  pull_request:
-    paths:
-      - extended/window/common/**
-      - extended/window/native/linux/**
-      - extended/window/native/linux-scene/**
-      - extended/window/scene/**
-      - extended/window/project.yaml
-      - extended/window/scripts/**
-      - .github/workflows/extended-window-linux.yml
-      - .github/actions/fork-compose/**
-      - extended/compose/**
-  push:
-    branches:
-      - extended
-    paths:
-      - extended/window/common/**
-      - extended/window/native/linux/**
-      - extended/window/native/linux-scene/**
-      - extended/window/scene/**
-      - extended/window/project.yaml
-      - extended/window/scripts/**
-      - .github/workflows/extended-window-linux.yml
-      - .github/actions/fork-compose/**
-      - extended/compose/**
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  workflow_call: {}
 
 permissions:
   contents: read

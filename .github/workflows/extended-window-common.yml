@@ -7,21 +7,7 @@
 name: Extended window common
 
 on:
-  workflow_dispatch:
-  pull_request:
-    paths:
-      - extended/window/**
-      - .github/workflows/extended-window-common.yml
-  push:
-    branches:
-      - extended
-    paths:
-      - extended/window/**
-      - .github/workflows/extended-window-common.yml
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  workflow_call: {}
 
 permissions:
   contents: read

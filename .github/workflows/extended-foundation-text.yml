@@ -5,25 +5,7 @@
 name: extended foundation text
 
 on:
-  workflow_dispatch:
-  pull_request:
-    branches: [ extended ]
-    paths:
-      - compose/foundation/foundation/src/commonMain/**/text/**
-      - compose/foundation/foundation/src/skikoMain/**/text/**
-      - compose/foundation/foundation/src/skikoTest/**/text/**
-      - .github/workflows/extended-foundation-text.yml
-  push:
-    branches: [ extended ]
-    paths:
-      - compose/foundation/foundation/src/commonMain/**/text/**
-      - compose/foundation/foundation/src/skikoMain/**/text/**
-      - compose/foundation/foundation/src/skikoTest/**/text/**
-      - .github/workflows/extended-foundation-text.yml
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  workflow_call: {}
 
 permissions:
   contents: read

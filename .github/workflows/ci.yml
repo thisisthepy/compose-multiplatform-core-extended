@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: dev-ci
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  packages: write
+
+jobs:
+  check_public_api:
+    uses: ./.github/workflows/check-public-api.yml
+    secrets: inherit
+  compose_tests:
+    uses: ./.github/workflows/compose-tests.yml
+    secrets: inherit
+  design_systems:
+    uses: ./.github/workflows/design-systems.yml
+    secrets: inherit
+  extended_coordinates:
+    uses: ./.github/workflows/extended-coordinates.yml
+    secrets: inherit
+  extended_desktop_test:
+    uses: ./.github/workflows/extended-desktop-test.yml
+    secrets: inherit
+  extended_foundation_macos:
+    uses: ./.github/workflows/extended-foundation-macos.yml
+    secrets: inherit
+  extended_foundation_text:
+    uses: ./.github/workflows/extended-foundation-text.yml
+    secrets: inherit
+  extended_packaging:
+    uses: ./.github/workflows/extended-packaging.yml
+    secrets: inherit
+  extended_pointericon_test:
+    uses: ./.github/workflows/extended-pointericon-test.yml
+    secrets: inherit
+  extended_public_api:
+    uses: ./.github/workflows/extended-public-api.yml
+    secrets: inherit
+  extended_skiko_awt_free:
+    uses: ./.github/workflows/extended-skiko-awt-free.yml
+    secrets: inherit
+  extended_skiko_awt_jar:
+    uses: ./.github/workflows/extended-skiko-awt-jar.yml
+    secrets: inherit
+  extended_skiko_static:
+    uses: ./.github/workflows/extended-skiko-static.yml
+    secrets: inherit
+  extended_window_common:
+    uses: ./.github/workflows/extended-window-common.yml
+    secrets: inherit
+  extended_window_graalvm_linux:
+    uses: ./.github/workflows/extended-window-graalvm-linux.yml
+    secrets: inherit
+  extended_window_graalvm_macos:
+    uses: ./.github/workflows/extended-window-graalvm-macos.yml
+    secrets: inherit
+  extended_window_graalvm_windows:
+    uses: ./.github/workflows/extended-window-graalvm-windows.yml
+    secrets: inherit
+  extended_window_linux:
+    uses: ./.github/workflows/extended-window-linux.yml
+    secrets: inherit
+  extended_window_macos:
+    uses: ./.github/workflows/extended-window-macos.yml
+    secrets: inherit
+  extended_window_scene:
+    uses: ./.github/workflows/extended-window-scene.yml
+    secrets: inherit
+  extended_window_windows_shared:
+    uses: ./.github/workflows/extended-window-windows-shared.yml
+    secrets: inherit
+  compose_publish_dry_run:
+    uses: ./.github/workflows/compose-publish-dry-run.yml
+    secrets: inherit
+  extended_publish_local:
+    uses: ./.github/workflows/extended-publish-local.yml
+    secrets: inherit
+  extended_window_publish:
+    uses: ./.github/workflows/extended-window-publish.yml
+    secrets: inherit
+  extended_publish:
+    uses: ./.github/workflows/extended-publish.yml
+    secrets: inherit

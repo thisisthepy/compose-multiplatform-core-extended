@@ -10,25 +10,7 @@
 name: Design systems
 
 on:
-  workflow_dispatch:
-  pull_request:
-    paths:
-      - extended/design-systems/**
-      - .github/workflows/design-systems.yml
-      - .github/actions/fork-compose/**
-      - extended/compose/**
-  push:
-    branches:
-      - extended
-    paths:
-      - extended/design-systems/**
-      - .github/workflows/design-systems.yml
-      - .github/actions/fork-compose/**
-      - extended/compose/**
-
-concurrency:
-  group: design-systems-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_call: {}
 
 permissions:
   contents: read

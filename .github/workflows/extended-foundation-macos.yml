@@ -4,21 +4,7 @@
 name: extended foundation macos
 
 on:
-  workflow_dispatch:
-  pull_request:
-    branches: [ extended ]
-    paths:
-      - compose/foundation/foundation/src/macos*/**
-      - .github/workflows/extended-foundation-macos.yml
-  push:
-    branches: [ extended ]
-    paths:
-      - compose/foundation/foundation/src/macos*/**
-      - .github/workflows/extended-foundation-macos.yml
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  workflow_call: {}
 
 permissions:
   contents: read

@@ -1,10 +1,6 @@
 name: Compose Tests
 on:
-  workflow_dispatch:
-  pull_request:
-  push:
-    branches:
-      - jb-main
+  workflow_call: {}
 
 env:
   # Retry transient dependency download failures (TLS handshake resets, timeouts) with

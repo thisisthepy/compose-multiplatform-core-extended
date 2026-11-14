@@ -4,33 +4,7 @@
 name: Extended coordinates
 
 on:
-  workflow_dispatch:
-  pull_request:
-    paths:
-      - extended/compose/**
-      - extended/skiko/republish-skiko-mingw.py
-      - extended/skiko/republish-skiko-awt.py
-      - extended/skiko/repoint-desktop-skiko.py
-      - extended/skiko/tests/republish-skiko-mingw.test.sh
-      - extended/skiko/tests/republish-skiko-awt.test.sh
-      - .github/actions/fork-compose/**
-      - .github/workflows/extended-coordinates.yml
-  push:
-    branches:
-      - extended
-    paths:
-      - extended/compose/**
-      - extended/skiko/republish-skiko-mingw.py
-      - extended/skiko/republish-skiko-awt.py
-      - extended/skiko/repoint-desktop-skiko.py
-      - extended/skiko/tests/republish-skiko-mingw.test.sh
-      - extended/skiko/tests/republish-skiko-awt.test.sh
-      - .github/actions/fork-compose/**
-      - .github/workflows/extended-coordinates.yml
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  workflow_call: {}
 
 permissions:
   contents: read
