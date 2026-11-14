@@ -1,12 +1,7 @@
-# Publishes this fork: every merge into extended to GitHub Packages as a dev build, and a
-# release tag to Maven Central through the Sonatype Central Portal.
+# Publishes this fork from a release tag to Maven Central through the Sonatype Central Portal.
 #
 # Three modes, one set of jobs:
-# - dev (a push to extended): builds every publication, renames every version to
-#   <version>-dev.<commit> (extended/publish/central_bundle.py stage --dev-suffix), checks it,
-#   resolves it from a small consumer, and uploads it to GitHub Packages,
-#   https://maven.pkg.github.com/thisisthepy/compose-multiplatform-core-extended. Not signed.
-# - dry run (a pull request, or a manual run with no tag): builds the same, and checks both
+# - dry run (the CI workflow, or a manual run with no tag): builds the same, and checks both
 #   the dev bundle and the Central bundle, signed with a key made in the job and thrown away
 #   after. Nothing is uploaded; the Central bundle is kept as a workflow artifact.
 # - release (a tag v<version>, or a manual run naming one): the Central bundle, signed with
@@ -42,39 +37,40 @@ name: Extended publish
 
 on:
   push:
-    branches:
-      - extended
     tags:
-      - 'v*-ext.*'
+    - v*-ext.*
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to publish (v1.11.1-ext.N). Empty runs the dry run on the chosen branch.
-        required: false
+        description: Release tag to publish (v1.11.1-ext.N). Empty runs the dry run
+          on the chosen branch.
+        required: 'false'
         default: ''
       publishing_type:
-        description: USER_MANAGED waits in the Central Portal for someone to press Publish; AUTOMATIC publishes once validated.
+        description: USER_MANAGED waits in the Central Portal for someone to press
+          Publish; AUTOMATIC publishes once validated.
         type: choice
-        options: [ USER_MANAGED, AUTOMATIC ]
+        options:
+        - USER_MANAGED
+        - AUTOMATIC
         default: USER_MANAGED
-  pull_request:
-    paths:
-      - extended/publish/**
-      - extended/compose/**
-      - extended/window/**
-      - extended/design-systems/**
-      - extended/skiko/**
-      - extended/COORDINATES.md
-      - buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build/**
-      - gradle.properties
-      - .github/actions/fork-compose/**
-      - .github/workflows/extended-publish.yml
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to publish (v1.11.1-ext.N). Empty runs the dry run
+          on the chosen branch.
+        required: false
+        default: ''
+        type: string
+      publishing_type:
+        description: USER_MANAGED waits in the Central Portal for someone to press
+          Publish; AUTOMATIC publishes once validated.
+        type: string
+        default: USER_MANAGED
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.tag || github.ref }}
-  # A dev upload or a release is never cut off halfway; a newer push to a pull request
-  # replaces its dry run.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.event_name == 'push' && format('publish-{0}', github.ref) || (github.workflow == 'CI' && format('called-extended-publish-{0}', github.run_id) || 'dev-ci') }}
+  cancel-in-progress: false
 
 permissions:
   contents: read

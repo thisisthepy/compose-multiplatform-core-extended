@@ -1,10 +1,11 @@
 name: Compose Publish Dry Run
 on:
-  workflow_dispatch:
-  pull_request:
-  push:
-    branches:
-      - jb-main
+  workflow_dispatch: {}
+  workflow_call: {}
+
+concurrency:
+  group: ${{ github.event_name == 'push' && format('publish-{0}', github.ref) || (github.workflow == 'CI' && format('called-compose-publish-dry-run-{0}', github.run_id) || 'dev-ci') }}
+  cancel-in-progress: false
 
 env:
   # Retry transient dependency download failures (TLS handshake resets, timeouts) with

@@ -9,6 +9,8 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
+  packages: write
 
 jobs:
   check_public_api:
@@ -73,4 +75,16 @@ jobs:
     secrets: inherit
   extended_window_windows_shared:
     uses: ./.github/workflows/extended-window-windows-shared.yml
+    secrets: inherit
+  compose_publish_dry_run:
+    uses: ./.github/workflows/compose-publish-dry-run.yml
+    secrets: inherit
+  extended_publish_local:
+    uses: ./.github/workflows/extended-publish-local.yml
+    secrets: inherit
+  extended_window_publish:
+    uses: ./.github/workflows/extended-window-publish.yml
+    secrets: inherit
+  extended_publish:
+    uses: ./.github/workflows/extended-publish.yml
     secrets: inherit
