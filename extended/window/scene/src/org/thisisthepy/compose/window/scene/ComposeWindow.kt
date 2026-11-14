@@ -132,6 +132,8 @@ class ComposeWindowHost(
     private val semantics = SceneSemantics()
     private val back = SceneBackInput()
     private val fieldMenu = FieldMenuOpener()
+    // The menu Compose asked the platform to put up, where its menus are the system's.
+    private val systemMenus = SystemMenus()
     // Described only while a reader is listening: it costs about a third of a frame.
     private val accessibility = AccessibilityCache(describe = { semantics.describe(density) }, push = platform::setAccessibility)
     private var readerWasListening = false
@@ -155,6 +157,11 @@ class ComposeWindowHost(
         }
 
         override fun onContextMenuChosen(id: Int) {
+            // The answer to a menu of Compose's that the platform put up for it.
+            if (systemMenus.answer(id)) {
+                requestFrame()
+                return
+            }
             val chord = editChord(id, usesCommandKey(platform.name)) ?: return
             for (press in chord) scene?.sendKeyEvent(press)
         }
@@ -214,9 +221,14 @@ class ComposeWindowHost(
                 LocalWindowCaption provides caption,
             ) {
                 val body: @Composable () -> Unit = {
-                    fieldMenu.Provide {
-                        WindowFrame(platform, caption, theme, config.resizable, padContentForCaption) { content() }
+                    val frame: @Composable () -> Unit = {
+                        fieldMenu.Provide {
+                            WindowFrame(platform, caption, theme, config.resizable, padContentForCaption) { content() }
+                        }
                     }
+                    // A platform whose menus are the system's puts up Compose's menu itself, so
+                    // a right click shows one menu and not the system's beside a drawn one.
+                    if (platform.systemContextMenu) ProvideSystemContextMenu(systemMenus, frame) else frame()
                 }
                 val locals = platform as? PlatformCompositionLocals
                 if (locals != null) locals.Provide(body) else body()
@@ -373,6 +385,16 @@ class ComposeWindowHost(
         }
         placeInputMethod()
         describeForReaders(drew)
+        showSystemMenu()
+    }
+
+    /**
+     * Puts up the menu Compose asked for, after the frame that shows what it is for. Its loop
+     * runs until it closes, which is why it is not put up from inside Compose's own work.
+     */
+    private fun showSystemMenu() {
+        val request = systemMenus.take() ?: return
+        platform.showContextMenu(request.items)
     }
 
     /**

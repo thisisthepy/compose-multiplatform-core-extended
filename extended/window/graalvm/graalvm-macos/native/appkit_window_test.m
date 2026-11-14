@@ -306,6 +306,93 @@ static void check_function_keys(NSWindow *window, void *view_pointer) {
     }
 }
 
+// The editing shortcuts, as AppKit offers them: to the view's key equivalents before the menu
+// bar. Command A, C, X, V, Z and Shift Command Z are claimed and reach the queue as a press
+// and a release with Command held, and type nothing; Command Q is left to the menu bar.
+static void check_editing_shortcuts(NSWindow *window, void *view_pointer) {
+    NSView *view = (__bridge NSView *)view_pointer;
+    struct dxc_event event;
+    while (dxc_native_poll_event(&event)) {}
+    // kVK_ANSI_A, C, X, V, Z, then Z with Shift.
+    static const unsigned short codes[] = {0x00, 0x08, 0x07, 0x09, 0x06, 0x06};
+    static const char *letters[] = {"a", "c", "x", "v", "z", "z"};
+    for (int index = 0; index < 6; index++) {
+        NSEventModifierFlags flags = NSEventModifierFlagCommand | (index == 5 ? NSEventModifierFlagShift : 0);
+        NSString *text = [NSString stringWithUTF8String:letters[index]];
+        NSEvent *key = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:flags
+                                       timestamp:0 windowNumber:window.windowNumber context:nil
+                                      characters:text charactersIgnoringModifiers:text isARepeat:NO
+                                         keyCode:codes[index]];
+        CHECK([view performKeyEquivalent:key], "Command key 0x%x is claimed before the menu bar", codes[index]);
+        int downs = 0, ups = 0, texts = 0;
+        while (dxc_native_poll_event(&event)) {
+            if (event.kind == DXC_EVENT_TEXT_COMMIT) texts++;
+            if (event.kind != DXC_EVENT_KEY_DOWN && event.kind != DXC_EVENT_KEY_UP) continue;
+            CHECK(event.key_code == codes[index], "Command key 0x%x arrived as 0x%x", codes[index], event.key_code);
+            CHECK((event.modifiers & NSEventModifierFlagCommand) != 0, "Command is held on key 0x%x", codes[index]);
+            if (index == 5) CHECK((event.modifiers & NSEventModifierFlagShift) != 0, "Shift is held for redo");
+            if (event.kind == DXC_EVENT_KEY_DOWN) downs++; else ups++;
+        }
+        CHECK(downs == 1 && ups == 1, "Command key 0x%x: %d press(es) and %d release(s)", codes[index], downs, ups);
+        CHECK(texts == 0, "Command key 0x%x typed text", codes[index]);
+    }
+    NSEvent *quit = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                                modifierFlags:NSEventModifierFlagCommand timestamp:0
+                                 windowNumber:window.windowNumber context:nil characters:@"q"
+                  charactersIgnoringModifiers:@"q" isARepeat:NO keyCode:0x0C];
+    CHECK(![view performKeyEquivalent:quit], "Command Q is left to the menu bar");
+    while (dxc_native_poll_event(&event)) {}
+}
+
+static int menus_tracked;
+
+// A right click puts up no menu of the window's own while no text menu is set, which is how
+// AppKitWindowPlatform opens it: Compose's menu is the one put up, through
+// dxc_native_context_menu. The press and the release both reach the queue as the secondary
+// button. With a text menu set the window's menu does come up, which shows the count counts.
+static void check_right_click_menus(NSWindow *window, void *view_pointer) {
+    NSView *view = (__bridge NSView *)view_pointer;
+    struct dxc_event event;
+    while (dxc_native_poll_event(&event)) {}
+    id observer = [NSNotificationCenter.defaultCenter
+        addObserverForName:NSMenuDidBeginTrackingNotification object:nil queue:nil
+                usingBlock:^(NSNotification *note) {
+                    menus_tracked++;
+                    NSMenu *menu = note.object;
+                    dispatch_async(dispatch_get_main_queue(), ^{ [menu cancelTracking]; });
+                }];
+    NSPoint at = [view convertPoint:NSMakePoint(NSMidX(view.bounds), NSMidY(view.bounds)) toView:nil];
+    NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeRightMouseDown location:at modifierFlags:0
+                                      timestamp:0 windowNumber:window.windowNumber context:nil
+                                    eventNumber:0 clickCount:1 pressure:1];
+    NSEvent *up = [NSEvent mouseEventWithType:NSEventTypeRightMouseUp location:at modifierFlags:0
+                                    timestamp:0 windowNumber:window.windowNumber context:nil
+                                  eventNumber:0 clickCount:1 pressure:0];
+
+    dxc_native_set_text_menu(NULL);
+    menus_tracked = 0;
+    [view rightMouseDown:down];
+    [view rightMouseUp:up];
+    spin(0.1);
+    CHECK(menus_tracked == 0, "a right click put up %d menu(s) of the window's own", menus_tracked);
+    int pressed = 0, released = 0;
+    while (dxc_native_poll_event(&event)) {
+        if (event.kind == DXC_EVENT_POINTER_DOWN && (event.buttons & DXC_SECONDARY_BUTTON)) pressed++;
+        if (event.kind == DXC_EVENT_POINTER_UP && (event.buttons & DXC_SECONDARY_BUTTON)) released++;
+    }
+    CHECK(pressed == 1 && released == 1, "the right click reached the queue: %d press(es), %d release(s)",
+          pressed, released);
+
+    dxc_native_set_text_menu("1\t1\t0\tCut\n2\t1\t0\tCopy");
+    menus_tracked = 0;
+    [view rightMouseDown:down];
+    spin(0.1);
+    CHECK(menus_tracked == 1, "with a text menu set, the window's menu came up %d time(s)", menus_tracked);
+    dxc_native_set_text_menu(NULL);
+    [NSNotificationCenter.defaultCenter removeObserver:observer];
+    while (dxc_native_poll_event(&event)) {}
+}
+
 int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];
@@ -343,6 +430,8 @@ int main(void) {
         check_backing_change(windows[0], opened[0].view);
         check_event_time(windows[0], opened[0].view);
         check_function_keys(windows[0], opened[0].view);
+        check_editing_shortcuts(windows[0], opened[0].view);
+        check_right_click_menus(windows[0], opened[0].view);
         for (int index = 0; index < 3; index++) [windows[index] orderOut:nil];
     }
     if (failures > 0) {

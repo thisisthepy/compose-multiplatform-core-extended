@@ -20,11 +20,15 @@ settings:
   jvm:
     jdk:
       version: 21
+    # Java 17 (major 61): the D-Bus connection's java.net.UnixDomainSocketAddress is Java 16, and
+    # GraalVM ships only on LTS JDKs, so 17 is the lowest this module allows (the SDK itself is
+    # major 55). central_bundle.py's CLASS_MAJOR_EXCEPTIONS lets this module, alone, carry 61.
+    release: 17
   publishing:
     enabled: true
     group: org.thisisthepy.compose.window
     artifactId: graalvm-linux
-    version: 1.11.1-ext.3
+    version: 1.11.1-ext.4
 
 repositories:
   - id: mavenLocal

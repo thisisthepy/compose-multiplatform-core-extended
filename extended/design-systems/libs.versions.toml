@@ -7,7 +7,7 @@ kotlinx-coroutines = "1.11.0"
 # the root gradle.properties). Equal to `version` in publish.module-template.yaml; a release
 # raises both. On Android the fork's roots point at androidx.compose, so the same coordinates
 # serve every target.
-compose-fork = "1.11.1-ext.3"
+compose-fork = "1.11.1-ext.4"
 # The skia binaries the JVM tests load, the version the fork's Compose is built against.
 skiko = "0.144.6"
 

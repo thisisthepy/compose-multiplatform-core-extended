@@ -15,7 +15,14 @@
 # root gradle.properties, and has to equal `compose-fork` in libs.versions.toml: a release
 # raises all three in one commit. scripts/check-version.sh fails the publish when they differ.
 # POM fields are the ones extended/publish/central_bundle.py writes for the window modules.
+#
+# jvm: release: 11 compiles the JVM (and Android) classes for Java 11, class major 55, like the
+# rest of the fork's Compose: Kotlin's jvmTarget, javac --release and -Xjdk-release. Without it
+# Amper targets the JDK it compiles with, and 1.11.1-ext.3 shipped major 69 (Java 25), which JDK
+# 17 and 21 consumers cannot load. central_bundle.py validate refuses anything above 55.
 settings:
+  jvm:
+    release: 11
   kotlin:
     compilerPlugins:
       - id: androidx.compose.compiler.plugins.kotlin
@@ -26,7 +33,7 @@ settings:
   publishing:
     enabled: true
     group: org.thisisthepy.compose.designsystem
-    version: 1.11.1-ext.3
+    version: 1.11.1-ext.4
     # Central asks for a sources jar beside every artifact; without it the bundle tool would
     # add an empty one.
     publishSources: true

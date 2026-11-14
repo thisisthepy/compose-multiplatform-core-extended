@@ -94,7 +94,7 @@ class VersionTest {
     fun forkReleasesOrderByTheirNumber() {
         assert(Version("1.11.1") < Version("1.11.1-ext.1-dev"))
         assert(Version("1.11.1-ext.1-dev") < Version("1.11.1-ext.1"))
-        assert(Version("1.11.1-ext.1") < Version("1.11.1-ext.3"))
+        assert(Version("1.11.1-ext.1") < Version("1.11.1-ext.4"))
         assert(Version("1.11.1-ext.9") < Version("1.11.1-ext.10"))
         assert(Version("1.11.1-ext.10") < Version("1.11.2-ext.1"))
     }

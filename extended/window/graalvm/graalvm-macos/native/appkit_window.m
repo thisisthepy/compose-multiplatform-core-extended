@@ -728,9 +728,12 @@ void dxc_native_set_cursor(int32_t shape) {
 - (void)otherMouseUp:(NSEvent *)event { [self dxcSend:DXC_EVENT_POINTER_UP event:event]; }
 - (void)otherMouseDragged:(NSEvent *)event { [self dxcSend:DXC_EVENT_POINTER_MOVE event:event]; }
 // The press goes to the scene first, so the field under the pointer takes focus and a word
-// under it can be selected the way a click would, and then the menu comes up under the
-// pointer. The menu's tracking swallows the release, so it is sent once the menu has gone,
-// or the scene would go on believing a button is held down.
+// under it can be selected the way a click would. Then, only where a text menu was set
+// (dxc_native_set_text_menu), the window's own menu comes up under the pointer. The
+// AppKitWindowPlatform sets none: Compose's menu is put up through dxc_native_context_menu
+// instead, and one of the window's own would be a second menu. A menu's tracking swallows
+// the release, so it is sent here, after any menu has gone, or the scene would go on
+// believing a button is held down.
 - (void)rightMouseDown:(NSEvent *)event {
     [self dxcSend:DXC_EVENT_POINTER_DOWN event:event];
     NSMenu *menu = dxc_text_menu(self);

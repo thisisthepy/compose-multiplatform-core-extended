@@ -56,6 +56,12 @@ validate checks <dir> the way Central's validation does, and a little more:
          - every Gradle plugin a jar declares has its marker POM;
          - every POM beside a Gradle module carries the published-with-gradle-metadata
            comment, without which Gradle and Amper never read the module;
+         - every variant of a Gradle module declares no capability but the module's own
+           coordinate: Amper takes a variant only when its capabilities are exactly that, and
+           with a second one it finds no variant ("Platform is not supported by the library");
+         - no desktop (<name>-desktop) module's POM or Gradle module depends on JetBrains'
+           org.jetbrains.skiko:skiko or skiko-awt, which would put JetBrains' skiko-awt beside
+           this fork's on a class path;
          - every --require coordinate is present.
          With --verify-signatures each .asc is checked with gpg; with --unsigned no .asc is
          asked for. --dev=<suffix> checks a dev build instead of a release: every version ends
@@ -71,6 +77,7 @@ put      uploads <dir> to a Maven repository over HTTP PUT (GitHub Packages), ea
 import argparse
 import filecmp
 import hashlib
+import io
 import json
 import os
 import re
@@ -95,6 +102,20 @@ VERSION_RULE = re.compile(r"^\d+(\.\d+)*(-[A-Za-z0-9.]+)?-ext\.\d+$")
 DEV_SUFFIX = re.compile(r"^-dev\.[0-9a-f]{7,40}(\.[0-9a-f]{7,40})?$")
 DEVELOPER = {"id": "thisisthepy", "name": "thisisthepy", "url": "https://github.com/thisisthepy"}
 LICENSE = {"name": "The Apache License, Version 2.0", "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"}
+# Every class file a published jar or aar carries is Java 11 (major 55) or older, as the fork's
+# Compose is: consumers run on JDK 11, 17 and 21, and tools reading the classes (ASM 9.7 reads
+# up to major 67) must read them. validate refuses anything newer, outside this allow-list of
+# (group, artifact) -> the highest major that module may carry. The GraalVM modules are each
+# built at the lowest Java they allow: org.graalvm.sdk:nativeimage and word 25.0.1 are major 55,
+# so graalvm-macos and graalvm-windows are Java 11; graalvm-linux's D-Bus connection uses
+# java.net.UnixDomainSocketAddress (Java 16) and GraalVM ships only on LTS JDKs, so it is
+# Java 17 (major 61). Raise an entry here only with its module.yaml `jvm: release`.
+MAX_CLASS_MAJOR = 55
+CLASS_MAJOR_EXCEPTIONS = {
+    ("org.thisisthepy.compose.window", "graalvm-macos"): 55,
+    ("org.thisisthepy.compose.window", "graalvm-windows"): 55,
+    ("org.thisisthepy.compose.window", "graalvm-linux"): 61,
+}
 
 ET.register_namespace("", POM_NS)
 ET.register_namespace("xsi", XSI_NS)
@@ -485,6 +506,9 @@ def validate(out, version, required, verify, dev=None, unsigned=False):
 
         for dependency in pom.findall(f"{q('dependencies')}/{q('dependency')}"):
             d_group, d_artifact, d_version = (text_of(dependency, k) for k in ("groupId", "artifactId", "version"))
+            if artifact.endswith("-desktop") and d_group == "org.jetbrains.skiko" and d_artifact in ("skiko", "skiko-awt"):
+                errors.append(f"{where}: the POM depends on JetBrains' org.jetbrains.skiko:{d_artifact}, not on "
+                              f"{PREFIX}.compose.skiko:skiko-awt (run repoint-desktop-skiko.py)")
             if d_group.startswith(PREFIX) and d_version and "${" not in d_version and not d_version.startswith(("[", "(")):
                 if not present(out, d_group, d_artifact, d_version):
                     errors.append(f"{where}: depends on {d_group}:{d_artifact}:{d_version}, which is not in the bundle")
@@ -511,6 +535,8 @@ def validate(out, version, required, verify, dev=None, unsigned=False):
         for name in files:
             if name.endswith(".jar"):
                 errors += check_plugin_markers(out, where, os.path.join(directory, name), ver)
+            if name.endswith((".jar", ".aar")) and not name.endswith(("-sources.jar", "-javadoc.jar")):
+                errors += check_class_majors(where, artifact, os.path.join(directory, name))
 
     for coordinate in required:
         if coordinate not in seen:
@@ -529,6 +555,7 @@ def check_module(out, where, path, directory):
             metadata = json.load(f)
     except ValueError as error:
         return [f"{where}: {os.path.basename(path)} is not JSON ({error})"]
+    errors += check_capabilities(where, metadata)
     for variant in metadata.get("variants", []):
         at = variant.get("available-at")
         if at:
@@ -547,6 +574,86 @@ def check_module(out, where, path, directory):
                     errors.append(f"{where}: variant {variant.get('name')} depends on "
                                   f"{group}:{dependency.get('module')}:{requires}, which is not in the bundle")
     return errors
+
+
+def check_capabilities(where, metadata):
+    """Each variant's capabilities must be none or exactly the module's own coordinate.
+
+    <where> is group:artifact:version of the directory. A target module's component names its
+    Kotlin Multiplatform root, so the root's coordinate counts as its own too.
+
+    Amper takes a variant only when its capabilities are exactly the module's own coordinate
+    (or there are none, which means the same), so a variant with a second one is no variant
+    to it, and a module whose every variant has one stops an Amper build with "Platform is
+    not supported by the library". 1.11.1-ext.4's skiko-awt declared JetBrains'
+    org.jetbrains.skiko:skiko-awt beside its own. Also refuses a desktop module that still
+    depends on JetBrains' skiko, which repoint-desktop-skiko.py changes to this fork's
+    skiko-awt: without it JetBrains' skiko-awt reaches a class path beside the fork's.
+    """
+    errors = []
+    group, artifact = where.split(":")[:2]
+    component = metadata.get("component") or {}
+    own = {(group, artifact), (component.get("group"), component.get("module"))}
+    for variant in metadata.get("variants", []):
+        names = [(c.get("group"), c.get("name")) for c in variant.get("capabilities") or []]
+        if len(names) > 1 or any(name not in own for name in names):
+            others = ", ".join(f"{g}:{n}" for g, n in names if (g, n) not in own) or "its own twice"
+            errors.append(f"{where}: variant {variant.get('name')} declares the capability {others} "
+                          f"besides its own; Amper takes a variant only when its capabilities are "
+                          f"exactly {group}:{artifact}")
+        if artifact.endswith("-desktop"):
+            for dependency in variant.get("dependencies", []):
+                if dependency.get("group") == "org.jetbrains.skiko" and dependency.get("module") in ("skiko", "skiko-awt"):
+                    errors.append(f"{where}: variant {variant.get('name')} depends on JetBrains' "
+                                  f"org.jetbrains.skiko:{dependency.get('module')}, not on "
+                                  f"{PREFIX}.compose.skiko:skiko-awt (run repoint-desktop-skiko.py)")
+    return errors
+
+
+def class_major_limit(group, artifact):
+    return CLASS_MAJOR_EXCEPTIONS.get((group, artifact), MAX_CLASS_MAJOR)
+
+
+def class_majors(archive, prefix=""):
+    """Yields (entry, major) for every class file in a jar or aar, nested jars included.
+
+    A multi-release jar's META-INF/versions/<N>/ classes are only loaded on Java N and later,
+    so they are left out.
+    """
+    for name in archive.namelist():
+        if name.startswith("META-INF/versions/"):
+            continue
+        if name.endswith(".class"):
+            header = archive.read(name)[:8]
+            if header[:4] == b"\xca\xfe\xba\xbe":
+                yield prefix + name, int.from_bytes(header[6:8], "big")
+        elif name.endswith(".jar"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(archive.read(name))) as inner:
+                    yield from class_majors(inner, f"{prefix}{name}!/")
+            except zipfile.BadZipFile:
+                pass
+
+
+def check_class_majors(where, artifact, path):
+    """Refuses a class file newer than the module may carry (MAX_CLASS_MAJOR, Java 11).
+
+    1.11.1-ext.3's design systems were compiled for Java 25 (major 69), the window modules
+    for Java 21 (65): a consumer on JDK 17 or 21 gets UnsupportedClassVersionError, and ASM
+    9.7 (major 67 at most) cannot read them.
+    """
+    group = where.split(":")[0]
+    limit = class_major_limit(group, artifact)
+    try:
+        with zipfile.ZipFile(path) as archive:
+            newer = [(entry, major) for entry, major in class_majors(archive) if major > limit]
+    except zipfile.BadZipFile:
+        return [f"{where}: {os.path.basename(path)} is not a valid zip"]
+    if not newer:
+        return []
+    highest = max(major for _, major in newer)
+    return [f"{where}: {os.path.basename(path)} has {len(newer)} class file(s) above major {limit} "
+            f"(Java {limit - 44}), up to major {highest} (Java {highest - 44}), e.g. {newer[0][0]}"]
 
 
 def check_plugin_markers(out, where, jar, version):

@@ -11,7 +11,6 @@ import org.thisisthepy.compose.window.parseMacosAxSnapshot
 import org.thisisthepy.compose.window.WindowCaption
 import org.thisisthepy.compose.window.WindowChrome
 import org.thisisthepy.compose.window.macosCaption
-import org.thisisthepy.compose.window.editMenuItems
 import org.thisisthepy.compose.window.printableText
 import org.thisisthepy.compose.window.FramePresentRecord
 import org.thisisthepy.compose.window.DoubleClick
@@ -78,7 +77,10 @@ class AppKitWindowPlatform : WindowPlatform {
             titleHidden = bar.titleHidden,
             unifiedToolbar = bar.unifiedToolbar,
         )
-        setTextMenu(packMenu(textEditMenu()))
+        // No menu of the window's own on a right click: Compose's menu is put up as the
+        // system's through showContextMenu (systemContextMenu), and a second one from the
+        // window would come up beside it or beside the one an application gave.
+        setTextMenu(null)
         val opened = openNativeWindow(config.title, config.width, config.height) ?: return false
         window = opened
         this.listener = listener
@@ -234,6 +236,12 @@ class AppKitWindowPlatform : WindowPlatform {
 
     override fun endComposition() = endNativeComposition()
 
+    /**
+     * Compose's context menus are the system's here: the scene hands [showContextMenu] what a
+     * field's menu holds, and draws none of its own.
+     */
+    override val systemContextMenu: Boolean get() = true
+
     override fun showContextMenu(items: List<ContextMenuItem>) {
         val current = window ?: return
         val chosen = current.showContextMenu(packMenu(items))
@@ -285,14 +293,6 @@ class AppKitWindowPlatform : WindowPlatform {
     }
 
     companion object {
-        /**
-         * The entries of the menu a right click puts up. Cut and Copy cannot be judged from
-         * outside the field, which owns the selection; Paste is greyed out by the window
-         * while the clipboard holds no text.
-         */
-        fun textEditMenu(): List<ContextMenuItem> =
-            editMenuItems(canCut = true, canCopy = true, canPaste = true, canSelectAll = true)
-
         /**
          * Hands one event the window wrote down to [sink]. A chosen menu entry goes to
          * [WindowListener.onContextMenuChosen] and a reader's request to

@@ -32,10 +32,13 @@ internal class FieldWindow(
     text: String,
     selection: TextRange,
     platformName: String = "graalvm-linux-x11",
+    /** Whether the platform's menus are the system's, as the GraalVM AppKit window's are. */
+    systemMenu: Boolean = false,
     wrap: @Composable (@Composable () -> Unit) -> Unit = { it() },
 ) {
     val platform = FakePlatform().also {
         it.name = platformName
+        it.systemMenu = systemMenu
         // Described only while a reader listens; the tests read the menu from that description.
         it.listening = true
     }

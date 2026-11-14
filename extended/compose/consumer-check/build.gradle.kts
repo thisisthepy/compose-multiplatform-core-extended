@@ -3,7 +3,7 @@
 // classes comes with them: next to the fork's (org.thisisthepy.compose) it would be the same
 // classes twice, which no resolver merges because the groups differ.
 //
-// Usage: gradle -p extended/compose/consumer-check checkResolution [-PforkVersion=1.11.1-ext.3]
+// Usage: gradle -p extended/compose/consumer-check checkResolution [-PforkVersion=1.11.1-ext.4]
 //        [-Ptargets=jvm,macosArm64,linuxX64,linuxArm64,mingwX64] [-Pwindow=true]
 //
 // The Compose runtime that ships is Google's androidx.compose.runtime, at the version JetBrains'
@@ -22,7 +22,7 @@ plugins {
     kotlin("multiplatform") version "2.3.20"
 }
 
-val forkVersion = providers.gradleProperty("forkVersion").orNull ?: "1.11.1-ext.3"
+val forkVersion = providers.gradleProperty("forkVersion").orNull ?: "1.11.1-ext.4"
 val wantedTargets = (providers.gradleProperty("targets").orNull ?: "jvm,macosArm64,linuxX64,linuxArm64,mingwX64")
     .split(",").map { it.trim() }.filter { it.isNotEmpty() }
 val withWindow = providers.gradleProperty("window").orNull?.toBoolean() ?: true
@@ -78,11 +78,6 @@ kotlin {
 // the components (components-resources brings the rest with it).
 val forbidden = Regex("""^org\.jetbrains\.compose\.(foundation|ui|animation|material|material3|material3\.adaptive|components|desktop)(\..*)?$""")
 
-configurations.configureEach {
-    // The fork's skiko-awt stands in for JetBrains' (a capability of it); keep the higher one.
-    resolutionStrategy.capabilitiesResolution.withCapability("org.jetbrains.skiko", "skiko-awt") { selectHighestVersion() }
-}
-
 tasks.register("checkResolution") {
     val names = wantedTargets.flatMap { target ->
         when (target) {
@@ -105,6 +100,11 @@ tasks.register("checkResolution") {
             failures.forEach { problems += "$name: cannot resolve ${it.requested.displayName}: ${it.failure.message}" }
             components.mapNotNull { it.moduleVersion }.forEach { module ->
                 if (forbidden.matches(module.group)) problems += "$name: JetBrains' ${module.group}:${module.name}:${module.version}"
+                // The desktop modules depend on the fork's skiko-awt (repoint-desktop-skiko.py);
+                // JetBrains' beside it would put skiko's classes on the path twice.
+                if (module.group == "org.jetbrains.skiko" && module.name == "skiko-awt") {
+                    problems += "$name: JetBrains' org.jetbrains.skiko:skiko-awt:${module.version}, beside the fork's org.thisisthepy.compose.skiko:skiko-awt"
+                }
             }
             println("$name: ${components.size} components")
         }

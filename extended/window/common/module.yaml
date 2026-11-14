@@ -17,11 +17,13 @@ settings:
   jvm:
     jdk:
       version: 21
+    # Class files for Java 11 (major 55), as the fork's Compose; the JDK above only compiles.
+    release: 11
   publishing:
     enabled: true
     group: org.thisisthepy.compose.window
     artifactId: common
-    version: 1.11.1-ext.3
+    version: 1.11.1-ext.4
   kotlin:
     # A klib's unique_name defaults to the Amper module name, which is the directory name
     # (`common`, `macos`, `linux`). The Kotlin/Native linker refuses two libraries with the

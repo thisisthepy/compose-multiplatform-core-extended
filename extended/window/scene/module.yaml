@@ -17,14 +17,14 @@ apply:
 
 dependencies:
   - ../common
-  - org.thisisthepy.compose.runtime:runtime:1.11.1-ext.3
+  - org.thisisthepy.compose.runtime:runtime:1.11.1-ext.4
   # This fork's Compose, not JetBrains': a consumer that links this module also links the
   # fork's foundation and UI, and two copies of the same classes under different groups are
   # not something a resolver can merge. Published to the local Maven repository first by
   # extended/compose/publish-local.sh. The runtime is the fork's too, a stub with no classes
   # that points at androidx.compose.runtime.
-  - org.thisisthepy.compose.foundation:foundation:1.11.1-ext.3
-  - org.thisisthepy.compose.ui:ui:1.11.1-ext.3
+  - org.thisisthepy.compose.foundation:foundation:1.11.1-ext.4
+  - org.thisisthepy.compose.ui:ui:1.11.1-ext.4
   # Escape as the back gesture, which closes a popup or a menu (SceneBackInput). The UI uses the
   # library at run time only, so naming its types takes it here; the version is the UI's own.
   - androidx.navigationevent:navigationevent:1.0.1
@@ -46,11 +46,13 @@ settings:
   jvm:
     jdk:
       version: 21
+    # Class files for Java 11 (major 55), as the fork's Compose; the JDK above only compiles.
+    release: 11
   publishing:
     enabled: true
     group: org.thisisthepy.compose.window
     artifactId: scene
-    version: 1.11.1-ext.3
+    version: 1.11.1-ext.4
   kotlin:
     # The klib takes its Maven coordinates as its unique_name, like the other window modules.
     freeCompilerArgs:

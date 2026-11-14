@@ -3,10 +3,24 @@
 The upstream changelogs under `compose/` stay upstream's. This one is for the modules this fork
 adds: the window modules, the design systems, the skiko scripts and the packaging templates.
 
-## Unreleased
+## 1.11.1-ext.4 (2026-11-14)
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
+- **Fix.** A right click in a text field of a macOS window put up two menus. On Kotlin/Native,
+  `MacosWindowPlatform` put up an edit menu of its own beside the `NSMenu` Compose already puts
+  up there; `nativeEditMenu` is now off by default, as `MacosWindow.editMenuOnRightClick` was.
+  On the GraalVM window, `AppKitWindowPlatform` put up its own menu and the scene then drew
+  Compose's menu as well; the window now sets no menu of its own and says its menus are the
+  system's (`WindowPlatform.systemContextMenu`, new, false by default), and a JVM scene hands
+  such a platform what Compose's menu holds through `LocalContextMenuRepresentation`, entries
+  and greying as the field says, and draws none. On both, an application that gives its own
+  menu (a dropdown or toolbar provider on Kotlin/Native, `LocalContextMenuRepresentation` or
+  `LocalTextContextMenu` on the JVM) shows that one alone. Tests on real windows count the menus
+  that come up, and cover the editing shortcuts, the Control letters, the minimum size, the Dock
+  icon, dark mode followed while open and the clipboard. `MacosWindowPlatform.close()` on a
+  platform made with its own content no longer closes the scene twice, which threw.
+  (DarkPyonix/compose-rust#180, #146, FR-33.1)
 - **Fix.** After a change of scale (`Xft.dpi` rewritten in the root window's resources) the X11
   windows kept their size in pixels, so a 640x480 window at a scale of 1 was 320x240 points at
   2. Both X11 layers (Kotlin/Native and GraalVM) now keep the size in points, as the macOS and
@@ -31,6 +45,20 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   key or Shift and F10 put up Cut, Copy, Paste and Select All, greyed where they cannot run,
   labelled by the system's edit control, at the pointer or at the caret; the entry chosen
   arrives as Control and X, C, V or A. (DarkPyonix/compose-rust#142)
+- **Fix.** The JVM classes of `common`, `scene`, `graalvm-macos` and `graalvm-windows` are Java 11
+  (class major 55) again, as the fork's Compose is; 1.11.1-ext.3 shipped them at Java 21 (65).
+  `graalvm-linux` is Java 17 (61): its D-Bus connection uses `UnixDomainSocketAddress`.
+
+### Design systems (`org.thisisthepy.compose.designsystem`)
+
+- **Fix.** The JVM and Android classes are Java 11 (class major 55). 1.11.1-ext.3 shipped them at
+  Java 25 (69), which a JDK 17 or 21 consumer cannot load (`UnsupportedClassVersionError`) and
+  ASM 9.7 cannot read.
+
+### Publishing
+
+- `central_bundle.py validate` refuses a release whose jars or aars hold a class file above
+  major 55, except the modules listed in `CLASS_MAJOR_EXCEPTIONS` (`graalvm-linux`, 61).
 
 ## 1.11.1-ext.3 (2026-11-13)
 
