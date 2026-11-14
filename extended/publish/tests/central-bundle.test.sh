@@ -197,6 +197,66 @@ jar "$d/ui-desktop-$V.jar"; jar "$d/ui-desktop-$V-sources.jar"; jar "$d/ui-deskt
 python3 -I "$tool" sign "$out" > /dev/null
 expect_fail "a desktop POM on JetBrains' skiko-awt fails" "the POM depends on JetBrains' org.jetbrains.skiko:skiko-awt" "$out"
 
+# Class files: Java 11 (major 55) at most, outside CLASS_MAJOR_EXCEPTIONS. 1.11.1-ext.3's
+# design systems were major 69 (Java 25), the window modules 65 (Java 21).
+classjar() { # <file> <major> [entry prefix]
+    python3 -I - "$1" "$2" "${3:-}" <<'PY2'
+import io, sys, zipfile
+path, major, prefix = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+cls = b"\xca\xfe\xba\xbe" + (0).to_bytes(2, "big") + major.to_bytes(2, "big") + b"\0" * 8
+with zipfile.ZipFile(path, "w") as z:
+    z.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n\r\n")
+    z.writestr("example/Old.class", cls[:6] + (55).to_bytes(2, "big") + cls[8:])
+    z.writestr("META-INF/versions/21/example/New.class", cls[:6] + (65).to_bytes(2, "big") + cls[8:])
+    if prefix:
+        inner = io.BytesIO()
+        with zipfile.ZipFile(inner, "w") as i:
+            i.writestr("example/Inner.class", cls)
+        z.writestr(prefix, inner.getvalue())
+    else:
+        z.writestr("example/Example.class", cls)
+PY2
+}
+majorjar() { # <name> <group dir> <artifact> <major> [ext] [nested jar entry]
+    local out d ext="${5:-jar}"
+    out="$(build "$1")"; d="$out/org/thisisthepy/compose/$2/$3/$V"; mkdir -p "$d"
+    pom "$d/$3-$V.pom" "org.thisisthepy.compose.${2//\//.}" "$3" "$V" "$ext"
+    classjar "$d/$3-$V.$ext" "$4" "${6:-}"; jar "$d/$3-$V-sources.jar"; jar "$d/$3-$V-javadoc.jar"
+    python3 -I "$tool" sign "$out" > /dev/null
+    echo "$out"
+}
+out="$(majorjar java11 designsystem designsystem-jvm 55)"
+# Added after staging, so its POM lacks what staging adds; only the class-major lines count here.
+python3 -I "$tool" validate "$out" > "$work/log" 2>&1 || true
+grep -q "above major" "$work/log" &&
+    { fail "a Java 11 jar (with a Java 21 multi-release class) is refused"; cat "$work/log" >&2; } ||
+    pass "a Java 11 jar passes, its META-INF/versions classes left out"
+out="$(majorjar java25 designsystem designsystem-jvm 69)"
+expect_fail "a Java 25 jar fails" "designsystem-jvm-$V.jar has 1 class file(s) above major 55 (Java 11), up to major 69 (Java 25)" "$out"
+out="$(majorjar java21 window scene-jvm 65)"
+expect_fail "a Java 21 window jar fails" "scene-jvm-$V.jar has 1 class file(s) above major 55" "$out"
+out="$(majorjar aar25 designsystem designsystem-android 69 aar libs/designsystem-jvm.jar)"
+expect_fail "an aar carrying a Java 25 jar fails" "libs/designsystem-jvm.jar!/example/Inner.class" "$out"
+out="$(majorjar graalvm56 window graalvm-macos 56)"
+expect_fail "a GraalVM module above its allow-listed major fails" "graalvm-macos-$V.jar has 1 class file(s) above major 55" "$out"
+out="$(majorjar linux61 window graalvm-linux 61)"
+python3 -I "$tool" validate "$out" > "$work/log" 2>&1 || true
+grep -q "above major" "$work/log" &&
+    { fail "graalvm-linux at its allow-listed major 61 is refused"; cat "$work/log" >&2; } ||
+    pass "graalvm-linux at its allow-listed major 61 (Java 17) passes"
+out="$(majorjar linux65 window graalvm-linux 65)"
+expect_fail "graalvm-linux above 61 fails" "graalvm-linux-$V.jar has 1 class file(s) above major 61 (Java 17)" "$out"
+# The jar 1.11.1-ext.3 put on Central, when the network has it (CI does).
+ext3="org/thisisthepy/compose/designsystem/designsystem-jvm/1.11.1-ext.3/designsystem-jvm-1.11.1-ext.3.jar"
+if curl -sSfL --max-time 60 -o "$work/ext3.jar" "https://repo1.maven.org/maven2/$ext3" 2>/dev/null; then
+    out="$(majorjar ext3 designsystem designsystem-jvm 55)"
+    cp "$work/ext3.jar" "$out/org/thisisthepy/compose/designsystem/designsystem-jvm/$V/designsystem-jvm-$V.jar"
+    python3 -I "$tool" sign "$out" > /dev/null
+    expect_fail "1.11.1-ext.3's designsystem-jvm jar from Central fails" "up to major 69 (Java 25)" "$out"
+else
+    echo "skip  1.11.1-ext.3's designsystem-jvm jar (Maven Central unreachable)"
+fi
+
 for bad in 1.11.1-SNAPSHOT 1.11.1-ext.1-dev 0.1.0; do
     repo="$work/v-repo"; out="$work/v-out"; rm -rf "$repo" "$out"
     d="$repo/org/thisisthepy/compose/window/common/$bad"; mkdir -p "$d"

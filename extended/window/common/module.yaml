@@ -17,6 +17,8 @@ settings:
   jvm:
     jdk:
       version: 21
+    # Class files for Java 11 (major 55), as the fork's Compose; the JDK above only compiles.
+    release: 11
   publishing:
     enabled: true
     group: org.thisisthepy.compose.window

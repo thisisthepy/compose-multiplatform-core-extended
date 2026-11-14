@@ -77,6 +77,7 @@ put      uploads <dir> to a Maven repository over HTTP PUT (GitHub Packages), ea
 import argparse
 import filecmp
 import hashlib
+import io
 import json
 import os
 import re
@@ -101,6 +102,20 @@ VERSION_RULE = re.compile(r"^\d+(\.\d+)*(-[A-Za-z0-9.]+)?-ext\.\d+$")
 DEV_SUFFIX = re.compile(r"^-dev\.[0-9a-f]{7,40}(\.[0-9a-f]{7,40})?$")
 DEVELOPER = {"id": "thisisthepy", "name": "thisisthepy", "url": "https://github.com/thisisthepy"}
 LICENSE = {"name": "The Apache License, Version 2.0", "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"}
+# Every class file a published jar or aar carries is Java 11 (major 55) or older, as the fork's
+# Compose is: consumers run on JDK 11, 17 and 21, and tools reading the classes (ASM 9.7 reads
+# up to major 67) must read them. validate refuses anything newer, outside this allow-list of
+# (group, artifact) -> the highest major that module may carry. The GraalVM modules are each
+# built at the lowest Java they allow: org.graalvm.sdk:nativeimage and word 25.0.1 are major 55,
+# so graalvm-macos and graalvm-windows are Java 11; graalvm-linux's D-Bus connection uses
+# java.net.UnixDomainSocketAddress (Java 16) and GraalVM ships only on LTS JDKs, so it is
+# Java 17 (major 61). Raise an entry here only with its module.yaml `jvm: release`.
+MAX_CLASS_MAJOR = 55
+CLASS_MAJOR_EXCEPTIONS = {
+    ("org.thisisthepy.compose.window", "graalvm-macos"): 55,
+    ("org.thisisthepy.compose.window", "graalvm-windows"): 55,
+    ("org.thisisthepy.compose.window", "graalvm-linux"): 61,
+}
 
 ET.register_namespace("", POM_NS)
 ET.register_namespace("xsi", XSI_NS)
@@ -520,6 +535,8 @@ def validate(out, version, required, verify, dev=None, unsigned=False):
         for name in files:
             if name.endswith(".jar"):
                 errors += check_plugin_markers(out, where, os.path.join(directory, name), ver)
+            if name.endswith((".jar", ".aar")) and not name.endswith(("-sources.jar", "-javadoc.jar")):
+                errors += check_class_majors(where, artifact, os.path.join(directory, name))
 
     for coordinate in required:
         if coordinate not in seen:
@@ -591,6 +608,52 @@ def check_capabilities(where, metadata):
                                   f"org.jetbrains.skiko:{dependency.get('module')}, not on "
                                   f"{PREFIX}.compose.skiko:skiko-awt (run repoint-desktop-skiko.py)")
     return errors
+
+
+def class_major_limit(group, artifact):
+    return CLASS_MAJOR_EXCEPTIONS.get((group, artifact), MAX_CLASS_MAJOR)
+
+
+def class_majors(archive, prefix=""):
+    """Yields (entry, major) for every class file in a jar or aar, nested jars included.
+
+    A multi-release jar's META-INF/versions/<N>/ classes are only loaded on Java N and later,
+    so they are left out.
+    """
+    for name in archive.namelist():
+        if name.startswith("META-INF/versions/"):
+            continue
+        if name.endswith(".class"):
+            header = archive.read(name)[:8]
+            if header[:4] == b"\xca\xfe\xba\xbe":
+                yield prefix + name, int.from_bytes(header[6:8], "big")
+        elif name.endswith(".jar"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(archive.read(name))) as inner:
+                    yield from class_majors(inner, f"{prefix}{name}!/")
+            except zipfile.BadZipFile:
+                pass
+
+
+def check_class_majors(where, artifact, path):
+    """Refuses a class file newer than the module may carry (MAX_CLASS_MAJOR, Java 11).
+
+    1.11.1-ext.3's design systems were compiled for Java 25 (major 69), the window modules
+    for Java 21 (65): a consumer on JDK 17 or 21 gets UnsupportedClassVersionError, and ASM
+    9.7 (major 67 at most) cannot read them.
+    """
+    group = where.split(":")[0]
+    limit = class_major_limit(group, artifact)
+    try:
+        with zipfile.ZipFile(path) as archive:
+            newer = [(entry, major) for entry, major in class_majors(archive) if major > limit]
+    except zipfile.BadZipFile:
+        return [f"{where}: {os.path.basename(path)} is not a valid zip"]
+    if not newer:
+        return []
+    highest = max(major for _, major in newer)
+    return [f"{where}: {os.path.basename(path)} has {len(newer)} class file(s) above major {limit} "
+            f"(Java {limit - 44}), up to major {highest} (Java {highest - 44}), e.g. {newer[0][0]}"]
 
 
 def check_plugin_markers(out, where, jar, version):
