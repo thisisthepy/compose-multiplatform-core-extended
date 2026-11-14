@@ -4,6 +4,7 @@ package org.thisisthepy.compose.window.macos
 
 import androidx.compose.ui.platform.PlatformContext
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsConfiguration
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsOwner
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -52,6 +53,50 @@ internal fun SemanticsOwner.describe(density: Float = 1f): List<AccessibleElemen
     return found
 }
 
+/**
+ * Where an application that declares roles of its own tells the window what a node is.
+ *
+ * Compose names only a few roles (a button, a checkbox, a tab). A toolkit drawn with Compose
+ * often knows more: that a node is a group, a list, a tab list, a dialog, a menu. It keeps
+ * that in a semantics property of its own, which this module cannot name. [of] is asked for
+ * every node, before the window falls back on what it can infer, and answers an
+ * [ElementRole] value or null for a node it has nothing to say about.
+ *
+ * A node with a declared role is described even when it has no label and no action: an
+ * empty list is still a list, and a reader moving through the window has to be told so.
+ * Without one, a labelled container reads as text, and a reader does not go inside text,
+ * so whatever the container holds cannot be reached.
+ */
+public object DeclaredElementRoles {
+    public var of: ((SemanticsConfiguration) -> Int?)? = null
+}
+
+/**
+ * The [ElementRole] a node with [config] is described as. A role Compose names wins, then a
+ * role the application declared through [DeclaredElementRoles], then what the window infers.
+ */
+internal fun elementRoleOf(config: SemanticsConfiguration, label: String?, declared: Int?): Int {
+    val role = config.getOrNull(SemanticsProperties.Role)
+    return when {
+        role == Role.Button -> ElementRole.BUTTON
+        role == Role.Checkbox -> ElementRole.CHECKBOX
+        role == Role.Switch -> ElementRole.SWITCH
+        role == Role.RadioButton -> ElementRole.RADIO_BUTTON
+        role == Role.Tab -> ElementRole.TAB
+        role == Role.Image -> ElementRole.IMAGE
+        role == Role.DropdownList -> ElementRole.COMBO_BOX
+        declared != null -> declared
+        config.getOrNull(SemanticsProperties.EditableText) != null -> ElementRole.FIELD
+        config.getOrNull(SemanticsProperties.ProgressBarRangeInfo) != null ->
+            if (config.getOrNull(SemanticsActions.SetProgress) != null) ElementRole.SLIDER else ElementRole.PROGRESS
+        config.getOrNull(SemanticsProperties.ToggleableState) != null -> ElementRole.CHECKBOX
+        config.getOrNull(SemanticsProperties.Heading) != null -> ElementRole.HEADING
+        config.getOrNull(SemanticsActions.OnClick) != null -> ElementRole.BUTTON
+        label != null -> ElementRole.TEXT
+        else -> ElementRole.GROUP
+    }
+}
+
 private fun SemanticsNode.describe(parentId: Int, scale: Float): AccessibleElement? {
     val config = config
     val editable = config.getOrNull(SemanticsProperties.EditableText)
@@ -62,23 +107,8 @@ private fun SemanticsNode.describe(parentId: Int, scale: Float): AccessibleEleme
     val progress = config.getOrNull(SemanticsProperties.ProgressBarRangeInfo)
     val setProgress = config.getOrNull(SemanticsActions.SetProgress) != null
     val toggle = config.getOrNull(SemanticsProperties.ToggleableState)
-    val role = config.getOrNull(SemanticsProperties.Role)
-    val elementRole = when {
-        role == Role.Button -> ElementRole.BUTTON
-        role == Role.Checkbox -> ElementRole.CHECKBOX
-        role == Role.Switch -> ElementRole.SWITCH
-        role == Role.RadioButton -> ElementRole.RADIO_BUTTON
-        role == Role.Tab -> ElementRole.TAB
-        role == Role.Image -> ElementRole.IMAGE
-        role == Role.DropdownList -> ElementRole.COMBO_BOX
-        editable != null -> ElementRole.FIELD
-        progress != null -> if (setProgress) ElementRole.SLIDER else ElementRole.PROGRESS
-        toggle != null -> ElementRole.CHECKBOX
-        config.getOrNull(SemanticsProperties.Heading) != null -> ElementRole.HEADING
-        onClick != null -> ElementRole.BUTTON
-        label != null -> ElementRole.TEXT
-        else -> ElementRole.GROUP
-    }
+    val declared = DeclaredElementRoles.of?.invoke(config)
+    val elementRole = elementRoleOf(config, label, declared)
     var actions = 0
     if (onClick != null) actions = actions or AccessibleAction.PRESS
     if (config.getOrNull(SemanticsActions.RequestFocus) != null) actions = actions or AccessibleAction.FOCUS
@@ -91,7 +121,7 @@ private fun SemanticsNode.describe(parentId: Int, scale: Float): AccessibleEleme
     }
     if (config.getOrNull(SemanticsActions.OnLongClick) != null) actions = actions or AccessibleAction.SHOW_MENU
     // Nothing to say and nothing to do. The layout is not the screen.
-    if (label == null && actions == 0 && progress == null && toggle == null) return null
+    if (label == null && actions == 0 && progress == null && toggle == null && declared == null) return null
 
     var states = 0
     if (config.getOrNull(SemanticsProperties.Disabled) == null) states = states or AccessibleState.ENABLED
