@@ -1,0 +1,18 @@
+# Dispatch entry for the extended fork's development CI. GitHub only offers
+# workflow_dispatch for workflows on the default branch (jb-main, the upstream mirror),
+# so this file lives here; dispatch it with `gh workflow run ci.yml --ref extended`,
+# which runs extended's own ci.yml and suites. Dispatched on jb-main itself it does nothing.
+name: CI
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  note:
+    name: Dispatch on the extended branch
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Run this workflow with --ref extended; jb-main is the upstream mirror and has no suites."
