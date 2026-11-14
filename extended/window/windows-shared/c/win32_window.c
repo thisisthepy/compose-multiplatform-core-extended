@@ -454,27 +454,18 @@ static int dxc_predraw_flush;
 // DXC_RESIZE_HIDE_EARLY=0: the swapchain's child stays visible until WM_SIZE, as before it
 // was hidden in WM_NCCALCSIZE, ahead of the size change. For comparing the two.
 static int dxc_hide_early_off;
-// DXC_SURFACE_RETURN: how the child taken off screen ahead of the size change comes back with
-// the frame drawn ahead. offstage (the default): the child is not hidden but moved outside the
-// client area, given the new size and presented to there in WM_NCCALCSIZE, and WM_SIZE only
-// moves it back; staged: the child is hidden, the swapchain is refitted and the frame copied
-// into its buffer in WM_NCCALCSIZE, and WM_SIZE fits the child, shows it and presents; wmsize: WM_SIZE
+// DXC_SURFACE_RETURN: how the child hidden ahead of the size change comes back with the frame
+// drawn ahead. staged (the default): the swapchain is refitted and the frame copied into its
+// buffer in WM_NCCALCSIZE, and WM_SIZE fits the child, shows it and presents; wmsize: WM_SIZE
 // fits it, presents the frame and shows it; nccalc: fitted and presented in WM_NCCALCSIZE,
 // shown in WM_SIZE; showfirst: WM_SIZE fits and shows it, then refits and presents; posted:
 // the GPU return after WM_SIZE draws a new frame first.
 enum {
-    DXC_SURFACE_RETURN_OFFSTAGE, DXC_SURFACE_RETURN_STAGED, DXC_SURFACE_RETURN_WM_SIZE, DXC_SURFACE_RETURN_NCCALC,
-    DXC_SURFACE_RETURN_SHOW_FIRST, DXC_SURFACE_RETURN_POSTED, DXC_SURFACE_RETURN_COUNT
+    DXC_SURFACE_RETURN_STAGED, DXC_SURFACE_RETURN_WM_SIZE, DXC_SURFACE_RETURN_NCCALC, DXC_SURFACE_RETURN_SHOW_FIRST,
+    DXC_SURFACE_RETURN_POSTED, DXC_SURFACE_RETURN_COUNT
 };
-static const char *const dxc_surface_return_names[] = {"offstage", "staged", "wmsize", "nccalc", "showfirst", "posted"};
+static const char *const dxc_surface_return_names[] = {"staged", "wmsize", "nccalc", "showfirst", "posted"};
 static int dxc_surface_return;
-// Set while the swapchain's child is visible but moved outside the client area, where the
-// window clips all of it (DXC_SURFACE_RETURN=offstage). A present to a hidden child is not
-// composed when the child is shown, and a child shown first is composed with its old picture
-// until a present lands, which can take a composition or two. A child that stays visible
-// takes the present where nothing of it is on screen, and moving it back shows that frame.
-static int dxc_surface_offstage;
-#define DXC_OFFSTAGE (-32000)
 // When each step of a size change outside a drag ran, on the performance counter in ms: the
 // frame drawn ahead was ready (WM_NCCALCSIZE about to return), WM_WINDOWPOSCHANGED and WM_SIZE
 // arrived, the frame was copied into the window, the child was fitted, and it was shown. A
@@ -485,6 +476,11 @@ enum {
     DXC_STATE_MARK_COUNT
 };
 static double dxc_state_marks[DXC_STATE_MARK_COUNT];
+// DXC_STATE_PRIORITY=1: the UI thread runs at time-critical priority from the frame drawn
+// ahead until WM_SIZE has put it on screen, so it does not lose the CPU between the window
+// taking its size and the frame landing. For comparing the two.
+static int dxc_state_priority;
+static int dxc_state_priority_before = THREAD_PRIORITY_ERROR_RETURN;
 /**
  * One line on stderr for every change of a state that decides how resize frames are
  * produced. On by default: these happen a handful of times a session, and they are what
@@ -2186,6 +2182,26 @@ static double dxc_now_ms(void) {
     return (double)now.QuadPart * 1000.0 / (double)frequency.QuadPart;
 }
 
+/** Raises the UI thread for a size change outside a drag (DXC_STATE_PRIORITY=1). */
+static void dxc_state_priority_raise(void) {
+    if (!dxc_state_priority || dxc_state_priority_before != THREAD_PRIORITY_ERROR_RETURN) {
+        return;
+    }
+    dxc_state_priority_before = GetThreadPriority(GetCurrentThread());
+    if (dxc_state_priority_before != THREAD_PRIORITY_ERROR_RETURN) {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    }
+}
+
+/** Gives the UI thread the priority it had before dxc_state_priority_raise. */
+static void dxc_state_priority_restore(void) {
+    if (dxc_state_priority_before == THREAD_PRIORITY_ERROR_RETURN) {
+        return;
+    }
+    SetThreadPriority(GetCurrentThread(), dxc_state_priority_before);
+    dxc_state_priority_before = THREAD_PRIORITY_ERROR_RETURN;
+}
+
 /*
  * Resize trace, for DXC_RESIZE_TRACE=1: when each message of a size change arrived and when
  * each step's frame was copied into the window, against DWM's own composition clock, so a
@@ -2437,10 +2453,6 @@ static void dxc_return_to_gpu(HWND window, int32_t width, int32_t height) {
     }
     dxc_resize_note(&dxc_sizing, width, height);
     dxc_draw_one_frame();
-    if (dxc_surface != NULL && dxc_surface_offstage) {
-        SetWindowPos(dxc_surface, NULL, 0, 0, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE);
-        dxc_surface_offstage = 0;
-    }
     if (dxc_surface != NULL) {
         ShowWindow(dxc_surface, SW_SHOWNA);
     }
@@ -2576,7 +2588,7 @@ static void dxc_raster_copy(void) {
     QueryPerformanceCounter(&dxc_blit_time);
     // Hidden after the copy, in the same step, so the redirection surface it reveals already
     // holds this frame.
-    if (dxc_surface != NULL && IsWindowVisible(dxc_surface) && !dxc_surface_offstage) {
+    if (dxc_surface != NULL && IsWindowVisible(dxc_surface)) {
         ShowWindow(dxc_surface, SW_HIDE);
         dxc_last_validated = ValidateRect(dxc_window, NULL) != 0 && dxc_last_validated;
     }
@@ -2654,8 +2666,7 @@ static int dxc_bitmap_to_swapchain(int32_t width, int32_t height) {
 }
 
 static int dxc_raster_present(int32_t width, int32_t height) {
-    if (dxc_raster_present_off || dxc_sizing.dragging || dxc_surface == NULL || !IsWindowVisible(dxc_surface) ||
-        dxc_surface_offstage) {
+    if (dxc_raster_present_off || dxc_sizing.dragging || dxc_surface == NULL || !IsWindowVisible(dxc_surface)) {
         return 0;
     }
     LARGE_INTEGER copy_started;
@@ -2679,17 +2690,6 @@ static int dxc_raster_present(int32_t width, int32_t height) {
 static int dxc_ready_surface(int32_t width, int32_t height) {
     dxc_surface_ready_width = 0;
     dxc_surface_ready_height = 0;
-    if (dxc_surface != NULL && dxc_surface_offstage) {
-        // Visible, where the window clips all of it: the present is taken, and nothing of
-        // it is on screen until WM_SIZE moves the child back.
-        SetWindowPos(dxc_surface, NULL, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE);
-        if (!dxc_bitmap_to_swapchain(width, height)) {
-            return 0;
-        }
-        dxc_surface_ready_width = width;
-        dxc_surface_ready_height = height;
-        return 1;
-    }
     if (dxc_surface == NULL || IsWindowVisible(dxc_surface)) {
         return 0;
     }
@@ -2724,28 +2724,6 @@ static int dxc_show_ready_surface(int32_t width, int32_t height) {
                 dxc_sizing.fitted_width == width && dxc_sizing.fitted_height == height;
     dxc_surface_ready_width = 0;
     dxc_surface_ready_height = 0;
-    if (dxc_surface != NULL && dxc_surface_offstage) {
-        if (!ready) {
-            // Not presented to ahead: back in place at the new size, then the frame.
-            SetWindowPos(dxc_surface, NULL, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
-            dxc_surface_offstage = 0;
-            if (!dxc_bitmap_to_swapchain(width, height)) return 0;
-        } else {
-            SetWindowPos(dxc_surface, NULL, 0, 0, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE);
-            dxc_surface_offstage = 0;
-        }
-        double ready_at = dxc_state_marks[DXC_STATE_READY];
-        dxc_presented_width = width;
-        dxc_presented_height = height;
-        dxc_switch_frames(0, width, height, "the frame drawn ahead was shown through the swapchain");
-        fprintf(stderr,
-                "compose-rust: resize-mode: surface moved back at %dx%d in WM_SIZE with the frame drawn ahead (%s, at %.1f ms; "
-                "after the frame was ready: WM_WINDOWPOSCHANGED +%.2f, WM_SIZE +%.2f, copied +%.2f, moved back +%.2f ms)\n",
-                (int)width, (int)height, ready ? "presented to ahead" : "presented to after", dxc_now_ms(),
-                dxc_state_marks[DXC_STATE_CHANGED] - ready_at, dxc_state_marks[DXC_STATE_SIZE] - ready_at,
-                dxc_state_marks[DXC_STATE_COPIED] - ready_at, dxc_now_ms() - ready_at);
-        return 1;
-    }
     if (dxc_surface == NULL || IsWindowVisible(dxc_surface) || dxc_surface_return == DXC_SURFACE_RETURN_POSTED) {
         return 0;
     }
@@ -2818,6 +2796,7 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
         }
     }
     dxc_resizing = 0;
+    dxc_state_priority_restore();
     if (dxc_cpu_mode) {
         // What this step put on screen and how, for the CI assertion over these lines.
         fprintf(stderr,
@@ -2890,6 +2869,7 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     }
     LARGE_INTEGER started;
     QueryPerformanceCounter(&started);
+    dxc_state_priority_raise();
     int hidden = dxc_hide_surface_early(window, (int32_t)(now.right - now.left), (int32_t)(now.bottom - now.top));
     dxc_switch_frames(1, width, height, "the size is about to change");
     dxc_predrawn_set(&dxc_predrawn, 0, 0);
@@ -2902,8 +2882,7 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     dxc_resizing = 0;
     int drawn = dxc_predrawn.width == width && dxc_predrawn.height == height;
     int ready = drawn && hidden &&
-                (dxc_surface_return == DXC_SURFACE_RETURN_NCCALC || dxc_surface_return == DXC_SURFACE_RETURN_STAGED ||
-                 dxc_surface_return == DXC_SURFACE_RETURN_OFFSTAGE) &&
+                (dxc_surface_return == DXC_SURFACE_RETURN_NCCALC || dxc_surface_return == DXC_SURFACE_RETURN_STAGED) &&
                 dxc_ready_surface(width, height);
     double drawn_ms = dxc_elapsed_ms(started);
     // Only for the copy into the GDI surface. A frame presented through the swapchain is
@@ -2914,6 +2893,10 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
             (int)width, (int)height, drawn ? "waiting for WM_SIZE" : "not drawn",
             ready ? ", presented to the hidden surface" : "", drawn_ms,
             flushed ? "DwmFlush" : "no DwmFlush", dxc_elapsed_ms(started) - drawn_ms, dxc_now_ms());
+    if (!drawn) {
+        // No WM_SIZE will take this frame, so nothing else gives the priority back.
+        dxc_state_priority_restore();
+    }
     dxc_state_marks[DXC_STATE_READY] = dxc_now_ms();
 }
 
@@ -3002,7 +2985,7 @@ static int dxc_copy_shown_to_window(int32_t width, int32_t height) {
  * the window takes the size, it is not on screen when the window changes.
  */
 static int dxc_hide_surface_early(HWND window, int32_t width, int32_t height) {
-    if (dxc_hide_early_off || dxc_surface == NULL || !IsWindowVisible(dxc_surface) || dxc_surface_offstage ||
+    if (dxc_hide_early_off || dxc_surface == NULL || !IsWindowVisible(dxc_surface) ||
         dxc_presented_width != width || dxc_presented_height != height ||
         dxc_sizing.fitted_width != width || dxc_sizing.fitted_height != height) {
         return 0;
@@ -3015,12 +2998,7 @@ static int dxc_hide_surface_early(HWND window, int32_t width, int32_t height) {
         return 0;
     }
     double copied_ms = dxc_elapsed_ms(started);
-    if (dxc_surface_return == DXC_SURFACE_RETURN_OFFSTAGE) {
-        SetWindowPos(dxc_surface, NULL, DXC_OFFSTAGE, DXC_OFFSTAGE, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE);
-        dxc_surface_offstage = 1;
-    } else {
-        ShowWindow(dxc_surface, SW_HIDE);
-    }
+    ShowWindow(dxc_surface, SW_HIDE);
     // Hiding the child asks the window to paint the area it uncovered, which already holds
     // the same picture.
     ValidateRect(window, NULL);
@@ -5083,6 +5061,8 @@ static int32_t dxc_open_window(
         dxc_raster_present_off = through != NULL && strcmp(through, "0") == 0;
         const char *flush = getenv("DXC_PREDRAW_FLUSH");
         dxc_predraw_flush = flush != NULL && strcmp(flush, "1") == 0;
+        const char *state_priority = getenv("DXC_STATE_PRIORITY");
+        dxc_state_priority = state_priority != NULL && strcmp(state_priority, "1") == 0;
         const char *early = getenv("DXC_RESIZE_HIDE_EARLY");
         dxc_hide_early_off = early != NULL && strcmp(early, "0") == 0;
         const char *surface_return = getenv("DXC_SURFACE_RETURN");
