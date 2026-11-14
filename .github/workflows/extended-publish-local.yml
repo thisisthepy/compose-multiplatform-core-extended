@@ -14,13 +14,13 @@ on:
       mac_run:
         description: 'Take the Mac''s repository from this earlier run of this workflow
           and run only the Windows program against it (empty: publish everything)'
-        required: 'false'
+        required: false
         default: ''
       plugin_ref:
         description: 'With mac_run: publish org.thisisthepy.kotlin.native.desktop
           from this ref of thisisthepy/compose-multiplatform-extended over the one
           in that repository'
-        required: 'false'
+        required: false
         default: ''
   workflow_call:
     inputs:
