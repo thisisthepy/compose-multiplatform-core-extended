@@ -45,6 +45,20 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   key or Shift and F10 put up Cut, Copy, Paste and Select All, greyed where they cannot run,
   labelled by the system's edit control, at the pointer or at the caret; the entry chosen
   arrives as Control and X, C, V or A. (DarkPyonix/compose-rust#142)
+- **Fix.** The JVM classes of `common`, `scene`, `graalvm-macos` and `graalvm-windows` are Java 11
+  (class major 55) again, as the fork's Compose is; 1.11.1-ext.3 shipped them at Java 21 (65).
+  `graalvm-linux` is Java 17 (61): its D-Bus connection uses `UnixDomainSocketAddress`.
+
+### Design systems (`org.thisisthepy.compose.designsystem`)
+
+- **Fix.** The JVM and Android classes are Java 11 (class major 55). 1.11.1-ext.3 shipped them at
+  Java 25 (69), which a JDK 17 or 21 consumer cannot load (`UnsupportedClassVersionError`) and
+  ASM 9.7 cannot read.
+
+### Publishing
+
+- `central_bundle.py validate` refuses a release whose jars or aars hold a class file above
+  major 55, except the modules listed in `CLASS_MAJOR_EXCEPTIONS` (`graalvm-linux`, 61).
 
 ## 1.11.1-ext.3 (2026-11-13)
 
