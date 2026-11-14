@@ -44,7 +44,7 @@ on:
       tag:
         description: Release tag to publish (v1.11.1-ext.N). Empty runs the dry run
           on the chosen branch.
-        required: 'false'
+        required: false
         default: ''
       publishing_type:
         description: USER_MANAGED waits in the Central Portal for someone to press
