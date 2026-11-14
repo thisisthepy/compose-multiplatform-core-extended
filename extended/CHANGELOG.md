@@ -26,6 +26,17 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   now runs in a key window, without a scene, with an idle scene and with a scene that places
   the view itself: 1 to 7 of 82 to 94 pictures had the two apart before, none of 77 to 94
   after. (#233)
+- **Fix.** Placing a macOS native view cost the same whether anything changed or not.
+  `MacosNativeViews.setFrame` and `setVisibleRegion` each placed the slot from scratch, set both
+  frames, `masksToBounds` and the mask again, and made a new `CAShapeLayer` and `CGPath` for any
+  clipped slot, holes or not. A placing now returns at once for the input it last placed with,
+  sets a frame only when it differs, makes no mask for a clip with no hole inside it (the
+  container's bounds are the clip), and makes a mask again only when what it cuts changed,
+  reusing the previous one when a frame and then a region put the same cut back. New:
+  `NativeViews.setFrameAndVisibleRegion`, both in one call and one placing; the two calls stay.
+  Four clipped views told their frame and region every frame, in a debug build: 46 µs a call
+  scrolling and 60 µs standing still before, 30 µs and 10 µs after, 39 µs a view through the
+  combined call. (#233)
 
 ## 1.11.1-ext.4 (2026-11-14)
 

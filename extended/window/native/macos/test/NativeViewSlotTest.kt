@@ -470,6 +470,134 @@ class NativeViewSlotTest {
         NSCursor.arrowCursor.set()
     }
 
+    @Test
+    fun a_clip_with_no_hole_inside_it_is_cut_by_the_container_alone() = withSlot { f, view ->
+        val layer = view.superview!!.layer!!
+        // Cut to its top half: the container's bounds are the clip, so no mask is needed.
+        f.views.setVisibleRegion(1, PixelRect(0, 0, f.px(1000), f.px(SLOT_Y + SLOT_H / 2)), emptyList())
+        assertNull(layer.mask, "a clip alone needs no mask")
+        assertTrue(layer.masksToBounds)
+        view.superview!!.frame.useContents { assertEquals((SLOT_H / 2).toDouble(), size.height, "cut to the clip") }
+        // A hole in the part the clip cut away is not inside what shows.
+        f.views.setVisibleRegion(
+            1,
+            PixelRect(0, 0, f.px(1000), f.px(SLOT_Y + SLOT_H / 2)),
+            listOf(PixelRoundRect(f.px(SLOT_X), f.px(SLOT_Y + SLOT_H - 20), f.px(40), f.px(20))),
+        )
+        assertNull(layer.mask, "a hole outside what shows needs no mask either")
+        // One inside does.
+        f.views.setVisibleRegion(
+            1,
+            PixelRect(0, 0, f.px(1000), f.px(SLOT_Y + SLOT_H / 2)),
+            listOf(PixelRoundRect(f.px(SLOT_X), f.px(SLOT_Y), f.px(40), f.px(20))),
+        )
+        assertNotNull(layer.mask, "a hole inside what shows is cut by a mask")
+        turn(0.3)
+        val image = f.image() ?: return@withSlot println("native view: no image of the window to look at")
+        assertEquals('S', image.at(SLOT_X + 10, SLOT_Y + 10), "the hole")
+        assertEquals('V', image.at(SLOT_X + 60, SLOT_Y + 10), "beside it the view")
+        assertEquals('S', image.at(SLOT_X + 60, SLOT_Y + SLOT_H - 10), "past the clip the scene")
+    }
+
+    @Test
+    fun the_same_frame_and_region_again_change_nothing() = withSlot { f, view ->
+        val container = view.superview!!
+        val layer = container.layer!!
+        val clip = PixelRect(0, 0, f.px(1000), f.px(SLOT_Y + SLOT_H - 30))
+        val holes = listOf(PixelRoundRect(f.px(SLOT_X + 20), f.px(SLOT_Y + 20), f.px(40), f.px(40), cornerRadius = f.px(8)))
+        f.views.setVisibleRegion(1, clip, holes)
+        // The layer itself, not the Kotlin object standing for it, which is made anew per read.
+        // Held, so a new layer cannot be given the old one's address.
+        val held = assertNotNull(layer.mask)
+        val mask = held.objcPtr()
+        val frame = container.frame.useContents { listOf(origin.x, origin.y, size.width, size.height) }
+        val viewFrame = view.frame.useContents { listOf(origin.x, origin.y, size.width, size.height) }
+        // What a caller sends every frame for a view that did not move.
+        repeat(3) {
+            f.views.setFrame(1, f.px(SLOT_X), f.px(SLOT_Y), f.px(SLOT_W), f.px(SLOT_H))
+            f.views.setVisibleRegion(1, clip, holes.toList())
+        }
+        assertEquals(mask, layer.mask?.objcPtr(), "the mask is the one already made")
+        assertEquals(frame, container.frame.useContents { listOf(origin.x, origin.y, size.width, size.height) })
+        assertEquals(viewFrame, view.frame.useContents { listOf(origin.x, origin.y, size.width, size.height) })
+        // A move that keeps the part shown and the holes where they are in it keeps the mask
+        // too, sent as callers send it: the frame, then the region.
+        f.views.setFrame(1, f.px(SLOT_X + 10), f.px(SLOT_Y), f.px(SLOT_W), f.px(SLOT_H))
+        f.views.setVisibleRegion(1, clip, listOf(PixelRoundRect(f.px(SLOT_X + 30), f.px(SLOT_Y + 20), f.px(40), f.px(40), cornerRadius = f.px(8))))
+        assertEquals(mask, layer.mask?.objcPtr(), "the same cut, moved with the view")
+        container.frame.useContents { assertEquals((SLOT_X + 10).toDouble(), origin.x, "but the container moved") }
+        // A hole that moves inside the view is a new mask, cut where the hole now is.
+        f.views.setVisibleRegion(1, clip, listOf(PixelRoundRect(f.px(SLOT_X + 60), f.px(SLOT_Y + 20), f.px(40), f.px(40), cornerRadius = f.px(8))))
+        assertTrue(layer.mask != null && layer.mask?.objcPtr() != mask, "a new mask for a hole that moved")
+        assertNotNull(held.superlayer ?: held, "the old mask was held until here")
+        turn(0.3)
+        val image = f.image() ?: return@withSlot println("native view: no image of the window to look at")
+        assertEquals('S', image.at(SLOT_X + 80, SLOT_Y + 40), "the scene in the hole")
+        assertEquals('V', image.at(SLOT_X + 40, SLOT_Y + 40), "the view where the hole was")
+    }
+
+    @Test
+    fun the_frame_and_the_region_in_one_call_place_as_the_two_calls_do() = withSlot { f, view ->
+        val container = view.superview!!
+        val clip = PixelRect(0, 0, f.px(1000), f.px(SLOT_Y + SLOT_H - 30))
+        val holes = listOf(PixelRoundRect(f.px(SLOT_X + 40), f.px(SLOT_Y + 20), f.px(40), f.px(40), cornerRadius = f.px(8)))
+        fun placed() = container.frame.useContents { listOf(origin.x, origin.y, size.width, size.height) } +
+            view.frame.useContents { listOf(origin.x, origin.y, size.width, size.height) }
+        f.views.setFrame(1, f.px(SLOT_X + 5), f.px(SLOT_Y + 7), f.px(SLOT_W), f.px(SLOT_H))
+        f.views.setVisibleRegion(1, clip, holes)
+        val twoCalls = placed()
+        f.views.setFrameAndVisibleRegion(1, f.px(SLOT_X), f.px(SLOT_Y), f.px(SLOT_W), f.px(SLOT_H), null, emptyList())
+        assertNull(container.layer!!.mask)
+        f.views.setFrameAndVisibleRegion(1, f.px(SLOT_X + 5), f.px(SLOT_Y + 7), f.px(SLOT_W), f.px(SLOT_H), clip, holes)
+        assertEquals(twoCalls, placed())
+        assertNotNull(container.layer!!.mask)
+        turn(0.3)
+        val image = f.image() ?: return@withSlot println("native view: no image of the window to look at")
+        assertEquals('S', image.at(SLOT_X + 65, SLOT_Y + 47), "the hole")
+        assertEquals('V', image.at(SLOT_X + 20, SLOT_Y + 47), "beside it the view")
+        assertEquals('S', image.at(SLOT_X + 20, SLOT_Y + SLOT_H - 20), "past the clip the scene")
+    }
+
+    /**
+     * What placing costs: four views, each told its frame and its region every frame, as a
+     * caller laying out a scrolling page tells them, and the same again with nothing moving.
+     * Printed for the record; what is asserted is only that the views end where they were told.
+     */
+    @Test
+    fun placing_four_views_a_frame_costs_what_changed() = withSlot { f, view ->
+        val extra = (2..4).map { id -> SolidView().also { assertTrue(f.views.attach(id, it.objcPtr().toLong())); f.views.setVisible(id, true) } }
+        val clip = PixelRect(0, f.px(40), f.px(400), f.px(240))
+        val frames = 120
+        fun frame(offset: Int) {
+            for (id in 1..4) {
+                f.views.setFrame(id, f.px(10 + (id - 1) * 90), f.px(20 + offset), f.px(80), f.px(120))
+                f.views.setVisibleRegion(id, clip, emptyList())
+            }
+        }
+        val begun = kotlin.time.TimeSource.Monotonic.markNow()
+        for (i in 0 until frames) frame(i % 100)
+        val moving = begun.elapsedNow().inWholeNanoseconds / 1000.0 / (frames * 8)
+        val still = kotlin.time.TimeSource.Monotonic.markNow()
+        for (i in 0 until frames) frame(0)
+        val idle = still.elapsedNow().inWholeNanoseconds / 1000.0 / (frames * 8)
+        val combined = kotlin.time.TimeSource.Monotonic.markNow()
+        for (i in 0 until frames) {
+            for (id in 1..4) {
+                f.views.setFrameAndVisibleRegion(id, f.px(10 + (id - 1) * 90), f.px(20 + i % 100), f.px(80), f.px(120), clip, emptyList())
+            }
+        }
+        val once = combined.elapsedNow().inWholeNanoseconds / 1000.0 / (frames * 4)
+        for (id in 1..4) f.views.setFrameAndVisibleRegion(id, f.px(10 + (id - 1) * 90), f.px(20), f.px(80), f.px(120), clip, emptyList())
+        fun tenths(micros: Double) = kotlin.math.round(micros * 10) / 10
+        println(
+            "native view: placing four scrolling clipped views, ${tenths(moving)} µs a call; " +
+                "the same views standing still, ${tenths(idle)} µs a call; " +
+                "scrolling through setFrameAndVisibleRegion, ${tenths(once)} µs a view",
+        )
+        // Standing at 20 points with the clip's top at 40, each shows its lower 100 points.
+        (extra + view).forEach { it.superview!!.frame.useContents { assertEquals(100.0, size.height) } }
+    }
+
     private fun WindowEvent.isFocusEvent() =
         kind == WindowEvent.NATIVE_VIEW_FOCUS_IN || kind == WindowEvent.NATIVE_VIEW_FOCUS_OUT
 
