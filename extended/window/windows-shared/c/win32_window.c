@@ -476,11 +476,14 @@ enum {
     DXC_STATE_MARK_COUNT
 };
 static double dxc_state_marks[DXC_STATE_MARK_COUNT];
-// DXC_STATE_PRIORITY=1: the UI thread runs at time-critical priority from the frame drawn
-// ahead until WM_SIZE has put it on screen, so it does not lose the CPU between the window
-// taking its size and the frame landing. For comparing the two.
-static int dxc_state_priority;
-static int dxc_state_priority_before = THREAD_PRIORITY_ERROR_RETURN;
+// DXC_STATE_SETTLE_MS: how long the frame drawn ahead waits after its DwmFlush before
+// WM_NCCALCSIZE returns and the window takes the size. The window's new rectangle, the copy
+// into it, the child's show and the present to it are four steps DWM can compose between.
+// DwmFlush returns as a composition ends, and DWM reads the windows for the next one a
+// millisecond or so later: the steps, begun at once, ran into that read in 3 of 208 size
+// changes (the present then waited 15 to 30 ms for DWM) and one was composed half done.
+// Begun after the read, they have the rest of the interval to themselves.
+static double dxc_state_settle_ms = 4.0;
 /**
  * One line on stderr for every change of a state that decides how resize frames are
  * produced. On by default: these happen a handful of times a session, and they are what
@@ -2182,24 +2185,14 @@ static double dxc_now_ms(void) {
     return (double)now.QuadPart * 1000.0 / (double)frequency.QuadPart;
 }
 
-/** Raises the UI thread for a size change outside a drag (DXC_STATE_PRIORITY=1). */
-static void dxc_state_priority_raise(void) {
-    if (!dxc_state_priority || dxc_state_priority_before != THREAD_PRIORITY_ERROR_RETURN) {
-        return;
+/** Waits out DWM's read of the windows after a DwmFlush (dxc_state_settle_ms), without sleeping. */
+static double dxc_state_settle(void) {
+    double began = dxc_now_ms();
+    // Not Sleep: its shortest wait is a timer tick, which can be a whole composition.
+    while (dxc_now_ms() - began < dxc_state_settle_ms) {
+        SwitchToThread();
     }
-    dxc_state_priority_before = GetThreadPriority(GetCurrentThread());
-    if (dxc_state_priority_before != THREAD_PRIORITY_ERROR_RETURN) {
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
-    }
-}
-
-/** Gives the UI thread the priority it had before dxc_state_priority_raise. */
-static void dxc_state_priority_restore(void) {
-    if (dxc_state_priority_before == THREAD_PRIORITY_ERROR_RETURN) {
-        return;
-    }
-    SetThreadPriority(GetCurrentThread(), dxc_state_priority_before);
-    dxc_state_priority_before = THREAD_PRIORITY_ERROR_RETURN;
+    return dxc_now_ms() - began;
 }
 
 /*
@@ -2796,7 +2789,6 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
         }
     }
     dxc_resizing = 0;
-    dxc_state_priority_restore();
     if (dxc_cpu_mode) {
         // What this step put on screen and how, for the CI assertion over these lines.
         fprintf(stderr,
@@ -2869,7 +2861,6 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     }
     LARGE_INTEGER started;
     QueryPerformanceCounter(&started);
-    dxc_state_priority_raise();
     int hidden = dxc_hide_surface_early(window, (int32_t)(now.right - now.left), (int32_t)(now.bottom - now.top));
     dxc_switch_frames(1, width, height, "the size is about to change");
     dxc_predrawn_set(&dxc_predrawn, 0, 0);
@@ -2893,9 +2884,10 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
             (int)width, (int)height, drawn ? "waiting for WM_SIZE" : "not drawn",
             ready ? ", presented to the hidden surface" : "", drawn_ms,
             flushed ? "DwmFlush" : "no DwmFlush", dxc_elapsed_ms(started) - drawn_ms, dxc_now_ms());
-    if (!drawn) {
-        // No WM_SIZE will take this frame, so nothing else gives the priority back.
-        dxc_state_priority_restore();
+    if (flushed && ready) {
+        double settled_ms = dxc_state_settle();
+        fprintf(stderr, "compose-rust: resize-mode: waited %.2f ms after the DwmFlush before the window takes %dx%d\n",
+                settled_ms, (int)width, (int)height);
     }
     dxc_state_marks[DXC_STATE_READY] = dxc_now_ms();
 }
@@ -5061,8 +5053,11 @@ static int32_t dxc_open_window(
         dxc_raster_present_off = through != NULL && strcmp(through, "0") == 0;
         const char *flush = getenv("DXC_PREDRAW_FLUSH");
         dxc_predraw_flush = flush != NULL && strcmp(flush, "1") == 0;
-        const char *state_priority = getenv("DXC_STATE_PRIORITY");
-        dxc_state_priority = state_priority != NULL && strcmp(state_priority, "1") == 0;
+        const char *settle = getenv("DXC_STATE_SETTLE_MS");
+        if (settle != NULL) {
+            double asked = atof(settle);
+            if (asked >= 0.0 && asked <= 100.0) dxc_state_settle_ms = asked;
+        }
         const char *early = getenv("DXC_RESIZE_HIDE_EARLY");
         dxc_hide_early_off = early != NULL && strcmp(early, "0") == 0;
         const char *surface_return = getenv("DXC_SURFACE_RETURN");

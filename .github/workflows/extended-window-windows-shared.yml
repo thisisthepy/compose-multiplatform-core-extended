@@ -172,21 +172,19 @@ jobs:
             DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-return-$way-30ms.log || true
           done
 
-      # For comparison, not a gate: the UI thread at time-critical priority for the length of
-      # the size change (DXC_STATE_PRIORITY in win32_window.c), over enough runs to tell a
-      # rare faulty frame from none.
-      - name: Resize probe, maximise, restore and snap, time-critical thread (comparison)
+      # For comparison, not a gate: no wait after the DwmFlush of the frame drawn ahead, and a
+      # longer one (DXC_STATE_SETTLE_MS in win32_window.c). Without the wait the present after
+      # the show ran into DWM's read of the windows in 3 of 208 size changes (run 43600454357).
+      - name: Resize probe, maximise, restore and snap, other waits after the DwmFlush (comparison)
         shell: bash
         run: |
-          for run in 1 2 3 4 5 6 7 8; do
-            DXC_STATE_PRIORITY=1 PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-states-priority-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-priority-$run.log || true
+          for run in 1 2 3 4 5 6; do
+            DXC_STATE_SETTLE_MS=0 PROBE_VERBOSE=1 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-settle0-$run.log || true
+            DXC_STATE_SETTLE_MS=8 PROBE_VERBOSE=1 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-settle8-$run.log || true
           done
-          for run in 1 2; do
-            DXC_STATE_PRIORITY=1 PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-priority-30ms-$run.log || true
-          done
-          grep -h 'verdict' out/probe-states-priority-*.log || true
+          grep -H 'verdict' out/probe-states-settle*.log || true
 
-      # With a frame that costs nothing, eight times, and with one that costs 30 ms, three times. A gate: no composed
+      # With a frame that costs nothing, sixteen times, and with one that costs 30 ms, three times. A gate: no composed
       # frame of maximise, restore, left-half snap or back may show another size's picture
       # (compose-rust#684).
       - name: Resize probe, maximise, restore and snap
@@ -194,7 +192,7 @@ jobs:
         run: |
           set -o pipefail
           status=0
-          for run in 1 2 3 4 5 6 7 8; do
+          for run in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
             PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-states-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-$run.log || status=1
           done
           for run in 1 2 3; do
