@@ -52,10 +52,16 @@ cat > "$ui/ui-desktop-$V.module" <<JSON
   {"group":"org.jetbrains.skiko","module":"skiko","version":{"requires":"0.144.6"}},
   {"group":"org.thisisthepy.compose.ui","module":"ui-util","version":{"requires":"$V"}}]}]}
 JSON
+# As Gradle writes it: the module names skiko's root, the POM skiko-awt itself, beside the
+# natives, which stay JetBrains'.
 cat > "$ui/ui-desktop-$V.pom" <<XML
 <project><dependencies><dependency>
   <groupId>org.jetbrains.skiko</groupId>
-  <artifactId>skiko</artifactId>
+  <artifactId>skiko-awt</artifactId>
+  <version>0.144.6</version>
+</dependency><dependency>
+  <groupId>org.jetbrains.skiko</groupId>
+  <artifactId>skiko-awt-runtime-macos-arm64</artifactId>
   <version>0.144.6</version>
 </dependency></dependencies></project>
 XML
@@ -71,11 +77,12 @@ PY
 python3 -I - "$ui/ui-desktop-$V.pom" <<'PY' || fail "the desktop pom must depend on the fork's skiko-awt"
 import re, sys
 t = open(sys.argv[1]).read()
-assert "org.jetbrains.skiko" not in t, t
+assert "<artifactId>skiko-awt</artifactId>\n  <version>0.144.6" not in t, t
+assert re.search(r"<groupId>org.jetbrains.skiko</groupId>\s*<artifactId>skiko-awt-runtime-macos-arm64</artifactId>\s*<version>0.144.6</version>", t), t
 assert re.search(r"<groupId>org.thisisthepy.compose.skiko</groupId>\s*<artifactId>skiko-awt</artifactId>\s*<version>1.11.1-ext.2</version>", t), t
 PY
 grep -q '"org.jetbrains.skiko"' "$native/ui-linuxx64-$V.module" || fail "a Kotlin/Native module was changed"
-grep -q '<artifactId>skiko</artifactId>' "$native/ui-linuxx64-$V.pom" || fail "a Kotlin/Native pom was changed"
+grep -q '<groupId>org.jetbrains.skiko</groupId>' "$native/ui-linuxx64-$V.pom" || fail "a Kotlin/Native pom was changed"
 python3 -I "$skiko/repoint-desktop-skiko.py" "$work/empty" --require > /dev/null 2>&1 && fail "--require accepts a repository with no desktop module"
 
 if [[ $failures -gt 0 ]]; then echo "$failures failure(s)"; exit 1; fi
