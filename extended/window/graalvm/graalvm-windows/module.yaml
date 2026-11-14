@@ -20,6 +20,9 @@ settings:
   jvm:
     jdk:
       version: 21
+    # Java 11 (major 55): the lowest org.graalvm.sdk:nativeimage and word 25.0.1 allow (their
+    # classes are major 55). central_bundle.py's CLASS_MAJOR_EXCEPTIONS lists these modules.
+    release: 11
   publishing:
     enabled: true
     group: org.thisisthepy.compose.window
