@@ -177,6 +177,8 @@ struct dxc_window_options {
     int32_t min_height;
     int32_t system_chrome;
     int32_t backdrop;
+    /** The application owns the caption strip (`Chrome::FullSize`); see dxc_caption_zone_is_system_caption. */
+    int32_t app_caption;
 };
 
 typedef struct DxcRootProvider DxcRootProvider;
@@ -1864,6 +1866,7 @@ void dxc_native_window_configure(
     dxc_next_options.min_height = min_height;
     dxc_next_options.system_chrome = system_chrome;
     dxc_next_options.backdrop = backdrop;
+    dxc_next_options.app_caption = 0;
 }
 
 // When the frame drawn now will be on the screen, in nanoseconds. The macOS window answers
@@ -2083,8 +2086,11 @@ static LRESULT dxc_caption_hit_test(HWND window, LPARAM lparam) {
         return HTTOP;
     case DXC_CAPTION_ZONE_CAPTION:
         // Drags the window, and brings back double click to maximise and the system menu
-        // on right click.
-        return HTCAPTION;
+        // on right click. Where the application owns the strip it is the application's
+        // content instead, and the scene begins a move from it (dxc_native_window_begin_drag).
+        return dxc_caption_zone_is_system_caption(DXC_CAPTION_ZONE_CAPTION, dxc_options.app_caption)
+            ? HTCAPTION
+            : HTCLIENT;
     case DXC_CAPTION_ZONE_MAXIMISE:
         // Snap Layouts appears only over a window's HTMAXBUTTON. The press and the moves
         // that land here are non-client messages, forwarded to the scene below so the
@@ -3553,9 +3559,53 @@ void dxc_native_window_action(int32_t action) {
     }
 }
 
-/** The system moves the window itself where the caption is the system's, so nothing here. */
+/**
+ * Hands the press the scene is holding to the system's own move ([edge] 0) or resize loop,
+ * as if it had landed on the caption or that edge: the capture is let go so the system can
+ * take the pointer, and a non-client button-down with the edge's hit test code starts the
+ * loop, so snapping, the keyboard and multiple monitors all behave as they do for any window.
+ * Where the caption is the system's the system already does this, so this is reached from a
+ * strip the application owns, or from a node it made a drag region.
+ *
+ * The window is the one holding the press: the one with the capture, or else the active one,
+ * so a second window of the application moves itself and not the first.
+ */
 void dxc_native_window_begin_drag(int32_t edge) {
-    (void)edge;
+    int32_t code = dxc_drag_hit_code(edge);
+    if (code < 0) {
+        return;
+    }
+    HWND target = GetCapture();
+    if (target == NULL) {
+        target = GetActiveWindow();
+    }
+    if (target == NULL) {
+        target = dxc_window;
+    }
+    if (target == NULL) {
+        return;
+    }
+    // The root window, not a child surface the press may have been captured on.
+    HWND root = GetAncestor(target, GA_ROOT);
+    if (root != NULL) {
+        target = root;
+    }
+    POINT point;
+    if (!GetCursorPos(&point)) {
+        return;
+    }
+    ReleaseCapture();
+    SendMessageW(target, WM_NCLBUTTONDOWN, (WPARAM)code, MAKELPARAM(point.x, point.y));
+}
+
+/**
+ * Whether the application owns the caption strip of the windows opened after this
+ * (`Chrome::FullSize`): its empty part is then client area, and the scene moves the window
+ * from it through dxc_native_window_begin_drag. 0, the default, keeps the system's caption.
+ * Called after dxc_native_window_configure, which sets it back to 0 for each window.
+ */
+void dxc_native_window_configure_app_caption(int32_t enabled) {
+    dxc_next_options.app_caption = enabled ? 1 : 0;
 }
 
 /**

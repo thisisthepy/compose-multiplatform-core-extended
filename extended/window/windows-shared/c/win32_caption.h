@@ -72,6 +72,41 @@ static inline enum dxc_caption_zone dxc_caption_zone_at(
     return DXC_CAPTION_ZONE_CAPTION;
 }
 
+/**
+ * Whether a point in [zone] is handed to the system as the caption, which moves the window,
+ * maximises it on a double click and opens the system menu on a right click.
+ *
+ * Not where the application owns the caption strip (`Chrome::FullSize`): there the strip is
+ * the application's content, its own buttons and fields have to take the press, and an empty
+ * part of it moves the window because the scene asks for that ([dxc_drag_hit_code]), not
+ * because the system took the press first.
+ */
+static inline int32_t dxc_caption_zone_is_system_caption(enum dxc_caption_zone zone, int32_t app_caption) {
+    return zone == DXC_CAPTION_ZONE_CAPTION && !app_caption;
+}
+
+/**
+ * The hit test code a drag the scene began from [edge] is handed to the system as, so the
+ * system's own move or resize loop runs: 0 moves, then left, right, top, bottom, top left,
+ * top right, bottom left, bottom right, the numbering every window here uses. The numbers
+ * are HTCAPTION, HTLEFT and the rest of winuser.h, written out so this header needs no
+ * Windows header; the shared test checks they are the same. -1 for an edge that is none.
+ */
+static inline int32_t dxc_drag_hit_code(int32_t edge) {
+    static const int32_t codes[9] = {
+        2,  /* HTCAPTION */
+        10, /* HTLEFT */
+        11, /* HTRIGHT */
+        12, /* HTTOP */
+        15, /* HTBOTTOM */
+        13, /* HTTOPLEFT */
+        14, /* HTTOPRIGHT */
+        16, /* HTBOTTOMLEFT */
+        17, /* HTBOTTOMRIGHT */
+    };
+    return edge >= 0 && edge < 9 ? codes[edge] : -1;
+}
+
 /*
  * What the scene is told of the pointer while it crosses between the maximise button, which
  * is non-client, and everything else the scene draws, which is client area.

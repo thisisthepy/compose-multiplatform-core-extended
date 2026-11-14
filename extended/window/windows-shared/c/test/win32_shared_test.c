@@ -404,6 +404,66 @@ static void pump_all(void) {
     dxc_native_pump(0.0);
 }
 
+// Where the application owns the caption strip (Chrome::FullSize) the strip is its content and
+// the scene moves the window from it; elsewhere the system's caption takes the press. A drag
+// the scene begins is handed to the system with the hit test code of its edge.
+static void fr19_9_app_caption_decisions(void) {
+    CHECK(dxc_caption_zone_is_system_caption(DXC_CAPTION_ZONE_CAPTION, 0));
+    CHECK(!dxc_caption_zone_is_system_caption(DXC_CAPTION_ZONE_CAPTION, 1));
+    CHECK(!dxc_caption_zone_is_system_caption(DXC_CAPTION_ZONE_CLOSE, 0));
+    CHECK(!dxc_caption_zone_is_system_caption(DXC_CAPTION_ZONE_CLIENT, 0));
+    CHECK(dxc_drag_hit_code(0) == HTCAPTION);
+    CHECK(dxc_drag_hit_code(1) == HTLEFT);
+    CHECK(dxc_drag_hit_code(2) == HTRIGHT);
+    CHECK(dxc_drag_hit_code(3) == HTTOP);
+    CHECK(dxc_drag_hit_code(4) == HTBOTTOM);
+    CHECK(dxc_drag_hit_code(5) == HTTOPLEFT);
+    CHECK(dxc_drag_hit_code(6) == HTTOPRIGHT);
+    CHECK(dxc_drag_hit_code(7) == HTBOTTOMLEFT);
+    CHECK(dxc_drag_hit_code(8) == HTBOTTOMRIGHT);
+    CHECK(dxc_drag_hit_code(9) == -1 && dxc_drag_hit_code(-1) == -1);
+}
+
+// A real window asked what is under a point in the empty part of its caption strip: the
+// caption, which the system moves, by default; client area, which the scene gets, once the
+// application owns the strip. The setting is the next window's and is cleared by configure.
+static void fr19_9_app_caption_strip_is_client_area(void) {
+    for (int app = 0; app <= 1; app++) {
+        dxc_native_window_configure(1, 0, 0, 0, 0);
+        if (app) {
+            dxc_native_window_configure_app_caption(1);
+        }
+        struct dxc_native_window window;
+        memset(&window, 0, sizeof window);
+        if (!open_test_window(&window, app ? "app caption" : "system caption")) {
+            printf("skip: fr19_9_app_caption_strip_is_client_area (no window here)\n");
+            return;
+        }
+        pump_all();
+        HWND hwnd = (HWND)window.window;
+        RECT client;
+        CHECK(GetClientRect(hwnd, &client));
+        int32_t dpi = (int32_t)GetDpiForWindow(hwnd);
+        if (dpi == 0) {
+            dpi = 96;
+        }
+        // A third of the way across, half way down the strip: clear of the buttons and the
+        // top resize band.
+        POINT point = {client.right / 3, dxc_caption_scale(DXC_CAPTION_HEIGHT_DIP, dpi) / 2};
+        CHECK(ClientToScreen(hwnd, &point));
+        LRESULT where = SendMessageW(hwnd, WM_NCHITTEST, 0, MAKELPARAM(point.x, point.y));
+        if (app) {
+            CHECK(where == HTCLIENT);
+        } else {
+            CHECK(where == HTCAPTION);
+        }
+        dxc_native_window_destroy(window.window);
+        pump_all();
+    }
+    // configure cleared it: the next window has the system's caption again.
+    dxc_native_window_configure(1, 0, 0, 0, 0);
+}
+
 // Two real windows, on the software Direct3D 12 adapter if the machine has no other. Where the
 // runner cannot make a window at all, the checks that need one say so and are skipped.
 static void fr53_two_windows_have_independent_state(void) {
@@ -1054,6 +1114,7 @@ int main(int argc, char **argv) {
     wheel_direction();
     utf8_conversion();
     caption_zones();
+    fr19_9_app_caption_decisions();
     caption_pointer_crossings();
     frame_time();
     x11_names();
@@ -1064,6 +1125,7 @@ int main(int argc, char **argv) {
     fr53_second_pump_in_the_same_turn_does_not_wait();
     // The software adapter, for a runner with no GPU.
     _putenv("DXC_D3D12_WARP=1");
+    fr19_9_app_caption_strip_is_client_area();
     fr53_two_windows_have_independent_state();
     fr53_window_position_round_trips();
     pointer_events_carry_the_message_time();
