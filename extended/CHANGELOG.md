@@ -3,7 +3,7 @@
 The upstream changelogs under `compose/` stay upstream's. This one is for the modules this fork
 adds: the window modules, the design systems, the skiko scripts and the packaging templates.
 
-## Unreleased
+## 1.11.1-ext.4 (2026-11-14)
 
 ### Window modules (`org.thisisthepy.compose.window`)
 

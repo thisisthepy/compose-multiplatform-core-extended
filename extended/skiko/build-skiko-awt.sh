@@ -30,7 +30,7 @@ REVISION="9a5b398bb2044fff7e7a84fbfd6f4b803e4427c0"
 # fork's one version line, gradle.properties).
 UPSTREAM_VERSION="0.144.6"
 PUBLISHED_GROUP="org.thisisthepy.compose.skiko"
-PUBLISHED_AS="1.11.1-ext.3"
+PUBLISHED_AS="1.11.1-ext.4"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
