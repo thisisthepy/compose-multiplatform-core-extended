@@ -130,9 +130,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # check_targets_test.py reads the design systems' project.yaml and module.yaml files.
+          # check_targets_test.py reads the design systems' project.yaml and module.yaml files;
+          # central-bundle.test.sh runs extended/skiko/repoint-desktop-skiko.py.
           sparse-checkout: |
             extended/publish
+            extended/skiko
             extended/COORDINATES.md
             extended/design-systems
             buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build
