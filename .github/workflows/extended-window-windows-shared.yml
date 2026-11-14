@@ -139,6 +139,7 @@ jobs:
         shell: bash
         run: |
           PROBE_RASTER=0 PROBE_SAVE='out\frames-states-gpu' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-gpu.log || true
+          PROBE_RASTER=0 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-gpu-30ms.log || true
 
       # How far the edge lags the pointer in a right-edge drag, with a frame that costs
       # nothing and with one that costs 30 ms (about what Skia's raster backend takes on this
@@ -149,18 +150,55 @@ jobs:
           PROBE_SAVE='out\frames-drag' ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-drag.log || true
           PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-drag-30ms.log || true
 
-      # With a frame that costs nothing and with one that costs 30 ms. Not a gate yet: after
-      # restore, left-half snap and back one composed frame still shows the old picture, while
-      # the GPU takes over again (compose-rust#684). The verdict lines are what is read.
-      - name: Resize probe, maximise, restore and snap
-        continue-on-error: true
+      # For comparison, not a gate: the swapchain's child left visible until WM_SIZE, as before
+      # it was hidden ahead of the size change; the frame drawn ahead presented through the
+      # swapchain, and copied into the window's GDI surface with the child hidden in WM_SIZE.
+      # Both showed the child's old picture once on restore or snap (compose-rust#684).
+      - name: Resize probe, maximise, restore and snap, child hidden in WM_SIZE (comparison)
         shell: bash
         run: |
-          set -o pipefail
-          status=0
-          PROBE_SAVE='out\frames-states' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states.log || status=1
-          PROBE_DRAW_MS=30 PROBE_SAVE='out\frames-states-30ms' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-30ms.log || status=1
-          exit $status
+          DXC_RESIZE_HIDE_EARLY=0 PROBE_VERBOSE=1 PROBE_SAVE='out\frames-states-late' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-late.log || true
+          DXC_RESIZE_HIDE_EARLY=0 PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-late-30ms.log || true
+          DXC_RESIZE_HIDE_EARLY=0 DXC_RESIZE_SWAPCHAIN=0 PROBE_VERBOSE=1 PROBE_SAVE='out\frames-states-hidden' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-hidden.log || true
+          DXC_RESIZE_HIDE_EARLY=0 DXC_RESIZE_SWAPCHAIN=0 PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-hidden-30ms.log || true
+
+      # For comparison, not a gate: other ways of bringing the child hidden ahead of the size
+      # change back with the frame drawn ahead (DXC_SURFACE_RETURN in win32_window.c).
+      - name: Resize probe, maximise, restore and snap, other returns of the child (comparison)
+        shell: bash
+        run: |
+          for way in wmsize showfirst; do
+            DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-return-$way.log || true
+            DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-return-$way-30ms.log || true
+          done
+
+      # A gate on a rate, not on zero. A size change outside a drag is several steps (the
+      # window's rectangle, the copy into it, the child's show, the present) that take about
+      # 1.4 ms together, and DWM can begin a composition between them: it then shows the new
+      # size with the old picture once. No order or wait removed that (issue #223 of the fork
+      # has the runs): 11 faulty frames in 429 size changes with this order, 2.6 %, and 6.4 %
+      # in the worst run. Zero needs a surface that takes size and picture in one step, which
+      # #223 tracks. Until then this fails above 10 % of the size changes, which a regression
+      # to one faulty frame on every restore and snap (69 %) cannot pass.
+      - name: Resize probe, maximise, restore and snap
+        shell: bash
+        run: |
+          for run in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
+            PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-states-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-$run.log || true
+          done
+          for run in 1 2 3; do
+            PROBE_VERBOSE=1 PROBE_DRAW_MS=30 PROBE_SAVE="out\\frames-states-30ms-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-30ms-$run.log || true
+          done
+          runs=0; changes=0; faulty=0
+          for log in out/probe-states-?.log out/probe-states-??.log out/probe-states-30ms-?.log; do
+            grep -q 'probe: verdict' "$log" || { echo "$log has no verdict: the probe did not finish" >&2; exit 1; }
+            runs=$((runs + 1))
+            changes=$((changes + $(grep -c 'resize-mode: frames gpu -> cpu' "$log" || true)))
+            faulty=$((faulty + $(grep -c 'probe: FAULT' "$log" || true)))
+          done
+          echo "resize probe: $runs runs, $changes size changes, $faulty faulty frames (limit: 10 % of the size changes)"
+          test "$changes" -ge 200 || { echo "expected at least 200 size changes, counted $changes" >&2; exit 1; }
+          test $((faulty * 10)) -le "$changes" || { echo "more than 10 % of the size changes showed a faulty frame" >&2; exit 1; }
 
       - uses: actions/upload-artifact@v4
         if: always()
