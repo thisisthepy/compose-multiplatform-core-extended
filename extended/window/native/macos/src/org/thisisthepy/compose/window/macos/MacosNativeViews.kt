@@ -38,7 +38,6 @@ import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSMakeRect
 import platform.QuartzCore.CALayer
 import platform.QuartzCore.CAShapeLayer
-import platform.QuartzCore.CATransaction
 import platform.QuartzCore.kCAFillRuleEvenOdd
 
 /**
@@ -235,7 +234,24 @@ class MacosNativeViews internal constructor(
         return point.useContents { slot.region.contains(x * slot.scale, (height - y) * slot.scale) }
     }
 
-    /** Puts [slot]'s container and view where its region says, and cuts it to the region. */
+    /**
+     * Puts [slot]'s container and view where its region says, and cuts it to the region.
+     *
+     * In whatever Core Animation transaction the thread already has, never one of its own. A
+     * slot is placed from the scene's layout, in the middle of the frame whose drawable the
+     * scene presents a few milliseconds later, and that drawable goes to the screen with the
+     * transaction the run loop commits at the end of its turn (the layer presents with the
+     * transaction). An explicit begin and commit here, with no transaction open around it, is
+     * the outermost one and is sent to the window server the moment it commits, so the view
+     * reached the screen ahead of the frame drawn for it: with 4 ms of drawing between the
+     * two, the window server composited the view's new place over the previous frame in 31 to
+     * 44 of about 112 pictures of a moving slot, one step of the movement apart. Left to the
+     * thread's transaction, the view and the frame are committed together, and none of 80 to
+     * 92 pictures had them apart (NativeViewSameFrameTest).
+     *
+     * Nothing animates without one: these are views' own layers, whose delegate (the view)
+     * answers no implicit animation, and the mask is a new layer each time.
+     */
     private fun place(slot: NativeViewSlot) {
         val scale = owner.window.backingScaleFactor.takeIf { it > 0.0 } ?: 1.0
         slot.scale = scale
@@ -243,27 +259,21 @@ class MacosNativeViews internal constructor(
         val frame = region.frame
         val bounds = region.bounds
         val height = backdrop.bounds.useContents { size.height }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        try {
-            slot.container.setFrame(
-                NSMakeRect(bounds.x / scale, height - bounds.bottom / scale, bounds.width / scale, bounds.height / scale),
-            )
-            // The view keeps the slot's whole frame; the container cuts it to the clip. Both are
-            // unflipped, so the view's origin is its bottom left corner.
-            slot.view.setFrame(
-                NSMakeRect(
-                    (frame.x - bounds.x) / scale,
-                    (bounds.bottom - frame.bottom) / scale,
-                    frame.width / scale,
-                    frame.height / scale,
-                ),
-            )
-            slot.container.layer?.masksToBounds = true
-            slot.container.layer?.mask = mask(region, scale)
-        } finally {
-            CATransaction.commit()
-        }
+        slot.container.setFrame(
+            NSMakeRect(bounds.x / scale, height - bounds.bottom / scale, bounds.width / scale, bounds.height / scale),
+        )
+        // The view keeps the slot's whole frame; the container cuts it to the clip. Both are
+        // unflipped, so the view's origin is its bottom left corner.
+        slot.view.setFrame(
+            NSMakeRect(
+                (frame.x - bounds.x) / scale,
+                (bounds.bottom - frame.bottom) / scale,
+                frame.width / scale,
+                frame.height / scale,
+            ),
+        )
+        slot.container.layer?.masksToBounds = true
+        slot.container.layer?.mask = mask(region, scale)
     }
 
     /**

@@ -3,6 +3,19 @@
 The upstream changelogs under `compose/` stay upstream's. This one is for the modules this fork
 adds: the window modules, the design systems, the skiko scripts and the packaging templates.
 
+## Unreleased
+
+### Window modules (`org.thisisthepy.compose.window`)
+
+- **Fix.** On the Kotlin/Native macOS window, a native view moved during an animated scroll was
+  a frame ahead of the content drawn under it. `MacosNativeViews` placed each slot inside a Core
+  Animation transaction of its own, which, with no transaction open around it, went to the
+  window server at once, in the middle of the frame, while the drawable of that frame went with
+  the run loop's transaction at the end of the turn. The slot is now placed in the thread's
+  transaction, so the view and the frame reach the screen in the same composition. A test reads
+  what the window server composited through ScreenCaptureKit: 31 to 44 of about 112 pictures of
+  a moving slot had the two apart before, none after. (#233)
+
 ## 1.11.1-ext.4 (2026-11-14)
 
 ### Window modules (`org.thisisthepy.compose.window`)
