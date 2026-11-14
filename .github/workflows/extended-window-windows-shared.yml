@@ -167,12 +167,12 @@ jobs:
       - name: Resize probe, maximise, restore and snap, other returns of the child (comparison)
         shell: bash
         run: |
-          for way in nccalc showfirst posted; do
+          for way in wmsize showfirst; do
             DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-return-$way.log || true
             DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-return-$way-30ms.log || true
           done
 
-      # With a frame that costs nothing and with one that costs 30 ms, twice each. A gate: no composed
+      # With a frame that costs nothing and with one that costs 30 ms, three times each. A gate: no composed
       # frame of maximise, restore, left-half snap or back may show another size's picture
       # (compose-rust#684).
       - name: Resize probe, maximise, restore and snap
@@ -180,7 +180,7 @@ jobs:
         run: |
           set -o pipefail
           status=0
-          for run in 1 2; do
+          for run in 1 2 3; do
             PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-states-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-$run.log || status=1
             PROBE_VERBOSE=1 PROBE_DRAW_MS=30 PROBE_SAVE="out\\frames-states-30ms-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-30ms-$run.log || status=1
           done

@@ -455,11 +455,16 @@ static int dxc_predraw_flush;
 // was hidden in WM_NCCALCSIZE, ahead of the size change. For comparing the two.
 static int dxc_hide_early_off;
 // DXC_SURFACE_RETURN: how the child hidden ahead of the size change comes back with the frame
-// drawn ahead. wmsize (the default): WM_SIZE fits it, presents the frame and shows it;
-// nccalc: fitted and presented in WM_NCCALCSIZE, shown in WM_SIZE; showfirst: WM_SIZE fits
-// and shows it, then presents; posted: the GPU return after WM_SIZE draws a new frame first.
-enum { DXC_SURFACE_RETURN_WM_SIZE, DXC_SURFACE_RETURN_NCCALC, DXC_SURFACE_RETURN_SHOW_FIRST, DXC_SURFACE_RETURN_POSTED };
-static const char *const dxc_surface_return_names[] = {"wmsize", "nccalc", "showfirst", "posted"};
+// drawn ahead. staged (the default): the swapchain is refitted and the frame copied into its
+// buffer in WM_NCCALCSIZE, and WM_SIZE fits the child, shows it and presents; wmsize: WM_SIZE
+// fits it, presents the frame and shows it; nccalc: fitted and presented in WM_NCCALCSIZE,
+// shown in WM_SIZE; showfirst: WM_SIZE fits and shows it, then refits and presents; posted:
+// the GPU return after WM_SIZE draws a new frame first.
+enum {
+    DXC_SURFACE_RETURN_STAGED, DXC_SURFACE_RETURN_WM_SIZE, DXC_SURFACE_RETURN_NCCALC, DXC_SURFACE_RETURN_SHOW_FIRST,
+    DXC_SURFACE_RETURN_POSTED, DXC_SURFACE_RETURN_COUNT
+};
+static const char *const dxc_surface_return_names[] = {"staged", "wmsize", "nccalc", "showfirst", "posted"};
 static int dxc_surface_return;
 /**
  * One line on stderr for every change of a state that decides how resize frames are
@@ -2576,10 +2581,10 @@ static void dxc_raster_copy(void) {
  * every resize frame is drawn on the GPU, which never showed that frame.
  */
 /**
- * Refits the swapchain to width x height where it is another size, copies the CPU frame in
- * the bitmap into its buffer and presents it. One when it was presented.
+ * Refits the swapchain to width x height where it is another size and copies the CPU frame
+ * in the bitmap into its buffer, without presenting it. One when it was copied.
  */
-static int dxc_bitmap_to_swapchain(int32_t width, int32_t height) {
+static int dxc_stage_bitmap(int32_t width, int32_t height) {
     if (dxc_swapchain == NULL || dxc_d3d11_context == NULL || dxc_dib_bits == NULL ||
         width > dxc_dib_width || height > dxc_dib_height) {
         return 0;
@@ -2607,6 +2612,11 @@ static int dxc_bitmap_to_swapchain(int32_t width, int32_t height) {
                                           (UINT)dxc_dib_width * 4, 0);
     ID3D11DeviceContext_Flush(dxc_d3d11_context);
     ID3D11Resource_Release(back);
+    return 1;
+}
+
+/** Presents what the swapchain's buffer holds. One when it was presented. */
+static int dxc_present_staged(void) {
     dxc_presents_in_change++;
     HRESULT shown = IDXGISwapChain1_Present(dxc_swapchain, 0, 0);
     if (FAILED(shown)) {
@@ -2614,6 +2624,10 @@ static int dxc_bitmap_to_swapchain(int32_t width, int32_t height) {
         return 0;
     }
     return 1;
+}
+
+static int dxc_bitmap_to_swapchain(int32_t width, int32_t height) {
+    return dxc_stage_bitmap(width, height) && dxc_present_staged();
 }
 
 static int dxc_raster_present(int32_t width, int32_t height) {
@@ -2644,9 +2658,17 @@ static int dxc_ready_surface(int32_t width, int32_t height) {
     if (dxc_surface == NULL || IsWindowVisible(dxc_surface)) {
         return 0;
     }
-    SetWindowPos(dxc_surface, NULL, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOREDRAW);
-    if (!dxc_bitmap_to_swapchain(width, height)) {
-        return 0;
+    if (dxc_surface_return == DXC_SURFACE_RETURN_STAGED) {
+        // Only refitted and filled: a present to a hidden child is not composed when it is
+        // shown, so the present waits for WM_SIZE, after the show.
+        if (!dxc_stage_bitmap(width, height)) {
+            return 0;
+        }
+    } else {
+        SetWindowPos(dxc_surface, NULL, 0, 0, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOREDRAW);
+        if (!dxc_bitmap_to_swapchain(width, height)) {
+            return 0;
+        }
     }
     dxc_surface_ready_width = width;
     dxc_surface_ready_height = height;
@@ -2674,14 +2696,19 @@ static int dxc_show_ready_surface(int32_t width, int32_t height) {
     if (dxc_surface_return == DXC_SURFACE_RETURN_NCCALC) {
         if (!ready) return 0;
         ShowWindow(dxc_surface, SW_SHOWNA);
-    } else if (dxc_surface_return == DXC_SURFACE_RETURN_SHOW_FIRST) {
+    } else if (dxc_surface_return == DXC_SURFACE_RETURN_STAGED && ready) {
         SetWindowPos(dxc_surface, NULL, 0, 0, width, height, fit);
         ShowWindow(dxc_surface, SW_SHOWNA);
+        if (!dxc_present_staged()) return 0;
+    } else if (dxc_surface_return == DXC_SURFACE_RETURN_WM_SIZE) {
+        SetWindowPos(dxc_surface, NULL, 0, 0, width, height, fit);
         if (!dxc_bitmap_to_swapchain(width, height)) return 0;
+        ShowWindow(dxc_surface, SW_SHOWNA);
     } else {
+        // showfirst, and staged where the frame could not be readied ahead.
         SetWindowPos(dxc_surface, NULL, 0, 0, width, height, fit);
-        if (!dxc_bitmap_to_swapchain(width, height)) return 0;
         ShowWindow(dxc_surface, SW_SHOWNA);
+        if (!dxc_bitmap_to_swapchain(width, height)) return 0;
     }
     dxc_presented_width = width;
     dxc_presented_height = height;
@@ -2807,7 +2834,9 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     dxc_predrawing = 0;
     dxc_resizing = 0;
     int drawn = dxc_predrawn.width == width && dxc_predrawn.height == height;
-    int ready = drawn && hidden && dxc_surface_return == DXC_SURFACE_RETURN_NCCALC && dxc_ready_surface(width, height);
+    int ready = drawn && hidden &&
+                (dxc_surface_return == DXC_SURFACE_RETURN_NCCALC || dxc_surface_return == DXC_SURFACE_RETURN_STAGED) &&
+                dxc_ready_surface(width, height);
     double drawn_ms = dxc_elapsed_ms(started);
     // Only for the copy into the GDI surface. A frame presented through the swapchain is
     // waited for after its present, in WM_SIZE, like any GPU resize frame.
@@ -4981,7 +5010,7 @@ static int32_t dxc_open_window(
         const char *early = getenv("DXC_RESIZE_HIDE_EARLY");
         dxc_hide_early_off = early != NULL && strcmp(early, "0") == 0;
         const char *surface_return = getenv("DXC_SURFACE_RETURN");
-        for (int named = 0; surface_return != NULL && named < 4; named++) {
+        for (int named = 0; surface_return != NULL && named < DXC_SURFACE_RETURN_COUNT; named++) {
             if (strcmp(surface_return, dxc_surface_return_names[named]) == 0) dxc_surface_return = named;
         }
     }
