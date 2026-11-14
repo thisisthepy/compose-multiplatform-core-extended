@@ -24,7 +24,7 @@ settings:
     enabled: true
     group: org.thisisthepy.compose.window
     artifactId: graalvm-linux
-    version: 1.11.1-ext.3
+    version: 1.11.1-ext.4
 
 repositories:
   - id: mavenLocal

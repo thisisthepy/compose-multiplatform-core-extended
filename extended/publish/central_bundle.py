@@ -568,7 +568,7 @@ def check_capabilities(where, metadata):
     Amper takes a variant only when its capabilities are exactly the module's own coordinate
     (or there are none, which means the same), so a variant with a second one is no variant
     to it, and a module whose every variant has one stops an Amper build with "Platform is
-    not supported by the library". 1.11.1-ext.3's skiko-awt declared JetBrains'
+    not supported by the library". 1.11.1-ext.4's skiko-awt declared JetBrains'
     org.jetbrains.skiko:skiko-awt beside its own. Also refuses a desktop module that still
     depends on JetBrains' skiko, which repoint-desktop-skiko.py changes to this fork's
     skiko-awt: without it JetBrains' skiko-awt reaches a class path beside the fork's.
