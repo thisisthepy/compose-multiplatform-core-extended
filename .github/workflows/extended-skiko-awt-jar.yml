@@ -63,11 +63,10 @@ jobs:
           assert "url" not in metadata["component"], metadata["component"]
           for variant in metadata["variants"]:
               names = {(c["group"], c["name"]) for c in variant.get("capabilities", [])}
-              assert ("org.jetbrains.skiko", "skiko-awt") in names, variant["name"]
-              assert ("org.thisisthepy.compose.skiko", "skiko-awt") in names, variant["name"]
+              assert names == {("org.thisisthepy.compose.skiko", "skiko-awt")}, (variant["name"], names)
           runtime = [d for v in metadata["variants"] for d in v.get("dependencies", [])
                      if d["module"].startswith("skiko-awt-runtime")]
           for dependency in runtime:
               assert dependency["group"] == "org.jetbrains.skiko" and dependency["version"]["requires"] == "0.144.6", dependency
-          print("ok:", len(runtime), "runtime dependencies at 0.144.6, and the capability on every variant")
+          print("ok:", len(runtime), "runtime dependencies at 0.144.6, and only its own capability on every variant")
           PY

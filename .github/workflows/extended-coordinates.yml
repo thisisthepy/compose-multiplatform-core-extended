@@ -9,7 +9,10 @@ on:
     paths:
       - extended/compose/**
       - extended/skiko/republish-skiko-mingw.py
+      - extended/skiko/republish-skiko-awt.py
+      - extended/skiko/repoint-desktop-skiko.py
       - extended/skiko/tests/republish-skiko-mingw.test.sh
+      - extended/skiko/tests/republish-skiko-awt.test.sh
       - .github/actions/fork-compose/**
       - .github/workflows/extended-coordinates.yml
   push:
@@ -18,7 +21,10 @@ on:
     paths:
       - extended/compose/**
       - extended/skiko/republish-skiko-mingw.py
+      - extended/skiko/republish-skiko-awt.py
+      - extended/skiko/repoint-desktop-skiko.py
       - extended/skiko/tests/republish-skiko-mingw.test.sh
+      - extended/skiko/tests/republish-skiko-awt.test.sh
       - .github/actions/fork-compose/**
       - .github/workflows/extended-coordinates.yml
 
@@ -47,3 +53,6 @@ jobs:
 
       - name: republish-skiko-mingw.py
         run: extended/skiko/tests/republish-skiko-mingw.test.sh
+
+      - name: republish-skiko-awt.py and repoint-desktop-skiko.py
+        run: extended/skiko/tests/republish-skiko-awt.test.sh

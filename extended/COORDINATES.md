@@ -171,9 +171,14 @@ the publish workflow when one of them is missing from the bundle.
   skiko by that coordinate.
 - **skiko-awt** is the exception among the skiko artifacts: the patched jar (the AWT switch) is
   this fork's, `org.thisisthepy.compose.skiko:skiko-awt:1.11.1-ext.3`, from
-  `extended/skiko/build-skiko-awt.sh`. Its Gradle module metadata declares JetBrains'
-  `org.jetbrains.skiko:skiko-awt` as a capability at `0.144.6.1`, so Gradle sees the two as one
-  library and, resolving the conflict by version, keeps this one. Its natives are JetBrains'
+  `extended/skiko/build-skiko-awt.sh`. Each variant of its Gradle module metadata declares one
+  capability, its own coordinate, because Amper accepts no other. To keep JetBrains' skiko-awt
+  off a class path, `extended/skiko/repoint-desktop-skiko.py` changes this fork's `*-desktop`
+  modules from `org.jetbrains.skiko:skiko` (their Gradle module metadata) and
+  `org.jetbrains.skiko:skiko-awt` (their POM) to this skiko-awt, in the local repository and in
+  the Central bundle; `extended/publish/central_bundle.py validate` refuses a second capability
+  on any variant and a desktop module still on JetBrains' skiko. Kotlin/Native and web modules
+  keep skiko. Its natives are JetBrains'
   `skiko-awt-runtime-*` jars at `0.144.6`, and its packages are skiko's own.
 - **Stubs this fork depends on from JetBrains.** Some modules depend on JetBrains artifacts
   at fixed versions that carry no classes and only point at androidx (the runtime, lifecycle,

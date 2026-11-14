@@ -141,6 +141,62 @@ open(sys.argv[1], "w").write(re.sub(r"<description>.*?</description>", "", text,
 PY
 expect_fail "a POM without a description fails" "no description" "$out"
 
+# Capabilities: a variant may declare its own coordinate, and nothing else (Amper finds no
+# variant otherwise). 1.11.1-ext.3's skiko-awt declared JetBrains' skiko-awt beside its own.
+capabilities() { # <module file> <json list of [group, name]>
+    python3 -I - "$1" "$2" <<'PY2'
+import json, sys
+path, names = sys.argv[1], json.loads(sys.argv[2])
+m = json.load(open(path))
+v = m["component"]["version"]
+for variant in m["variants"]:
+    variant["capabilities"] = [{"group": g, "name": n, "version": v} for g, n in names]
+json.dump(m, open(path, "w"))
+PY2
+}
+out="$(build owncap)"; m="$out/org/thisisthepy/compose/ui/ui/$V/ui-$V.module"
+capabilities "$m" '[["org.thisisthepy.compose.ui", "ui"]]'
+python3 -I "$tool" sign "$out" > /dev/null
+python3 -I "$tool" validate "$out" > "$work/log" && pass "a variant declaring only its own capability validates" ||
+    { fail "a variant declaring only its own capability"; cat "$work/log" >&2; }
+out="$(build secondcap)"; m="$out/org/thisisthepy/compose/ui/ui/$V/ui-$V.module"
+capabilities "$m" '[["org.thisisthepy.compose.ui", "ui"], ["org.jetbrains.skiko", "skiko-awt"]]'
+python3 -I "$tool" sign "$out" > /dev/null
+expect_fail "a second capability fails" "declares the capability org.jetbrains.skiko:skiko-awt besides its own" "$out"
+out="$(build othercap)"; m="$out/org/thisisthepy/compose/ui/ui/$V/ui-$V.module"
+capabilities "$m" '[["org.jetbrains.skiko", "skiko-awt"]]'
+python3 -I "$tool" sign "$out" > /dev/null
+expect_fail "a capability other than its own fails" "declares the capability org.jetbrains.skiko:skiko-awt" "$out"
+
+# A desktop module must name the fork's skiko-awt, not JetBrains' skiko.
+out="$(build desktopskiko)"
+d="$out/org/thisisthepy/compose/ui/ui-desktop/$V"; mkdir -p "$d"
+pom "$d/ui-desktop-$V.pom" org.thisisthepy.compose.ui ui-desktop "$V" jar "<!-- $MARKER -->"
+jar "$d/ui-desktop-$V.jar"; jar "$d/ui-desktop-$V-sources.jar"; jar "$d/ui-desktop-$V-javadoc.jar"
+cat > "$d/ui-desktop-$V.module" <<JSON
+{"formatVersion":"1.1","component":{"group":"org.thisisthepy.compose.ui","module":"ui-desktop","version":"$V"},
+ "variants":[{"name":"desktopRuntimeElements-published","files":[{"name":"ui-desktop-$V.jar","url":"ui-desktop-$V.jar"}],
+   "dependencies":[{"group":"org.jetbrains.skiko","module":"skiko","version":{"requires":"0.144.6"}}]}]}
+JSON
+python3 -I "$tool" sign "$out" > /dev/null
+expect_fail "a desktop module on JetBrains' skiko fails" "variant desktopRuntimeElements-published depends on JetBrains' org.jetbrains.skiko:skiko" "$out"
+python3 -I "$here/../../skiko/repoint-desktop-skiko.py" "$out" --require > /dev/null
+python3 -I "$tool" sign "$out" > /dev/null
+# Added after staging, so its POM lacks what staging adds; only the skiko lines count here.
+python3 -I "$tool" validate "$out" > "$work/log" || true
+if grep -q "JetBrains' org.jetbrains.skiko" "$work/log" || ! grep -q "depends on org.thisisthepy.compose.skiko:skiko-awt:$V" "$work/log"; then
+    fail "a repointed desktop module"; cat "$work/log" >&2
+else
+    pass "a desktop module repointed at the fork's skiko-awt passes the skiko check"
+fi
+out="$(build desktoppom)"
+d="$out/org/thisisthepy/compose/ui/ui-desktop/$V"; mkdir -p "$d"
+pom "$d/ui-desktop-$V.pom" org.thisisthepy.compose.ui ui-desktop "$V" jar \
+    "<dependencies><dependency><groupId>org.jetbrains.skiko</groupId><artifactId>skiko-awt</artifactId><version>0.144.6</version></dependency></dependencies>"
+jar "$d/ui-desktop-$V.jar"; jar "$d/ui-desktop-$V-sources.jar"; jar "$d/ui-desktop-$V-javadoc.jar"
+python3 -I "$tool" sign "$out" > /dev/null
+expect_fail "a desktop POM on JetBrains' skiko-awt fails" "the POM depends on JetBrains' org.jetbrains.skiko:skiko-awt" "$out"
+
 for bad in 1.11.1-SNAPSHOT 1.11.1-ext.1-dev 0.1.0; do
     repo="$work/v-repo"; out="$work/v-out"; rm -rf "$repo" "$out"
     d="$repo/org/thisisthepy/compose/window/common/$bad"; mkdir -p "$d"
