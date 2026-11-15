@@ -130,6 +130,7 @@ void dxc_native_window_action(int32_t action);
 /** 1 while the window is maximised, so the renderer draws restore rather than maximise. */
 int32_t dxc_native_window_is_zoomed(void);
 void dxc_native_window_begin_drag(int32_t edge);
+void dxc_native_window_configure_app_caption(int32_t enabled);
 void dxc_native_set_icon(const uint8_t *rgba, int32_t width, int32_t height);
 void dxc_native_install_menu(const char *application_name);
 

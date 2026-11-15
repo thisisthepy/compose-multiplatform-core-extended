@@ -40,6 +40,8 @@ import org.thisisthepy.compose.window.windows.c.dxc_native_set_raster_resize
 import org.thisisthepy.compose.window.windows.c.dxc_native_text_scale_percent
 import org.thisisthepy.compose.window.windows.c.dxc_native_window
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_action
+import org.thisisthepy.compose.window.windows.c.dxc_native_window_begin_drag
+import org.thisisthepy.compose.window.windows.c.dxc_native_window_configure_app_caption
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_is_zoomed
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_closed
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_configure
@@ -146,6 +148,23 @@ class Win32NativeWindow private constructor(
             if (systemChrome) 1 else 0,
             backdrop,
         )
+
+        /**
+         * Whether the application owns the caption strip of the next window (`Chrome::FullSize`
+         * in compose-rust). Its empty part is then client area: the application's own buttons
+         * and fields in it take their presses, and the scene moves the window from it with
+         * [beginDrag]. Called after [configure], which sets it back to false for each window.
+         */
+        fun appCaption(enabled: Boolean) = dxc_native_window_configure_app_caption(if (enabled) 1 else 0)
+
+        /**
+         * Hands the press the scene holds to the system's move loop ([edge] 0), or its resize
+         * loop from an edge (1 left, 2 right, 3 top, 4 bottom, 5 to 8 the corners from top
+         * left), so the window moves or resizes, snaps and crosses monitors as any window does.
+         * Called from a press that is still down: in a strip the application owns, or on a
+         * node it made a drag region.
+         */
+        fun beginDrag(edge: Int = 0) = dxc_native_window_begin_drag(edge)
 
         /**
          * Opens the window [config] describes, at its position when it names one, and holds
