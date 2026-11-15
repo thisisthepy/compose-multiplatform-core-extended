@@ -21,44 +21,22 @@ import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.node.CompositionLocalConsumerModifierNode
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
-import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.alloc
-import kotlinx.cinterop.memScoped
-import kotlinx.cinterop.ptr
-import kotlinx.cinterop.value
-import platform.windows.SPI_GETWHEELSCROLLLINES
-import platform.windows.SystemParametersInfoW
-import platform.windows.UINTVar
 
 internal actual fun CompositionLocalConsumerModifierNode.platformScrollConfig(): ScrollConfig =
     WindowsScrollConfig
 
 /**
- * How far a turn of the wheel scrolls.
+ * How far, and which way, a turn of the wheel scrolls.
  *
  * The same answer Compose gives on Windows under the JVM, which was measured against the
- * Start menu: a twentieth of the scrolled area per line, times the number of lines a notch
- * is set to move in the system's mouse settings. Reading that setting is what makes a
- * reader who turned it up or down get what they asked for here too.
+ * Start menu: a twentieth of the scrolled area per line (see [windowsWheelScroll]). The
+ * window has already counted a notch as the lines the system's mouse settings move it, so a
+ * reader who turned that up or down gets what they asked for, and it is not counted again here.
  */
 private object WindowsScrollConfig : ScrollConfig {
     override fun Density.calculateMouseWheelScroll(event: PointerEvent, bounds: IntSize): Offset {
-        val change = event.changes.firstOrNull() ?: return Offset.Zero
-        val lines = linesPerNotch()
-        return Offset(
-            x = change.scrollDelta.x * (bounds.width / 20f) * lines,
-            y = change.scrollDelta.y * (bounds.height / 20f) * lines,
-        )
-    }
-}
-
-/** The system's lines per notch, or three, which is the default, if it cannot be read. */
-@OptIn(ExperimentalForeignApi::class)
-private fun linesPerNotch(): Float = memScoped {
-    val lines = alloc<UINTVar>()
-    if (SystemParametersInfoW(SPI_GETWHEELSCROLLLINES.toUInt(), 0u, lines.ptr, 0u) != 0) {
-        lines.value.toFloat()
-    } else {
-        3f
+        var travel = Offset.Zero
+        for (change in event.changes) travel += change.scrollDelta
+        return windowsWheelScroll(travel, bounds)
     }
 }

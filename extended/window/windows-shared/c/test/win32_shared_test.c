@@ -569,6 +569,54 @@ static void pointer_events_carry_the_message_time(void) {
     dxc_native_window_release(d.window);
 }
 
+// A real wheel message reaches the event queue with the sign WindowEvent.SCROLL documents:
+// a notch away from the reader (WM_MOUSEWHEEL, positive delta) asks for what is above, a
+// negative y, and a tilt to the right (WM_MOUSEHWHEEL, positive) for what is to the right, a
+// positive x. Both in lines, the notches times the lines a notch moves in the mouse settings.
+static void wheel_messages_reach_the_scene_with_the_documented_sign(void) {
+    if (!real_windows_ok) { printf("skip: wheel_messages_reach_the_scene_with_the_documented_sign\n"); return; }
+    UINT lines = 3;
+    if (!SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0) || lines == 0 || lines == WHEEL_PAGESCROLL) {
+        lines = 3;
+    }
+    struct dxc_native_window w;
+    memset(&w, 0, sizeof w);
+    if (!open_test_window(&w, "wheel")) return;
+    dxc_native_window_select(w.window);
+    struct dxc_event event;
+    pump_all();
+    while (dxc_native_poll_event(&event)) {}
+    POINT at = {20, 20};
+    ClientToScreen((HWND)w.window, &at);
+    LPARAM where = MAKELPARAM(at.x, at.y);
+    float seen[4][2];
+    int count = 0;
+    SendMessageW((HWND)w.window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), where);
+    SendMessageW((HWND)w.window, WM_MOUSEWHEEL, MAKEWPARAM(0, (WORD)(-WHEEL_DELTA)), where);
+    SendMessageW((HWND)w.window, WM_MOUSEHWHEEL, MAKEWPARAM(0, WHEEL_DELTA), where);
+    // A precision touchpad's quarter notch.
+    SendMessageW((HWND)w.window, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA / 4), where);
+    pump_all();
+    while (dxc_native_poll_event(&event)) {
+        if (event.kind == DXC_EVENT_SCROLL && count < 4) {
+            seen[count][0] = event.x;
+            seen[count][1] = event.y;
+            count++;
+        }
+    }
+    float l = (float)lines;
+    CHECK(count == 4);
+    if (count == 4) {
+        CHECK(seen[0][0] == 0.0f && seen[0][1] == -l);
+        CHECK(seen[1][0] == 0.0f && seen[1][1] == l);
+        CHECK(seen[2][0] == l && seen[2][1] == 0.0f);
+        CHECK(seen[3][0] == 0.0f && seen[3][1] == -l / 4.0f);
+    }
+    dxc_native_window_destroy(w.window);
+    pump_all();
+    dxc_native_window_release(w.window);
+}
+
 // A close the system asks for reaches the window it was asked of, and no other.
 static void fr53_close_request_reaches_only_its_window(void) {
     if (!real_windows_ok) { printf("skip: fr53_close_request_reaches_only_its_window\n"); return; }
@@ -1129,6 +1177,7 @@ int main(int argc, char **argv) {
     fr53_two_windows_have_independent_state();
     fr53_window_position_round_trips();
     pointer_events_carry_the_message_time();
+    wheel_messages_reach_the_scene_with_the_documented_sign();
     fr53_close_request_reaches_only_its_window();
     fr53_destroying_one_window_does_not_quit();
     fr53_activate_reports_focus();
