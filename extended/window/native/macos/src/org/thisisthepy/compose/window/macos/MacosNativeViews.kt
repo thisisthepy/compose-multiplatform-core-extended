@@ -17,6 +17,8 @@ import org.thisisthepy.compose.window.WindowEvent
 import platform.AppKit.NSEvent
 import platform.AppKit.NSView
 import platform.AppKit.NSViewMinYMargin
+import platform.AppKit.NSVisualEffectState
+import platform.AppKit.NSVisualEffectView
 import platform.Foundation.CFBridgingRelease
 import platform.CoreGraphics.CGBitmapContextCreate
 import platform.CoreGraphics.CGBitmapContextCreateImage
@@ -83,7 +85,37 @@ internal class NativeViewSlot(val id: Int, val view: NSView, val container: Nati
 
     /** The backing scale the frame and region were converted with. */
     var scale = 1.0
+
+    /** The region, scale and content height the slot was last placed with; null before that. */
+    var placed: NativeViewRegion? = null
+    var placedScale = 0.0
+    var placedHeight = 0.0
+
+    /** What the container's mask cuts, as [MacosNativeViews] made it; null for no mask. */
+    var cut: MaskCut? = null
+    var mask: CALayer? = null
+
+    /**
+     * The cut and mask before those, kept for a caller that sends the frame and then the region
+     * of a slot whose cut did not change: between the two calls the slot has the new frame
+     * and the old region, a cut of its own, and the region puts the earlier cut back.
+     */
+    var lastCut: MaskCut? = null
+    var lastMask: CALayer? = null
 }
+
+/**
+ * What a slot's mask cuts out, in the coordinates of the part of the slot that shows: two
+ * placings with the same cut have the same mask, wherever the slot is in the window.
+ */
+internal data class MaskCut(
+    val width: Int,
+    val height: Int,
+    /** The holes inside what shows, moved to its top left. */
+    val holes: List<PixelRoundRect>,
+    val disjoint: Boolean,
+    val scale: Double,
+)
 
 /**
  * The [NativeViews] of a [MacosWindow].
@@ -148,12 +180,56 @@ class MacosNativeViews internal constructor(
         place(slot)
     }
 
+    override fun setFrameAndVisibleRegion(
+        id: Int,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        clip: PixelRect?,
+        holes: List<PixelRoundRect>,
+    ) {
+        val slot = slots[id] ?: return
+        slot.region = NativeViewRegion(
+            PixelRect(x, y, maxOf(0, width), maxOf(0, height)),
+            clip,
+            holes.filter { !it.rect.isEmpty },
+        )
+        place(slot)
+    }
+
     override fun setVisible(id: Int, visible: Boolean) {
         val slot = slots[id] ?: return
         if (slot.visible == visible) return
         if (!visible && focus.focused == id) focusScene()
         slot.visible = visible
         slot.container.hidden = !visible
+        backdropFollowsSlots()
+    }
+
+    /**
+     * Holds the backdrop's blur still while a slot shows, and gives it back to the window's
+     * active state when none does.
+     *
+     * The backdrop is an NSVisualEffectView that follows the window's active state, so in a key
+     * window it is live, blurring what is behind the window. While it is, the window server
+     * does not always composite the layer tree and the Metal drawable of one commit together:
+     * a slot moved in the same turn as the frame drawn under it reached the screen a frame
+     * ahead of that frame in 2 to 14 of about 90 pictures, with or without a scene, against
+     * none with the window not key or the backdrop inactive (NativeViewSameFrameTest). Moving
+     * the Metal view and the slots out of the effect view, as its siblings above it, still left
+     * 2 to 4 apart, and a within-window effect 7, so it is the live effect anywhere in the
+     * window, not where the views sit. The inactive state draws the material without sampling
+     * what is behind the window, which is how the window looks when it is not key.
+     */
+    private fun backdropFollowsSlots() {
+        val effect = backdrop as? NSVisualEffectView ?: return
+        val state = if (slots.values.any { it.visible }) {
+            NSVisualEffectState.NSVisualEffectStateInactive
+        } else {
+            NSVisualEffectState.NSVisualEffectStateFollowsWindowActiveState
+        }
+        if (effect.state != state) effect.state = state
     }
 
     override fun focus(id: Int) {
@@ -172,6 +248,7 @@ class MacosNativeViews internal constructor(
         slots.remove(id)
         slot.view.removeFromSuperview()
         slot.container.removeFromSuperview()
+        backdropFollowsSlots()
         // The first responder may have been inside the view without the window making it so
         // through makeFirstResponder; whatever it is now is reported.
         firstResponderChanged()
@@ -250,46 +327,86 @@ class MacosNativeViews internal constructor(
      * 92 pictures had them apart (NativeViewSameFrameTest).
      *
      * Nothing animates without one: these are views' own layers, whose delegate (the view)
-     * answers no implicit animation, and the mask is a new layer each time.
+     * answers no implicit animation, and a mask is always a new layer.
+     *
+     * Only what changed is set. A caller sends every slot's frame and region each time it lays
+     * out, mostly unchanged, and a slot that scrolls is told both in one frame; placed from
+     * scratch each time (two frames, and for a clipped slot a new mask layer and its path) a
+     * call cost about 46 to 60 µs in a debug build. Unchanged input returns at once, a frame
+     * equal to the one set is not set again, and the mask is made again only when what it cuts
+     * changed; a clip with no hole inside it needs none, the container's bounds being the clip.
      */
     private fun place(slot: NativeViewSlot) {
         val scale = owner.window.backingScaleFactor.takeIf { it > 0.0 } ?: 1.0
-        slot.scale = scale
+        val height = backdrop.bounds.useContents { size.height }
         val region = slot.region
+        if (region == slot.placed && scale == slot.placedScale && height == slot.placedHeight) return
+        slot.placed = region
+        slot.placedScale = scale
+        slot.placedHeight = height
+        slot.scale = scale
         val frame = region.frame
         val bounds = region.bounds
-        val height = backdrop.bounds.useContents { size.height }
-        slot.container.setFrame(
-            NSMakeRect(bounds.x / scale, height - bounds.bottom / scale, bounds.width / scale, bounds.height / scale),
+        setFrameIfChanged(
+            slot.container,
+            bounds.x / scale, height - bounds.bottom / scale, bounds.width / scale, bounds.height / scale,
         )
         // The view keeps the slot's whole frame; the container cuts it to the clip. Both are
         // unflipped, so the view's origin is its bottom left corner.
-        slot.view.setFrame(
-            NSMakeRect(
-                (frame.x - bounds.x) / scale,
-                (bounds.bottom - frame.bottom) / scale,
-                frame.width / scale,
-                frame.height / scale,
-            ),
+        setFrameIfChanged(
+            slot.view,
+            (frame.x - bounds.x) / scale, (bounds.bottom - frame.bottom) / scale, frame.width / scale, frame.height / scale,
         )
-        slot.container.layer?.masksToBounds = true
-        slot.container.layer?.mask = mask(region, scale)
+        val cut = cutOf(region, scale)
+        if (cut != slot.cut) {
+            val mask = if (cut != null && cut == slot.lastCut) slot.lastMask else cut?.let(::mask)
+            slot.lastCut = slot.cut
+            slot.lastMask = slot.mask
+            slot.cut = cut
+            slot.mask = mask
+            slot.container.layer?.mask = mask
+        }
+    }
+
+    private fun setFrameIfChanged(view: NSView, x: Double, y: Double, width: Double, height: Double) {
+        val same = view.frame.useContents {
+            origin.x == x && origin.y == y && size.width == width && size.height == height
+        }
+        if (!same) view.setFrame(NSMakeRect(x, y, width, height))
     }
 
     /**
-     * The mask of a container cut to [region]: none when the whole frame shows, one path filled
-     * even-odd when the holes do not touch, and an image with each hole cleared when they do.
+     * What [region] needs cut out of the part of the slot that shows, or null when nothing
+     * does: the container's own bounds are the clip, and its layer cuts to them, so a mask is
+     * needed only for a hole inside them. A slot cut to nothing shows nothing either way, its
+     * container having no size.
      */
-    private fun mask(region: NativeViewRegion, scale: Double): CALayer? {
-        if (region.isWholeFrame) return null
+    private fun cutOf(region: NativeViewRegion, scale: Double): MaskCut? {
         val bounds = region.bounds
-        if (bounds.isEmpty) return CALayer()
-        val layerFrame = CGRectMake(0.0, 0.0, bounds.width / scale, bounds.height / scale)
+        if (bounds.isEmpty) return null
         val inside = region.holes.filter { it.rect.intersects(bounds) }
-        if (region.holesAreDisjoint) {
+        if (inside.isEmpty()) return null
+        return MaskCut(
+            width = bounds.width,
+            height = bounds.height,
+            holes = inside.map { it.copy(rect = it.rect.copy(x = it.rect.x - bounds.x, y = it.rect.y - bounds.y)) },
+            disjoint = NativeViewRegion(bounds, holes = inside).holesAreDisjoint,
+            scale = scale,
+        )
+    }
+
+    /**
+     * The mask that makes [cut]: one path filled even-odd when the holes do not touch, and an
+     * image with each hole cleared when they do.
+     */
+    private fun mask(cut: MaskCut): CALayer? {
+        val scale = cut.scale
+        val bounds = PixelRect(0, 0, cut.width, cut.height)
+        val layerFrame = CGRectMake(0.0, 0.0, cut.width / scale, cut.height / scale)
+        if (cut.disjoint) {
             val path = CGPathCreateMutable() ?: return null
             CGPathAddRect(path, null, layerFrame)
-            for (hole in inside) addHole(path, hole, bounds, scale)
+            for (hole in cut.holes) addHole(path, hole, bounds, scale)
             val shape = CAShapeLayer()
             shape.frame = layerFrame
             shape.path = path
@@ -299,14 +416,14 @@ class MacosNativeViews internal constructor(
         }
         // One byte of coverage per backing pixel, cleared under every hole: an overlap of two
         // holes is cleared twice and stays a hole.
-        val width = bounds.width.toULong()
+        val width = cut.width.toULong()
         val context = CGBitmapContextCreate(
-            null, width, bounds.height.toULong(), 8u, width, null, CGImageAlphaInfo.kCGImageAlphaOnly.value,
+            null, width, cut.height.toULong(), 8u, width, null, CGImageAlphaInfo.kCGImageAlphaOnly.value,
         ) ?: return null
         CGContextSetGrayFillColor(context, 0.0, 1.0)
-        CGContextFillRect(context, CGRectMake(0.0, 0.0, bounds.width.toDouble(), bounds.height.toDouble()))
+        CGContextFillRect(context, CGRectMake(0.0, 0.0, cut.width.toDouble(), cut.height.toDouble()))
         CGContextSetBlendMode(context, CGBlendMode.kCGBlendModeClear)
-        for (hole in inside) {
+        for (hole in cut.holes) {
             val path = CGPathCreateMutable() ?: continue
             addHole(path, hole, bounds, 1.0)
             CGContextAddPath(context, path)

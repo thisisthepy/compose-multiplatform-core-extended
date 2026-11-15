@@ -48,6 +48,24 @@ interface NativeViews {
     fun setVisibleRegion(id: Int, clip: PixelRect?, holes: List<PixelRoundRect>)
 
     /**
+     * [setFrame] and [setVisibleRegion] in one call, for a caller that has both in hand, as a
+     * layout pass does: the slot is placed once rather than once for each, which matters when a
+     * clipped view scrolls and both change every frame.
+     */
+    fun setFrameAndVisibleRegion(
+        id: Int,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        clip: PixelRect?,
+        holes: List<PixelRoundRect>,
+    ) {
+        setFrame(id, x, y, width, height)
+        setVisibleRegion(id, clip, holes)
+    }
+
+    /**
      * Hides or shows slot [id]. A hidden view is kept, with its state, and gets no input; if it
      * had keyboard focus the focus goes back to the scene first.
      */
