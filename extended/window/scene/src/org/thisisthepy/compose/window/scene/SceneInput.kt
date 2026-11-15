@@ -34,14 +34,20 @@ internal const val MODIFIER_COMMAND = 1 shl 20
  * platform says it happened (see [org.thisisthepy.compose.window.EventClock]); Compose counts
  * a double click by the time between two presses, and the time the scene read the second
  * one is late by however long the frame before it took.
+ *
+ * A scroll reaches Compose at the place [pointer] remembers, because the window's scroll
+ * record carries the wheel's travel where a pointer event carries its place. One
+ * [ScenePointer] goes with one scene for as long as it lives.
  */
 internal fun ComposeScene.receive(
     event: WindowEvent,
+    pointer: ScenePointer,
     keyOf: (Int) -> Key = ::composeKey,
     timeMillis: Long = monotonicNanos() / 1_000_000,
     /** Hears a key the scene did not use, and answers whether it used it. */
     unused: (KeyEvent) -> Boolean = { false },
 ) {
+    pointer.heard(event)
     when (event.kind) {
         WindowEvent.KEY_DOWN, WindowEvent.KEY_UP -> keyEventOf(event, keyOf).let { key ->
             if (!sendKeyEvent(key)) unused(key)
@@ -94,13 +100,38 @@ internal fun ComposeScene.receive(
         WindowEvent.NATIVE_VIEW_FOCUS_IN -> focusManager.releaseFocus()
 
         // The wheel's travel arrives where a position usually is, because a scroll happens
-        // wherever the pointer already was.
+        // wherever the pointer already was. It goes there: the scene hit-tests a scroll at its
+        // position, and at the corner it would scroll only what happens to lie under it.
         WindowEvent.SCROLL -> sendPointerEvent(
             eventType = PointerEventType.Scroll,
-            position = Offset.Zero,
+            position = pointer.at,
             scrollDelta = Offset(event.x, event.y),
             timeMillis = timeMillis,
         )
+    }
+}
+
+/**
+ * Where the pointer last was over the scene, from the top left of the content in the scene's
+ * pixels: the place of the last move, press, release or enter the window heard.
+ *
+ * A scroll needs it, because the window records a scroll's travel and not its place. Before
+ * the window has said where the pointer is, a scroll goes to the top left corner, which is
+ * what the scene did with every scroll before it had this; a window that knows where the
+ * pointer is sends a move first (the macOS window does), so that corner is a last resort.
+ * An exit, the pointer going into a native view, leaves the place as it was: a scroll over
+ * the native view is the view's and never reaches the scene.
+ */
+internal class ScenePointer {
+    var at: Offset = Offset.Zero
+        private set
+
+    fun heard(event: WindowEvent) {
+        when (event.kind) {
+            WindowEvent.POINTER_MOVE, WindowEvent.POINTER_DOWN, WindowEvent.POINTER_UP, WindowEvent.POINTER_ENTER -> {
+                at = Offset(event.x, event.y)
+            }
+        }
     }
 }
 

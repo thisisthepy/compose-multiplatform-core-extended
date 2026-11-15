@@ -47,6 +47,8 @@ class SceneNativeViewTest {
         }
     }
 
+    private val pointer = ScenePointer()
+
     private fun event(kind: Int, x: Float = 50f, y: Float = 50f, keyCode: Int = 0) =
         WindowEvent(kind, x, y, 0, 0, keyCode, 0, "")
 
@@ -59,13 +61,13 @@ class SceneNativeViewTest {
             hovered = isHovered
             Box(Modifier.fillMaxSize().hoverable(source))
         }) { scene, frame ->
-            scene.receive(event(WindowEvent.POINTER_MOVE))
+            scene.receive(event(WindowEvent.POINTER_MOVE), pointer)
             frame()
             assertTrue(hovered, "hovered after a move over it")
-            scene.receive(event(WindowEvent.POINTER_EXIT))
+            scene.receive(event(WindowEvent.POINTER_EXIT), pointer)
             frame()
             assertFalse(hovered, "not hovered once the pointer went into the native view")
-            scene.receive(event(WindowEvent.POINTER_ENTER))
+            scene.receive(event(WindowEvent.POINTER_ENTER), pointer)
             frame()
             assertTrue(hovered, "hovered again when it came back")
         }
@@ -81,10 +83,10 @@ class SceneNativeViewTest {
         }) { scene, frame ->
             frame()
             assertTrue(focused, "the box has focus to begin with")
-            scene.receive(WindowEvent.NativeViewFocusIn(1))
+            scene.receive(WindowEvent.NativeViewFocusIn(1), pointer)
             frame()
             assertFalse(focused, "the box lost focus to the native view")
-            scene.receive(WindowEvent.NativeViewFocusOut(1))
+            scene.receive(WindowEvent.NativeViewFocusOut(1), pointer)
             frame()
             assertFalse(focused, "focus out of the slot gives nothing in the scene focus by itself")
         }

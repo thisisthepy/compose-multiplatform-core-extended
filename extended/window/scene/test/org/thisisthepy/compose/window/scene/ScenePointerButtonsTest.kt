@@ -41,6 +41,7 @@ class ScenePointerButtonsTest {
 
     private fun withScene(body: (send: (Int, Int) -> Unit, heard: List<Heard>) -> Unit) {
         val heard = ArrayList<Heard>()
+        val pointer = ScenePointer()
         val scene = CanvasLayersComposeScene(
             density = Density(1f),
             size = IntSize(100, 100),
@@ -62,7 +63,7 @@ class ScenePointerButtonsTest {
                 )
             }
             scene.render(Surface.makeRasterN32Premul(100, 100).canvas.asComposeCanvas(), 0L)
-            body({ kind, buttons -> scene.receive(WindowEvent(kind, 50f, 50f, buttons, 0, 0, 0, "")) }, heard)
+            body({ kind, buttons -> scene.receive(WindowEvent(kind, 50f, 50f, buttons, 0, 0, 0, ""), pointer) }, heard)
         } finally {
             scene.close()
         }

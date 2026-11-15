@@ -7,6 +7,16 @@
 
 ### 바뀐 것
 
+- **Kotlin/Native macOS 창에서 휠과 트랙패드로 아무것도 스크롤되지 않던 문제를 고쳤습니다.** 원인은 두 가지였습니다.
+  창의 스크롤 기록은 포인터 이벤트가 위치를 담는 자리에 이동량을 담기 때문에, 장면은 모든 스크롤을 창의 왼쪽 위
+  모서리로 보냈습니다. Compose는 스크롤의 위치에서 대상을 찾으므로, 그 모서리 아래에 있는 것만 스크롤될 수
+  있었습니다. 또 foundation의 macOS 스크롤 거리(`MacOsScrollConfig`)는 `NSEvent` 만으로 계산했는데, 이 창은
+  장면에 `NSEvent` 를 넘기지 않으므로 모든 스크롤이 0이 되었습니다. 이제 장면은 마지막 이동, 누름, 뗌, 진입이
+  포인터를 둔 곳을 기억해 스크롤을 그곳으로 보내고, macOS 창은 이동보다 먼저 온 스크롤 앞에 포인터의 현재 위치를
+  알려 줍니다. foundation의 macOS 설정은 `NSEvent` 가 없으면 포인터 변화의 이동량을 읽습니다. 한 줄은
+  NSScrollView의 한 줄인 10 dp이고, 트랙패드 10 포인트가 한 줄이므로 트랙패드는 손가락이 움직인 만큼 내용을
+  움직입니다. `NSEvent` 가 있는 스크롤은 전과 같이 계산합니다. `WindowEvent.SCROLL` 에 모든 창 계층이 보내는
+  단위와 부호를 적었습니다. foundation이 바뀌었으므로, 사용하는 쪽은 이 커밋 이후의 Compose 빌드가 필요합니다.
 - `graalvm/graalvm-windows` 모듈이 새로 생겼습니다. 네이티브 이미지의 Win32 창(`Win32GraalWindow`,
   `Win32Frames`, 크기 조절 중 그리는 업콜)을 compose-rust 에서 옮겨 왔습니다. `frameTimeNanos()` 는
   단조 시계의 `FrameClock` 을 읽으므로, 프레임 시각은 16 ms 씩 세지 않고 실제 시계를 따릅니다.

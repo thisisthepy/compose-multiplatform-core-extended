@@ -65,6 +65,18 @@ data class WindowEvent(
         const val POINTER_MOVE = 1
         const val POINTER_DOWN = 2
         const val POINTER_UP = 3
+        /**
+         * A turn of the wheel or a swipe on a trackpad. [x] and [y] carry its travel, not a
+         * place: the scene scrolls what is under the pointer's last place.
+         *
+         * The travel is in lines, the convention of AWT's wheel rotation and of a Compose
+         * scroll delta: a positive [y] asks for what is below (the content moves up) and a
+         * positive [x] for what is to the right. Every window layer sends it this way. macOS
+         * sends AppKit's scrollingDelta negated, which already follows the natural scrolling
+         * setting, as lines for a wheel and as points divided by ten for a trackpad, so ten
+         * points are one line. Windows sends the notches times the lines a notch moves in the
+         * system's mouse settings. X11 sends three lines a notch.
+         */
         const val SCROLL = 4
         const val KEY_DOWN = 5
         const val KEY_UP = 6

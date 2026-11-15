@@ -7,6 +7,19 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
+- **Fix.** Nothing scrolled on the Kotlin/Native macOS window, with a wheel or a trackpad. Two
+  things were wrong. The scene sent every scroll to the top left corner of the window, because
+  the window's scroll record carries the travel where a pointer event carries its place, and
+  Compose hit-tests a scroll at its position; only what lay under the corner could scroll. And
+  Compose's macOS scroll distance (`MacOsScrollConfig` in foundation) was worked out from the
+  `NSEvent` alone, which this window does not hand the scene, so every scroll came to zero. The
+  scene now remembers where the last move, press, release or enter put the pointer and sends the
+  scroll there, and the macOS window tells it where the pointer is before a scroll that came
+  before any move. Foundation's macOS config, given no `NSEvent`, now reads the travel from the
+  pointer change: a line is 10 dp, NSScrollView's line, and ten trackpad points are a line, so a
+  trackpad moves the content as far as the fingers went. A scroll with an `NSEvent` is worked out
+  as before. `WindowEvent.SCROLL` documents the units and the sign every window layer sends. This
+  changes foundation, so a consumer needs a Compose build from this commit on.
 - **Fix.** On the Kotlin/Native macOS window, a native view moved during an animated scroll was
   a frame ahead of the content drawn under it. `MacosNativeViews` placed each slot inside a Core
   Animation transaction of its own, which, with no transaction open around it, went to the

@@ -62,9 +62,9 @@ class SceneFunctionKeysTest {
             }
             frame()
             frame()
-            scene.receive(key(WindowEvent.KEY_DOWN, 0x6D, shift))
-            scene.receive(key(WindowEvent.KEY_UP, 0x6D, shift))
-            scene.receive(key(WindowEvent.KEY_DOWN, 0x6E, 0))
+            scene.receive(key(WindowEvent.KEY_DOWN, 0x6D, shift), ScenePointer())
+            scene.receive(key(WindowEvent.KEY_UP, 0x6D, shift), ScenePointer())
+            scene.receive(key(WindowEvent.KEY_DOWN, 0x6E, 0), ScenePointer())
             frame()
         } finally {
             scene.close()
