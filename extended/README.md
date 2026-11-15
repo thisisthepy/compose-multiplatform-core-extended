@@ -148,6 +148,19 @@ value), focus request and scroll arrive at `WindowListener.onAccessibilityAction
 argument)` on the thread that pumps. `accessibilityActive` turns true once a reader has asked the
 window anything or VoiceOver is on, so a scene can skip describing itself while nobody listens.
 
+### macOS native views
+
+While any native view slot is shown, `native/macos` draws the window's background material
+as it does for a window that is not key: the material stays, but it does not blur what is
+behind the window live. The reason is compositing. With the live blur on, the window server
+does not always show a native view's new place and the scene frame of the same commit
+together: in a key window the two were 2 to 14 of about 90 composited pictures apart, and 0
+with the blur held still. The change shows only where the scene is translucent and the
+material shows through. It is provisional
+([#233](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/233)). The
+alternative not taken is a separate blur window behind the main one, which keeps the live
+blur but adds a second window to order, move and resize with the first.
+
 ### macOS window diagnostics
 
 `native/macos` reads these environment variables, all off by default. Each prints its readings
