@@ -3,7 +3,7 @@
 The upstream changelogs under `compose/` stay upstream's. This one is for the modules this fork
 adds: the window modules, the design systems, the skiko scripts and the packaging templates.
 
-## Unreleased
+## 1.11.1-ext.5 (2026-11-16)
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
@@ -62,6 +62,26 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   Four clipped views told their frame and region every frame, in a debug build: 46 µs a call
   scrolling and 60 µs standing still before, 30 µs and 10 µs after, 39 µs a view through the
   combined call. (#233)
+- **Fix.** A restore or a snap of the Kotlin/Native Windows window showed one frame at the wrong
+  size almost every time. The frame drawn ahead is now presented through the swapchain and shown
+  once the window has taken its new size, after DWM has read the windows; the probe allows at
+  most 10 % of size changes a faulty frame, and a few in a hundred remain until a surface takes
+  size and picture in one step (#223). (#232)
+- **New.** A Windows window can give its caption strip to the application:
+  `dxc_native_window_configure_app_caption` (`Win32NativeWindow.appCaption`) makes the strip's
+  empty part client area, so the application's own buttons there get a press, and
+  `dxc_native_window_begin_drag` (`Win32NativeWindow.beginDrag`) starts the system's move or
+  resize loop from a strip or drag region the application chose. (#236)
+- **New.** An application can declare a node's accessible role to the Kotlin/Native macOS window
+  (`DeclaredElementRoles`), for roles Compose does not name (a group, a list, a tab list, a
+  dialog). A node with a declared role is described even with nothing to read out, so VoiceOver
+  reaches the buttons inside a labelled container. (#234)
+
+### Publishing
+
+- The "Extended publish" workflow stopped at "Decide the mode" because the plan job did not check
+  out `extended/skiko`, which the bundle tool's test runs. (#229)
+- The publish workflows' required inputs are booleans again, so a dispatch takes them. (#237)
 
 ## 1.11.1-ext.4 (2026-11-14)
 
