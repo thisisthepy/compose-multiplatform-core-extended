@@ -2,7 +2,9 @@
 
 package org.thisisthepy.compose.window.scene
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
@@ -16,11 +18,13 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.verticalScroll
 import kotlinx.coroutines.Dispatchers
 import org.jetbrains.skia.Surface
 import org.thisisthepy.compose.window.WindowEvent
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * A scroll reaches the scene where the pointer is.
@@ -97,5 +101,44 @@ class SceneScrollTest {
         send(event(WindowEvent.SCROLL, 0f, 1f))
         assertEquals(listOf(Offset.Zero), corner.map { it.position })
         assertEquals(0, far.size)
+    }
+
+    /**
+     * The anchor of the direction on every platform the scene runs on: WindowEvent.SCROLL with
+     * a positive y asks for what is below, so a verticalScroll column's position grows, and a
+     * negative y brings it back. Each platform's scroll config in foundation answers it (the
+     * desktop ones under the JVM, the macOS, Linux and Windows ones under Kotlin/Native), so a
+     * config with the wrong sign fails here on that platform.
+     */
+    @Test
+    fun a_scroll_asking_for_what_is_below_moves_a_column_forward_and_back() {
+        val state = ScrollState(0)
+        val scene = CanvasLayersComposeScene(
+            density = Density(1f),
+            size = IntSize(100, 100),
+            coroutineContext = Dispatchers.Unconfined,
+        )
+        val canvas = Surface.makeRasterN32Premul(100, 100).canvas.asComposeCanvas()
+        var time = 0L
+        fun frames() = repeat(60) { scene.render(canvas, time); time += 16_000_000L }
+        val pointer = ScenePointer()
+        try {
+            scene.setContent {
+                Column(Modifier.size(100.dp).verticalScroll(state)) {
+                    Box(Modifier.size(100.dp, 4000.dp))
+                }
+            }
+            frames()
+            scene.receive(event(WindowEvent.POINTER_MOVE, 50f, 50f), pointer)
+            scene.receive(event(WindowEvent.SCROLL, 0f, 3f), pointer)
+            frames()
+            val down = state.value
+            assertTrue(down > 0, "three lines asking for what is below move the column forward, it is at $down")
+            scene.receive(event(WindowEvent.SCROLL, 0f, -1f), pointer)
+            frames()
+            assertTrue(state.value in 1 until down, "a line asking for what is above moves it back, from $down to ${state.value}")
+        } finally {
+            scene.close()
+        }
     }
 }
