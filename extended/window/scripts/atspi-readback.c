@@ -9,7 +9,9 @@
  *
  * Finds the frame called <frame name> among the desktop's applications, walks everything under
  * it and requires, for each --expect, an object with that role and that name. Roles are named
- * as libatspi names them (entry, push button, label, check box, password text, ...).
+ * as libatspi names them (entry, push button, label, check box, password text, ...). A role is
+ * matched by its number, not its name, because libatspi renames roles between releases: newer
+ * ones call a push button "button". Either name is accepted for it.
  * --text requires the object of that name that has the Text interface to hold that text;
  * --set replaces the text of the one of that name with EditableText; --press does the first
  * action of the one of that name with actions. The walk is tried
@@ -31,6 +33,7 @@
 
 struct found {
     AtspiAccessible *object;
+    AtspiRole role_id;
     char *role;
     char *name;
     int depth;
@@ -71,6 +74,7 @@ static void walk(AtspiAccessible *object, int depth) {
     entry->depth = depth;
     AtspiRole role = atspi_accessible_get_role(object, &error);
     if (error != NULL) { g_clear_error(&error); role = ATSPI_ROLE_INVALID; }
+    entry->role_id = role;
     entry->role = atspi_role_get_name(role);
     if (entry->role == NULL) entry->role = g_strdup("unknown");
     entry->name = atspi_accessible_get_name(object, &error);
@@ -146,6 +150,30 @@ static int split(const char *pair, char separator, char **left, char **right) {
     return 1;
 }
 
+/*
+ * The role a --expect names, or ATSPI_ROLE_INVALID when no role has that name. The names this
+ * libatspi gives are tried first, then the ones other releases give, so a test written against
+ * either reads the same.
+ */
+static AtspiRole role_named(const char *role_name) {
+    for (int id = 0; id < ATSPI_ROLE_LAST_DEFINED; id++) {
+        gchar *known = atspi_role_get_name((AtspiRole)id);
+        int same = known != NULL && strcmp(known, role_name) == 0;
+        g_free(known);
+        if (same) return (AtspiRole)id;
+    }
+    static const struct { const char *name; AtspiRole role; } other_names[] = {
+        { "push button", ATSPI_ROLE_PUSH_BUTTON },
+        { "button", ATSPI_ROLE_PUSH_BUTTON },
+        { "entry", ATSPI_ROLE_ENTRY },
+        { "text", ATSPI_ROLE_TEXT },
+    };
+    for (size_t i = 0; i < sizeof other_names / sizeof other_names[0]; i++) {
+        if (strcmp(other_names[i].name, role_name) == 0) return other_names[i].role;
+    }
+    return ATSPI_ROLE_INVALID;
+}
+
 /* Whether everything --expect asks for is there. Prints what is missing when [report]. */
 static int expectations_met(int report) {
     int met = 1;
@@ -155,9 +183,14 @@ static int expectations_met(int report) {
             fprintf(stderr, "atspi-readback: --expect %s is not role:name\n", expects[i]);
             exit(2);
         }
+        AtspiRole wanted = role_named(role);
+        if (wanted == ATSPI_ROLE_INVALID) {
+            fprintf(stderr, "atspi-readback: --expect %s names no role libatspi knows\n", expects[i]);
+            exit(2);
+        }
         int there = 0;
         for (int j = 0; j < found_count; j++) {
-            if (strcmp(found[j].role, role) == 0 && strcmp(found[j].name, name) == 0) there = 1;
+            if (found[j].role_id == wanted && strcmp(found[j].name, name) == 0) there = 1;
         }
         if (!there) {
             met = 0;
