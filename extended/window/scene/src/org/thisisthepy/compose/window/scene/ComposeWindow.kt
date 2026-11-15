@@ -124,6 +124,8 @@ class ComposeWindowHost(
     private val heard = ArrayList<WindowEvent>()
     private val ime = ImeSession { event -> log.heard(event) }
     private var scene: ComposeScene? = null
+    // Where the pointer last was, which is where a scroll goes.
+    private val pointer = ScenePointer()
     private var surface: WindowSurface? = null
     private var frames: WindowFrames? = null
     private var theme by mutableStateOf(SystemTheme.Light)
@@ -325,7 +327,7 @@ class ComposeWindowHost(
                 if (at != null) {
                     if (!fieldMenu.open(at)) {
                         val time = eventClock.timeOf(event.timeMillis)
-                        for (press in secondaryClickAt(at, event.timeMillis)) current.receive(press, timeMillis = time)
+                        for (press in secondaryClickAt(at, event.timeMillis)) current.receive(press, pointer, timeMillis = time)
                     }
                     unsettled = Edit.POINTER
                     continue
@@ -342,7 +344,7 @@ class ComposeWindowHost(
                 platform.endComposition()
                 if (settleBetween) settle() else runPendingWork()
             }
-            current.receive(event, timeMillis = eventClock.timeOf(event.timeMillis), unused = ::keyLeftAlone)
+            current.receive(event, pointer, timeMillis = eventClock.timeOf(event.timeMillis), unused = ::keyLeftAlone)
             when (event.kind) {
                 WindowEvent.TEXT_COMMIT -> textInput.commit(event.text)
                 WindowEvent.TEXT_COMPOSE -> textInput.compose(event.text)

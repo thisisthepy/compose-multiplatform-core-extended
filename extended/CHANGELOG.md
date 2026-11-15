@@ -7,6 +7,31 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
+- **Fix.** The mouse wheel scrolled the wrong way on the Kotlin/Native Windows and Linux
+  windows, and too far. The windows send a scroll's travel in lines with a positive y asking
+  for what is below, as AWT's wheel rotation, and desktop Compose (which the GraalVM windows go
+  through) negates it. Foundation's `WindowsScrollConfig` (mingwX64) and `LinuxScrollConfig`
+  (linuxX64, linuxArm64) did not. On Windows the sign had been right until #169 negated the
+  window's vertical delta for the GraalVM path, which reached the Kotlin/Native config as well;
+  that config also counted the lines a notch moves a second time, three times too far at the
+  default. On Linux the config had the wrong sign from the start and moved 64 dp a line, 192 dp
+  a notch. Both now answer as desktop Compose does on the same system, with its line: a
+  twentieth of the scrolled side on Windows, the square root of it on Linux. The windows are
+  unchanged, so the GraalVM path is not negated twice. `WindowEvent.SCROLL` holds a table of
+  what each window sends and what each config makes of it. This changes foundation.
+- **Fix.** Nothing scrolled on the Kotlin/Native macOS window, with a wheel or a trackpad. Two
+  things were wrong. The scene sent every scroll to the top left corner of the window, because
+  the window's scroll record carries the travel where a pointer event carries its place, and
+  Compose hit-tests a scroll at its position; only what lay under the corner could scroll. And
+  Compose's macOS scroll distance (`MacOsScrollConfig` in foundation) was worked out from the
+  `NSEvent` alone, which this window does not hand the scene, so every scroll came to zero. The
+  scene now remembers where the last move, press, release or enter put the pointer and sends the
+  scroll there, and the macOS window tells it where the pointer is before a scroll that came
+  before any move. Foundation's macOS config, given no `NSEvent`, now reads the travel from the
+  pointer change: a line is 10 dp, NSScrollView's line, and ten trackpad points are a line, so a
+  trackpad moves the content as far as the fingers went. A scroll with an `NSEvent` is worked out
+  as before. `WindowEvent.SCROLL` documents the units and the sign every window layer sends. This
+  changes foundation, so a consumer needs a Compose build from this commit on.
 - **Fix.** On the Kotlin/Native macOS window, a native view moved during an animated scroll was
   a frame ahead of the content drawn under it. `MacosNativeViews` placed each slot inside a Core
   Animation transaction of its own, which, with no transaction open around it, went to the

@@ -21,27 +21,21 @@ import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.node.CompositionLocalConsumerModifierNode
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.dp
 
 internal actual fun CompositionLocalConsumerModifierNode.platformScrollConfig(): ScrollConfig =
     LinuxScrollConfig
 
 /**
- * How far a turn of the wheel scrolls.
+ * How far, and which way, a turn of the wheel scrolls.
  *
- * The platforms that can tell a wheel from a trackpad ask their own event which it was,
- * because a trackpad reports in pixels and a wheel in notches. There is nothing here to
- * ask: X11 reports a wheel as a button press and Wayland reports an axis, and what reaches
- * this point is already a delta either way. So one distance per notch, which is what every
- * other program on this platform does.
+ * X11 reports a wheel as a button press, which the window sends on as three lines a notch
+ * with a positive y for what is below, and there is nothing else here to ask. The distance and
+ * the sign are desktop Compose's for Linux (see [linuxWheelScroll]).
  */
 private object LinuxScrollConfig : ScrollConfig {
     override fun Density.calculateMouseWheelScroll(event: PointerEvent, bounds: IntSize): Offset {
-        val notch = 64.dp.toPx()
-        val change = event.changes.firstOrNull() ?: return Offset.Zero
-        return Offset(
-            x = change.scrollDelta.x * notch,
-            y = change.scrollDelta.y * notch,
-        )
+        var travel = Offset.Zero
+        for (change in event.changes) travel += change.scrollDelta
+        return linuxWheelScroll(travel, bounds)
     }
 }

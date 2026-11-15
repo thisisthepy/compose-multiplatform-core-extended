@@ -628,8 +628,15 @@ class MacosWindow(
         // held), so that its release is marked the same, whatever is held by then.
         private var controlClick = false
 
-        private fun postPointer(event: NSEvent, kind: Int, eventButton: Int = 0) {
-            val position = event.offsetInView
+        // Whether the scene has been told where the pointer is. It is told by every move,
+        // press, release or enter, and a scroll goes to the last of those places.
+        private var pointerPlaced = false
+
+        private fun postPointer(event: NSEvent, kind: Int, eventButton: Int = 0) =
+            postPointerAt(event, kind, event.offsetInView, eventButton)
+
+        private fun postPointerAt(event: NSEvent, kind: Int, position: Offset, eventButton: Int = 0) {
+            if (kind != WindowEvent.POINTER_EXIT) pointerPlaced = true
             val buttons = WindowEvent.pointerButtons(NSEvent.pressedMouseButtons.toInt(), eventButton)
             onEvent?.invoke(
                 WindowEvent(
@@ -714,7 +721,20 @@ class MacosWindow(
         override fun otherMouseDragged(event: NSEvent) =
             postPointer(event, WindowEvent.POINTER_MOVE)
 
+        // The scroll's record carries the wheel's travel and no place, so the scene scrolls
+        // what is under the last place it was told. A scroll before any (the window opened
+        // under a pointer that has not moved since) first tells it where the pointer is now.
+        //
+        // The travel is in lines, a positive y asking for what is below and a positive x for
+        // what is to the right (the convention WindowEvent.SCROLL documents). AppKit's
+        // scrollingDelta points the other way and counts lines for a wheel and points for a
+        // trackpad; ten points count as one line.
         override fun scrollWheel(event: NSEvent) {
+            val shown = this.window
+            if (!pointerPlaced && shown != null) {
+                val now = scenePoint(this, shown.mouseLocationOutsideOfEventStream, shown.backingScaleFactor)
+                postPointerAt(event, WindowEvent.POINTER_MOVE, now)
+            }
             val divisor = if (event.hasPreciseScrollingDeltas) 10f else 1f
             onEvent?.invoke(
                 WindowEvent(

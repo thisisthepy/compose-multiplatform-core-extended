@@ -16,8 +16,11 @@
 
 package androidx.compose.foundation.gestures
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.InternalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -124,6 +127,97 @@ class MacosScrollableTest {
 
         waitForIdle()
         assertEquals(2F * scrollLine, context.offset, 0.1F)
+    }
+
+    // A window with no AWT and no NSEvent to hand over (the fork's Kotlin/Native window and its
+    // GraalVM one) sends only the travel, in the scene's convention: a line is one, ten points
+    // of a trackpad are one, and a positive y asks for what is below. So -3 is AppKit's
+    // scrollingDeltaY of +3 lines, and -1 its +10 points of a trackpad.
+
+    @Test
+    fun `scroll by lines vertically from a window that sends only the travel`() =
+        runSkikoComposeUiTest(density = density) {
+            val context = TestColumn()
+            setContent {
+                Box(
+                    Modifier
+                        .scrollable(orientation = Orientation.Vertical, state = context.controller())
+                        .size(10.dp, 20.dp)
+                )
+            }
+
+            sendTravel(Offset(0f, -3f))
+
+            waitForIdle()
+            assertEquals(3F * scrollLine, context.offset, 0.1F)
+        }
+
+    @Test
+    fun `scroll by trackpad points vertically from a window that sends only the travel`() =
+        runSkikoComposeUiTest(density = density) {
+            val context = TestColumn()
+            setContent {
+                Box(
+                    Modifier
+                        .scrollable(orientation = Orientation.Vertical, state = context.controller())
+                        .size(10.dp, 20.dp)
+                )
+            }
+
+            // Ten points of a trackpad move the content ten points, as in any AppKit view.
+            sendTravel(Offset(0f, -1f))
+
+            waitForIdle()
+            assertEquals(10F * density.density, context.offset, 0.1F)
+        }
+
+    @Test
+    fun `scroll by lines horizontally from a window that sends only the travel`() =
+        runSkikoComposeUiTest(density = density) {
+            val context = TestColumn()
+            setContent {
+                Box(
+                    Modifier
+                        .scrollable(orientation = Orientation.Horizontal, state = context.controller())
+                        .size(10.dp, 20.dp)
+                )
+            }
+
+            sendTravel(Offset(-2f, 0f))
+
+            waitForIdle()
+            assertEquals(2F * scrollLine, context.offset, 0.1F)
+        }
+
+    @Test
+    fun `a wheel asking for what is below moves a verticalScroll column down`() =
+        runSkikoComposeUiTest(density = density) {
+            val state = ScrollState(0)
+            setContent {
+                Column(Modifier.size(10.dp, 20.dp).verticalScroll(state)) {
+                    Box(Modifier.size(10.dp, 200.dp))
+                }
+            }
+
+            // AppKit's scrollingDeltaY of -2 lines: the wheel turned toward the reader with
+            // natural scrolling off, or two fingers pushed up with it on. Content moves up and
+            // what is below comes into view, so the scroll position grows.
+            sendTravel(Offset(0f, 2f))
+            waitForIdle()
+            assertEquals((2F * scrollLine).toInt(), state.value)
+
+            // And back up again.
+            sendTravel(Offset(0f, -1f))
+            waitForIdle()
+            assertEquals(scrollLine.toInt(), state.value)
+        }
+
+    private fun SkikoComposeUiTest.sendTravel(travel: Offset) {
+        scene.sendPointerEvent(
+            eventType = PointerEventType.Scroll,
+            position = Offset(1f, 1f),
+            scrollDelta = travel,
+        )
     }
 
     private fun SkikoComposeUiTest.sendScrollingEvent(
