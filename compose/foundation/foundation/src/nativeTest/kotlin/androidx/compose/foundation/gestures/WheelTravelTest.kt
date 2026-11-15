@@ -18,6 +18,7 @@ package androidx.compose.foundation.gestures
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntSize
+import kotlin.math.sqrt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -33,6 +34,27 @@ import kotlin.test.assertEquals
  */
 class WheelTravelTest {
     private val bounds = IntSize(300, 400)
+
+    // Desktop LinuxGnomeConfig: a line moves the square root of the scrolled side, in pixels.
+    // X11 sends three lines a notch, which is AWT's scrollAmount there.
+
+    @Test
+    fun linux_what_is_below_moves_a_vertical_scroll_forward() {
+        val scroll = (linuxWheelScroll(Offset(0f, 3f), bounds))
+        assertEquals(Offset(0f, -3f * sqrt(400f)), scroll)
+    }
+
+    @Test
+    fun linux_what_is_above_moves_it_back() {
+        val scroll = (linuxWheelScroll(Offset(0f, -3f), bounds))
+        assertEquals(Offset(0f, 3f * sqrt(400f)), scroll)
+    }
+
+    @Test
+    fun linux_what_is_to_the_right_moves_a_horizontal_scroll_forward() {
+        val scroll = (linuxWheelScroll(Offset(3f, 0f), bounds))
+        assertEquals(Offset(-3f * sqrt(300f), 0f), scroll)
+    }
 
     // Desktop WindowsWinUIConfig: a line is a twentieth of the scrolled side. The window has
     // already multiplied the notches by the lines a notch moves in the mouse settings, which is

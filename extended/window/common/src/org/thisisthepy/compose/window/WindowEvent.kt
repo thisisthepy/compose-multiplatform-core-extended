@@ -71,11 +71,18 @@ data class WindowEvent(
          *
          * The travel is in lines, the convention of AWT's wheel rotation and of a Compose
          * scroll delta: a positive [y] asks for what is below (the content moves up) and a
-         * positive [x] for what is to the right. Every window layer sends it this way. macOS
-         * sends AppKit's scrollingDelta negated, which already follows the natural scrolling
-         * setting, as lines for a wheel and as points divided by ten for a trackpad, so ten
-         * points are one line. Windows sends the notches times the lines a notch moves in the
-         * system's mouse settings. X11 sends three lines a notch.
+         * positive [x] for what is to the right. Every window layer sends it this way, and the
+         * scroll config of each platform in the fork's foundation answers a positive [y] by
+         * moving a verticalScroll forward:
+         *
+         * | Window | What the window layer sends | Foundation config, line distance |
+         * |---|---|---|
+         * | macOS, Kotlin/Native and GraalVM | AppKit's `scrollingDelta` negated (it already follows natural scrolling): lines for a wheel, points / 10 for a trackpad | `MacOsScrollConfig` / desktop `MacOSCocoaConfig`: 10 dp |
+         * | Windows, Kotlin/Native and GraalVM (one C window) | `WM_MOUSEWHEEL` delta / 120 × lines a notch (`SPI_GETWHEELSCROLLLINES`), negated, since Win32 counts a turn away from the reader as positive; `WM_MOUSEHWHEEL` the same, not negated, since right is positive on both sides; fractions of a notch kept | `WindowsScrollConfig` / desktop `WindowsWinUIConfig`: a twentieth of the scrolled side |
+         * | X11, Kotlin/Native and GraalVM | three lines a notch: button 4 -y, 5 +y, 6 -x, 7 +x (no XInput2 smooth scrolling) | `LinuxScrollConfig` / desktop `LinuxGnomeConfig`: the square root of the scrolled side in pixels |
+         *
+         * The lines a notch moves are counted once, by the window; a config does not multiply
+         * by them again.
          */
         const val SCROLL = 4
         const val KEY_DOWN = 5

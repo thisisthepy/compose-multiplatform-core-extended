@@ -18,8 +18,9 @@ package androidx.compose.foundation.gestures
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntSize
+import kotlin.math.sqrt
 
-// How far, and which way, a wheel scrolls on the Windows window with no AWT.
+// How far, and which way, a wheel scrolls on the Linux and Windows windows with no AWT.
 //
 // Those windows record a scroll as its travel, in lines, with a positive y asking for what is
 // below and a positive x for what is to the right: the sign of AWT's wheel rotation. A scroll
@@ -30,6 +31,13 @@ import androidx.compose.ui.unit.IntSize
 // it moves (AWT's scrollAmount), so the travel counts lines once.
 //
 // Subtracted from zero rather than negated, so an axis with no travel answers 0 and not -0.
+
+/** Desktop LinuxGnomeConfig's line: the square root of the scrolled side, in pixels. */
+internal fun linuxWheelScroll(travel: Offset, bounds: IntSize): Offset =
+    Offset(
+        x = 0f - travel.x * sqrt(bounds.width.toFloat()),
+        y = 0f - travel.y * sqrt(bounds.height.toFloat()),
+    )
 
 /** Desktop WindowsWinUIConfig's line: a twentieth of the scrolled side. */
 internal fun windowsWheelScroll(travel: Offset, bounds: IntSize): Offset =
