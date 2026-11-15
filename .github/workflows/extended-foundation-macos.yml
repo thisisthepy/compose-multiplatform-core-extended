@@ -34,4 +34,4 @@ jobs:
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
       - name: Compile and run the fork's macOS tests
-        run: ./gradlew :compose:foundation:foundation:macosArm64Test --tests '*MenuLocationTest*' --tests '*MacosTextContextMenuProviderTest*' -Pcompose.platforms=macos --no-daemon --stacktrace
+        run: ./gradlew :compose:foundation:foundation:macosArm64Test --tests '*MenuLocationTest*' --tests '*MacosTextContextMenuProviderTest*' --tests '*MacosScrollableTest*' -Pcompose.platforms=macos --no-daemon --stacktrace
