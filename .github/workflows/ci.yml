@@ -2,6 +2,14 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      suites:
+        description: >-
+          Which jobs to run: "all", or a comma separated list of this file's job names
+          (for example "extended_window_windows_shared,extended_window_common").
+        required: false
+        default: all
+        type: string
 
 concurrency:
   group: dev-ci
@@ -13,78 +21,165 @@ permissions:
   packages: write
 
 jobs:
+  # Decides which of the jobs below run. The names it accepts are read from this file, so a
+  # job added here can be asked for by name with nothing else to keep in step. A name that
+  # is not a job fails the run: a misspelt name must not turn into a green run that ran nothing.
+  plan:
+    name: Choose the suites
+    runs-on: ubuntu-latest
+    outputs:
+      suites: ${{ steps.choose.outputs.suites }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/workflows/ci.yml
+          sparse-checkout-cone-mode: false
+      - id: choose
+        env:
+          ASKED: ${{ inputs.suites }}
+        run: |
+          set -euo pipefail
+          known=$(sed -n '/^jobs:/,$p' .github/workflows/ci.yml \
+            | grep -E '^  [a-z0-9_]+:$' | tr -d ' :' | grep -vx plan)
+          asked=$(printf '%s' "${ASKED:-all}" | tr -d '[:space:]')
+          if [ -z "$asked" ] || [ "$asked" = all ]; then
+            chosen=$(printf '%s\n' "$known" | paste -sd, -)
+          else
+            unknown=""
+            for name in $(printf '%s' "$asked" | tr ',' ' '); do
+              printf '%s\n' "$known" | grep -qx -- "$name" || unknown="$unknown $name"
+            done
+            if [ -n "$unknown" ]; then
+              echo "::error::not a job of ci.yml:$unknown"
+              echo "the jobs are:"; printf '  %s\n' $known
+              exit 1
+            fi
+            chosen=$asked
+          fi
+          echo "running: $chosen"
+          echo "suites=,$chosen," >> "$GITHUB_OUTPUT"
   check_public_api:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',check_public_api,')
     uses: ./.github/workflows/check-public-api.yml
     secrets: inherit
   compose_tests:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',compose_tests,')
     uses: ./.github/workflows/compose-tests.yml
     secrets: inherit
   design_systems:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',design_systems,')
     uses: ./.github/workflows/design-systems.yml
     secrets: inherit
   extended_coordinates:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_coordinates,')
     uses: ./.github/workflows/extended-coordinates.yml
     secrets: inherit
   extended_desktop_test:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_desktop_test,')
     uses: ./.github/workflows/extended-desktop-test.yml
     secrets: inherit
   extended_foundation_macos:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_foundation_macos,')
     uses: ./.github/workflows/extended-foundation-macos.yml
     secrets: inherit
   extended_foundation_text:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_foundation_text,')
     uses: ./.github/workflows/extended-foundation-text.yml
     secrets: inherit
   extended_packaging:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_packaging,')
     uses: ./.github/workflows/extended-packaging.yml
     secrets: inherit
   extended_pointericon_test:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_pointericon_test,')
     uses: ./.github/workflows/extended-pointericon-test.yml
     secrets: inherit
   extended_public_api:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_public_api,')
     uses: ./.github/workflows/extended-public-api.yml
     secrets: inherit
   extended_skiko_awt_free:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_skiko_awt_free,')
     uses: ./.github/workflows/extended-skiko-awt-free.yml
     secrets: inherit
   extended_skiko_awt_jar:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_skiko_awt_jar,')
     uses: ./.github/workflows/extended-skiko-awt-jar.yml
     secrets: inherit
   extended_skiko_static:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_skiko_static,')
     uses: ./.github/workflows/extended-skiko-static.yml
     secrets: inherit
   extended_window_common:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_window_common,')
     uses: ./.github/workflows/extended-window-common.yml
     secrets: inherit
   extended_window_graalvm_linux:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_window_graalvm_linux,')
     uses: ./.github/workflows/extended-window-graalvm-linux.yml
     secrets: inherit
   extended_window_graalvm_macos:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_window_graalvm_macos,')
     uses: ./.github/workflows/extended-window-graalvm-macos.yml
     secrets: inherit
   extended_window_graalvm_windows:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_window_graalvm_windows,')
     uses: ./.github/workflows/extended-window-graalvm-windows.yml
     secrets: inherit
   extended_window_linux:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_window_linux,')
     uses: ./.github/workflows/extended-window-linux.yml
     secrets: inherit
   extended_window_macos:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_window_macos,')
     uses: ./.github/workflows/extended-window-macos.yml
     secrets: inherit
   extended_window_scene:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_window_scene,')
     uses: ./.github/workflows/extended-window-scene.yml
     secrets: inherit
   extended_window_windows_shared:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_window_windows_shared,')
     uses: ./.github/workflows/extended-window-windows-shared.yml
     secrets: inherit
   compose_publish_dry_run:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',compose_publish_dry_run,')
     uses: ./.github/workflows/compose-publish-dry-run.yml
     secrets: inherit
   extended_publish_local:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_publish_local,')
     uses: ./.github/workflows/extended-publish-local.yml
     secrets: inherit
   extended_window_publish:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_window_publish,')
     uses: ./.github/workflows/extended-window-publish.yml
     secrets: inherit
   extended_publish:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',extended_publish,')
     uses: ./.github/workflows/extended-publish.yml
     secrets: inherit
