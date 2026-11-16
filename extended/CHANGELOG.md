@@ -3,6 +3,24 @@
 The upstream changelogs under `compose/` stay upstream's. This one is for the modules this fork
 adds: the window modules, the design systems, the skiko scripts and the packaging templates.
 
+## Unreleased
+
+### Window modules (`org.thisisthepy.compose.window`)
+
+- **Fix.** The Windows window (`windows-shared`, so the Kotlin/Native and the GraalVM windows
+  both) did not keep its size in points when its DPI changed. It applied the rectangle
+  `WM_DPICHANGED` suggests, which Windows scales from the old outer rectangle without knowing
+  this window's frame, so a window of 320x240 points, 640x480 pixels at 200 %, came out
+  398x297 pixels at 125 % instead of 400x300. The window now remembers its size (in points
+  where the application gave it, in pixels at their DPI where the user dragged it,
+  `win32_dpi.h`) and gives the client area that size at the new DPI, a half pixel rounded up as
+  on X11, at the top left Windows suggests and never under the minimum size. It answers
+  `WM_GETDPISCALEDSIZE` with the same size, so the rectangle Windows suggests is already right,
+  and measures the client area afterwards and corrects the outer size once should the frame
+  differ. Changes back and forth come back to the same size with no drift. A maximised,
+  minimised or snapped window keeps the place it fills and gets its size back when it is
+  restored. (DarkPyonix/compose-rust FR-82)
+
 ## 1.11.1-ext.5 (2026-11-16)
 
 ### Window modules (`org.thisisthepy.compose.window`)

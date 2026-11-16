@@ -20,6 +20,7 @@
 #include "win32_placement.h"
 #include "win32_scheme.h"
 #include "win32_edit_menu.h"
+#include "win32_dpi.h"
 #include "win32_window.h"
 
 // The records the Kotlin side reads and writes by offset. A field added on one side only is
@@ -538,6 +539,211 @@ static void fr53_window_position_round_trips(void) {
     dxc_native_window_destroy(c.window);
     pump_all();
     dxc_native_window_release(c.window);
+}
+
+// The size a window keeps across a change of DPI, as arithmetic (win32_dpi.h): its size in
+// points times the new scale, a half rounded up, remembered rather than re-derived from the
+// pixels at each change, so changes back and forth come back to the same size.
+static void fr82_dpi_size_arithmetic(void) {
+    // 320x240 points at the DPIs of 100, 125, 150 and 200 percent.
+    CHECK(dxc_dpi_length(320, 96, 192) == 640 && dxc_dpi_length(240, 96, 192) == 480);
+    CHECK(dxc_dpi_length(320, 96, 120) == 400 && dxc_dpi_length(240, 96, 120) == 300);
+    CHECK(dxc_dpi_length(320, 96, 144) == 480 && dxc_dpi_length(240, 96, 144) == 360);
+    CHECK(dxc_dpi_length(640, 192, 120) == 400 && dxc_dpi_length(480, 192, 120) == 300);
+    CHECK(dxc_dpi_length(400, 120, 192) == 640 && dxc_dpi_length(300, 120, 192) == 480);
+    // The rounding of dxc_points_to_pixels and X11Scale.pixelsAtScale: a half goes up.
+    CHECK(dxc_dpi_length(333, 96, 144) == 500);
+    CHECK(dxc_dpi_length(333, 96, 120) == 416);
+    for (int32_t points = 1; points < 2000; points += 37) {
+        CHECK(dxc_dpi_length(points, 96, 120) == dxc_points_to_pixels(points, 120));
+        CHECK(dxc_dpi_length(points, 96, 168) == dxc_points_to_pixels(points, 168));
+    }
+    // The same DPI, or none, leaves the length alone; nothing comes to less than a pixel.
+    CHECK(dxc_dpi_length(417, 120, 120) == 417);
+    CHECK(dxc_dpi_length(417, 0, 120) == 417);
+    CHECK(dxc_dpi_length(1, 192, 96) == 1);
+
+    // Re-deriving from the pixels drifts: 416 pixels at 120 DPI are 499 at 144, where the
+    // 333 points they came from are 500.
+    CHECK(dxc_dpi_length(dxc_dpi_length(333, 96, 120), 120, 144) == 499);
+    struct dxc_dpi_size kept = {333, 201, 96};
+    const uint32_t chain[] = {120, 144, 192, 120, 96, 144, 96};
+    for (int index = 0; index < 7; index++) {
+        int32_t width = 0, height = 0;
+        dxc_dpi_size_client(kept, chain[index], 0, 0, &width, &height);
+        CHECK(width == dxc_points_to_pixels(333, chain[index]));
+        CHECK(height == dxc_points_to_pixels(201, chain[index]));
+        // The WM_SIZE that applies it keeps the size in points.
+        struct dxc_dpi_size noted = dxc_dpi_size_note(kept, width, height, chain[index]);
+        CHECK(noted.width == 333 && noted.height == 201 && noted.dpi == 96);
+        kept = noted;
+    }
+    // A size the user dragged to is kept in the pixels of the DPI it was dragged at.
+    struct dxc_dpi_size dragged = dxc_dpi_size_note(kept, 641, 480, 192);
+    CHECK(dragged.width == 641 && dragged.height == 480 && dragged.dpi == 192);
+    int32_t width = 0, height = 0;
+    dxc_dpi_size_client(dragged, 120, 0, 0, &width, &height);
+    CHECK(width == 401 && height == 300);
+    dxc_dpi_size_client(dragged, 192, 0, 0, &width, &height);
+    CHECK(width == 641 && height == 480);
+    // Never under the window's minimum, which is in points.
+    struct dxc_dpi_size tiny = {100, 50, 96};
+    dxc_dpi_size_client(tiny, 120, 200, 40, &width, &height);
+    CHECK(width == 250 && height == 63);
+
+    // Only a window that is neither maximised, minimised nor snapped is resized.
+    CHECK(dxc_dpi_change_resizes(0, 0, 0) == 1);
+    CHECK(dxc_dpi_change_resizes(1, 0, 0) == 0);
+    CHECK(dxc_dpi_change_resizes(0, 1, 0) == 0);
+    CHECK(dxc_dpi_change_resizes(0, 0, 1) == 0);
+}
+
+// The client area this window would get from a rectangle Windows suggests by scaling the
+// outer rectangle linearly, against the frame AdjustWindowRectExForDpi gives the style, for
+// the log: it shows what the window would be without the fix, at the frames of this machine.
+static void fr82_note_linear_suggestion(int system_chrome) {
+    const UINT dpis[] = {96, 120, 144, 192};
+    for (int index = 0; index < 4; index++) {
+        RECT frame = {0, 0, 0, 0};
+        AdjustWindowRectExForDpi(&frame, WS_OVERLAPPEDWINDOW, FALSE, 0, dpis[index]);
+        printf("note: fr82 frame at %u dpi: left %ld top %ld right %ld bottom %ld\n", dpis[index],
+               (long)-frame.left, (long)-frame.top, (long)frame.right, (long)frame.bottom);
+    }
+    RECT at_192 = {0, 0, 640, 480};
+    RECT at_120 = {0, 0, 0, 0};
+    AdjustWindowRectExForDpi(&at_192, WS_OVERLAPPEDWINDOW, FALSE, 0, 192);
+    AdjustWindowRectExForDpi(&at_120, WS_OVERLAPPEDWINDOW, FALSE, 0, 120);
+    long outer_width = at_192.right - at_192.left;
+    long outer_height = system_chrome ? at_192.bottom - at_192.top : at_192.bottom;
+    long width = MulDiv(outer_width, 120, 192) - (at_120.right - at_120.left);
+    long height = MulDiv(outer_height, 120, 192) - (system_chrome ? at_120.bottom - at_120.top : at_120.bottom);
+    printf("note: fr82 %s chrome: 640x480 at 192 dpi in a linearly scaled rectangle at 120 dpi is %ldx%ld\n",
+           system_chrome ? "system" : "custom", width, height);
+}
+
+// What Windows hands a window in WM_DPICHANGED: the outer rectangle scaled from the DPI it
+// had to the new one, its top left kept. The window's DPI itself does not change here (it
+// is the monitor's), so the frame Windows draws stays the one of this monitor and the
+// window corrects its outer size by what it measures.
+static void deliver_dpi_change(HWND hwnd, UINT from, UINT to) {
+    RECT outer;
+    CHECK(GetWindowRect(hwnd, &outer));
+    RECT suggested = {outer.left, outer.top,
+                      outer.left + MulDiv(outer.right - outer.left, (int)to, (int)from),
+                      outer.top + MulDiv(outer.bottom - outer.top, (int)to, (int)from)};
+    SendMessageW(hwnd, WM_DPICHANGED, MAKEWPARAM(to, to), (LPARAM)&suggested);
+    pump_all();
+}
+
+static int client_is(HWND hwnd, int32_t width, int32_t height) {
+    RECT client;
+    if (!GetClientRect(hwnd, &client)) return 0;
+    if (client.right - client.left == width && client.bottom - client.top == height) return 1;
+    printf("note: client %ldx%ld, wanted %dx%d\n", (long)(client.right - client.left),
+           (long)(client.bottom - client.top), (int)width, (int)height);
+    return 0;
+}
+
+// A real window opened at 320x240 points, its DPI changed from 192 to 120, from 120 to 192,
+// from 96 to 144 and back: its client area is 320x240 points at each new scale exactly, and
+// coming back gives the first size with no drift. With the window's own caption and with the
+// system's. And a window of 333x201 points, whose sizes at 120 and 144 DPI round.
+static void fr82_dpi_change_keeps_the_size_in_points(void) {
+    if (!real_windows_ok) { printf("skip: fr82_dpi_change_keeps_the_size_in_points\n"); return; }
+    for (int system_chrome = 0; system_chrome <= 1; system_chrome++) {
+        fr82_note_linear_suggestion(system_chrome);
+        dxc_native_window_configure(1, 0, 0, system_chrome, 0);
+        struct dxc_native_window w;
+        memset(&w, 0, sizeof w);
+        if (!open_test_window(&w, "dpi")) {
+            printf("fail: fr82 the window could not be made\n");
+            failures++;
+            continue;
+        }
+        pump_all();
+        HWND hwnd = (HWND)w.window;
+        UINT dpi = GetDpiForWindow(hwnd);
+        if (dpi == 0) dpi = 96;
+        CHECK(client_is(hwnd, dxc_points_to_pixels(320, dpi), dxc_points_to_pixels(240, dpi)));
+        const UINT steps[] = {192, 120, 192, 96, 144, 96, 192};
+        UINT from = dpi;
+        for (int index = 0; index < 7; index++) {
+            deliver_dpi_change(hwnd, from, steps[index]);
+            CHECK(client_is(hwnd, dxc_points_to_pixels(320, steps[index]), dxc_points_to_pixels(240, steps[index])));
+            from = steps[index];
+        }
+        CHECK(client_is(hwnd, 640, 480));
+        dxc_native_window_destroy(w.window);
+        pump_all();
+        dxc_native_window_release(w.window);
+    }
+    dxc_native_window_configure(1, 0, 0, 0, 0);
+
+    struct dxc_native_window odd;
+    memset(&odd, 0, sizeof odd);
+    if (!open_test_window(&odd, "dpi odd")) {
+        printf("fail: fr82 the window could not be made\n");
+        failures++;
+        return;
+    }
+    pump_all();
+    HWND hwnd = (HWND)odd.window;
+    UINT dpi = GetDpiForWindow(hwnd);
+    if (dpi == 0) dpi = 96;
+    dxc_native_window_select(odd.window);
+    dxc_native_window_set_content_size(333, 201);
+    pump_all();
+    CHECK(client_is(hwnd, dxc_points_to_pixels(333, dpi), dxc_points_to_pixels(201, dpi)));
+    const UINT steps[] = {120, 144, 120, 96, 144};
+    UINT from = dpi;
+    for (int index = 0; index < 5; index++) {
+        deliver_dpi_change(hwnd, from, steps[index]);
+        CHECK(client_is(hwnd, dxc_points_to_pixels(333, steps[index]), dxc_points_to_pixels(201, steps[index])));
+        from = steps[index];
+    }
+    // 500x302, where restating 416x251 pixels at 120 DPI would have given 499x301.
+    CHECK(client_is(hwnd, 500, 302));
+    dxc_native_window_destroy(odd.window);
+    pump_all();
+    dxc_native_window_release(odd.window);
+}
+
+// A maximised window keeps filling its place when the DPI changes, and stays maximised.
+// Restored afterwards, it gets its size in points at the new scale.
+static void fr82_maximised_window_stays_maximised_across_a_dpi_change(void) {
+    if (!real_windows_ok) { printf("skip: fr82_maximised_window_stays_maximised_across_a_dpi_change\n"); return; }
+    struct dxc_native_window w;
+    memset(&w, 0, sizeof w);
+    if (!open_test_window(&w, "dpi maximised")) {
+        printf("fail: fr82 the window could not be made\n");
+        failures++;
+        return;
+    }
+    pump_all();
+    HWND hwnd = (HWND)w.window;
+    ShowWindow(hwnd, SW_MAXIMIZE);
+    pump_all();
+    if (!IsZoomed(hwnd)) {
+        printf("skip: fr82_maximised_window_stays_maximised_across_a_dpi_change (the window could not be maximised here)\n");
+    } else {
+        RECT before;
+        CHECK(GetWindowRect(hwnd, &before));
+        // For a maximised window Windows suggests the place it fills.
+        RECT suggested = before;
+        SendMessageW(hwnd, WM_DPICHANGED, MAKEWPARAM(144, 144), (LPARAM)&suggested);
+        pump_all();
+        CHECK(IsZoomed(hwnd));
+        RECT after;
+        CHECK(GetWindowRect(hwnd, &after));
+        CHECK(EqualRect(&before, &after));
+        ShowWindow(hwnd, SW_RESTORE);
+        pump_all();
+        CHECK(!IsZoomed(hwnd));
+        CHECK(client_is(hwnd, 480, 360));
+    }
+    dxc_native_window_destroy(w.window);
+    pump_all();
+    dxc_native_window_release(w.window);
 }
 
 // A press is dated by when the system posted it (GetMessageTime, read unsigned), and the
@@ -1171,11 +1377,14 @@ int main(int argc, char **argv) {
     fr53_points_round_trip_at_every_scale();
     fr53_follow_pointer_keeps_anchor_under_pointer();
     fr53_second_pump_in_the_same_turn_does_not_wait();
+    fr82_dpi_size_arithmetic();
     // The software adapter, for a runner with no GPU.
     _putenv("DXC_D3D12_WARP=1");
     fr19_9_app_caption_strip_is_client_area();
     fr53_two_windows_have_independent_state();
     fr53_window_position_round_trips();
+    fr82_dpi_change_keeps_the_size_in_points();
+    fr82_maximised_window_stays_maximised_across_a_dpi_change();
     pointer_events_carry_the_message_time();
     wheel_messages_reach_the_scene_with_the_documented_sign();
     fr53_close_request_reaches_only_its_window();

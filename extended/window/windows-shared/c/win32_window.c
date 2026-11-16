@@ -74,6 +74,7 @@
 #include "win32_placement.h"
 #include "win32_scheme.h"
 #include "win32_edit_menu.h"
+#include "win32_dpi.h"
 
 // What happened in the window, waiting to be read.
 //
@@ -310,6 +311,17 @@ struct DxcWin {
     // Where the pointer is between the maximise button and the client area, for a window
     // that draws its own caption (win32_caption.h).
     struct dxc_caption_pointer caption_pointer;
+
+    // The size the window keeps across a change of DPI (win32_dpi.h), and the DPI its size
+    // is laid out at: the window's own DPI, taken from WM_DPICHANGED as it arrives. 0 until
+    // the window has been given its first size. in_dpi_change is set while WM_DPICHANGED
+    // applies the size, whose WM_SIZE is not a size to remember; dpi_restore_pending is set
+    // when the DPI changed while the window was maximised, minimised or snapped, so it gets
+    // its size back when it is restored.
+    struct dxc_dpi_size dpi_size;
+    uint32_t layout_dpi;
+    int in_dpi_change;
+    int dpi_restore_pending;
 };
 
 #define dxc_events (dxc_w->events)
@@ -2986,6 +2998,91 @@ static int dxc_hide_surface_early(HWND window, int32_t width, int32_t height) {
     return 1;
 }
 
+#ifndef WM_GETDPISCALEDSIZE
+#define WM_GETDPISCALEDSIZE 0x02E4
+#endif
+// Posted from WM_SIZE when a window whose DPI changed while it was maximised, minimised or
+// snapped is restored: it is given its size at the new DPI once the restore is done.
+#define DXC_WM_DPI_RESTORE (WM_APP + 3)
+
+typedef BOOL(WINAPI *dxc_is_window_arranged_fn)(HWND);
+
+/**
+ * 1 while the window is snapped (arranged) to an edge or a corner of its monitor. Looked up
+ * at run time: user32 has exported IsWindowArranged since Windows 7, but SDK headers declare
+ * it only lately. Where it is missing the window is taken not to be snapped.
+ */
+static int dxc_window_arranged(HWND window) {
+    static int looked_up;
+    static dxc_is_window_arranged_fn is_arranged;
+    if (!looked_up) {
+        HMODULE user32 = GetModuleHandleW(L"user32.dll");
+        if (user32 != NULL) {
+            is_arranged = (dxc_is_window_arranged_fn)(void *)GetProcAddress(user32, "IsWindowArranged");
+        }
+        looked_up = 1;
+    }
+    return is_arranged != NULL && is_arranged(window) ? 1 : 0;
+}
+
+/**
+ * The outer size, in pixels at [dpi], of a window whose client area is [width] x [height]
+ * pixels: the frame AdjustWindowRectExForDpi gives the window's style at that DPI, less the
+ * part above the content when the window draws its own caption (WM_NCCALCSIZE keeps the top
+ * edge where it was).
+ */
+static void dxc_outer_for_client(int32_t width, int32_t height, UINT dpi, int32_t *outer_width,
+                                 int32_t *outer_height) {
+    RECT wanted = {0, 0, width, height};
+    AdjustWindowRectExForDpi(&wanted, dxc_window_style(), FALSE, 0, dpi);
+    *outer_width = wanted.right - wanted.left;
+    *outer_height = dxc_options.system_chrome ? wanted.bottom - wanted.top : wanted.bottom;
+}
+
+/** 1 when a change of DPI now resizes the window to the size it keeps (win32_dpi.h). */
+static int dxc_dpi_resizes_now(HWND window) {
+    return dxc_w->dpi_size.dpi != 0 &&
+           dxc_dpi_change_resizes(IsZoomed(window) ? 1 : 0, IsIconic(window) ? 1 : 0,
+                                  dxc_window_arranged(window));
+}
+
+/**
+ * Gives the window the client area its kept size comes to at [dpi], the outer top left at
+ * ([left], [top]). Goes through SetWindowPos, so the size reaches WM_NCCALCSIZE and WM_SIZE
+ * and is drawn ahead, presented and flushed there like any other size change outside a drag.
+ *
+ * The outer size comes from AdjustWindowRectExForDpi at the new DPI. Should the frame the
+ * window then has differ from it, the client area is measured and the outer size corrected
+ * by the difference once, so the client area is the kept size whatever the frame came to.
+ */
+static void dxc_apply_dpi_size(HWND window, int32_t left, int32_t top, UINT dpi, const char *why) {
+    int32_t width = 0, height = 0;
+    dxc_dpi_size_client(dxc_w->dpi_size, dpi, dxc_options.min_width, dxc_options.min_height, &width, &height);
+    int32_t outer_width = 0, outer_height = 0;
+    dxc_outer_for_client(width, height, dpi, &outer_width, &outer_height);
+    dxc_w->in_dpi_change = 1;
+    SetWindowPos(window, NULL, left, top, outer_width, outer_height, SWP_NOZORDER | SWP_NOACTIVATE);
+    RECT client = {0, 0, 0, 0};
+    GetClientRect(window, &client);
+    int32_t short_width = width - (int32_t)(client.right - client.left);
+    int32_t short_height = height - (int32_t)(client.bottom - client.top);
+    if (short_width != 0 || short_height != 0) {
+        SetWindowPos(window, NULL, left, top, outer_width + short_width, outer_height + short_height,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+        GetClientRect(window, &client);
+    }
+    dxc_w->in_dpi_change = 0;
+    // The frame at the new DPI is the applied outer size less the client area, so this line
+    // and the one WM_DPICHANGED prints give the frame at both DPIs.
+    fprintf(stderr,
+            "compose-rust: dpi-size: %s: kept %dx%d at %u dpi, client wanted %dx%d at %u dpi, "
+            "outer %dx%d, corrected by %d,%d, client now %ldx%ld\n",
+            why, (int)dxc_w->dpi_size.width, (int)dxc_w->dpi_size.height, (unsigned)dxc_w->dpi_size.dpi,
+            (int)width, (int)height, (unsigned)dpi, (int)outer_width, (int)outer_height,
+            (int)short_width, (int)short_height,
+            (long)(client.right - client.left), (long)(client.bottom - client.top));
+}
+
 static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     if (dxc_trace_state >= 0 && dxc_trace_on()) dxc_trace_message(window, message, wparam, lparam);
     switch (message) {
@@ -3280,15 +3377,80 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         if (dxc_swapchain != NULL) {
             dxc_log_monitor(window, "WM_DPICHANGED");
         }
-        // A per monitor aware window is not resized by the system when its DPI changes;
-        // it is handed the rectangle that keeps its size in points and has to apply it.
-        // Applied with SetWindowPos, so the new size goes through WM_SIZE and is drawn,
-        // presented and flushed there like any other resize.
+        // A per monitor aware window is not resized by the system when its DPI changes; it
+        // is handed a rectangle and has to apply a size itself. The rectangle's size is
+        // Windows' scaling of the old outer rectangle, made without knowing this window's
+        // frame (the caption strip is client area, WM_NCCALCSIZE), and the client area inside
+        // it came out a few pixels off the size in points (win32_dpi.h). The window is
+        // given its kept size at the new DPI instead, at the rectangle's top left: that is
+        // where Windows put the window, on the monitor whose DPI this is, and the corner a
+        // change of scale leaves in place, as the X11 windows leave theirs. A maximised,
+        // minimised or snapped window takes the rectangle as it is: it fills its place, and
+        // gets its kept size back when it is restored. Applied with SetWindowPos either way,
+        // so the new size goes through WM_NCCALCSIZE and WM_SIZE and is drawn, presented and
+        // flushed there like any other resize outside a drag.
         {
             const RECT *suggested = (const RECT *)lparam;
-            SetWindowPos(window, NULL, suggested->left, suggested->top,
-                         suggested->right - suggested->left, suggested->bottom - suggested->top,
-                         SWP_NOZORDER | SWP_NOACTIVATE);
+            UINT to = (UINT)HIWORD(wparam);
+            RECT before_outer = {0, 0, 0, 0};
+            RECT before_client = {0, 0, 0, 0};
+            GetWindowRect(window, &before_outer);
+            GetClientRect(window, &before_client);
+            fprintf(stderr,
+                    "compose-rust: dpi-size: WM_DPICHANGED %u -> %u dpi: outer %ldx%ld client %ldx%ld, "
+                    "suggested %ldx%ld at %ld,%ld%s\n",
+                    (unsigned)dxc_w->layout_dpi, (unsigned)to,
+                    (long)(before_outer.right - before_outer.left), (long)(before_outer.bottom - before_outer.top),
+                    (long)before_client.right, (long)before_client.bottom,
+                    (long)(suggested->right - suggested->left), (long)(suggested->bottom - suggested->top),
+                    (long)suggested->left, (long)suggested->top,
+                    IsZoomed(window) ? " (maximised)" : IsIconic(window) ? " (minimised)"
+                    : dxc_window_arranged(window) ? " (snapped)" : "");
+            int resizes = to != 0 && dxc_dpi_resizes_now(window);
+            if (to != 0) dxc_w->layout_dpi = to;
+            if (resizes) {
+                dxc_apply_dpi_size(window, suggested->left, suggested->top, to, "the DPI changed");
+            } else {
+                if (dxc_w->dpi_size.dpi != 0) dxc_w->dpi_restore_pending = 1;
+                if (!IsIconic(window)) {
+                    dxc_w->in_dpi_change = 1;
+                    SetWindowPos(window, NULL, suggested->left, suggested->top,
+                                 suggested->right - suggested->left, suggested->bottom - suggested->top,
+                                 SWP_NOZORDER | SWP_NOACTIVATE);
+                    dxc_w->in_dpi_change = 0;
+                }
+            }
+        }
+        return 0;
+    case WM_GETDPISCALEDSIZE:
+        // Sent before WM_DPICHANGED (Windows 10 1703 and later) to ask what outer size the
+        // window will have at the new DPI. Answered with the size WM_DPICHANGED will apply,
+        // so the rectangle Windows then suggests, and where it puts it when a dragged window
+        // crosses onto another monitor, is for the window's real size.
+        if (lparam != 0 && wparam != 0 && dxc_dpi_resizes_now(window)) {
+            int32_t width = 0, height = 0, outer_width = 0, outer_height = 0;
+            dxc_dpi_size_client(dxc_w->dpi_size, (UINT)wparam, dxc_options.min_width, dxc_options.min_height,
+                                &width, &height);
+            dxc_outer_for_client(width, height, (UINT)wparam, &outer_width, &outer_height);
+            SIZE *size = (SIZE *)lparam;
+            size->cx = outer_width;
+            size->cy = outer_height;
+            return TRUE;
+        }
+        break;
+    case DXC_WM_DPI_RESTORE:
+        // Restored after the DPI changed while the window was maximised, minimised or
+        // snapped: given its kept size at the DPI it now has, its top left where it is.
+        if (dxc_dpi_resizes_now(window) && dxc_w->layout_dpi != 0) {
+            int32_t width = 0, height = 0;
+            dxc_dpi_size_client(dxc_w->dpi_size, dxc_w->layout_dpi, dxc_options.min_width,
+                                dxc_options.min_height, &width, &height);
+            RECT outer, client;
+            if (GetWindowRect(window, &outer) && GetClientRect(window, &client) &&
+                (client.right - client.left != width || client.bottom - client.top != height)) {
+                dxc_apply_dpi_size(window, outer.left, outer.top, dxc_w->layout_dpi,
+                                   "restored after the DPI changed");
+            }
         }
         return 0;
     case WM_DISPLAYCHANGE:
@@ -3323,6 +3485,21 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
             dxc_mode("window", dxc_size_kind_name(dxc_last_size_kind), dxc_size_kind_name(wparam),
                      "WM_SIZE");
             dxc_last_size_kind = wparam;
+        }
+        // The size the window keeps across a change of DPI: whatever size it is restored to,
+        // by the application or by the user, except the one a DPI change is applying and the
+        // one Windows gives a snapped window. The first restore after a DPI change that came
+        // while the window was maximised, minimised or snapped asks for the kept size instead,
+        // once this resize is over.
+        if (wparam == SIZE_RESTORED && !dxc_w->in_dpi_change && dxc_w->layout_dpi != 0 &&
+            !dxc_window_arranged(window)) {
+            if (dxc_w->dpi_restore_pending) {
+                dxc_w->dpi_restore_pending = 0;
+                PostMessageW(window, DXC_WM_DPI_RESTORE, 0, 0);
+            } else {
+                dxc_w->dpi_size = dxc_dpi_size_note(dxc_w->dpi_size, (int32_t)LOWORD(lparam),
+                                                    (int32_t)HIWORD(lparam), dxc_w->layout_dpi);
+            }
         }
         // Written down, then drawn: the frame refits the swapchain where it begins, never
         // while a buffer is being drawn into. Nothing to do while minimised: the client
@@ -4888,6 +5065,12 @@ static int32_t dxc_open_window(
         top = wanted_y;
         placement = SWP_NOZORDER;
     }
+    // The size is kept in points from here on, through changes of DPI (win32_dpi.h). Where
+    // the work area made the window smaller, the WM_SIZE below keeps the pixels it got.
+    dxc_w->layout_dpi = dpi;
+    dxc_w->dpi_size.width = width;
+    dxc_w->dpi_size.height = height;
+    dxc_w->dpi_size.dpi = USER_DEFAULT_SCREEN_DPI;
     SetWindowPos(window, NULL, left, top, outer_width, outer_height, placement | SWP_FRAMECHANGED);
 
     RECT client;
@@ -5594,14 +5777,8 @@ static UINT dxc_dpi_of(HWND window) {
 
 /** The size of the window's outer frame for content of [width] by [height] points, in pixels. */
 static void dxc_outer_size(int32_t width, int32_t height, UINT dpi, int32_t *outer_width, int32_t *outer_height) {
-    RECT wanted;
-    wanted.left = 0;
-    wanted.top = 0;
-    wanted.right = dxc_points_to_pixels(width, dpi);
-    wanted.bottom = dxc_points_to_pixels(height, dpi);
-    AdjustWindowRectExForDpi(&wanted, dxc_window_style(), FALSE, 0, dpi);
-    *outer_width = wanted.right - wanted.left;
-    *outer_height = dxc_options.system_chrome ? wanted.bottom - wanted.top : wanted.bottom;
+    dxc_outer_for_client(dxc_points_to_pixels(width, dpi), dxc_points_to_pixels(height, dpi), dpi,
+                         outer_width, outer_height);
 }
 
 void dxc_native_window_set_position(int32_t x, int32_t y) {
@@ -5615,6 +5792,14 @@ void dxc_native_window_set_content_size(int32_t width, int32_t height) {
     if (dxc_window == NULL) return;
     int32_t outer_width = 0, outer_height = 0;
     dxc_outer_size(width, height, dxc_dpi_of(dxc_window), &outer_width, &outer_height);
+    // Kept in points, so a change of DPI later gives exactly these points at the new scale.
+    // Where the window cannot take the size (a maximised window, a minimum), WM_SIZE keeps
+    // the pixels it got instead.
+    if (!IsZoomed(dxc_window) && !IsIconic(dxc_window)) {
+        dxc_w->dpi_size.width = width;
+        dxc_w->dpi_size.height = height;
+        dxc_w->dpi_size.dpi = USER_DEFAULT_SCREEN_DPI;
+    }
     SetWindowPos(dxc_window, NULL, 0, 0, outer_width, outer_height,
                  SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
 }
