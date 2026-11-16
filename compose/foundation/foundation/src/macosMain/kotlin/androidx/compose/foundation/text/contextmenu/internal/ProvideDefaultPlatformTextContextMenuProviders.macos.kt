@@ -91,6 +91,7 @@ private class NativeTextContextMenuProvider(
 
         val menu = NSMenu()
         menu.setAutoenablesItems(false)
+        val actions = mutableListOf<MenuAction>()
         var wanted = 0
         suspendCancellableCoroutine { waiting ->
             val session = object : TextContextMenuSession {
@@ -109,7 +110,10 @@ private class NativeTextContextMenuProvider(
                         val action = MenuAction { component.onClick(session) }
                         item.setTarget(action)
                         item.setAction(sel_registerName("perform"))
-                        // Held by the item's target being strong, which it is here.
+                        // A menu item holds its target weakly, so without this the object
+                        // that carries the closure is collected before the menu is shown
+                        // and every entry does nothing when it is chosen.
+                        actions += action
                         menu.addItem(item)
                         wanted++
                     }

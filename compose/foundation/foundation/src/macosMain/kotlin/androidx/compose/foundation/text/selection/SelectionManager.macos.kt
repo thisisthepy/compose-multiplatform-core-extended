@@ -17,26 +17,23 @@
 package androidx.compose.foundation.text.selection
 
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.text.nativeSelectionContainerTextContextMenuComponents
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.key
 
 // this doesn't sounds very sustainable
 // it would end up being a function for any conceptual keyevent (selectall, cut, copy, paste)
 // TODO(b/1564937)
 internal actual fun isCopyKeyEvent(keyEvent: KeyEvent): Boolean =
-    TODO("implement native isCopyKeyEvent")
-/*
-    keyEvent.key == Key.C && when (DesktopPlatform.Current) {
-        DesktopPlatform.MacOS -> keyEvent.isMetaPressed
-        else -> keyEvent.isCtrlPressed
-    } || keyEvent.key == Key.Copy
-*/
+    keyEvent.key == Key.C && keyEvent.isMetaPressed || keyEvent.key == Key.Copy
 
 /**
  * Magnification is not supported on desktop.
  */
 internal actual fun Modifier.selectionMagnifier(manager: SelectionManager): Modifier = this
 
-// TODO https://youtrack.jetbrains.com/issue/CMP-7819
 internal actual fun Modifier.addSelectionContainerTextContextMenuComponents(
     selectionManager: SelectionManager
-): Modifier = this
+): Modifier = nativeSelectionContainerTextContextMenuComponents(selectionManager)

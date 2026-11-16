@@ -19,6 +19,7 @@ package androidx.compose.foundation.text.input.internal.selection
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.internal.hasText
 import androidx.compose.foundation.text.TextDragObserver
+import androidx.compose.foundation.text.nativeBasicTextFieldTextContextMenuComponents
 import androidx.compose.foundation.text.selection.MouseSelectionObserver
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -44,7 +45,7 @@ internal actual suspend fun TextFieldSelectionState.textFieldSelectionGestures(
 internal actual fun Modifier.addBasicTextFieldTextContextMenuComponents(
     state: TextFieldSelectionState,
     coroutineScope: CoroutineScope
-): Modifier = this
+): Modifier = nativeBasicTextFieldTextContextMenuComponents(state, coroutineScope)
 
 internal actual class ClipboardPasteState actual constructor(private val clipboard: Clipboard) {
     private var _hasClip = false
