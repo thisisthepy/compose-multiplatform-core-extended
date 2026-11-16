@@ -587,8 +587,8 @@ static void fr82_dpi_size_arithmetic(void) {
     dxc_dpi_size_client(dragged, 192, 0, 0, &width, &height);
     CHECK(width == 641 && height == 480);
     // Never under the window's minimum, which is in points.
-    struct dxc_dpi_size small = {100, 50, 96};
-    dxc_dpi_size_client(small, 120, 200, 40, &width, &height);
+    struct dxc_dpi_size tiny = {100, 50, 96};
+    dxc_dpi_size_client(tiny, 120, 200, 40, &width, &height);
     CHECK(width == 250 && height == 63);
 
     // Only a window that is neither maximised, minimised nor snapped is resized.
