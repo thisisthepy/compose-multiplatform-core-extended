@@ -7,7 +7,8 @@ application for Windows without a JVM.
   clipboard, file drops and the live resize. `c/win32_file_dialog.c`: the file open and save
   dialogs. `c/win32_notifications.c`: toasts.
   `c/win32_resize.h`, `c/win32_ime_text.h`, `c/win32_buttons.h`, `c/win32_wheel.h` (the wheel's scroll
-  direction) and `c/win32_file_dialog_spec.h` (a dialog's type list) are header-only logic that compiles without
+  direction), `c/win32_dpi.h` (the size a window keeps across a change of DPI) and
+  `c/win32_file_dialog_spec.h` (a dialog's type list) are header-only logic that compiles without
   Windows.
   `c/win32_keys.h` decides which key messages stay the scene's (F10 and the menu key among
   them); it is header-only too and reads only the message and key names of `<windows.h>`.
