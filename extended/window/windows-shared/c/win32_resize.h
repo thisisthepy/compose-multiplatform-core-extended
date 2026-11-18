@@ -160,6 +160,53 @@ static int dxc_resize_predraw_wanted(const struct dxc_resize *resize, int raster
 }
 
 /**
+ * Whether a step of a drag has to be drawn before the window takes the step's size.
+ *
+ * Asked from WM_NCCALCSIZE too, inside a drag. A step drawn in WM_SIZE is drawn after the
+ * window has the new rectangle, and the draw takes several milliseconds (4 to 6 on a CI
+ * runner). A composition that falls in that time shows the new rectangle with the picture
+ * of the step before: where the window got smaller, the old picture cut by the new
+ * rectangle, its right or bottom edge missing (issue 245; 26 of the 29 faulty frames of one
+ * run were composed between WM_SIZE and the copy). Drawn here instead, into the bitmap,
+ * while the window still has the old rectangle and the old picture, the step leaves WM_SIZE
+ * only the copy, a fraction of a millisecond.
+ *
+ * Only inside a drag, only with CPU frames, never while a frame is being drawn, never for
+ * an empty client area, only for a size that differs from the one the window has, and not
+ * where it was turned off ([enabled], DXC_DRAG_PREDRAW=0).
+ */
+static int dxc_resize_drag_predraw_wanted(const struct dxc_resize *resize, int raster, int drawing,
+                                          int enabled, int32_t width, int32_t height,
+                                          int32_t current_width, int32_t current_height) {
+    if (!enabled || !raster || drawing || !resize->dragging || width <= 0 || height <= 0) {
+        return 0;
+    }
+    return width != current_width || height != current_height;
+}
+
+// The first build of the Windows 11 generation of the desktop compositor. Server 2022
+// (20348) and every Windows 10 are below it; Windows 11 and Server 2025 (26100) are not.
+#define DXC_WINDOWS_11_BUILD 22000
+
+/**
+ * Whether a step of a drag drawn ahead waits for one composition before the window takes
+ * its size, so the size change and the copy that follows it start a composition interval
+ * together rather than straddle one.
+ *
+ * The wait costs up to one composition per step, which is the pace the GPU path has. So it
+ * is taken only where the fault is common: on the Windows 10 generation of the compositor
+ * (build below DXC_WINDOWS_11_BUILD), where 15 of 24 drags showed it against 0 or 1 of 24 on
+ * the Windows 11 generation. [asked] overrides the build: 1 always waits, 0 never does,
+ * anything else follows the build (DXC_DRAG_FLUSH). An unknown build (zero) does not wait.
+ */
+static int dxc_resize_drag_flush_wanted(int asked, uint32_t build) {
+    if (asked == 0 || asked == 1) {
+        return asked;
+    }
+    return build != 0 && build < DXC_WINDOWS_11_BUILD;
+}
+
+/**
  * A frame drawn ahead of a size change and waiting for the size to arrive, or nothing
  * (both zero).
  */

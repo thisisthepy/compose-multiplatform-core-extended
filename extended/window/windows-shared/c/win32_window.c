@@ -468,6 +468,16 @@ static int dxc_predraw_flush;
 // DXC_RESIZE_HIDE_EARLY=0: the swapchain's child stays visible until WM_SIZE, as before it
 // was hidden in WM_NCCALCSIZE, ahead of the size change. For comparing the two.
 static int dxc_hide_early_off;
+// DXC_DRAG_PREDRAW=0: a step of a drag is drawn in WM_SIZE, after the window has taken its
+// size, as before it was drawn ahead in WM_NCCALCSIZE (issue 245). For comparing the two.
+static int dxc_drag_predraw_off;
+// DXC_DRAG_FLUSH: 1 waits for one composition before every step of a drag takes its size, 0
+// never does; unset, it follows the Windows build (dxc_resize_drag_flush_wanted).
+static int dxc_drag_flush_asked = -1;
+static int dxc_drag_flush;
+// Steps of the current drag drawn ahead, and how many of them waited for a composition.
+static int dxc_drag_predrawn_steps;
+static int dxc_drag_flushed_steps;
 // DXC_SURFACE_RETURN: how the child hidden ahead of the size change comes back with the frame
 // drawn ahead. staged (the default): the swapchain is refitted and the frame copied into its
 // buffer in WM_NCCALCSIZE, and WM_SIZE fits the child, shows it and presents; wmsize: WM_SIZE
@@ -2786,7 +2796,8 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
         if (!dxc_raster_present(width, height)) {
             dxc_raster_copy();
             dxc_state_marks[DXC_STATE_COPIED] = dxc_now_ms();
-            dxc_show_ready_surface(width, height);
+            // Not inside a drag: the child stays hidden until the size has settled.
+            if (!dxc_sizing.dragging) dxc_show_ready_surface(width, height);
         }
     }
     dxc_resizing = 0;
@@ -2831,6 +2842,25 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
 }
 
 /**
+ * The Windows build number (20348 for Server 2022, 26100 for Server 2025), or zero where it
+ * cannot be read. From RtlGetVersion, looked up at run time: GetVersionEx answers with the
+ * build the executable's manifest names, not the one that is running.
+ */
+static uint32_t dxc_windows_build(void) {
+    typedef LONG(WINAPI * dxc_rtl_get_version_fn)(OSVERSIONINFOW *);
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    dxc_rtl_get_version_fn get =
+            ntdll != NULL ? (dxc_rtl_get_version_fn)(void *)GetProcAddress(ntdll, "RtlGetVersion") : NULL;
+    OSVERSIONINFOW version;
+    memset(&version, 0, sizeof version);
+    version.dwOSVersionInfoSize = sizeof version;
+    if (get == NULL || get(&version) != 0) {
+        return 0;
+    }
+    return (uint32_t)version.dwBuildNumber;
+}
+
+/**
  * Draws the frame for a size the window is about to be given, before it is given it.
  *
  * Called from WM_NCCALCSIZE with the client rectangle the window will have. Outside a drag
@@ -2843,6 +2873,12 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
  * picture; WM_SIZE then only copies it, which takes far less than a composition. The wait
  * for DWM to compose once more, last, puts that copy at the start of a composition
  * interval rather than at a random point of one.
+ *
+ * Inside a drag each step is drawn here too (issue 245, dxc_resize_drag_predraw_wanted):
+ * drawn in WM_SIZE, a step left the window with its new rectangle and the picture of the
+ * step before for the length of the draw, and a composition in that time showed a smaller
+ * window with the old picture cut by it. The child is not readied (it stays hidden for the
+ * whole drag), and the wait for a composition is taken only where dxc_drag_flush says so.
  */
 static int dxc_hide_surface_early(HWND window, int32_t width, int32_t height);
 static void dxc_predraw_resize(HWND window, const RECT *client) {
@@ -2855,15 +2891,22 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     }
     int32_t width = (int32_t)(client->right - client->left);
     int32_t height = (int32_t)(client->bottom - client->top);
-    if (!dxc_resize_predraw_wanted(&dxc_sizing, dxc_raster_enabled, dxc_drawing, width, height,
-                                   (int32_t)(now.right - now.left), (int32_t)(now.bottom - now.top),
-                                   dxc_presented_width, dxc_presented_height)) {
+    int dragging = dxc_sizing.dragging;
+    if (dragging) {
+        if (!dxc_resize_drag_predraw_wanted(&dxc_sizing, dxc_raster_enabled, dxc_drawing, !dxc_drag_predraw_off,
+                                            width, height, (int32_t)(now.right - now.left),
+                                            (int32_t)(now.bottom - now.top))) {
+            return;
+        }
+    } else if (!dxc_resize_predraw_wanted(&dxc_sizing, dxc_raster_enabled, dxc_drawing, width, height,
+                                          (int32_t)(now.right - now.left), (int32_t)(now.bottom - now.top),
+                                          dxc_presented_width, dxc_presented_height)) {
         return;
     }
     LARGE_INTEGER started;
     QueryPerformanceCounter(&started);
     int hidden = dxc_hide_surface_early(window, (int32_t)(now.right - now.left), (int32_t)(now.bottom - now.top));
-    dxc_switch_frames(1, width, height, "the size is about to change");
+    dxc_switch_frames(1, width, height, dragging ? "the edge is being dragged" : "the size is about to change");
     dxc_predrawn_set(&dxc_predrawn, 0, 0);
     dxc_resize_target_width = width;
     dxc_resize_target_height = height;
@@ -2873,6 +2916,23 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     dxc_predrawing = 0;
     dxc_resizing = 0;
     int drawn = dxc_predrawn.width == width && dxc_predrawn.height == height;
+    if (dragging) {
+        // The child stays hidden until the drag is over, so nothing is readied for it. The
+        // wait puts the size change and WM_SIZE's copy at the start of a composition interval.
+        double step_drawn_ms = dxc_elapsed_ms(started);
+        int step_flushed = drawn && (hidden || dxc_drag_flush) ? dxc_dwm_flush() : 0;
+        if (drawn) dxc_drag_predrawn_steps++;
+        if (step_flushed) dxc_drag_flushed_steps++;
+        if (dxc_report_latency) {
+            fprintf(stderr,
+                    "compose-rust: resize-mode: drag step %dx%d drawn before the window took it (%s, draw %.2f ms, "
+                    "%s %.2f ms, at %.1f ms)\n",
+                    (int)width, (int)height, drawn ? "waiting for WM_SIZE" : "not drawn", step_drawn_ms,
+                    step_flushed ? "DwmFlush" : "no DwmFlush", dxc_elapsed_ms(started) - step_drawn_ms,
+                    dxc_now_ms());
+        }
+        return;
+    }
     int ready = drawn && hidden &&
                 (dxc_surface_return == DXC_SURFACE_RETURN_NCCALC || dxc_surface_return == DXC_SURFACE_RETURN_STAGED) &&
                 dxc_ready_surface(width, height);
@@ -3272,6 +3332,8 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         // inside `DefWindowProc` rather than from the renderer's frame loop, and that
         // loop does not return until the reader lets go.
         dxc_resize_begin_drag(&dxc_sizing);
+        dxc_drag_predrawn_steps = 0;
+        dxc_drag_flushed_steps = 0;
         dxc_mode("size-move", "off", "on", "WM_ENTERSIZEMOVE");
         // Each step of the drag has to be drawn and presented before DWM shows the new
         // size, so the thread doing it should not lose the CPU to background load.
@@ -3285,6 +3347,10 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         // written down and taken by the next frame.
         dxc_resize_end_drag(&dxc_sizing);
         dxc_mode("size-move", "on", "off", "WM_EXITSIZEMOVE");
+        fprintf(stderr, "compose-rust: resize-proof drag steps drawn ahead=%d waited for a composition=%d\n",
+                dxc_drag_predrawn_steps, dxc_drag_flushed_steps);
+        // A step drawn ahead for a size the window never took is a frame nobody may show.
+        dxc_predrawn_set(&dxc_predrawn, 0, 0);
         if (dxc_external_drag) {
             // The window's side of an external drag: how many sizes it drew. None is a
             // failure of the drag, not a pass.
@@ -5266,6 +5332,19 @@ static int32_t dxc_open_window(
         dxc_predraw_flush = flush != NULL && strcmp(flush, "1") == 0;
         const char *early = getenv("DXC_RESIZE_HIDE_EARLY");
         dxc_hide_early_off = early != NULL && strcmp(early, "0") == 0;
+        const char *drag_predraw = getenv("DXC_DRAG_PREDRAW");
+        dxc_drag_predraw_off = drag_predraw != NULL && strcmp(drag_predraw, "0") == 0;
+        const char *drag_flush = getenv("DXC_DRAG_FLUSH");
+        dxc_drag_flush_asked = drag_flush == NULL ? -1 : strcmp(drag_flush, "1") == 0 ? 1
+                               : strcmp(drag_flush, "0") == 0 ? 0 : -1;
+        uint32_t build = dxc_windows_build();
+        dxc_drag_flush = dxc_resize_drag_flush_wanted(dxc_drag_flush_asked, build);
+        fprintf(stderr,
+                "compose-rust: resize-mode: drag steps drawn %s, %s (windows build %u, DXC_DRAG_FLUSH %s)\n",
+                dxc_drag_predraw_off ? "in WM_SIZE" : "ahead in WM_NCCALCSIZE",
+                dxc_drag_flush ? "each waits for one composition before the size changes"
+                               : "no wait for a composition",
+                (unsigned)build, drag_flush != NULL ? drag_flush : "unset");
         const char *surface_return = getenv("DXC_SURFACE_RETURN");
         for (int named = 0; surface_return != NULL && named < DXC_SURFACE_RETURN_COUNT; named++) {
             if (strcmp(surface_return, dxc_surface_return_names[named]) == 0) dxc_surface_return = named;
