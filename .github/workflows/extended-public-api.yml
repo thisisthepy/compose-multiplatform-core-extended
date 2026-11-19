@@ -113,4 +113,14 @@ jobs:
       # Desktop (jvm) targets only. No Android SDK is installed, so Android must stay off.
       - name: apiCheck against the committed dumps
         if: steps.modules.outputs.tasks != ''
-        run: ./gradlew ${{ steps.modules.outputs.tasks }} -Pcompose.platforms=jvm --no-daemon --stacktrace
+        run: |
+          for attempt in 1 2 3; do
+            if ./gradlew ${{ steps.modules.outputs.tasks }} -Pcompose.platforms=jvm --no-daemon --stacktrace; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "gradlew failed on attempt $attempt; retrying in $((attempt * 15))s..." >&2
+            sleep $((attempt * 15))
+          done
