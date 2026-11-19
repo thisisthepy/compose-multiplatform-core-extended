@@ -471,7 +471,7 @@ class MacosWindowPlatform(
         val host = internalHost
         internalHost = null
         host?.close()
-        window?.window?.close()
+        window?.close()
         window = null
         listener = null
     }

@@ -238,7 +238,11 @@ class MetalSurface {
         }
     }
 
+    private var closed = false
+
     fun close() {
+        if (closed) return
+        closed = true
         context.close()
     }
 
