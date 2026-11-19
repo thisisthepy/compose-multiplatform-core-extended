@@ -229,7 +229,17 @@ class MacosWindow(
         AppKitAccessibilityTree(backdrop) { id, action, argument -> onAccessibilityAction(id, action, argument) }
     }
 
-    val accessibilityActive: Boolean get() = readerIsListening || NSWorkspace.sharedWorkspace.voiceOverEnabled
+    val accessibilityActive: Boolean get() = readerIsListening || VoiceOverState.enabled
+
+    /** Releases the Skia Metal context and closes the underlying AppKit window. */
+    fun close() {
+        if (closed) return
+        closed = true
+        host = null
+        metal.close()
+        window.delegate = null
+        window.close()
+    }
 
     var onElements: ((List<AccessibleElement>) -> Unit)? = null
 
@@ -1296,3 +1306,23 @@ private val CAPTION_RETRY_DELAYS_NANOS = longArrayOf(50_000_000L, 150_000_000L, 
  */
 internal fun shouldRetryCaptionMeasure(attempt: Int, height: Float, fullSize: Boolean): Boolean =
     fullSize && height <= 0f && attempt < CAPTION_RETRY_DELAYS_NANOS.size
+
+/**
+ * Caches `NSWorkspace.sharedWorkspace.voiceOverEnabled` so per-turn accessibility checks do
+ * not copy the CFPreferences dictionary on every frame, refreshing when macOS posts an
+ * accessibility display options change notification.
+ */
+private object VoiceOverState {
+    var enabled: Boolean = NSWorkspace.sharedWorkspace.voiceOverEnabled
+        private set
+
+    init {
+        NSWorkspace.sharedWorkspace.notificationCenter.addObserverForName(
+            name = platform.AppKit.NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
+            `object` = null,
+            queue = platform.Foundation.NSOperationQueue.mainQueue,
+        ) { _ ->
+            enabled = NSWorkspace.sharedWorkspace.voiceOverEnabled
+        }
+    }
+}
