@@ -36,6 +36,8 @@ import platform.CoreGraphics.CGPathAddRoundedRect
 import platform.CoreGraphics.CGPathCreateMutable
 import platform.CoreGraphics.CGPathRelease
 import platform.CoreGraphics.CGPoint
+import platform.CoreGraphics.CGPointMake
+import platform.CoreGraphics.CGSizeMake
 import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSMakeRect
 import platform.QuartzCore.CALayer
@@ -368,11 +370,22 @@ class MacosNativeViews internal constructor(
         }
     }
 
+    /**
+     * Gives [view] the frame, through the cheapest call that changes what differs. A scroll moves
+     * a slot without resizing it, and `setFrameOrigin:` skips the size bookkeeping `setFrame:`
+     * does even for an unchanged size: four views moved through `setFrame:` with their size kept
+     * cost 69 to 71 µs a frame together with the commit after it, against 51 to 61 µs through
+     * `setFrameOrigin:` (a probe on an M-series Mac, medians of 400 frames).
+     */
     private fun setFrameIfChanged(view: NSView, x: Double, y: Double, width: Double, height: Double) {
-        val same = view.frame.useContents {
-            origin.x == x && origin.y == y && size.width == width && size.height == height
+        val (moved, resized) = view.frame.useContents {
+            (origin.x != x || origin.y != y) to (size.width != width || size.height != height)
         }
-        if (!same) view.setFrame(NSMakeRect(x, y, width, height))
+        when {
+            moved && resized -> view.setFrame(NSMakeRect(x, y, width, height))
+            moved -> view.setFrameOrigin(CGPointMake(x, y))
+            resized -> view.setFrameSize(CGSizeMake(width, height))
+        }
     }
 
     /**

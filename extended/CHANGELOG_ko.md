@@ -7,6 +7,11 @@
 
 ### 바뀐 것
 
+- **macOS Kotlin/Native 창에서 크기는 그대로 두고 움직이는 네이티브 뷰를 더 싸게 옮깁니다.** 스크롤처럼 자리만 바뀌면
+  `setFrame:` 대신 `setFrameOrigin:`, 크기만 바뀌면 `setFrameSize:`를 부릅니다. 크기를 유지한 뷰 넷을 옮기는 데
+  뒤따르는 Core Animation 커밋까지 합해 `setFrame:`로는 프레임당 69~71µs, `setFrameOrigin:`로는 51~61µs가
+  들었습니다(400 프레임의 중앙값). 뷰가 놓이는 자리는 같습니다. (DarkPyonix/compose-rust#855)
+
 - **Windows 창이 DPI가 바뀐 뒤 포인트 단위 크기를 지키지 못하던 문제를 고쳤습니다.** `windows-shared` 의
   문제여서 Kotlin/Native 창과 GraalVM 창 모두 해당합니다. 창은 `WM_DPICHANGED` 가 제안하는 사각형을 그대로
   썼는데, Windows는 이 창의 틀을 모른 채 예전 바깥 사각형을 비율대로 늘이거나 줄여 그 사각형을 만듭니다. 그래서

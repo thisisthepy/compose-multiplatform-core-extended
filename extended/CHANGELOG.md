@@ -7,6 +7,13 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
+- **Performance.** On the Kotlin/Native macOS window, a native view that moves without
+  changing size (a scroll) is now moved with `setFrameOrigin:` rather than `setFrame:`, and one
+  that only changes size with `setFrameSize:`. Four views moved with their size kept cost 69 to
+  71 µs a frame together with the Core Animation commit after it through `setFrame:`, and 51 to
+  61 µs through `setFrameOrigin:` (medians of 400 frames). Where each view ends is unchanged.
+  (DarkPyonix/compose-rust#855)
+
 - **Fix.** The Windows window (`windows-shared`, so the Kotlin/Native and the GraalVM windows
   both) did not keep its size in points when its DPI changed. It applied the rectangle
   `WM_DPICHANGED` suggests, which Windows scales from the old outer rectangle without knowing
