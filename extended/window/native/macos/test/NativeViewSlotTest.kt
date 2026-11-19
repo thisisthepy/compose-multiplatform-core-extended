@@ -215,6 +215,32 @@ class NativeViewSlotTest {
     }
 
     @Test
+    fun a_move_that_keeps_the_size_and_a_resize_that_keeps_the_place_each_land_where_set_frame_says() = withSlot { f, view ->
+        val container = view.superview!!
+        val height = f.window.window.contentView!!.bounds.useContents { size.height }
+        fun placed() = container.frame.useContents { listOf(origin.x, origin.y, size.width, size.height) } +
+            view.frame.useContents { listOf(origin.x, origin.y, size.width, size.height) }
+        // Moved only, as a scroll does: the container goes, the view inside it stays put.
+        f.views.setFrame(1, f.px(SLOT_X + 7), f.px(SLOT_Y + 30), f.px(SLOT_W), f.px(SLOT_H))
+        assertEquals(
+            listOf((SLOT_X + 7).toDouble(), height - SLOT_Y - 30 - SLOT_H, SLOT_W.toDouble(), SLOT_H.toDouble(), 0.0, 0.0, SLOT_W.toDouble(), SLOT_H.toDouble()),
+            placed(),
+        )
+        // Resized only: the top edge stays where it was, so the unflipped origin moves down by the growth.
+        f.views.setFrame(1, f.px(SLOT_X + 7), f.px(SLOT_Y + 30), f.px(SLOT_W + 12), f.px(SLOT_H + 8))
+        assertEquals(
+            listOf((SLOT_X + 7).toDouble(), height - SLOT_Y - 30 - SLOT_H - 8, (SLOT_W + 12).toDouble(), (SLOT_H + 8).toDouble(), 0.0, 0.0, (SLOT_W + 12).toDouble(), (SLOT_H + 8).toDouble()),
+            placed(),
+        )
+        // Clipped from the top while it moves: the container shrinks to what shows, the view keeps its whole frame.
+        f.views.setFrameAndVisibleRegion(1, f.px(SLOT_X), f.px(SLOT_Y), f.px(SLOT_W), f.px(SLOT_H), PixelRect(0, f.px(SLOT_Y + 40), f.px(400), f.px(320)), emptyList())
+        assertEquals(
+            listOf(SLOT_X.toDouble(), height - SLOT_Y - SLOT_H, SLOT_W.toDouble(), (SLOT_H - 40).toDouble(), 0.0, 0.0, SLOT_W.toDouble(), SLOT_H.toDouble()),
+            placed(),
+        )
+    }
+
+    @Test
     fun the_view_is_placed_where_set_frame_says_in_points_of_the_backing_scale() = withSlot { f, view ->
         val container = view.superview!!
         val content = f.window.window.contentView!!
