@@ -98,6 +98,19 @@ private fun describeTree(node: SemanticsNode, parentId: Int, density: Float, int
     for (child in node.children) describeTree(child, childParent, density, into)
 }
 
+/**
+ * Where an application that declares roles of its own tells the scene what a node is.
+ *
+ * Compose names only a few roles (a button, a checkbox, a tab). A toolkit drawn with Compose
+ * often knows more: that a node is a group, a list, a tab list, an outline, a menu. It keeps
+ * that in a semantics property of its own, which this module cannot name. [of] is asked for
+ * every node, before the scene falls back on what it can infer, and answers an [ElementRole]
+ * value or null for a node it has nothing to say about.
+ */
+public object SceneDeclaredElementRoles {
+    public var of: ((androidx.compose.ui.semantics.SemanticsConfiguration) -> Int?)? = null
+}
+
 /** What a reader is told about one node, or null for a node that is only arrangement. */
 internal fun SemanticsNode.describe(parentId: Int, density: Float): AccessibleElement? {
     val config = config
@@ -107,6 +120,7 @@ internal fun SemanticsNode.describe(parentId: Int, density: Float): AccessibleEl
         ?: config.getOrNull(SemanticsProperties.Text)?.firstOrNull()?.text
         ?: editable?.text
     val composeRole = config.getOrNull(SemanticsProperties.Role)
+    val declared = SceneDeclaredElementRoles.of?.invoke(config)
     val toggle = config.getOrNull(SemanticsProperties.ToggleableState)
     val range = config.getOrNull(SemanticsProperties.ProgressBarRangeInfo)
     val canClick = config.getOrNull(SemanticsActions.OnClick) != null
@@ -125,6 +139,7 @@ internal fun SemanticsNode.describe(parentId: Int, density: Float): AccessibleEl
         composeRole == Role.Tab -> ElementRole.TAB
         composeRole == Role.Image -> ElementRole.IMAGE
         composeRole == Role.DropdownList -> ElementRole.COMBO_BOX
+        declared != null -> declared
         editable != null -> ElementRole.FIELD
         range != null -> if (canSetProgress) ElementRole.SLIDER else ElementRole.PROGRESS
         toggle != null -> ElementRole.CHECKBOX

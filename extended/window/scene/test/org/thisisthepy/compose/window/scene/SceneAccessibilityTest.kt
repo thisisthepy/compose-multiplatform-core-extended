@@ -24,6 +24,7 @@ import androidx.compose.ui.semantics.collapse
 import androidx.compose.ui.semantics.collectionInfo
 import androidx.compose.ui.semantics.collectionItemInfo
 import androidx.compose.ui.semantics.expand
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.semantics.popup
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -222,5 +223,41 @@ class SceneAccessibilityTest {
         assertTrue(opened.states and AccessibleState.EXPANDED != 0)
         assertEquals(AccessibleAction.COLLAPSE, opened.actions and (AccessibleAction.EXPAND or AccessibleAction.COLLAPSE))
         host.close()
+    }
+
+    @Test
+    fun declared_element_roles_override_inferred_scene_roles() {
+        val roleKey = androidx.compose.ui.semantics.SemanticsPropertyKey<Int>("TestDeclaredRole")
+        val previous = SceneDeclaredElementRoles.of
+        SceneDeclaredElementRoles.of = { config -> config.getOrNull(roleKey) }
+        try {
+            val platform = FakePlatform().apply { listening = true }
+            val host = opened(platform) {
+                Box(
+                    Modifier
+                        .size(120.dp, 40.dp)
+                        .semantics {
+                            contentDescription = "Tabs"
+                            collectionInfo = CollectionInfo(rowCount = 2, columnCount = 1)
+                            this[roleKey] = ElementRole.TAB_GROUP
+                        },
+                )
+                Box(
+                    Modifier
+                        .size(120.dp, 40.dp)
+                        .semantics {
+                            contentDescription = "Card"
+                            this[roleKey] = ElementRole.GROUP
+                        },
+                )
+            }
+            repeat(3) { host.turn(0) }
+            val elements = platform.last()
+            assertEquals(ElementRole.TAB_GROUP, elements.single { it.label == "Tabs" }.role)
+            assertEquals(ElementRole.GROUP, elements.single { it.label == "Card" }.role)
+            host.close()
+        } finally {
+            SceneDeclaredElementRoles.of = previous
+        }
     }
 }
