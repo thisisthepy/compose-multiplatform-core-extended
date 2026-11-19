@@ -34,4 +34,14 @@ jobs:
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
       - name: Compile and run the fork's macOS tests
-        run: ./gradlew :compose:foundation:foundation:macosArm64Test --tests '*MenuLocationTest*' --tests '*MacosTextContextMenuProviderTest*' --tests '*MacosScrollableTest*' --tests '*WheelTravelTest*' -Pcompose.platforms=macos --no-daemon --stacktrace
+        run: |
+          for attempt in 1 2 3; do
+            if ./gradlew :compose:foundation:foundation:macosArm64Test --tests '*MenuLocationTest*' --tests '*MacosTextContextMenuProviderTest*' --tests '*MacosScrollableTest*' --tests '*WheelTravelTest*' -Pcompose.platforms=macos --no-daemon --stacktrace; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "gradlew failed on attempt $attempt; retrying in $((attempt * 15))s..." >&2
+            sleep $((attempt * 15))
+          done

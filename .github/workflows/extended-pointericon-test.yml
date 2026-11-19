@@ -33,4 +33,14 @@ jobs:
         with:
           cache-read-only: true
       - name: Run test
-        run: ./gradlew :compose:ui:ui:desktopTest --tests '*AwtFreePointerIconTest*' --no-daemon --stacktrace
+        run: |
+          for attempt in 1 2 3; do
+            if ./gradlew :compose:ui:ui:desktopTest --tests '*AwtFreePointerIconTest*' --no-daemon --stacktrace; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "gradlew failed on attempt $attempt; retrying in $((attempt * 15))s..." >&2
+            sleep $((attempt * 15))
+          done

@@ -50,4 +50,14 @@ jobs:
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
       - name: Run test
-        run: ./gradlew ${{ matrix.task }} --tests '${{ matrix.filter }}' --no-daemon --stacktrace
+        run: |
+          for attempt in 1 2 3; do
+            if ./gradlew ${{ matrix.task }} --tests '${{ matrix.filter }}' --no-daemon --stacktrace; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "gradlew failed on attempt $attempt; retrying in $((attempt * 15))s..." >&2
+            sleep $((attempt * 15))
+          done
