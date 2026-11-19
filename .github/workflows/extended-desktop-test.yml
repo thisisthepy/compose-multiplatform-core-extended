@@ -37,6 +37,9 @@ jobs:
           - name: Embedder main dispatcher
             task: :compose:ui:ui:desktopTest
             filter: '*AwtFreeMainDispatcherTest*'
+          - name: CSS half-leading
+            task: :compose:ui:ui-text:desktopTest
+            filter: 'androidx.compose.ui.text.SkikoParagraphTest.cssHalfLeading_keptWhenLineHeightLessOrEqualFontSize'
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-java@v4
