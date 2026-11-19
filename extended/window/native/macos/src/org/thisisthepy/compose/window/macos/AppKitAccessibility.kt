@@ -68,7 +68,11 @@ internal fun SemanticsOwner.describe(density: Float = 1f): List<AccessibleElemen
  * so whatever the container holds cannot be reached.
  */
 public object DeclaredElementRoles {
-    public var of: ((SemanticsConfiguration) -> Int?)? = null
+    public var of: ((SemanticsConfiguration) -> Int?)?
+        get() = org.thisisthepy.compose.window.scene.SceneDeclaredElementRoles.of
+        set(value) {
+            org.thisisthepy.compose.window.scene.SceneDeclaredElementRoles.of = value
+        }
 }
 
 /**
