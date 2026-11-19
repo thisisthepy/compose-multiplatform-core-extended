@@ -231,15 +231,11 @@ class MacosWindow(
 
     val accessibilityActive: Boolean get() = readerIsListening || VoiceOverState.enabled
 
-    private var closed = false
-
-    /** Releases the scene host, the Skia Metal context, and the underlying AppKit window. */
+    /** Releases the Skia Metal context and closes the underlying AppKit window. */
     fun close() {
         if (closed) return
         closed = true
-        val h = host
         host = null
-        h?.close()
         metal.close()
         window.delegate = null
         window.close()
