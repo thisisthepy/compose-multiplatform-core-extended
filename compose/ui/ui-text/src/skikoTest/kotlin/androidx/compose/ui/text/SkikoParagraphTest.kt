@@ -24,6 +24,7 @@ import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import kotlin.test.Ignore
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -446,6 +447,33 @@ class SkikoParagraphTest {
 
         // Verify paragraph was created successfully without crashing
         assertEquals(1, paragraph.lineCount)
+    }
+
+    @Test
+    fun cssHalfLeading_keptWhenLineHeightLessOrEqualFontSize() {
+        val cssStyle = androidx.compose.ui.text.style.LineHeightStyle(
+            alignment = androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center,
+            trim = androidx.compose.ui.text.style.LineHeightStyle.Trim.None
+        )
+        val equalHeight = simpleParagraph(
+            text = "Hello",
+            textStyle = TextStyle(
+                fontSize = 20.sp,
+                lineHeight = 20.sp,
+                lineHeightStyle = cssStyle
+            )
+        )
+        assertEquals(20f, equalHeight.height, 0.5f)
+
+        val smallerHeight = simpleParagraph(
+            text = "Hello",
+            textStyle = TextStyle(
+                fontSize = 20.sp,
+                lineHeight = 16.sp,
+                lineHeightStyle = cssStyle
+            )
+        )
+        assertEquals(16f, smallerHeight.height, 0.5f)
     }
 
     private fun simpleParagraph(text: String, textStyle: TextStyle = TextStyle()) = Paragraph(

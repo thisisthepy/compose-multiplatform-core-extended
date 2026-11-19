@@ -629,8 +629,8 @@ internal class ParagraphBuilder(
         }
 
         val lineHeight = computedStyle.lineHeight
-        if (lineHeight != null && lineHeight > computedStyle.fontSize) {
-            val lineHeightStyle = style.lineHeightStyle ?: LineHeightStyle.Default
+        val lineHeightStyle = style.lineHeightStyle ?: LineHeightStyle.Default
+        if (lineHeight != null && (lineHeight > computedStyle.fontSize || lineHeightStyle.trim == LineHeightStyle.Trim.None)) {
             pStyle.heightMode = lineHeightStyle.trim.toHeightMode()
         } else {
             /*
