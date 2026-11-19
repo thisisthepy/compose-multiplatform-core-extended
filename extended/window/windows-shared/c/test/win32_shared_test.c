@@ -99,6 +99,29 @@ static void resize_predraw_decisions(void) {
     CHECK(dxc_resize_predraw_wanted(&resize, 1, 0, 1024, 728, 624, 472, 624, 472) == 0);
     dxc_resize_end_drag(&resize);
 
+    // Issue 245: inside a drag each step is drawn ahead too, by its own rule, so the window
+    // never has a new rectangle for the length of a draw with the old picture in it.
+    CHECK(dxc_resize_drag_predraw_wanted(&resize, 1, 0, 1, 616, 472, 624, 472) == 0);
+    dxc_resize_begin_drag(&resize);
+    CHECK(dxc_resize_drag_predraw_wanted(&resize, 1, 0, 1, 616, 472, 624, 472) == 1);
+    CHECK(dxc_resize_drag_predraw_wanted(&resize, 1, 0, 1, 632, 480, 624, 472) == 1);
+    // Not for a move that keeps the size, an empty client area, GPU frames, a frame already
+    // being drawn, or where it is turned off.
+    CHECK(dxc_resize_drag_predraw_wanted(&resize, 1, 0, 1, 624, 472, 624, 472) == 0);
+    CHECK(dxc_resize_drag_predraw_wanted(&resize, 1, 0, 1, 0, 472, 624, 472) == 0);
+    CHECK(dxc_resize_drag_predraw_wanted(&resize, 0, 0, 1, 616, 472, 624, 472) == 0);
+    CHECK(dxc_resize_drag_predraw_wanted(&resize, 1, 1, 1, 616, 472, 624, 472) == 0);
+    CHECK(dxc_resize_drag_predraw_wanted(&resize, 1, 0, 0, 616, 472, 624, 472) == 0);
+    dxc_resize_end_drag(&resize);
+    // The wait for a composition per step follows the compositor's generation unless asked.
+    CHECK(dxc_resize_drag_flush_wanted(-1, 20348) == 1);
+    CHECK(dxc_resize_drag_flush_wanted(-1, 19045) == 1);
+    CHECK(dxc_resize_drag_flush_wanted(-1, 22000) == 0);
+    CHECK(dxc_resize_drag_flush_wanted(-1, 26100) == 0);
+    CHECK(dxc_resize_drag_flush_wanted(-1, 0) == 0);
+    CHECK(dxc_resize_drag_flush_wanted(0, 20348) == 0);
+    CHECK(dxc_resize_drag_flush_wanted(1, 26100) == 1);
+
     struct dxc_predrawn predrawn;
     memset(&predrawn, 0, sizeof predrawn);
     CHECK(dxc_predrawn_take(&predrawn, 1024, 728) == 0);
