@@ -28,7 +28,7 @@ jobs:
         os: [windows-2022, windows-2025]
     runs-on: ${{ matrix.os }}
     # Every probe step runs twice, on the DirectComposition route and on the GDI route.
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         shell: cmd
@@ -264,25 +264,28 @@ jobs:
       # WM_NCCALCSIZE without a wait after (commit-ahead), and the frame shown before a smaller
       # rectangle waited for until composed (wait-flush) or not at all (wait-none); the surface
       # written with the D3D11On12 device instead of a native one (upload-on12); the drag rule's
-      # wait before each step taken as on the GDI route (rule-on). Logs probe-dcomp-<way>-*.
+      # wait before each step taken as on the GDI route (rule-on); a shrinking drag step held to
+      # the last frame DWM has taken instead of waiting for its commit (wait-hold); one surface
+      # instead of two taking turns (surfaces-1). Logs probe-dcomp-<way>-*.
       - name: Resize probe, composition route, other commit orders and waits (comparison)
         shell: bash
         run: |
-          for way in commit-wmsize commit-ahead wait-flush wait-none upload-on12 rule-on; do
-            unset DXC_DCOMP_COMMIT DXC_DCOMP_SHRINK_WAIT DXC_DCOMP_UPLOAD DXC_DCOMP_DRAG_RULE
+          for way in commit-wmsize commit-ahead wait-flush wait-none wait-hold upload-on12 rule-on surfaces-1; do
+            unset DXC_DCOMP_COMMIT DXC_DCOMP_SHRINK_WAIT DXC_DCOMP_UPLOAD DXC_DCOMP_DRAG_RULE DXC_DCOMP_SURFACES
             case $way in
               commit-*) export DXC_DCOMP_COMMIT=${way#commit-} ;;
               wait-*) export DXC_DCOMP_SHRINK_WAIT=${way#wait-} ;;
               upload-*) export DXC_DCOMP_UPLOAD=${way#upload-} ;;
               rule-*) export DXC_DCOMP_DRAG_RULE=1 ;;
+              surfaces-*) export DXC_DCOMP_SURFACES=${way#surfaces-} ;;
             esac
             for run in 1 2; do
               PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-dcomp-$way-states-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-dcomp-$way-states-$run.log || true
               DXC_REPORT_LATENCY=1 PROBE_DRAW_MS=5 PROBE_SAVE="out\\frames-dcomp-$way-drag-$run" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-$way-drag-$run.log || true
             done
           done
-          unset DXC_DCOMP_COMMIT DXC_DCOMP_SHRINK_WAIT DXC_DCOMP_UPLOAD DXC_DCOMP_DRAG_RULE
-          for log in out/probe-dcomp-commit-*.log out/probe-dcomp-wait-*.log out/probe-dcomp-upload-*.log out/probe-dcomp-rule-*.log; do
+          unset DXC_DCOMP_COMMIT DXC_DCOMP_SHRINK_WAIT DXC_DCOMP_UPLOAD DXC_DCOMP_DRAG_RULE DXC_DCOMP_SURFACES
+          for log in out/probe-dcomp-commit-*.log out/probe-dcomp-wait-*.log out/probe-dcomp-upload-*.log out/probe-dcomp-rule-*.log out/probe-dcomp-surfaces-*.log; do
             echo "$(basename "$log" .log): $(grep -c 'probe: FAULT' "$log" || true) faulty"
             grep -h 'probe: phase .* composed\|probe: drag lag\|dcomp: drag timing\|dcomp: drag upload parts\|dcomp: surface written with' "$log" | sed 's/^/  /' || true
           done

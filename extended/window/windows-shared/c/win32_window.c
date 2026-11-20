@@ -235,6 +235,7 @@ struct DxcWin {
     // device the window already has, whose every write to a surface DWM reads has to drain the
     // Direct3D 12 queue behind it first.
     int comp_native;
+    int comp_surfaces;
     ID3D11Device *comp_device;
     ID3D11DeviceContext *comp_context;
     ID3D11DeviceContext4 *comp_context4;
@@ -385,6 +386,7 @@ struct DxcWin {
 #define dxc_comp_commit_failed (dxc_w->comp_commit_failed)
 #define dxc_comp_first_show_logged (dxc_w->comp_first_show_logged)
 #define dxc_comp_native (dxc_w->comp_native)
+#define dxc_comp_surfaces (dxc_w->comp_surfaces)
 #define dxc_comp_device (dxc_w->comp_device)
 #define dxc_comp_context (dxc_w->comp_context)
 #define dxc_comp_context4 (dxc_w->comp_context4)
@@ -2705,10 +2707,22 @@ static int dxc_comp_commit_mode;
 // How a frame committed ahead of a smaller rectangle is waited for (DXC_DCOMP_SHRINK_WAIT):
 // commit, the default: until DWM has taken the commit (WaitForCommitCompletion), so it is
 // composed no later than the rectangle sent after it; flush: that and one composition
-// (DwmFlush) as well, so it is on screen first; none: no wait. For comparing them.
-enum { DXC_COMP_WAIT_COMMIT, DXC_COMP_WAIT_FLUSH, DXC_COMP_WAIT_NONE };
-static const char *const dxc_comp_wait_names[] = {"commit", "flush", "none"};
+// (DwmFlush) as well, so it is on screen first; none: no wait. hold: a drag step that shrinks
+// waits for nothing; the window is held instead at the size of the last frame DWM has taken,
+// and follows it a step behind (dxc_comp_hold_step); outside a drag it is commit. For
+// comparing them.
+enum { DXC_COMP_WAIT_COMMIT, DXC_COMP_WAIT_FLUSH, DXC_COMP_WAIT_NONE, DXC_COMP_WAIT_HOLD };
+static const char *const dxc_comp_wait_names[] = {"commit", "flush", "none", "hold"};
 static int dxc_comp_wait_mode;
+// For DXC_DCOMP_SHRINK_WAIT=hold, during a drag: the size of the last frame DWM has taken (the
+// window may shrink to it), the frame committed since and not yet known to be taken, the edge
+// being dragged (WM_SIZING), and whether the size change in flight is one held here, whose
+// WM_NCCALCSIZE and WM_SIZE draw nothing (the frame for it is already committed).
+static int32_t dxc_comp_confirmed_width, dxc_comp_confirmed_height;
+static int32_t dxc_comp_held_width, dxc_comp_held_height;
+static WPARAM dxc_comp_sizing_edge;
+static int dxc_comp_hold_active;
+#define DXC_TIMER_COMP_HOLD 0x4443
 // For the current drag: steps whose frame was shown before the window took the size, and where
 // a step's time went, in ms (the upload into the surface, the wait for the commit, the
 // composition waited for after it, and the drag rule's wait before the commit).
@@ -3410,9 +3424,144 @@ static uint32_t dxc_windows_build(void) {
  * window with the old picture cut by it. The child is not readied (it stays hidden for the
  * whole drag), and the wait for a composition is taken only where dxc_drag_flush says so.
  */
+/**
+ * For DXC_DCOMP_SHRINK_WAIT=hold: the frame committed last is known to be taken by DWM, so the
+ * window may shrink to its size. The wait is short by now: a step or a timer tick has passed
+ * since that commit.
+ */
+static void dxc_comp_confirm(void) {
+    if (dxc_comp_held_width <= 0) {
+        return;
+    }
+    LARGE_INTEGER started;
+    QueryPerformanceCounter(&started);
+    dxc_dcomp_wait(dxc_comp);
+    if (dxc_sizing.dragging) dxc_comp_time(&dxc_comp_wait_sum, &dxc_comp_wait_max, dxc_elapsed_ms(started));
+    dxc_comp_confirmed_width = dxc_comp_held_width;
+    dxc_comp_confirmed_height = dxc_comp_held_height;
+    dxc_comp_held_width = 0;
+    dxc_comp_held_height = 0;
+}
+
+/** Draws a CPU frame of width x height into the bitmap. One when it was drawn at that size. */
+static int dxc_comp_draw_cpu(int32_t width, int32_t height) {
+    dxc_switch_frames(1, width, height, "the edge is being dragged");
+    dxc_predrawn_set(&dxc_predrawn, 0, 0);
+    dxc_resize_target_width = width;
+    dxc_resize_target_height = height;
+    dxc_resizing = 1;
+    dxc_predrawing = 1;
+    dxc_draw_one_frame();
+    dxc_predrawing = 0;
+    dxc_resizing = 0;
+    int drawn = dxc_predrawn.width == width && dxc_predrawn.height == height;
+    dxc_predrawn_set(&dxc_predrawn, 0, 0);
+    return drawn;
+}
+
+/**
+ * For DXC_DCOMP_SHRINK_WAIT=hold, in WM_WINDOWPOSCHANGING during a drag, on the composition
+ * route: DSA's keep_to_frame for a step that shrinks. The frame of the size asked for is drawn
+ * and committed without waiting, and the window is given the size of the last frame DWM has
+ * taken instead (never smaller than asked): whichever of the two frames a composition shows,
+ * it fits inside the window, so nothing is cut, and nothing waits for DWM. The window follows a
+ * step behind; a timer brings it to the last frame once the pointer stops. A step that grows,
+ * or grows one side, goes the usual way. One when the size was held here.
+ */
+static int dxc_comp_hold_step(HWND window, WINDOWPOS *pos) {
+    if (!dxc_on_comp || dxc_comp_wait_mode != DXC_COMP_WAIT_HOLD || !dxc_sizing.dragging ||
+        (pos->flags & SWP_NOSIZE) != 0 || !dxc_raster_enabled || dxc_draw_frame == NULL || dxc_drawing ||
+        dxc_drag_predraw_off) {
+        return 0;
+    }
+    RECT outer, client;
+    if (!GetWindowRect(window, &outer) || !GetClientRect(window, &client)) {
+        return 0;
+    }
+    int32_t now_width = (int32_t)client.right;
+    int32_t now_height = (int32_t)client.bottom;
+    int32_t frame_width = (int32_t)(outer.right - outer.left) - now_width;
+    int32_t frame_height = (int32_t)(outer.bottom - outer.top) - now_height;
+    int32_t width = (int32_t)pos->cx - frame_width;
+    int32_t height = (int32_t)pos->cy - frame_height;
+    int shrinks = width < now_width || height < now_height;
+    int grows = width > now_width || height > now_height;
+    dxc_comp_confirm();
+    if (!shrinks || grows || width <= 0 || height <= 0) {
+        return 0;
+    }
+    LARGE_INTEGER started;
+    QueryPerformanceCounter(&started);
+    if (width != dxc_comp_confirmed_width || height != dxc_comp_confirmed_height) {
+        if (!dxc_comp_draw_cpu(width, height) || !dxc_comp_upload_bitmap(width, height) ||
+            !dxc_comp_show("a drag step held to its frame")) {
+            return 0;
+        }
+        dxc_comp_held_width = width;
+        dxc_comp_held_height = height;
+        dxc_presented_width = width;
+        dxc_presented_height = height;
+        dxc_drag_predrawn_steps++;
+    }
+    // Never smaller than the frame DWM may still show, never larger than the window is now.
+    int32_t keep_width = width;
+    int32_t keep_height = height;
+    if (dxc_comp_confirmed_width > keep_width) keep_width = dxc_comp_confirmed_width;
+    if (dxc_comp_confirmed_height > keep_height) keep_height = dxc_comp_confirmed_height;
+    if (keep_width > now_width) keep_width = now_width;
+    if (keep_height > now_height) keep_height = now_height;
+    int32_t keep_outer_width = keep_width + frame_width;
+    int32_t keep_outer_height = keep_height + frame_height;
+    // The edge not being dragged stays where it is.
+    if ((pos->flags & SWP_NOMOVE) == 0) {
+        if (pos->x != outer.left) pos->x += pos->cx - keep_outer_width;
+        if (pos->y != outer.top) pos->y += pos->cy - keep_outer_height;
+    }
+    pos->cx = keep_outer_width;
+    pos->cy = keep_outer_height;
+    dxc_comp_hold_active = 1;
+    if (keep_width != width || keep_height != height) {
+        SetTimer(window, DXC_TIMER_COMP_HOLD, 16, NULL);
+    }
+    if (dxc_report_latency) {
+        fprintf(stderr, "compose-rust: dcomp: drag step %dx%d held at %dx%d (%.2f ms)\n", (int)width, (int)height,
+                (int)keep_width, (int)keep_height, dxc_elapsed_ms(started));
+    }
+    return 1;
+}
+
+/** The hold timer: the window is brought to the last frame DWM has taken, once it is taken. */
+static void dxc_comp_hold_tick(HWND window) {
+    dxc_comp_confirm();
+    RECT outer, client;
+    if (!dxc_sizing.dragging || dxc_comp_confirmed_width <= 0 || !GetWindowRect(window, &outer) ||
+        !GetClientRect(window, &client)) {
+        KillTimer(window, DXC_TIMER_COMP_HOLD);
+        return;
+    }
+    int32_t now_width = (int32_t)client.right;
+    int32_t now_height = (int32_t)client.bottom;
+    if (dxc_comp_confirmed_width >= now_width && dxc_comp_confirmed_height >= now_height) {
+        KillTimer(window, DXC_TIMER_COMP_HOLD);
+        return;
+    }
+    int32_t outer_width = (int32_t)(outer.right - outer.left) - now_width + dxc_comp_confirmed_width;
+    int32_t outer_height = (int32_t)(outer.bottom - outer.top) - now_height + dxc_comp_confirmed_height;
+    WPARAM edge = dxc_comp_sizing_edge;
+    int left = edge == WMSZ_LEFT || edge == WMSZ_TOPLEFT || edge == WMSZ_BOTTOMLEFT;
+    int top = edge == WMSZ_TOP || edge == WMSZ_TOPLEFT || edge == WMSZ_TOPRIGHT;
+    int x = left ? outer.right - outer_width : outer.left;
+    int y = top ? outer.bottom - outer_height : outer.top;
+    SetWindowPos(window, NULL, x, y, outer_width, outer_height, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
 static int dxc_hide_surface_early(HWND window, int32_t width, int32_t height);
 static void dxc_predraw_resize(HWND window, const RECT *client) {
     if (dxc_predraw_off || dxc_swapchain == NULL || dxc_draw_frame == NULL || IsIconic(window)) {
+        return;
+    }
+    // A step held to its frame (dxc_comp_hold_step): that frame is already committed.
+    if (dxc_comp_hold_active) {
         return;
     }
     RECT now;
@@ -3896,6 +4045,15 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         dxc_drag_flushed_steps = 0;
         dxc_comp_frame_first_steps = 0;
         dxc_comp_timed_steps = 0;
+        if (dxc_on_comp) {
+            RECT shown;
+            GetClientRect(window, &shown);
+            dxc_comp_confirmed_width = (int32_t)shown.right;
+            dxc_comp_confirmed_height = (int32_t)shown.bottom;
+            dxc_comp_held_width = 0;
+            dxc_comp_held_height = 0;
+            dxc_comp_hold_active = 0;
+        }
         dxc_comp_upload_sum = dxc_comp_upload_max = 0.0;
         dxc_comp_wait_sum = dxc_comp_wait_max = 0.0;
         dxc_comp_flush_sum = dxc_comp_flush_max = 0.0;
@@ -3938,6 +4096,11 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         }
         // A step drawn ahead for a size the window never took is a frame nobody may show.
         dxc_predrawn_set(&dxc_predrawn, 0, 0);
+        if (dxc_on_comp) {
+            KillTimer(window, DXC_TIMER_COMP_HOLD);
+            dxc_comp_confirm();
+            dxc_comp_hold_active = 0;
+        }
         dxc_comp_staged_width = 0;
         dxc_comp_staged_height = 0;
         dxc_comp_staged_committed = 0;
@@ -4120,11 +4283,35 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         dxc_w->active = LOWORD(wparam) != WA_INACTIVE;
         dxc_w->activation_pending = 1;
         break;
+    case WM_WINDOWPOSCHANGING:
+        // The composition route's hold of a shrinking drag step (DXC_DCOMP_SHRINK_WAIT=hold);
+        // otherwise, and always on the GDI route, the default handler alone.
+        if (dxc_on_comp && dxc_comp_wait_mode == DXC_COMP_WAIT_HOLD && dxc_sizing.dragging) {
+            LRESULT answer = DefWindowProcW(window, message, wparam, lparam);
+            dxc_comp_hold_step(window, (WINDOWPOS *)lparam);
+            return answer;
+        }
+        break;
+    case WM_SIZING:
+        if (dxc_on_comp) dxc_comp_sizing_edge = wparam;
+        break;
+    case WM_TIMER:
+        if (wparam == DXC_TIMER_COMP_HOLD) {
+            dxc_comp_hold_tick(window);
+            return 0;
+        }
+        break;
     case WM_WINDOWPOSCHANGED:
         // Moved or resized, by the user or by SetWindowPos. The default handler turns it into
         // WM_MOVE and WM_SIZE.
         dxc_w->moved_pending = 1;
         dxc_state_marks[DXC_STATE_CHANGED] = dxc_now_ms();
+        if (dxc_comp_hold_active) {
+            // A size held to its frame: its WM_SIZE draws nothing, and the next change is drawn.
+            LRESULT answer = DefWindowProcW(window, message, wparam, lparam);
+            dxc_comp_hold_active = 0;
+            return answer;
+        }
         break;
     case WM_MOVE:
         dxc_w->moved_pending = 1;
@@ -4164,8 +4351,11 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
             dxc_resize_note(&dxc_sizing, (int32_t)LOWORD(lparam), (int32_t)HIWORD(lparam));
             // Drawn here, inside the SetWindowPos that resized the window, whether or not
             // a drag is on: during one there is no other place that runs, and outside one
-            // the same ordering keeps the frame ahead of the next size.
-            dxc_draw_resize((int32_t)LOWORD(lparam), (int32_t)HIWORD(lparam));
+            // the same ordering keeps the frame ahead of the next size. Not a size held to the
+            // frame already committed for it (dxc_comp_hold_step).
+            if (!dxc_comp_hold_active) {
+                dxc_draw_resize((int32_t)LOWORD(lparam), (int32_t)HIWORD(lparam));
+            }
         }
         if (dxc_trace_state > 0) dxc_trace_event(DXC_TRACE_WM_SIZE_RET, (int)LOWORD(lparam), (int)HIWORD(lparam));
         if (dxc_external_drag && dxc_sizing.dragging) dxc_external_drag_steps++;
@@ -5619,7 +5809,7 @@ static void dxc_memory_point(const char *where, IDXGIAdapter1 *adapter) {
     // On the composition route what is shown is the surface, at the size of its last frame.
     int32_t swapchain_width = dxc_on_comp ? dxc_comp_surface_width : dxc_sizing.fitted_width;
     int32_t swapchain_height = dxc_on_comp ? dxc_comp_surface_height : dxc_sizing.fitted_height;
-    int swapchain_buffers = dxc_on_comp ? 1 : DXC_BUFFER_COUNT;
+    int swapchain_buffers = dxc_on_comp ? dxc_comp_surfaces : DXC_BUFFER_COUNT;
     fprintf(stderr,
             "compose-rust: memory-breakdown %s private_mb=%.1f working_set_mb=%.1f peak_working_set_mb=%.1f "
             "video_local_mb=%.1f video_nonlocal_mb=%.1f draw_texture=%dx%d (%.1f MB) "
@@ -5929,9 +6119,17 @@ static int32_t dxc_open_window(
             fprintf(stderr, "compose-rust: dcomp: surface written with the %s device%s\n",
                     dxc_comp_native ? "native Direct3D 11" : "D3D11On12",
                     on12_asked ? " (DXC_DCOMP_UPLOAD=on12)" : dxc_comp_native ? "" : " (the native one could not be made)");
+            // DXC_DCOMP_SURFACES: how many surfaces the visual's content takes turns between, 2
+            // unless asked (1 to DXC_DCOMP_MAX_SURFACES). With one, BeginDraw waits for DWM to let
+            // go of the surface on screen: 7 to 18 ms a drag step in run 44662848036.
+            const char *surfaces_asked = getenv("DXC_DCOMP_SURFACES");
+            int surfaces = surfaces_asked != NULL ? atoi(surfaces_asked) : 2;
+            if (surfaces < 1 || surfaces > DXC_DCOMP_MAX_SURFACES) surfaces = 2;
+            fprintf(stderr, "compose-rust: dcomp: %d surfaces taking turns (DXC_DCOMP_SURFACES)\n", surfaces);
+            dxc_comp_surfaces = surfaces;
             failed_at = "the surface and the visual";
             step = dxc_dcomp_attach(dxc_comp, window, (IUnknown *)dxc_comp_device, (int32_t)pixel_width,
-                                    (int32_t)pixel_height) == 0 ? S_OK : E_FAIL;
+                                    (int32_t)pixel_height, surfaces) == 0 ? S_OK : E_FAIL;
         }
         if (FAILED(step)) {
             fprintf(stderr, "compose-rust: dcomp: %s failed with 0x%08lx, the window opens on the GDI route\n",
@@ -5963,7 +6161,7 @@ static int32_t dxc_open_window(
         dxc_comp_drag_rule = drag_rule != NULL && strcmp(drag_rule, "1") == 0;
         const char *wait_for = getenv("DXC_DCOMP_SHRINK_WAIT");
         dxc_comp_wait_mode = DXC_COMP_WAIT_COMMIT;
-        for (int named = 0; wait_for != NULL && named < 3; named++) {
+        for (int named = 0; wait_for != NULL && named < 4; named++) {
             if (strcmp(wait_for, dxc_comp_wait_names[named]) == 0) dxc_comp_wait_mode = named;
         }
     } else {

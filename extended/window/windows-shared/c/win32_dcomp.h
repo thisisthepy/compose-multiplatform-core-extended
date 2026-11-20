@@ -24,6 +24,9 @@ extern "C" {
 
 typedef struct dxc_dcomp dxc_dcomp;
 
+/** The most surfaces the visual's content takes turns between (dxc_dcomp_attach). */
+#define DXC_DCOMP_MAX_SURFACES 3
+
 /**
  * Makes a composition device (DCompositionCreateDevice2, a desktop device), or answers NULL
  * where this machine has none. Called before the window exists, because the window's
@@ -32,16 +35,19 @@ typedef struct dxc_dcomp dxc_dcomp;
 dxc_dcomp *dxc_dcomp_create(void);
 
 /**
- * Puts a width x height surface on a window: a surface factory on d3d11_device (an
- * ID3D11Device), a virtual surface from it, a target for the window, a visual showing the
- * surface clipped to its size, then one commit. Zero on success. Non-zero leaves the device
- * and nothing else, so the caller can release it and fall back. Each step's answer is logged.
+ * Puts width x height surfaces on a window: a surface factory on d3d11_device (an
+ * ID3D11Device), surfaces virtual surfaces from it (1 to DXC_DCOMP_MAX_SURFACES, taking turns:
+ * each frame is written into one the visual does not show, so writing it never waits for DWM
+ * to let go of the one on screen), a target for the window, a visual showing the first clipped
+ * to its size, then one commit. Zero on success. Non-zero leaves the device and nothing else, so
+ * the caller can release it and fall back. Each step's answer is logged.
  */
-int dxc_dcomp_attach(dxc_dcomp *comp, HWND window, IUnknown *d3d11_device, int32_t width, int32_t height);
+int dxc_dcomp_attach(dxc_dcomp *comp, HWND window, IUnknown *d3d11_device, int32_t width, int32_t height,
+                     int surfaces);
 
 /**
- * Begins drawing a frame of width x height into the surface's top left: the visual takes that
- * clip at the next commit (the surface itself only ever grows), and *texture is an ID3D11Texture2D to write the frame into at
+ * Begins drawing a frame of width x height into the top left of the next surface of the ring:
+ * the visual takes that surface and that clip at the next commit (a surface only ever grows), and *texture is an ID3D11Texture2D to write the frame into at
  * (*x, *y). Zero on success; then dxc_dcomp_end_draw has to follow.
  */
 int dxc_dcomp_begin_draw(dxc_dcomp *comp, int32_t width, int32_t height, void **texture, int32_t *x,
