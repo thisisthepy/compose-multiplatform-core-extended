@@ -7,6 +7,15 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
+- **Fix.** On the Kotlin/Native macOS window, the accessibility frame of every control was
+  flipped top to bottom inside the window: a control drawn 10 points under the window's top was
+  reported 10 points above its bottom, so VoiceOver's cursor and a reader's hit test landed on
+  the wrong place. The reader tree's parent became the window's backdrop, which is not flipped,
+  while the frames were still converted through it as if it were (f436d43). The frame is now
+  the content's rectangle on the screen with the control placed from its top
+  (`axScreenRect`), whatever the parent view's flip. The GraalVM window converts through its
+  own flipped view and was right. (DarkPyonix/compose-rust#937)
+
 - **Fix.** The Windows window (`windows-shared`) shows its frames through DirectComposition.
   On restore, maximise and snap it showed the new size with the old picture now and then: the
   rectangle and the picture reached DWM in separate steps (#223). The window now has no GDI
