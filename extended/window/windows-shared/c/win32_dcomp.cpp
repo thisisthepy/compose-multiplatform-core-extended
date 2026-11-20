@@ -27,6 +27,8 @@ struct dxc_dcomp {
     IUnknown *content;
     int32_t clip_width;
     int32_t clip_height;
+    int32_t buffer_width;
+    int32_t buffer_height;
 };
 
 namespace {
@@ -82,16 +84,35 @@ bool make_device(dxc_dcomp *comp) {
     return true;
 }
 
+// The scale that undoes the swapchain's stretch of its source size to its buffer size, and the
+// clip, which is in the visual's coordinates (before that scale): the whole buffer, which the
+// scale brings to clip_width x clip_height on the window.
 bool apply_clip(dxc_dcomp *comp) {
-    if (comp->visual == nullptr || comp->clip_width <= 0 || comp->clip_height <= 0) {
+    if (comp->visual == nullptr || comp->clip_width <= 0 || comp->clip_height <= 0 ||
+        comp->buffer_width <= 0 || comp->buffer_height <= 0) {
         return true;
     }
+    D2D_MATRIX_3X2_F scale;
+    scale._11 = static_cast<float>(comp->clip_width) / static_cast<float>(comp->buffer_width);
+    scale._12 = 0.0f;
+    scale._21 = 0.0f;
+    scale._22 = static_cast<float>(comp->clip_height) / static_cast<float>(comp->buffer_height);
+    scale._31 = 0.0f;
+    scale._32 = 0.0f;
+    HRESULT scaled = comp->visual->SetTransform(scale);
     D2D_RECT_F clip;
     clip.left = 0.0f;
     clip.top = 0.0f;
-    clip.right = static_cast<float>(comp->clip_width);
-    clip.bottom = static_cast<float>(comp->clip_height);
-    return SUCCEEDED(comp->visual->SetClip(clip));
+    clip.right = static_cast<float>(comp->buffer_width);
+    clip.bottom = static_cast<float>(comp->buffer_height);
+    HRESULT clipped = comp->visual->SetClip(clip);
+    if (FAILED(scaled) || FAILED(clipped)) {
+        fprintf(stderr, "compose-rust: dcomp: SetTransform 0x%08lx SetClip 0x%08lx for %dx%d of %dx%d\n",
+                static_cast<unsigned long>(scaled), static_cast<unsigned long>(clipped), (int)comp->clip_width,
+                (int)comp->clip_height, (int)comp->buffer_width, (int)comp->buffer_height);
+        return false;
+    }
+    return true;
 }
 
 // The target, the visual, its content and its clip, on the device there is. No commit.
@@ -99,11 +120,21 @@ bool build_tree(dxc_dcomp *comp) {
     if (comp->device == nullptr || comp->window == nullptr || comp->content == nullptr) {
         return false;
     }
-    if (FAILED(comp->device->CreateTargetForHwnd(comp->window, TRUE, &comp->target)) ||
-        FAILED(comp->device->CreateVisual(&comp->visual)) ||
-        FAILED(comp->visual->SetContent(comp->content)) ||
-        !apply_clip(comp) ||
-        FAILED(comp->target->SetRoot(comp->visual))) {
+    // Every step's answer is said, once for each tree made (once a window, again only if a
+    // failed commit makes it again), so a window that shows nothing is not a mystery.
+    HRESULT target = comp->device->CreateTargetForHwnd(comp->window, TRUE, &comp->target);
+    HRESULT visual = SUCCEEDED(target) ? comp->device->CreateVisual(&comp->visual) : E_ABORT;
+    HRESULT content = SUCCEEDED(visual) ? comp->visual->SetContent(comp->content) : E_ABORT;
+    bool clipped = SUCCEEDED(content) && apply_clip(comp);
+    HRESULT root = clipped ? comp->target->SetRoot(comp->visual) : E_ABORT;
+    fprintf(stderr,
+            "compose-rust: dcomp: tree for window %p: CreateTargetForHwnd 0x%08lx CreateVisual 0x%08lx "
+            "SetContent 0x%08lx transform and clip %s SetRoot 0x%08lx, showing %dx%d of %dx%d buffers\n",
+            static_cast<void *>(comp->window), static_cast<unsigned long>(target),
+            static_cast<unsigned long>(visual), static_cast<unsigned long>(content), clipped ? "ok" : "failed",
+            static_cast<unsigned long>(root), (int)comp->clip_width, (int)comp->clip_height,
+            (int)comp->buffer_width, (int)comp->buffer_height);
+    if (FAILED(root)) {
         release_tree(comp);
         return false;
     }
@@ -138,7 +169,9 @@ extern "C" int dxc_dcomp_attach(dxc_dcomp *comp, HWND window, IUnknown *swapchai
     if (!build_tree(comp)) {
         return 2;
     }
-    if (FAILED(comp->device->Commit())) {
+    HRESULT committed = comp->device->Commit();
+    fprintf(stderr, "compose-rust: dcomp: first Commit 0x%08lx\n", static_cast<unsigned long>(committed));
+    if (FAILED(committed)) {
         release_tree(comp);
         return 3;
     }
@@ -160,12 +193,15 @@ extern "C" int dxc_dcomp_set_content(dxc_dcomp *comp, IUnknown *swapchain) {
     return SUCCEEDED(comp->visual->SetContent(swapchain)) ? 0 : 1;
 }
 
-extern "C" int dxc_dcomp_set_clip(dxc_dcomp *comp, int32_t width, int32_t height) {
+extern "C" int dxc_dcomp_set_clip(dxc_dcomp *comp, int32_t width, int32_t height, int32_t buffer_width,
+                                  int32_t buffer_height) {
     if (comp == nullptr) {
         return 1;
     }
     comp->clip_width = width;
     comp->clip_height = height;
+    comp->buffer_width = buffer_width;
+    comp->buffer_height = buffer_height;
     return apply_clip(comp) ? 0 : 1;
 }
 
@@ -173,9 +209,12 @@ extern "C" int dxc_dcomp_commit(dxc_dcomp *comp) {
     if (comp == nullptr) {
         return -1;
     }
-    if (comp->device != nullptr && comp->visual != nullptr && SUCCEEDED(comp->device->Commit())) {
+    HRESULT committed = comp->device != nullptr && comp->visual != nullptr ? comp->device->Commit() : E_POINTER;
+    if (SUCCEEDED(committed)) {
         return 0;
     }
+    fprintf(stderr, "compose-rust: dcomp: Commit failed with 0x%08lx, making the device again\n",
+            static_cast<unsigned long>(committed));
     // A device can be lost (a display driver update, a session change). Made again once, with
     // the content and the clip it had; a second failure is the caller's to report.
     release_device(comp);

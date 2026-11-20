@@ -39,10 +39,15 @@ int dxc_dcomp_attach(dxc_dcomp *comp, HWND window, IUnknown *swapchain);
 int dxc_dcomp_set_content(dxc_dcomp *comp, IUnknown *swapchain);
 
 /**
- * Clips the visual to width x height pixels from its top left. Zero on success; takes effect
- * at the next commit, so a present, this clip and a commit land as one change.
+ * Makes the visual show width x height pixels of a swapchain whose buffers are buffer_width x
+ * buffer_height. A composition swapchain stretches its source size to its buffer size, so the
+ * visual is scaled by the source size over the buffer size, which puts the frame back at 1:1,
+ * and clipped to the buffer in its own coordinates, which is width x height on the window.
+ * Zero on success; takes effect at the next commit, so a present, this and a commit land as
+ * one change.
  */
-int dxc_dcomp_set_clip(dxc_dcomp *comp, int32_t width, int32_t height);
+int dxc_dcomp_set_clip(dxc_dcomp *comp, int32_t width, int32_t height, int32_t buffer_width,
+                       int32_t buffer_height);
 
 /**
  * Commits what is pending on the visual. Zero on success, 1 when the commit failed and the

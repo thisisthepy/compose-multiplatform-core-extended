@@ -224,6 +224,7 @@ struct DxcWin {
     // A frame has been presented, so WM_PAINT has nothing to draw: the visual keeps it.
     int comp_presented;
     int comp_commit_failed;
+    int comp_first_present_logged;
     ID3D11Device *d3d11;
     ID3D11DeviceContext *d3d11_context;
     ID3D11On12Device *on12;
@@ -366,6 +367,7 @@ struct DxcWin {
 #define dxc_comp_staged_height (dxc_w->comp_staged_height)
 #define dxc_comp_presented (dxc_w->comp_presented)
 #define dxc_comp_commit_failed (dxc_w->comp_commit_failed)
+#define dxc_comp_first_present_logged (dxc_w->comp_first_present_logged)
 #define dxc_d3d11 (dxc_w->d3d11)
 #define dxc_d3d11_context (dxc_w->d3d11_context)
 #define dxc_on12 (dxc_w->on12)
@@ -2674,6 +2676,27 @@ static void dxc_comp_buffer_room(HWND window, int32_t *width, int32_t *height) {
 }
 
 /**
+ * On the composition route, once a window: the first present's answer and the sizes it was
+ * made with (buffers, source size, the visual's clip), so a window that shows nothing says why.
+ */
+static void dxc_comp_note_present(const char *where, HRESULT shown) {
+    if (!dxc_on_comp || dxc_comp_first_present_logged) {
+        return;
+    }
+    dxc_comp_first_present_logged = 1;
+    UINT source_width = 0, source_height = 0;
+    HRESULT source = dxc_swapchain2 != NULL
+                         ? IDXGISwapChain2_GetSourceSize(dxc_swapchain2, &source_width, &source_height)
+                         : E_POINTER;
+    fprintf(stderr,
+            "compose-rust: dcomp: first Present (%s) 0x%08lx, buffers %dx%d x%d, source %ux%u (0x%08lx), "
+            "clip %dx%d, fitted %dx%d\n",
+            where, (unsigned long)shown, (int)dxc_comp_buffer_width, (int)dxc_comp_buffer_height,
+            DXC_COMP_BUFFER_COUNT, source_width, source_height, (unsigned long)source, (int)dxc_comp_clip_width,
+            (int)dxc_comp_clip_height, (int)dxc_sizing.fitted_width, (int)dxc_sizing.fitted_height);
+}
+
+/**
  * On the composition route: makes the swapchain show width x height. The buffers grow (a
  * refit, which waits for the GPU) only for a size larger than they are; otherwise only the
  * source size changes, which takes effect with the next present.
@@ -2695,6 +2718,9 @@ static HRESULT dxc_comp_fit(int32_t width, int32_t height) {
         }
         dxc_comp_buffer_width = buffer_width;
         dxc_comp_buffer_height = buffer_height;
+        // The visual's scale follows the buffers, so the next commit sets it again.
+        dxc_comp_clip_width = 0;
+        dxc_comp_clip_height = 0;
         fprintf(stderr, "compose-rust: resize-mode: composition buffers -> %dx%d because a frame needed room\n",
                 (int)buffer_width, (int)buffer_height);
     }
@@ -2712,7 +2738,7 @@ static void dxc_comp_commit(int32_t width, int32_t height) {
         return;
     }
     if (width != dxc_comp_clip_width || height != dxc_comp_clip_height) {
-        dxc_dcomp_set_clip(dxc_comp, width, height);
+        dxc_dcomp_set_clip(dxc_comp, width, height, dxc_comp_buffer_width, dxc_comp_buffer_height);
         dxc_comp_clip_width = width;
         dxc_comp_clip_height = height;
     }
@@ -2780,6 +2806,7 @@ static int dxc_stage_bitmap(int32_t width, int32_t height) {
 static int dxc_present_staged(void) {
     dxc_presents_in_change++;
     HRESULT shown = IDXGISwapChain1_Present(dxc_swapchain, 0, 0);
+    dxc_comp_note_present("a CPU frame", shown);
     if (FAILED(shown)) {
         dxc_log_dxgi_failure("Present", shown);
         return 0;
@@ -5538,7 +5565,7 @@ static int32_t dxc_open_window(
         }
         if (SUCCEEDED(step)) {
             failed_at = "the visual";
-            dxc_dcomp_set_clip(dxc_comp, (int32_t)pixel_width, (int32_t)pixel_height);
+            dxc_dcomp_set_clip(dxc_comp, (int32_t)pixel_width, (int32_t)pixel_height, buffer_width, buffer_height);
             step = dxc_dcomp_attach(dxc_comp, window, (IUnknown *)swapchain) == 0 ? S_OK : E_FAIL;
         }
         if (FAILED(step)) {
@@ -5983,6 +6010,7 @@ void dxc_native_frame_end(void *queue_pointer) {
     // for first would hold the drag for one more frame.
     dxc_presents_in_change++;
     HRESULT shown = IDXGISwapChain1_Present(dxc_swapchain, dxc_resizing ? 0 : 1, 0);
+    dxc_comp_note_present("a GPU frame", shown);
     if (FAILED(shown)) {
         dxc_log_dxgi_failure("Present", shown);
     }
