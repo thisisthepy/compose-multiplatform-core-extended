@@ -233,6 +233,59 @@ jobs:
           done
           exit $status
 
+      # DXC_DCOMP_GPU_DRAG=1: each step of a drag rendered on the GPU inside WM_NCCALCSIZE, on
+      # the composition route, instead of by the CPU raster (the default, measured above as
+      # dcomp ahead). Eight drags with 5 ms frames, a drag with frames that cost nothing and
+      # one with 30 ms frames, then the same without the CPU waits (nowait, comparison). Then
+      # the one-step changes with the switch on, which it leaves as they are (printed). Gates: the
+      # steps really were GPU frames drawn ahead, and no composed frame of a drag is faulty.
+      - name: Resize probe, right-edge drag, steps rendered on the GPU (DXC_DCOMP_GPU_DRAG)
+        shell: bash
+        run: |
+          for run in 1 2 3 4 5 6 7 8; do
+            DXC_DCOMP_GPU_DRAG=1 PROBE_DRAW_MS=5 PROBE_SAVE="out\\frames-dcomp-gpudrag-$run" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-gpudrag-5ms-$run.log || true
+          done
+          DXC_DCOMP_GPU_DRAG=1 DXC_REPORT_LATENCY=1 PROBE_SAVE="out\\frames-dcomp-gpudrag-fast" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-gpudrag-fast-1.log || true
+          DXC_DCOMP_GPU_DRAG=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-gpudrag-30ms-1.log || true
+          DXC_DCOMP_GPU_DRAG=nowait PROBE_DRAW_MS=5 ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-gpudrag-nowait-1.log || true
+          DXC_DCOMP_GPU_DRAG=nowait ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-gpudrag-nowait-2.log || true
+          DXC_DCOMP_GPU_DRAG=1 DXC_DCOMP_UPLOAD=on12 PROBE_DRAW_MS=5 ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-gpudrag-on12-1.log || true
+          DXC_DCOMP_GPU_DRAG=1 PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-dcomp-gpudrag-states" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-dcomp-gpudrag-states.log || true
+          status=0
+          for log in out/probe-dcomp-gpudrag-*.log; do
+            grep -q 'probe: verdict' "$log" || { echo "$log has no verdict: the probe did not finish" >&2; status=1; }
+          done
+          echo "GPU drag steps (DXC_DCOMP_GPU_DRAG): composed and faulty frames of the drag, pointer lag, where a step went"
+          for log in out/probe-dcomp-gpudrag-5ms-?.log out/probe-dcomp-gpudrag-fast-1.log out/probe-dcomp-gpudrag-30ms-1.log out/probe-dcomp-gpudrag-nowait-?.log out/probe-dcomp-gpudrag-on12-1.log; do
+            name=$(basename "$log" .log)
+            grep -h 'probe: phase drag composed' "$log" | sed "s/^/  $name /" || true
+            grep -h 'probe: drag lag' "$log" | sed "s/^/  $name /" || echo "  $name: no lag line"
+            grep -h 'probe: frames drawn' "$log" | sed "s/^/  $name /" || true
+            grep -h 'dcomp: gpu drag timing' "$log" | sed "s/^/  $name /" || true
+            grep -h 'dcomp: drag timing' "$log" | sed "s/^/  $name /" || true
+            grep -h 'dcomp: gpu drag: the shared fence' "$log" | sed "s/^/  $name /" || true
+          done
+          grep -h 'probe: phase .* composed' out/probe-dcomp-gpudrag-states.log | sed "s/^/  gpudrag-states /" || true
+          grep -h 'probe: verdict' out/probe-dcomp-gpudrag-states.log | sed "s/^/  gpudrag-states /" || true
+          # The gate, over the drags that wait (the default of the switch).
+          for log in out/probe-dcomp-gpudrag-5ms-?.log out/probe-dcomp-gpudrag-fast-1.log out/probe-dcomp-gpudrag-30ms-1.log; do
+            grep -q 'compose-rust: dcomp: route dcomp' "$log" || { echo "$log: not on the composition route" >&2; status=1; }
+            grep -q 'dcomp: gpu drag timing steps=[1-9][0-9]* drawn_ahead=[1-9]' "$log" || { echo "$log: no drag step was rendered ahead on the GPU" >&2; status=1; }
+            ! grep -q 'resize-proof step' "$log" || { echo "$log: a drag step was drawn on the CPU" >&2; status=1; }
+            ! grep -q 'dcomp: gpu drag: the shared fence' "$log" || { echo "$log: a wait on the shared fence timed out" >&2; status=1; }
+            line=$(grep 'probe: phase drag composed' "$log" | head -1 || true)
+            composed=$(sed -nE 's/.*composed ([0-9]+) frames, ([0-9]+) faulty.*/\1/p' <<<"$line")
+            faulty=$(sed -nE 's/.*composed ([0-9]+) frames, ([0-9]+) faulty.*/\2/p' <<<"$line")
+            test "${composed:-0}" -gt 0 || { echo "$log: the drag composed no frame" >&2; status=1; }
+            test "${faulty:-1}" = 0 || { echo "$log: ${faulty:-?} faulty frames in a drag with GPU steps, expected none" >&2; status=1; }
+          done
+          # One-step changes keep their own way with the switch on. Printed, not gated: one run is
+          # 12 changes, too few for the 2 % limit of the gate below.
+          changes=$(grep -c 'probe: phase \(maximise\|restore\|left-half\|back\) at' out/probe-dcomp-gpudrag-states.log || true)
+          faulty=$(grep -c 'probe: FAULT' out/probe-dcomp-gpudrag-states.log || true)
+          echo "gpudrag states (comparison, not gated): $changes size changes, $faulty faulty frames"
+          exit $status
+
       # For comparison, not a gate: the swapchain's child left visible until WM_SIZE, as before
       # it was hidden ahead of the size change; the frame drawn ahead presented through the
       # swapchain, and copied into the window's GDI surface with the child hidden in WM_SIZE.

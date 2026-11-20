@@ -184,6 +184,28 @@ static int dxc_resize_drag_predraw_wanted(const struct dxc_resize *resize, int r
     return width != current_width || height != current_height;
 }
 
+/**
+ * Whether a step of a drag is rendered on the GPU before the window takes the step's size.
+ *
+ * Asked from WM_NCCALCSIZE, inside a drag, before the CPU question above. Only on the
+ * composition route and only where it was asked for ([enabled]: on_comp and
+ * DXC_DCOMP_GPU_DRAG): there the frame, its size and its clip reach DWM in one commit, so a
+ * frame from the GPU renderer can be shown with the rectangle the way the CPU frame is. On the
+ * GDI route a GPU frame goes through a swapchain's present, which DWM does not tie to the
+ * rectangle, so the answer there is always no. Whether resize frames are otherwise drawn on
+ * the CPU does not matter: this replaces the CPU frame of a drag step. Never while a frame is
+ * being drawn, never for an empty client area, and only for a size that differs from the one
+ * the window has.
+ */
+static int dxc_resize_gpu_drag_step_wanted(const struct dxc_resize *resize, int enabled, int drawing,
+                                           int32_t width, int32_t height, int32_t current_width,
+                                           int32_t current_height) {
+    if (!enabled || drawing || !resize->dragging || width <= 0 || height <= 0) {
+        return 0;
+    }
+    return width != current_width || height != current_height;
+}
+
 // The first build of the Windows 11 generation of the desktop compositor. Server 2022
 // (20348) and every Windows 10 are below it; Windows 11 and Server 2025 (26100) are not.
 #define DXC_WINDOWS_11_BUILD 22000
