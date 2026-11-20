@@ -27,8 +27,8 @@ jobs:
       matrix:
         os: [windows-2022, windows-2025]
     runs-on: ${{ matrix.os }}
-    # Every probe step runs twice, on the DirectComposition route and on the GDI route.
-    timeout-minutes: 60
+    # The probe steps run on both routes, the DirectComposition one and the GDI one.
+    timeout-minutes: 40
     defaults:
       run:
         shell: cmd
@@ -225,19 +225,24 @@ jobs:
               status=1
             fi
           done
+          # The composition route draws every step ahead with none faulty, whatever the wait
+          # (runs 44656676042 to 44666182474: 0 on both runners), so any is a regression.
+          for way in ahead nowait wait; do
+            read -r composed faulty <<<"$(count dcomp $way)"
+            test "$faulty" = 0 || { echo "dcomp $way: $faulty faulty frames in the drags, expected none" >&2; status=1; }
+          done
           exit $status
 
       # For comparison, not a gate: the swapchain's child left visible until WM_SIZE, as before
       # it was hidden ahead of the size change; the frame drawn ahead presented through the
       # swapchain, and copied into the window's GDI surface with the child hidden in WM_SIZE.
       # Both showed the child's old picture once on restore or snap (compose-rust#684). These
-      # switches name the GDI route's child; on the composition route, which has none, they
-      # change nothing, and its runs are the same order again for the comparison.
+      # switches name the GDI route's child, so they run on that route only.
       - name: Resize probe, maximise, restore and snap, child hidden in WM_SIZE (comparison)
         shell: bash
         run: |
-          for route in dcomp gdi; do
-            flag=$([ "$route" = gdi ] && echo 0 || echo 1)
+          for route in gdi; do
+            flag=0
             DXC_DCOMP=$flag DXC_RESIZE_HIDE_EARLY=0 PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-$route-states-late" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-late.log || true
             DXC_DCOMP=$flag DXC_RESIZE_HIDE_EARLY=0 PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-late-30ms.log || true
             DXC_DCOMP=$flag DXC_RESIZE_HIDE_EARLY=0 DXC_RESIZE_SWAPCHAIN=0 PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-$route-states-hidden" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-hidden.log || true
@@ -246,60 +251,28 @@ jobs:
 
       # For comparison, not a gate: other ways of bringing the child hidden ahead of the size
       # change back with the frame drawn ahead (DXC_SURFACE_RETURN in win32_window.c). The GDI
-      # route's child again; on the composition route these runs are the default order.
+      # route's child again, so the GDI route only.
       - name: Resize probe, maximise, restore and snap, other returns of the child (comparison)
         shell: bash
         run: |
-          for route in dcomp gdi; do
-            flag=$([ "$route" = gdi ] && echo 0 || echo 1)
+          for route in gdi; do
+            flag=0
             for way in wmsize showfirst; do
               DXC_DCOMP=$flag DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-return-$way.log || true
               DXC_DCOMP=$flag DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-return-$way-30ms.log || true
             done
           done
 
-      # For comparison, not a gate: other orders and waits of the composition route against the
-      # default (DXC_DCOMP_COMMIT=order, DXC_DCOMP_SHRINK_WAIT=commit; both in win32_window.c):
-      # the frame drawn ahead always committed in WM_SIZE (commit-wmsize) or always in
-      # WM_NCCALCSIZE without a wait after (commit-ahead), and the frame shown before a smaller
-      # rectangle waited for until composed (wait-flush) or not at all (wait-none); the surface
-      # written with the D3D11On12 device instead of a native one (upload-on12); the drag rule's
-      # wait before each step taken as on the GDI route (rule-on); a shrinking drag step held to
-      # the last frame DWM has taken instead of waiting for its commit (wait-hold); one surface
-      # instead of two taking turns (surfaces-1). Logs probe-dcomp-<way>-*.
-      - name: Resize probe, composition route, other commit orders and waits (comparison)
-        shell: bash
-        run: |
-          for way in commit-wmsize commit-ahead wait-flush wait-none wait-hold upload-on12 rule-on surfaces-1; do
-            unset DXC_DCOMP_COMMIT DXC_DCOMP_SHRINK_WAIT DXC_DCOMP_UPLOAD DXC_DCOMP_DRAG_RULE DXC_DCOMP_SURFACES
-            case $way in
-              commit-*) export DXC_DCOMP_COMMIT=${way#commit-} ;;
-              wait-*) export DXC_DCOMP_SHRINK_WAIT=${way#wait-} ;;
-              upload-*) export DXC_DCOMP_UPLOAD=${way#upload-} ;;
-              rule-*) export DXC_DCOMP_DRAG_RULE=1 ;;
-              surfaces-*) export DXC_DCOMP_SURFACES=${way#surfaces-} ;;
-            esac
-            for run in 1 2; do
-              PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-dcomp-$way-states-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-dcomp-$way-states-$run.log || true
-              DXC_REPORT_LATENCY=1 PROBE_DRAW_MS=5 PROBE_SAVE="out\\frames-dcomp-$way-drag-$run" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-$way-drag-$run.log || true
-            done
-          done
-          unset DXC_DCOMP_COMMIT DXC_DCOMP_SHRINK_WAIT DXC_DCOMP_UPLOAD DXC_DCOMP_DRAG_RULE DXC_DCOMP_SURFACES
-          for log in out/probe-dcomp-commit-*.log out/probe-dcomp-wait-*.log out/probe-dcomp-upload-*.log out/probe-dcomp-rule-*.log out/probe-dcomp-surfaces-*.log; do
-            echo "$(basename "$log" .log): $(grep -c 'probe: FAULT' "$log" || true) faulty"
-            grep -h 'probe: phase .* composed\|probe: drag lag\|dcomp: drag timing\|dcomp: drag upload parts\|dcomp: surface written with' "$log" | sed 's/^/  /' || true
-          done
-
-      # A gate on a rate, not on zero, on each route. On the GDI route a size change outside a
-      # drag is several steps (the window's rectangle, the copy into it, the child's show, the
-      # present) that take about 1.4 ms together, and DWM can begin a composition between them:
-      # it then shows the new size with the old picture once. No order or wait removed that
-      # (issue #223 of the fork has the runs): 11 faulty frames in 429 size changes with this
-      # order, 2.6 %, and 6.4 % in the worst run. The composition route presents the frame drawn
-      # ahead and commits it with the visual's clip in WM_SIZE, which is meant to bring that to
-      # zero; this run compares the two before the gate is tightened. Until then each route fails
-      # above 10 % of its size changes, which a regression to one faulty frame on every restore
-      # and snap (69 %) cannot pass.
+      # The gate is the composition route's, which brings the size and the picture to the screen
+      # in one commit. It fails above 2 % of its size changes (5 of 247): runs 44659612997 to
+      # 44666182474 showed 0 to 1 on windows-2022 and 1 to 4 on windows-2025, all of them
+      # maximise frames on the 2025 compositor, so a gate of zero would fail by chance there,
+      # while a regression to one fault on every restore or snap (69 %) cannot pass.
+      #
+      # The GDI route is printed beside it and not gated: it is the route issue #223 is about,
+      # where a size change is several steps (the rectangle, the copy, the child's show, the
+      # present) that DWM can compose between, and it keeps that (11 and 81 of 247 in run
+      # 44666182474).
       - name: Resize probe, maximise, restore and snap
         shell: bash
         run: |
@@ -326,19 +299,18 @@ jobs:
               sed -nE 's/.*phase ([a-z-]+) composed ([0-9]+) frames, ([0-9]+) faulty.*/\1 \3/p' |
               awk '{f[$1] += $2} END {for (p in f) printf "%s=%d ", p, f[p]}' || true)
             if [ "$route" = dcomp ]; then
-              line="resize probe states $route (the gate): $runs runs, $changes size changes, $faulty faulty frames (limit: 10 % of the size changes); faulty by phase: $by_phase"
+              limit=$(( (changes * 2 + 99) / 100 ))
+              line="resize probe states $route (the gate): $runs runs, $changes size changes, $faulty faulty frames (limit: 2 % of the size changes, $limit); faulty by phase: $by_phase"
             else
               line="resize probe states $route (comparison, not gated): $runs runs, $changes size changes, $faulty faulty frames; faulty by phase: $by_phase"
             fi
             summary="$summary$line"$'\n'
-            # The verdict is the composition route's. The GDI route is the one #223 is about,
-            # and keeps its faults (75 of 247 on windows-2025 in run 44653739125).
             [ "$route" = dcomp ] || continue
             if [ "$changes" -lt 200 ]; then
               echo "$route: expected at least 200 size changes, counted $changes" >&2
               status=1
-            elif [ $((faulty * 10)) -gt "$changes" ]; then
-              echo "$route: more than 10 % of the size changes showed a faulty frame" >&2
+            elif [ "$faulty" -gt "$limit" ]; then
+              echo "$route: $faulty faulty frames, more than 2 % of the size changes ($limit)" >&2
               status=1
             fi
           done
@@ -363,6 +335,14 @@ jobs:
             echo "window memory at rest $route: $n runs, median working_set_mb=${ws:-none} private_mb=${pv:-none}, route lines: ${routes:-none}"
           done
 
+      # The owner's lag probe (c/test/run-lag-probe.ps1), once in its short form, so the script
+      # people run on a real GPU builds and finishes here too.
+      - name: The lag probe script runs
+        shell: pwsh
+        run: |
+          ./c/test/run-lag-probe.ps1 -Fast
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -371,6 +351,7 @@ jobs:
           path: |
             extended/window/windows-shared/out/probe-*.log
             extended/window/windows-shared/out/frames-*/
+            extended/window/windows-shared/out/lag-probe/
 
   kotlin:
     name: windows-shared Kotlin/Native (mingwX64 klib build and test)
