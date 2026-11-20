@@ -83,6 +83,20 @@ by it. So the frames are committed in this order:
 The wait before each drag step that the GDI route takes on builds below 22000 (issue #245) is
 not taken here: the order already decides which frame meets which rectangle.
 
+With `DXC_DCOMP_GPU_DRAG=1` the steps of an edge drag are rendered on the GPU instead. In
+`WM_NCCALCSIZE` the window asks the renderer for a GPU frame of the size it is about to take
+(`dxc_native_frame_mode` answers 0 for the whole drag), waits on the shared fence until the
+Direct3D 12 queue has finished it, copies it from the shared draw texture into the surface on
+the Direct3D 11 device, waits for that copy, and commits in the same order as above. Before
+a step's frame is written it also waits until DWM has taken the commit of the step before:
+the frame goes into the surface that commit took off the screen, and a GPU step can be quick
+enough for two to fall inside one composition. A size
+given in one step keeps the CPU frame. This is off by default until it is measured on a real
+GPU next to the CPU step: on WARP a step already waits one composition in `BeginDraw`, and the
+render is added to that. At the end of a drag the window prints
+`compose-rust: dcomp: gpu drag timing`, with the average and the longest render, `BeginDraw`,
+fence wait, copy, `EndDraw`, commit wait, whole step and the wait for the commit before.
+
 ### The GDI route
 
 `DXC_DCOMP=0`, a machine without a composition device, or a composition surface that cannot be
@@ -104,6 +118,7 @@ Read when a window opens. The defaults are what the probe runs below measured.
 | `DXC_DCOMP_COMMIT` | `order` (default), `ahead`, `wmsize` | The commit order above, every frame in `WM_NCCALCSIZE`, or every frame in `WM_SIZE`. |
 | `DXC_DCOMP_SHRINK_WAIT` | `commit` (default), `flush`, `none`, `hold` | What a frame shown before a smaller rectangle waits for: DWM taking the commit, that and one composition, nothing, or nothing with the window held at the last frame DWM took during a drag. |
 | `DXC_DCOMP_DRAG_RULE` | `1` | Take the GDI route's wait before each drag step. |
+| `DXC_DCOMP_GPU_DRAG` | `1`, `nowait` | Render each drag step on the GPU in `WM_NCCALCSIZE` instead of on the CPU. `1` waits on the CPU for the commit of the step before, for the frame and for its copy; `nowait` waits for none of them. |
 | `DXC_REPORT_LATENCY` | any | Each resize step and each drag print where their time went. |
 
 ### Measured
@@ -197,13 +212,15 @@ through Desktop Duplication, with the frame drawn for each step.
 
 ## Measuring on a real GPU
 
-`c/test/run-lag-probe.ps1` measures the drag lag and the faulty frames of both routes on the
-machine it runs on. CI runs it in its short form, so it keeps working.
+`c/test/run-lag-probe.ps1` measures the drag lag and the faulty frames on the machine it runs
+on, for three routes: `dcomp-cpu-drag` (DirectComposition, drag steps drawn on the CPU, the
+default), `dcomp-gpu-drag` (DirectComposition with `DXC_DCOMP_GPU_DRAG=1`) and `gdi`
+(`DXC_DCOMP=0`). CI runs it in its short form, so it keeps working.
 
 Without a compiler, use the prebuilt probe: the workflow's windows-2022 job uploads the
 artifact `lag-probe-windows-x64`, with `win32_resize_probe.exe` (static CRT, so it needs only
 the DLLs Windows ships), the script and `run-lag-probe.cmd`. Unzip it, double-click
-`run-lag-probe.cmd`, leave the mouse and keyboard alone for about three minutes, and send back
+`run-lag-probe.cmd`, leave the mouse and keyboard alone for about five minutes, and send back
 the `lag-probe-summary.txt` it writes in the same folder.
 
 To build it yourself:
@@ -217,12 +234,14 @@ To build it yourself:
    powershell -ExecutionPolicy Bypass -File extended\window\windows-shared\c\test\run-lag-probe.ps1
    ```
 
-4. Leave the mouse and keyboard alone for about three minutes. The script builds the window
+4. Leave the mouse and keyboard alone for about five minutes. The script builds the window
    and the probe, then moves a window and the pointer on screen: three kinds of drag, three
    times each, on each route.
 5. Send back `extended\window\windows-shared\out\lag-probe\lag-probe-summary.txt`. It has
    the GPU, the Windows build and one row a run: route, faulty frames, lag median, p95 and max,
-   the longest hold, and the window's memory at rest. The logs beside it have every line.
+   the longest hold, how many frames were drawn on the CPU and on the GPU, and the window's
+   memory at rest. Under the table it lists where a drag step's time went on the two
+   DirectComposition routes. The logs beside it have every line.
 
 `-Runs 5` runs each drag five times; `-Fast` once.
 

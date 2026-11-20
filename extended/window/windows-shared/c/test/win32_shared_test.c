@@ -112,7 +112,17 @@ static void resize_predraw_decisions(void) {
     CHECK(dxc_resize_drag_predraw_wanted(&resize, 0, 0, 1, 616, 472, 624, 472) == 0);
     CHECK(dxc_resize_drag_predraw_wanted(&resize, 1, 1, 1, 616, 472, 624, 472) == 0);
     CHECK(dxc_resize_drag_predraw_wanted(&resize, 1, 0, 0, 616, 472, 624, 472) == 0);
+    // A step rendered on the GPU instead (DXC_DCOMP_GPU_DRAG on the composition route): by the
+    // same sizes, whether or not resize frames are otherwise drawn on the CPU.
+    CHECK(dxc_resize_gpu_drag_step_wanted(&resize, 1, 0, 616, 472, 624, 472) == 1);
+    CHECK(dxc_resize_gpu_drag_step_wanted(&resize, 1, 0, 632, 480, 624, 472) == 1);
+    CHECK(dxc_resize_gpu_drag_step_wanted(&resize, 0, 0, 616, 472, 624, 472) == 0);
+    CHECK(dxc_resize_gpu_drag_step_wanted(&resize, 1, 1, 616, 472, 624, 472) == 0);
+    CHECK(dxc_resize_gpu_drag_step_wanted(&resize, 1, 0, 624, 472, 624, 472) == 0);
+    CHECK(dxc_resize_gpu_drag_step_wanted(&resize, 1, 0, 616, 0, 624, 472) == 0);
     dxc_resize_end_drag(&resize);
+    // Never outside a drag: a size given in one step keeps its own way.
+    CHECK(dxc_resize_gpu_drag_step_wanted(&resize, 1, 0, 616, 472, 624, 472) == 0);
     // The wait for a composition per step follows the compositor's generation unless asked.
     CHECK(dxc_resize_drag_flush_wanted(-1, 20348) == 1);
     CHECK(dxc_resize_drag_flush_wanted(-1, 19045) == 1);
