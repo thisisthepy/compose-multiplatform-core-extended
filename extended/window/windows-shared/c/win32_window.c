@@ -2729,6 +2729,20 @@ static int dxc_comp_hold_active;
 static int dxc_comp_frame_first_steps;
 static int dxc_comp_timed_steps;
 static double dxc_comp_upload_sum, dxc_comp_upload_max;
+// The CPU drag's guard against writing the surface DWM still shows. The surfaces take turns,
+// so a step's frame goes into the surface the step before last showed. Two commits inside one
+// composition interval mean that surface may still be on screen when the next step writes it:
+// the GPU drag composed such a frame on windows-2025 (one in about a thousand), and the CPU
+// step uses the same ring and order. BeginDraw does not prevent it: those commits were 1.8 ms
+// apart with BeginDraw on the path. So before a drag step writes a surface, it waits until DWM
+// has taken the last commit, where nothing waited for it since. Off unless DXC_DCOMP_CPU_GUARD=1:
+// the fault is one reading of one frame, never seen on the CPU drag, and the same wait cost the
+// GPU drag about 20 ms a step on WARP (run 44693082474). The steps it would have waited on are
+// counted either way.
+static int dxc_comp_cpu_guard;
+static int dxc_comp_unconfirmed;
+static int dxc_comp_guard_steps, dxc_comp_guard_waits;
+static double dxc_comp_guard_sum, dxc_comp_guard_max;
 static double dxc_comp_wait_sum, dxc_comp_wait_max;
 static double dxc_comp_flush_sum, dxc_comp_flush_max;
 static double dxc_comp_rule_sum, dxc_comp_rule_max;
@@ -2807,6 +2821,29 @@ static void dxc_comp_part(LARGE_INTEGER *mark, double *sum) {
  * On the composition route: writes the CPU frame in the bitmap into the surface at width x
  * height, which the visual's clip takes at the next commit. No commit. One when it was written.
  */
+static int dxc_comp_upload_bitmap(int32_t width, int32_t height);
+
+/** Before a CPU drag step writes a surface: waits for the last unwaited commit (see above). */
+static void dxc_comp_guard_write(void) {
+    if (!dxc_sizing.dragging) {
+        dxc_comp_unconfirmed = 0;
+        return;
+    }
+    dxc_comp_guard_steps++;
+    if (!dxc_comp_unconfirmed) {
+        return;
+    }
+    dxc_comp_unconfirmed = 0;
+    dxc_comp_guard_waits++;
+    if (!dxc_comp_cpu_guard) {
+        return;
+    }
+    LARGE_INTEGER started;
+    QueryPerformanceCounter(&started);
+    dxc_dcomp_wait(dxc_comp);
+    dxc_comp_time(&dxc_comp_guard_sum, &dxc_comp_guard_max, dxc_elapsed_ms(started));
+}
+
 static int dxc_comp_upload_bitmap(int32_t width, int32_t height) {
     if (dxc_comp == NULL || dxc_comp_context == NULL || dxc_dib_bits == NULL || width > dxc_dib_width ||
         height > dxc_dib_height) {
@@ -3093,6 +3130,7 @@ static int dxc_comp_show(const char *what) {
         return 0;
     }
     dxc_comp_presented = 1;
+    dxc_comp_unconfirmed = 1;
     return 1;
 }
 
@@ -3179,6 +3217,7 @@ static int dxc_comp_present_bitmap(int32_t width, int32_t height) {
     if (committed) {
         return 1;
     }
+    if (!staged) dxc_comp_guard_write();
     if (!(staged || dxc_comp_upload_bitmap(width, height))) {
         return 0;
     }
@@ -3200,6 +3239,7 @@ static int dxc_comp_stage_ahead(int32_t width, int32_t height) {
     dxc_comp_staged_committed = 0;
     LARGE_INTEGER started;
     QueryPerformanceCounter(&started);
+    dxc_comp_guard_write();
     int written = dxc_comp_upload_bitmap(width, height);
     if (dxc_sizing.dragging) dxc_comp_time(&dxc_comp_upload_sum, &dxc_comp_upload_max, dxc_elapsed_ms(started));
     if (!written) {
@@ -3215,7 +3255,10 @@ static int dxc_comp_stage_ahead(int32_t width, int32_t height) {
  * accounts for it.
  */
 static void dxc_comp_wait_shown(int32_t width, int32_t height, LARGE_INTEGER started) {
-    if (dxc_comp_wait_mode != DXC_COMP_WAIT_NONE) dxc_dcomp_wait(dxc_comp);
+    if (dxc_comp_wait_mode != DXC_COMP_WAIT_NONE) {
+        dxc_dcomp_wait(dxc_comp);
+        dxc_comp_unconfirmed = 0;
+    }
     double taken_ms = dxc_elapsed_ms(started);
     int flushed = dxc_comp_wait_mode == DXC_COMP_WAIT_FLUSH ? dxc_dwm_flush() : 0;
     double flush_ms = dxc_elapsed_ms(started) - taken_ms;
@@ -3269,6 +3312,7 @@ static void dxc_comp_show_both_hold(int32_t width, int32_t height, int32_t now_w
     }
     LARGE_INTEGER started;
     QueryPerformanceCounter(&started);
+    dxc_comp_guard_write();
     if (!dxc_comp_upload_bitmap(both_width, both_height)) {
         return;
     }
@@ -3553,6 +3597,7 @@ static void dxc_comp_confirm(void) {
     LARGE_INTEGER started;
     QueryPerformanceCounter(&started);
     dxc_dcomp_wait(dxc_comp);
+    dxc_comp_unconfirmed = 0;
     if (dxc_sizing.dragging) dxc_comp_time(&dxc_comp_wait_sum, &dxc_comp_wait_max, dxc_elapsed_ms(started));
     dxc_comp_confirmed_width = dxc_comp_held_width;
     dxc_comp_confirmed_height = dxc_comp_held_height;
@@ -3611,7 +3656,11 @@ static int dxc_comp_hold_step(HWND window, WINDOWPOS *pos) {
     LARGE_INTEGER started;
     QueryPerformanceCounter(&started);
     if (width != dxc_comp_confirmed_width || height != dxc_comp_confirmed_height) {
-        if (!dxc_comp_draw_cpu(width, height) || !dxc_comp_upload_bitmap(width, height) ||
+        if (!dxc_comp_draw_cpu(width, height)) {
+            return 0;
+        }
+        dxc_comp_guard_write();
+        if (!dxc_comp_upload_bitmap(width, height) ||
             !dxc_comp_show("a drag step held to its frame")) {
             return 0;
         }
@@ -4330,6 +4379,9 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
             dxc_comp_hold_active = 0;
         }
         dxc_comp_upload_sum = dxc_comp_upload_max = 0.0;
+        dxc_comp_guard_steps = dxc_comp_guard_waits = 0;
+        dxc_comp_guard_sum = dxc_comp_guard_max = 0.0;
+        dxc_comp_unconfirmed = 0;
         dxc_comp_wait_sum = dxc_comp_wait_max = 0.0;
         dxc_comp_flush_sum = dxc_comp_flush_max = 0.0;
         dxc_comp_rule_sum = dxc_comp_rule_max = 0.0;
@@ -4372,6 +4424,11 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
                     dxc_comp_timed_steps, dxc_comp_frame_first_steps, dxc_comp_wait_names[dxc_comp_wait_mode],
                     dxc_comp_upload_sum / timed, dxc_comp_upload_max, dxc_comp_rule_sum / timed, dxc_comp_rule_max,
                     dxc_comp_wait_sum / first, dxc_comp_wait_max, dxc_comp_flush_sum / first, dxc_comp_flush_max);
+            fprintf(stderr,
+                    "compose-rust: dcomp: drag write guard (DXC_DCOMP_CPU_GUARD=%d): CPU writes=%d "
+                    "after an unwaited commit=%d, wait avg %.2f max %.2f ms\n",
+                    dxc_comp_cpu_guard, dxc_comp_guard_steps, dxc_comp_guard_waits,
+                    dxc_comp_guard_waits > 0 ? dxc_comp_guard_sum / dxc_comp_guard_waits : 0.0, dxc_comp_guard_max);
             int uploads = dxc_comp_uploads > 0 ? dxc_comp_uploads : 1;
             fprintf(stderr,
                     "compose-rust: dcomp: drag upload parts uploads=%d device=%s drag_rule=%s: BeginDraw avg %.2f ms, "
@@ -6464,6 +6521,8 @@ static int32_t dxc_open_window(
         }
         const char *drag_rule = getenv("DXC_DCOMP_DRAG_RULE");
         dxc_comp_drag_rule = drag_rule != NULL && strcmp(drag_rule, "1") == 0;
+        const char *cpu_guard = getenv("DXC_DCOMP_CPU_GUARD");
+        dxc_comp_cpu_guard = cpu_guard != NULL && strcmp(cpu_guard, "1") == 0;
         const char *gpu_drag = getenv("DXC_DCOMP_GPU_DRAG");
         dxc_comp_gpu_drag = gpu_drag == NULL ? DXC_GPU_DRAG_OFF
                             : strcmp(gpu_drag, "1") == 0 || strcmp(gpu_drag, "wait") == 0 ? DXC_GPU_DRAG_WAIT

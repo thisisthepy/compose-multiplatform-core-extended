@@ -233,6 +233,46 @@ jobs:
           done
           exit $status
 
+      # The default CPU drag on the composition route, with frames that cost nothing, so steps
+      # come closer than compositions: the case where a step can write the surface DWM still
+      # shows (the surfaces take turns). Eight with the write guard (DXC_DCOMP_CPU_GUARD=1,
+      # gated at 0 faulty frames) and eight with the default, no guard (printed, to see whether
+      # the fault happens on this route at all).
+      - name: Resize probe, right-edge drag, fast CPU steps and the write guard
+        shell: bash
+        run: |
+          for run in 1 2 3 4 5 6 7 8; do
+            DXC_DCOMP_CPU_GUARD=1 PROBE_SAVE="out\\frames-dcomp-cpufast-$run" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-cpufast-guard-$run.log || true
+            PROBE_SAVE="out\\frames-dcomp-cpufast-noguard-$run" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-cpufast-noguard-$run.log || true
+          done
+          status=0
+          total() { # <glob>: faulty frames of the drag phase over the logs
+            local faulty=0 f
+            for f in $(grep -h 'probe: phase drag composed' $1 | sed -nE 's/.*, ([0-9]+) faulty.*/\1/p'); do faulty=$((faulty + f)); done
+            echo "$faulty"
+          }
+          for way in guard noguard; do
+            for log in out/probe-dcomp-cpufast-$way-?.log; do
+              name=$(basename "$log" .log)
+              grep -q 'probe: verdict' "$log" || { echo "$log has no verdict: the probe did not finish" >&2; status=1; }
+              grep -h 'probe: phase drag composed' "$log" | sed "s/^/  $name /" || true
+              grep -h 'probe: drag lag' "$log" | sed "s/^/  $name /" || true
+              grep -h 'dcomp: drag write guard' "$log" | sed "s/^/  $name /" || true
+            done
+          done
+          echo "cpu fast drags faulty frames: with the guard $(total 'out/probe-dcomp-cpufast-guard-?.log'), without $(total 'out/probe-dcomp-cpufast-noguard-?.log')"
+          grep -h 'probe: FAULT' out/probe-dcomp-cpufast-*.log | sed "s/^/  cpufast fault /" || true
+          for log in out/probe-dcomp-cpufast-guard-?.log; do
+            grep -q 'compose-rust: dcomp: route dcomp' "$log" || { echo "$log: not on the composition route" >&2; status=1; }
+            grep -q 'dcomp: drag write guard (DXC_DCOMP_CPU_GUARD=1): CPU writes=[1-9]' "$log" || { echo "$log: no CPU drag step went through the guard" >&2; status=1; }
+            line=$(grep 'probe: phase drag composed' "$log" | head -1 || true)
+            composed=$(sed -nE 's/.*composed ([0-9]+) frames, ([0-9]+) faulty.*/\1/p' <<<"$line")
+            faulty=$(sed -nE 's/.*composed ([0-9]+) frames, ([0-9]+) faulty.*/\2/p' <<<"$line")
+            test "${composed:-0}" -gt 0 || { echo "$log: the drag composed no frame" >&2; status=1; }
+            test "${faulty:-1}" = 0 || { echo "$log: ${faulty:-?} faulty frames in a fast CPU drag with the guard, expected none" >&2; status=1; }
+          done
+          exit $status
+
       # DXC_DCOMP_GPU_DRAG=1: each step of a drag rendered on the GPU inside WM_NCCALCSIZE, on
       # the composition route, instead of by the CPU raster (the default, measured above as
       # dcomp ahead). Eight drags with 5 ms frames, eight with frames that cost nothing and
