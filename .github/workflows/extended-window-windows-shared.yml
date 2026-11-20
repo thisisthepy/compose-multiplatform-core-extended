@@ -235,14 +235,15 @@ jobs:
 
       # The default CPU drag on the composition route, with frames that cost nothing, so steps
       # come closer than compositions: the case where a step can write the surface DWM still
-      # shows (the surfaces take turns). Eight with the write guard (gated at 0 faulty frames)
-      # and eight with DXC_DCOMP_CPU_GUARD=0 (comparison, printed).
+      # shows (the surfaces take turns). Eight with the write guard (DXC_DCOMP_CPU_GUARD=1,
+      # gated at 0 faulty frames) and eight with the default, no guard (printed, to see whether
+      # the fault happens on this route at all).
       - name: Resize probe, right-edge drag, fast CPU steps and the write guard
         shell: bash
         run: |
           for run in 1 2 3 4 5 6 7 8; do
-            PROBE_SAVE="out\\frames-dcomp-cpufast-$run" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-cpufast-guard-$run.log || true
-            DXC_DCOMP_CPU_GUARD=0 PROBE_SAVE="out\\frames-dcomp-cpufast-noguard-$run" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-cpufast-noguard-$run.log || true
+            DXC_DCOMP_CPU_GUARD=1 PROBE_SAVE="out\\frames-dcomp-cpufast-$run" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-cpufast-guard-$run.log || true
+            PROBE_SAVE="out\\frames-dcomp-cpufast-noguard-$run" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-cpufast-noguard-$run.log || true
           done
           status=0
           total() { # <glob>: faulty frames of the drag phase over the logs

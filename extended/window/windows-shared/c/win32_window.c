@@ -2735,9 +2735,11 @@ static double dxc_comp_upload_sum, dxc_comp_upload_max;
 // the GPU drag composed such a frame on windows-2025 (one in about a thousand), and the CPU
 // step uses the same ring and order. BeginDraw does not prevent it: those commits were 1.8 ms
 // apart with BeginDraw on the path. So before a drag step writes a surface, it waits until DWM
-// has taken the last commit, where nothing waited for it since. DXC_DCOMP_CPU_GUARD=0 skips
-// the wait, for comparison; the steps it would have waited on are still counted.
-static int dxc_comp_cpu_guard = 1;
+// has taken the last commit, where nothing waited for it since. Off unless DXC_DCOMP_CPU_GUARD=1:
+// the fault is one reading of one frame, never seen on the CPU drag, and the same wait cost the
+// GPU drag about 20 ms a step on WARP (run 44693082474). The steps it would have waited on are
+// counted either way.
+static int dxc_comp_cpu_guard;
 static int dxc_comp_unconfirmed;
 static int dxc_comp_guard_steps, dxc_comp_guard_waits;
 static double dxc_comp_guard_sum, dxc_comp_guard_max;
@@ -6520,7 +6522,7 @@ static int32_t dxc_open_window(
         const char *drag_rule = getenv("DXC_DCOMP_DRAG_RULE");
         dxc_comp_drag_rule = drag_rule != NULL && strcmp(drag_rule, "1") == 0;
         const char *cpu_guard = getenv("DXC_DCOMP_CPU_GUARD");
-        dxc_comp_cpu_guard = cpu_guard == NULL || strcmp(cpu_guard, "0") != 0;
+        dxc_comp_cpu_guard = cpu_guard != NULL && strcmp(cpu_guard, "1") == 0;
         const char *gpu_drag = getenv("DXC_DCOMP_GPU_DRAG");
         dxc_comp_gpu_drag = gpu_drag == NULL ? DXC_GPU_DRAG_OFF
                             : strcmp(gpu_drag, "1") == 0 || strcmp(gpu_drag, "wait") == 0 ? DXC_GPU_DRAG_WAIT
