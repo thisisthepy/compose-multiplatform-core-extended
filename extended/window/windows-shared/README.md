@@ -118,6 +118,7 @@ Read when a window opens. The defaults are what the probe runs below measured.
 | `DXC_DCOMP_COMMIT` | `order` (default), `ahead`, `wmsize` | The commit order above, every frame in `WM_NCCALCSIZE`, or every frame in `WM_SIZE`. |
 | `DXC_DCOMP_SHRINK_WAIT` | `commit` (default), `flush`, `none`, `hold` | What a frame shown before a smaller rectangle waits for: DWM taking the commit, that and one composition, nothing, or nothing with the window held at the last frame DWM took during a drag. |
 | `DXC_DCOMP_DRAG_RULE` | `1` | Take the GDI route's wait before each drag step. |
+| `DXC_DCOMP_CPU_GUARD` | `0` | Do not wait, before a CPU drag step writes a surface, for DWM to take the last commit nothing waited for. The two surfaces take turns, so without the wait two steps inside one composition can write the surface still on screen. For comparison. |
 | `DXC_DCOMP_GPU_DRAG` | `1`, `nowait` | Render each drag step on the GPU in `WM_NCCALCSIZE` instead of on the CPU. `1` waits on the CPU for the commit of the step before, for the frame and for its copy; `nowait` waits for none of them. |
 | `DXC_REPORT_LATENCY` | any | Each resize step and each drag print where their time went. |
 
