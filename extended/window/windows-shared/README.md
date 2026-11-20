@@ -200,6 +200,14 @@ through Desktop Duplication, with the frame drawn for each step.
 `c/test/run-lag-probe.ps1` measures the drag lag and the faulty frames of both routes on the
 machine it runs on. CI runs it in its short form, so it keeps working.
 
+Without a compiler, use the prebuilt probe: the workflow's windows-2022 job uploads the
+artifact `lag-probe-windows-x64`, with `win32_resize_probe.exe` (static CRT, so it needs only
+the DLLs Windows ships), the script and `run-lag-probe.cmd`. Unzip it, double-click
+`run-lag-probe.cmd`, leave the mouse and keyboard alone for about three minutes, and send back
+the `lag-probe-summary.txt` it writes in the same folder.
+
+To build it yourself:
+
 1. Install Visual Studio 2022 Build Tools with "Desktop development with C++" and a Windows
    SDK.
 2. Open "x64 Native Tools Command Prompt for VS 2022" and go to the repository's root.
