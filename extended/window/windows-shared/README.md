@@ -24,7 +24,9 @@ application for Windows without a JVM.
 
 ## Linking
 
-The C is compiled with MSVC (`cl /c /std:c11`) and linked by MSVC, for both consumers:
+The C is compiled with MSVC (`cl /c /std:c11`) and linked by MSVC, for both consumers.
+`c/win32_dcomp.cpp`, the window's DirectComposition calls, is the one C++ file: it is
+compiled with `cl /c /std:c++17 /GR- /EHs-c-` and its object goes beside the others.
 
 - GraalVM native image: the objects are passed to the image's link, and the image's Kotlin
   calls them by symbol name with `@CFunction`.
@@ -33,8 +35,23 @@ The C is compiled with MSVC (`cl /c /std:c11`) and linked by MSVC, for both cons
   window beside the Kotlin/Native object, is MSVC's. There is no MinGW link of this window.
 
 The application links `user32`, `gdi32`, `ole32`, `oleaut32`, `imm32`, `uiautomationcore`,
-`d3d12`, `dxgi`, `dxguid`, `shell32`, `advapi32` and `runtimeobject`. `dwmapi` and `d3d11` are
-loaded at run time. The toasts call `compose_rust_renderer_request_frame(void)` when an
+`d3d12`, `dxgi`, `dxguid`, `shell32`, `advapi32` and `runtimeobject`. `dwmapi`, `d3d11` and
+`dcomp` are loaded at run time.
+
+## How frames reach the screen
+
+The window shows its swapchain through DirectComposition: it has no GDI redirection surface
+(`WS_EX_NOREDIRECTIONBITMAP`), and a composition swapchain is the content of one visual on
+the window. A size change outside a drag (maximise, restore, snap, a change of DPI) has its
+frame drawn on the CPU in `WM_NCCALCSIZE` and put into the swapchain's back buffer without a
+present; `WM_SIZE` presents it, clips the visual to the new size and commits, so the picture
+and the size reach DWM together. A step of an edge drag is drawn the same way and presented
+and committed in `WM_SIZE`.
+
+`DXC_DCOMP=0` opens the window on the GDI route instead, which is also what a machine without
+a composition device gets: the redirection surface and the swapchain on a child window, with
+CPU frames copied into the window with GDI during a resize. The window says which route it
+took on stderr (`compose-rust: dcomp: route`), and its memory lines end in `route=`. The toasts call `compose_rust_renderer_request_frame(void)` when an
 answer arrives, which the application defines.
 
 ## File dialogs
