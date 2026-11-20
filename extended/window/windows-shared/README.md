@@ -87,12 +87,15 @@ With `DXC_DCOMP_GPU_DRAG=1` the steps of an edge drag are rendered on the GPU in
 `WM_NCCALCSIZE` the window asks the renderer for a GPU frame of the size it is about to take
 (`dxc_native_frame_mode` answers 0 for the whole drag), waits on the shared fence until the
 Direct3D 12 queue has finished it, copies it from the shared draw texture into the surface on
-the Direct3D 11 device, waits for that copy, and commits in the same order as above. A size
+the Direct3D 11 device, waits for that copy, and commits in the same order as above. Before
+a step's frame is written it also waits until DWM has taken the commit of the step before:
+the frame goes into the surface that commit took off the screen, and a GPU step can be quick
+enough for two to fall inside one composition. A size
 given in one step keeps the CPU frame. This is off by default until it is measured on a real
 GPU next to the CPU step: on WARP a step already waits one composition in `BeginDraw`, and the
 render is added to that. At the end of a drag the window prints
 `compose-rust: dcomp: gpu drag timing`, with the average and the longest render, `BeginDraw`,
-fence wait, copy, `EndDraw`, commit wait and whole step.
+fence wait, copy, `EndDraw`, commit wait, whole step and the wait for the commit before.
 
 ### The GDI route
 
@@ -115,7 +118,7 @@ Read when a window opens. The defaults are what the probe runs below measured.
 | `DXC_DCOMP_COMMIT` | `order` (default), `ahead`, `wmsize` | The commit order above, every frame in `WM_NCCALCSIZE`, or every frame in `WM_SIZE`. |
 | `DXC_DCOMP_SHRINK_WAIT` | `commit` (default), `flush`, `none`, `hold` | What a frame shown before a smaller rectangle waits for: DWM taking the commit, that and one composition, nothing, or nothing with the window held at the last frame DWM took during a drag. |
 | `DXC_DCOMP_DRAG_RULE` | `1` | Take the GDI route's wait before each drag step. |
-| `DXC_DCOMP_GPU_DRAG` | `1`, `nowait` | Render each drag step on the GPU in `WM_NCCALCSIZE` instead of on the CPU. `1` waits on the CPU for the frame and for its copy before the commit; `nowait` leaves both to the GPU, as a steady frame does. |
+| `DXC_DCOMP_GPU_DRAG` | `1`, `nowait` | Render each drag step on the GPU in `WM_NCCALCSIZE` instead of on the CPU. `1` waits on the CPU for the commit of the step before, for the frame and for its copy; `nowait` waits for none of them. |
 | `DXC_REPORT_LATENCY` | any | Each resize step and each drag print where their time went. |
 
 ### Measured

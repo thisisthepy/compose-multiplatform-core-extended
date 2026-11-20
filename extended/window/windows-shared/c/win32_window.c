@@ -2753,12 +2753,23 @@ static void dxc_comp_time(double *sum, double *max, double ms) {
 // the commit that follows names pixels that are there. nowait: neither is waited for, as for a
 // steady frame, where the Direct3D 11 context waits for the frame on the GPU alone. For
 // comparing the two.
+//
+// 1 also waits, before a step's frame is written, until DWM has taken the commit of the step
+// before it (dxc_comp_gpu_unconfirmed). The surfaces take turns, so a step's frame goes into
+// the surface the step before last showed, and two steps inside one composition interval write
+// it while DWM still shows it: run 44690079899 composed one frame in about a thousand, on
+// windows-2025, with the window two steps back and a newer, wider picture cut by it. A GPU
+// step can take 1 ms, so steps that close are ordinary here. The wait runs after the renderer
+// has drawn, so it only costs what is left of the interval.
 enum { DXC_GPU_DRAG_OFF, DXC_GPU_DRAG_WAIT, DXC_GPU_DRAG_NOWAIT };
 static const char *const dxc_comp_gpu_drag_names[] = {"off", "wait", "nowait"};
 static int dxc_comp_gpu_drag;
 // A drag step is being rendered ahead on the GPU: dxc_native_frame_end writes the frame into
 // the surface and leaves the commit to the step (staged, like a CPU frame drawn ahead).
 static int dxc_comp_gpu_staging;
+// A GPU drag step was committed and DWM is not yet known to have taken it.
+static int dxc_comp_gpu_unconfirmed;
+static double dxc_comp_gpu_confirm_sum, dxc_comp_gpu_confirm_max, dxc_comp_gpu_last_confirm;
 static HANDLE dxc_comp_gpu_event;
 static int dxc_comp_gpu_wait_failed;
 // For the current drag: its GPU steps, those whose frame reached the surface, and where a
@@ -3681,6 +3692,7 @@ static int dxc_comp_gpu_render(int32_t width, int32_t height) {
     dxc_resize_target_height = height;
     dxc_step_draw_ms = 0.0;
     dxc_comp_gpu_last_begin = dxc_comp_gpu_last_fence = dxc_comp_gpu_last_copy = dxc_comp_gpu_last_end = 0.0;
+    dxc_comp_gpu_last_confirm = 0.0;
     dxc_resizing = 1;
     dxc_comp_gpu_staging = 1;
     dxc_draw_one_frame();
@@ -3704,6 +3716,8 @@ static int dxc_comp_gpu_commit_first(const char *what) {
     dxc_comp_wait_shown(dxc_comp_staged_width, dxc_comp_staged_height, started);
     dxc_comp_time(&dxc_comp_gpu_commit_sum, &dxc_comp_gpu_commit_max, dxc_elapsed_ms(started));
     dxc_comp_gpu_waited_steps++;
+    // Waited for, unless DXC_DCOMP_SHRINK_WAIT=none.
+    dxc_comp_gpu_unconfirmed = dxc_comp_wait_mode == DXC_COMP_WAIT_NONE;
     return 1;
 }
 
@@ -3756,6 +3770,7 @@ static void dxc_comp_gpu_drag_step(int32_t width, int32_t height, int32_t now_wi
                 dxc_comp_staged_committed = dxc_comp_gpu_commit_first("a GPU drag step drawn ahead");
             } else {
                 dxc_comp_staged_committed = dxc_comp_show("a GPU drag step drawn ahead");
+                if (dxc_comp_staged_committed) dxc_comp_gpu_unconfirmed = 1;
             }
             commit_ms = dxc_elapsed_ms(commit_started);
         }
@@ -3765,12 +3780,12 @@ static void dxc_comp_gpu_drag_step(int32_t width, int32_t height, int32_t now_wi
     if (dxc_report_latency) {
         fprintf(stderr,
                 "compose-rust: dcomp: gpu drag step %dx%d %s: render %.2f ms, BeginDraw %.2f, fence wait %.2f, "
-                "copy %.2f, EndDraw %.2f, commit and wait %.2f, step %.2f ms (at %.1f ms)\n",
+                "copy %.2f, EndDraw %.2f, commit and wait %.2f, wait for the commit before %.2f, step %.2f ms (at %.1f ms)\n",
                 (int)width, (int)height,
                 !staged ? "not drawn, left to WM_SIZE"
                 : dxc_comp_staged_committed ? "committed before the window took it" : "staged for WM_SIZE",
                 render_ms, dxc_comp_gpu_last_begin, dxc_comp_gpu_last_fence, dxc_comp_gpu_last_copy,
-                dxc_comp_gpu_last_end, commit_ms, step_ms, dxc_now_ms());
+                dxc_comp_gpu_last_end, commit_ms, dxc_comp_gpu_last_confirm, step_ms, dxc_now_ms());
     }
 }
 
@@ -3795,8 +3810,11 @@ static int dxc_comp_gpu_take(int32_t width, int32_t height) {
     }
     LARGE_INTEGER started;
     QueryPerformanceCounter(&started);
-    if (!committed && !dxc_comp_show("a GPU drag step")) {
-        return 0;
+    if (!committed) {
+        if (!dxc_comp_show("a GPU drag step")) {
+            return 0;
+        }
+        dxc_comp_gpu_unconfirmed = 1;
     }
     dxc_last_blit = 1;
     dxc_last_validated = ValidateRect(dxc_window, NULL) != 0;
@@ -4325,6 +4343,8 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         dxc_comp_gpu_end_sum = dxc_comp_gpu_end_max = 0.0;
         dxc_comp_gpu_commit_sum = dxc_comp_gpu_commit_max = 0.0;
         dxc_comp_gpu_step_sum = dxc_comp_gpu_step_max = 0.0;
+        dxc_comp_gpu_confirm_sum = dxc_comp_gpu_confirm_max = 0.0;
+        dxc_comp_gpu_unconfirmed = 0;
         dxc_mode("size-move", "off", "on", "WM_ENTERSIZEMOVE");
         // Each step of the drag has to be drawn and presented before DWM shows the new
         // size, so the thread doing it should not lose the CPU to background load.
@@ -4365,7 +4385,8 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
                         "compose-rust: dcomp: gpu drag timing steps=%d drawn_ahead=%d shown_first=%d "
                         "(DXC_DCOMP_GPU_DRAG=%s, device=%s): render avg %.2f max %.2f ms, BeginDraw avg %.2f max %.2f ms, "
                         "fence wait avg %.2f max %.2f ms, copy avg %.2f max %.2f ms, EndDraw avg %.2f max %.2f ms, "
-                        "commit wait avg %.2f max %.2f ms, step avg %.2f max %.2f ms\n",
+                        "commit wait avg %.2f max %.2f ms, step avg %.2f max %.2f ms, "
+                        "wait for the commit before avg %.2f max %.2f ms\n",
                         dxc_comp_gpu_steps, dxc_comp_gpu_staged_steps, dxc_comp_gpu_waited_steps,
                         dxc_comp_gpu_drag_names[dxc_comp_gpu_drag], dxc_comp_native ? "native" : "on12",
                         dxc_comp_gpu_render_sum / steps, dxc_comp_gpu_render_max,
@@ -4374,7 +4395,8 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
                         dxc_comp_gpu_copy_sum / steps, dxc_comp_gpu_copy_max,
                         dxc_comp_gpu_end_sum / steps, dxc_comp_gpu_end_max,
                         dxc_comp_gpu_commit_sum / waited, dxc_comp_gpu_commit_max,
-                        dxc_comp_gpu_step_sum / steps, dxc_comp_gpu_step_max);
+                        dxc_comp_gpu_step_sum / steps, dxc_comp_gpu_step_max,
+                        dxc_comp_gpu_confirm_sum / steps, dxc_comp_gpu_confirm_max);
             }
         }
         // A step drawn ahead for a size the window never took is a frame nobody may show.
@@ -6852,6 +6874,15 @@ void dxc_native_frame_end(void *queue_pointer) {
     if (dxc_on_comp) {
         LARGE_INTEGER comp_copy_started;
         QueryPerformanceCounter(&comp_copy_started);
+        if (dxc_comp_gpu_staging && dxc_comp_gpu_unconfirmed) {
+            // The surface this frame goes into is the one the last commit took off the screen.
+            dxc_comp_gpu_unconfirmed = 0;
+            if (dxc_comp_gpu_drag == DXC_GPU_DRAG_WAIT) {
+                dxc_dcomp_wait(dxc_comp);
+                dxc_comp_gpu_last_confirm = dxc_elapsed_ms(comp_copy_started);
+                dxc_comp_time(&dxc_comp_gpu_confirm_sum, &dxc_comp_gpu_confirm_max, dxc_comp_gpu_last_confirm);
+            }
+        }
         int written = dxc_comp_upload_texture(dxc_sizing.fitted_width, dxc_sizing.fitted_height);
         dxc_step_copy_ms = dxc_elapsed_ms(comp_copy_started);
         if (dxc_comp_gpu_staging) {
