@@ -50,6 +50,7 @@
 #include <dwmapi.h>
 #include <d3d11.h>
 #include <d3d11on12.h>
+#include <d3d11_4.h>
 #include <ole2.h>
 #include <shellapi.h>
 #include <winreg.h>
@@ -227,6 +228,21 @@ struct DxcWin {
     int comp_presented;
     int comp_commit_failed;
     int comp_first_show_logged;
+    // The Direct3D 11 device the surface is written with. Native (comp_native): a device of its
+    // own on the same adapter, made with D3D11CreateDevice; the GPU frame reaches it through the
+    // draw texture shared from Direct3D 12 and a shared fence (comp_fence12, comp_fence11).
+    // Otherwise (DXC_DCOMP_UPLOAD=on12, or where sharing could not be set up) the D3D11On12
+    // device the window already has, whose every write to a surface DWM reads has to drain the
+    // Direct3D 12 queue behind it first.
+    int comp_native;
+    ID3D11Device *comp_device;
+    ID3D11DeviceContext *comp_context;
+    ID3D11DeviceContext4 *comp_context4;
+    ID3D12Fence *comp_fence12;
+    ID3D11Fence *comp_fence11;
+    UINT64 comp_fence_value;
+    ID3D11Texture2D *comp_shared;
+    ID3D12Resource *comp_shared_from;
     ID3D11Device *d3d11;
     ID3D11DeviceContext *d3d11_context;
     ID3D11On12Device *on12;
@@ -368,6 +384,15 @@ struct DxcWin {
 #define dxc_comp_presented (dxc_w->comp_presented)
 #define dxc_comp_commit_failed (dxc_w->comp_commit_failed)
 #define dxc_comp_first_show_logged (dxc_w->comp_first_show_logged)
+#define dxc_comp_native (dxc_w->comp_native)
+#define dxc_comp_device (dxc_w->comp_device)
+#define dxc_comp_context (dxc_w->comp_context)
+#define dxc_comp_context4 (dxc_w->comp_context4)
+#define dxc_comp_fence12 (dxc_w->comp_fence12)
+#define dxc_comp_fence11 (dxc_w->comp_fence11)
+#define dxc_comp_fence_value (dxc_w->comp_fence_value)
+#define dxc_comp_shared (dxc_w->comp_shared)
+#define dxc_comp_shared_from (dxc_w->comp_shared_from)
 #define dxc_d3d11 (dxc_w->d3d11)
 #define dxc_d3d11_context (dxc_w->d3d11_context)
 #define dxc_on12 (dxc_w->on12)
@@ -2694,33 +2719,63 @@ static double dxc_comp_wait_sum, dxc_comp_wait_max;
 static double dxc_comp_flush_sum, dxc_comp_flush_max;
 static double dxc_comp_rule_sum, dxc_comp_rule_max;
 
+// DXC_DCOMP_DRAG_RULE=1: the composition route waits for a composition before each drag step
+// where the drag rule says so (dxc_drag_flush, builds below 22000), as the GDI route does. Off
+// by default: that wait put the GDI route's copy at the start of a composition interval, and on
+// this route the order of the commits (dxc_comp_commit_mode) already decides which frame is
+// shown with which rectangle. Run 44659612997 measured it at 24 ms a step on windows-2022, and
+// windows-2025, which never takes it, was as clean. Kept for comparing the two.
+static int dxc_comp_drag_rule;
+
 static void dxc_comp_time(double *sum, double *max, double ms) {
     *sum += ms;
     if (ms > *max) *max = ms;
 }
 
+// Where the upload of the current drag's frames went, in ms, summed over its uploads:
+// BeginDraw, the write (UpdateSubresource or the copy, and the context's Flush), EndDraw.
+static int dxc_comp_uploads;
+static double dxc_comp_begin_sum, dxc_comp_write_sum, dxc_comp_end_sum;
+
+static void dxc_comp_part(LARGE_INTEGER *mark, double *sum) {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    if (dxc_sizing.dragging) {
+        static LARGE_INTEGER frequency;
+        if (frequency.QuadPart == 0) QueryPerformanceFrequency(&frequency);
+        *sum += (double)(now.QuadPart - mark->QuadPart) * 1000.0 / (double)frequency.QuadPart;
+    }
+    *mark = now;
+}
+
 /**
  * On the composition route: writes the CPU frame in the bitmap into the surface at width x
- * height, which the surface and the visual's clip take at the next commit. No commit. One
- * when it was written.
+ * height, which the visual's clip takes at the next commit. No commit. One when it was written.
  */
 static int dxc_comp_upload_bitmap(int32_t width, int32_t height) {
-    if (dxc_comp == NULL || dxc_d3d11_context == NULL || dxc_dib_bits == NULL || width > dxc_dib_width ||
+    if (dxc_comp == NULL || dxc_comp_context == NULL || dxc_dib_bits == NULL || width > dxc_dib_width ||
         height > dxc_dib_height) {
         return 0;
     }
+    LARGE_INTEGER mark;
+    QueryPerformanceCounter(&mark);
     void *texture = NULL;
     int32_t x = 0, y = 0;
     if (dxc_dcomp_begin_draw(dxc_comp, width, height, &texture, &x, &y) != 0) {
         return 0;
     }
+    dxc_comp_part(&mark, &dxc_comp_begin_sum);
     // The bitmap is BGRA, top-down, the surface's format; the box is where in the surface's
     // texture this update goes.
     D3D11_BOX drawn = {(UINT)x, (UINT)y, 0, (UINT)(x + width), (UINT)(y + height), 1};
-    ID3D11DeviceContext_UpdateSubresource(dxc_d3d11_context, (ID3D11Resource *)texture, 0, &drawn, dxc_dib_bits,
+    ID3D11DeviceContext_UpdateSubresource(dxc_comp_context, (ID3D11Resource *)texture, 0, &drawn, dxc_dib_bits,
                                           (UINT)dxc_dib_width * 4, 0);
-    ID3D11DeviceContext_Flush(dxc_d3d11_context);
-    if (dxc_dcomp_end_draw(dxc_comp, texture) != 0) {
+    ID3D11DeviceContext_Flush(dxc_comp_context);
+    dxc_comp_part(&mark, &dxc_comp_write_sum);
+    int ended = dxc_dcomp_end_draw(dxc_comp, texture) == 0;
+    dxc_comp_part(&mark, &dxc_comp_end_sum);
+    if (dxc_sizing.dragging) dxc_comp_uploads++;
+    if (!ended) {
         return 0;
     }
     dxc_comp_surface_width = width;
@@ -2730,30 +2785,164 @@ static int dxc_comp_upload_bitmap(int32_t width, int32_t height) {
 }
 
 /**
+ * The draw texture as the native device sees it, opened again whenever the draw texture was
+ * made again (it only grows). NULL where it cannot be shared.
+ */
+static ID3D11Texture2D *dxc_comp_shared_texture(void) {
+    if (dxc_buffers[0] == NULL) {
+        return NULL;
+    }
+    if (dxc_comp_shared != NULL && dxc_comp_shared_from == dxc_buffers[0]) {
+        return dxc_comp_shared;
+    }
+    if (dxc_comp_shared != NULL) {
+        ID3D11Texture2D_Release(dxc_comp_shared);
+        dxc_comp_shared = NULL;
+    }
+    dxc_comp_shared_from = NULL;
+    HANDLE handle = NULL;
+    ID3D11Device1 *device1 = NULL;
+    HRESULT shared = ID3D12Device_CreateSharedHandle(dxc_device, (ID3D12DeviceChild *)dxc_buffers[0], NULL,
+                                                     GENERIC_ALL, NULL, &handle);
+    HRESULT opened = E_FAIL;
+    if (SUCCEEDED(shared) &&
+        SUCCEEDED(ID3D11Device_QueryInterface(dxc_comp_device, &IID_ID3D11Device1, (void **)&device1))) {
+        opened = ID3D11Device1_OpenSharedResource1(device1, handle, &IID_ID3D11Texture2D, (void **)&dxc_comp_shared);
+        ID3D11Device1_Release(device1);
+    }
+    if (handle != NULL) CloseHandle(handle);
+    if (FAILED(opened)) {
+        fprintf(stderr, "compose-rust: dcomp: sharing the draw texture failed (CreateSharedHandle 0x%08lx, "
+                        "OpenSharedResource1 0x%08lx)\n", (unsigned long)shared, (unsigned long)opened);
+        dxc_comp_shared = NULL;
+        return NULL;
+    }
+    dxc_comp_shared_from = dxc_buffers[0];
+    return dxc_comp_shared;
+}
+
+/**
  * On the composition route: copies the GPU frame (the top left width x height of the draw
  * texture) into the surface. No commit. One when it was copied.
+ *
+ * Natively, the Direct3D 12 queue signals the shared fence after the frame, the native
+ * context waits for it on the GPU, copies, and signals back, and the queue waits for that
+ * before the next frame draws into the texture: nothing waits on the CPU.
  */
 static int dxc_comp_upload_texture(int32_t width, int32_t height) {
-    if (dxc_comp == NULL || dxc_d3d11_context == NULL || dxc_wrapped == NULL) {
+    if (dxc_comp == NULL || dxc_comp_context == NULL) {
         return 0;
     }
+    ID3D11Resource *source = NULL;
+    if (dxc_comp_native) {
+        source = (ID3D11Resource *)dxc_comp_shared_texture();
+    } else {
+        source = dxc_wrapped;
+    }
+    if (source == NULL) {
+        return 0;
+    }
+    LARGE_INTEGER mark;
+    QueryPerformanceCounter(&mark);
     void *texture = NULL;
     int32_t x = 0, y = 0;
     if (dxc_dcomp_begin_draw(dxc_comp, width, height, &texture, &x, &y) != 0) {
         return 0;
     }
-    ID3D11On12Device_AcquireWrappedResources(dxc_on12, &dxc_wrapped, 1);
+    dxc_comp_part(&mark, &dxc_comp_begin_sum);
     D3D11_BOX drawn = {0, 0, 0, (UINT)width, (UINT)height, 1};
-    ID3D11DeviceContext_CopySubresourceRegion(dxc_d3d11_context, (ID3D11Resource *)texture, 0, (UINT)x, (UINT)y, 0,
-                                              dxc_wrapped, 0, &drawn);
-    ID3D11On12Device_ReleaseWrappedResources(dxc_on12, &dxc_wrapped, 1);
-    ID3D11DeviceContext_Flush(dxc_d3d11_context);
-    if (dxc_dcomp_end_draw(dxc_comp, texture) != 0) {
+    if (dxc_comp_native) {
+        UINT64 drawn_mark = ++dxc_comp_fence_value;
+        ID3D12CommandQueue_Signal(dxc_queue, dxc_comp_fence12, drawn_mark);
+        ID3D11DeviceContext4_Wait(dxc_comp_context4, dxc_comp_fence11, drawn_mark);
+        ID3D11DeviceContext_CopySubresourceRegion(dxc_comp_context, (ID3D11Resource *)texture, 0, (UINT)x, (UINT)y, 0,
+                                                  source, 0, &drawn);
+        UINT64 copied_mark = ++dxc_comp_fence_value;
+        ID3D11DeviceContext4_Signal(dxc_comp_context4, dxc_comp_fence11, copied_mark);
+        ID3D11DeviceContext_Flush(dxc_comp_context);
+        ID3D12CommandQueue_Wait(dxc_queue, dxc_comp_fence12, copied_mark);
+    } else {
+        ID3D11On12Device_AcquireWrappedResources(dxc_on12, &dxc_wrapped, 1);
+        ID3D11DeviceContext_CopySubresourceRegion(dxc_comp_context, (ID3D11Resource *)texture, 0, (UINT)x, (UINT)y, 0,
+                                                  source, 0, &drawn);
+        ID3D11On12Device_ReleaseWrappedResources(dxc_on12, &dxc_wrapped, 1);
+        ID3D11DeviceContext_Flush(dxc_comp_context);
+    }
+    dxc_comp_part(&mark, &dxc_comp_write_sum);
+    int ended = dxc_dcomp_end_draw(dxc_comp, texture) == 0;
+    dxc_comp_part(&mark, &dxc_comp_end_sum);
+    if (!ended) {
         return 0;
     }
     dxc_comp_surface_width = width;
     dxc_comp_surface_height = height;
     return 1;
+}
+
+/**
+ * Makes the native device the surface is written with, on the window's adapter, and the fence
+ * shared with the Direct3D 12 queue. One when all of it was made; otherwise nothing is kept
+ * and the surface is written with the D3D11On12 device.
+ */
+static int dxc_comp_make_native(IDXGIAdapter1 *adapter, ID3D12Device *device) {
+    HMODULE library = LoadLibraryW(L"d3d11.dll");
+    PFN_D3D11_CREATE_DEVICE create =
+        library == NULL ? NULL : (PFN_D3D11_CREATE_DEVICE)(void *)GetProcAddress(library, "D3D11CreateDevice");
+    D3D_FEATURE_LEVEL levels[2] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
+    HRESULT made = create == NULL ? E_NOINTERFACE
+                                  : create((IDXGIAdapter *)adapter, D3D_DRIVER_TYPE_UNKNOWN, NULL,
+                                           D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels, 2, D3D11_SDK_VERSION,
+                                           &dxc_comp_device, NULL, &dxc_comp_context);
+    HRESULT context4 = SUCCEEDED(made) ? ID3D11DeviceContext_QueryInterface(dxc_comp_context, &IID_ID3D11DeviceContext4,
+                                                                           (void **)&dxc_comp_context4)
+                                       : E_ABORT;
+    HRESULT fence12 = SUCCEEDED(context4) ? ID3D12Device_CreateFence(device, 0, D3D12_FENCE_FLAG_SHARED,
+                                                                      &IID_ID3D12Fence, (void **)&dxc_comp_fence12)
+                                          : E_ABORT;
+    HANDLE handle = NULL;
+    HRESULT shared = SUCCEEDED(fence12) ? ID3D12Device_CreateSharedHandle(device, (ID3D12DeviceChild *)dxc_comp_fence12,
+                                                                           NULL, GENERIC_ALL, NULL, &handle)
+                                        : E_ABORT;
+    HRESULT fence11 = E_ABORT;
+    if (SUCCEEDED(shared)) {
+        ID3D11Device5 *device5 = NULL;
+        fence11 = ID3D11Device_QueryInterface(dxc_comp_device, &IID_ID3D11Device5, (void **)&device5);
+        if (SUCCEEDED(fence11)) {
+            fence11 = ID3D11Device5_OpenSharedFence(device5, handle, &IID_ID3D11Fence, (void **)&dxc_comp_fence11);
+            ID3D11Device5_Release(device5);
+        }
+        CloseHandle(handle);
+    }
+    fprintf(stderr,
+            "compose-rust: dcomp: native device: D3D11CreateDevice 0x%08lx, DeviceContext4 0x%08lx, shared fence "
+            "0x%08lx/0x%08lx/0x%08lx\n",
+            (unsigned long)made, (unsigned long)context4, (unsigned long)fence12, (unsigned long)shared,
+            (unsigned long)fence11);
+    if (FAILED(fence11)) {
+        if (dxc_comp_fence11 != NULL) { ID3D11Fence_Release(dxc_comp_fence11); dxc_comp_fence11 = NULL; }
+        if (dxc_comp_fence12 != NULL) { ID3D12Fence_Release(dxc_comp_fence12); dxc_comp_fence12 = NULL; }
+        if (dxc_comp_context4 != NULL) { ID3D11DeviceContext4_Release(dxc_comp_context4); dxc_comp_context4 = NULL; }
+        if (dxc_comp_context != NULL) { ID3D11DeviceContext_Release(dxc_comp_context); dxc_comp_context = NULL; }
+        if (dxc_comp_device != NULL) { ID3D11Device_Release(dxc_comp_device); dxc_comp_device = NULL; }
+        return 0;
+    }
+    return 1;
+}
+
+/** Lets go of the native device and what is shared with it. */
+static void dxc_comp_release_native(void) {
+    if (dxc_comp_shared != NULL) { ID3D11Texture2D_Release(dxc_comp_shared); dxc_comp_shared = NULL; }
+    dxc_comp_shared_from = NULL;
+    if (dxc_comp_fence11 != NULL) { ID3D11Fence_Release(dxc_comp_fence11); dxc_comp_fence11 = NULL; }
+    if (dxc_comp_fence12 != NULL) { ID3D12Fence_Release(dxc_comp_fence12); dxc_comp_fence12 = NULL; }
+    if (dxc_comp_context4 != NULL) { ID3D11DeviceContext4_Release(dxc_comp_context4); dxc_comp_context4 = NULL; }
+    if (dxc_comp_native) {
+        if (dxc_comp_context != NULL) ID3D11DeviceContext_Release(dxc_comp_context);
+        if (dxc_comp_device != NULL) ID3D11Device_Release(dxc_comp_device);
+    }
+    dxc_comp_context = NULL;
+    dxc_comp_device = NULL;
+    dxc_comp_native = 0;
 }
 
 /**
@@ -3273,7 +3462,9 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
         int step_staged = dxc_on_comp && drawn && dxc_comp_stage_ahead(width, height);
         LARGE_INTEGER rule_started;
         QueryPerformanceCounter(&rule_started);
-        int step_flushed = drawn && (hidden || dxc_drag_flush) ? dxc_dwm_flush() : 0;
+        int rule_wanted = hidden || dxc_drag_flush;
+        if (dxc_on_comp && !dxc_comp_drag_rule) rule_wanted = 0;
+        int step_flushed = drawn && rule_wanted ? dxc_dwm_flush() : 0;
         if (dxc_on_comp) {
             dxc_comp_timed_steps++;
             dxc_comp_time(&dxc_comp_rule_sum, &dxc_comp_rule_max, dxc_elapsed_ms(rule_started));
@@ -3709,6 +3900,8 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         dxc_comp_wait_sum = dxc_comp_wait_max = 0.0;
         dxc_comp_flush_sum = dxc_comp_flush_max = 0.0;
         dxc_comp_rule_sum = dxc_comp_rule_max = 0.0;
+        dxc_comp_uploads = 0;
+        dxc_comp_begin_sum = dxc_comp_write_sum = dxc_comp_end_sum = 0.0;
         dxc_mode("size-move", "off", "on", "WM_ENTERSIZEMOVE");
         // Each step of the drag has to be drawn and presented before DWM shows the new
         // size, so the thread doing it should not lose the CPU to background load.
@@ -3736,6 +3929,12 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
                     dxc_comp_timed_steps, dxc_comp_frame_first_steps, dxc_comp_wait_names[dxc_comp_wait_mode],
                     dxc_comp_upload_sum / timed, dxc_comp_upload_max, dxc_comp_rule_sum / timed, dxc_comp_rule_max,
                     dxc_comp_wait_sum / first, dxc_comp_wait_max, dxc_comp_flush_sum / first, dxc_comp_flush_max);
+            int uploads = dxc_comp_uploads > 0 ? dxc_comp_uploads : 1;
+            fprintf(stderr,
+                    "compose-rust: dcomp: drag upload parts uploads=%d device=%s drag_rule=%s: BeginDraw avg %.2f ms, "
+                    "write and Flush avg %.2f ms, EndDraw avg %.2f ms\n",
+                    dxc_comp_uploads, dxc_comp_native ? "native" : "on12", dxc_comp_drag_rule ? "on" : "off",
+                    dxc_comp_begin_sum / uploads, dxc_comp_write_sum / uploads, dxc_comp_end_sum / uploads);
         }
         // A step drawn ahead for a size the window never took is a frame nobody may show.
         dxc_predrawn_set(&dxc_predrawn, 0, 0);
@@ -5245,7 +5444,8 @@ static int32_t dxc_acquire_buffers(int32_t width, int32_t height) {
     description.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
     description.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
     if (FAILED(ID3D12Device_CreateCommittedResource(
-            dxc_device, &heap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_PRESENT,
+            dxc_device, &heap, dxc_comp_native ? D3D12_HEAP_FLAG_SHARED : D3D12_HEAP_FLAG_NONE, &description,
+            D3D12_RESOURCE_STATE_PRESENT,
             NULL, &IID_ID3D12Resource, (void **)&dxc_buffers[0]))) {
         dxc_buffers[0] = NULL;
         return 1;
@@ -5285,6 +5485,7 @@ static void dxc_abandon_window(IDXGIAdapter1 *adapter) {
     dxc_latency_wait = NULL;
     // The visual holds the composition swapchain as its content, so it goes first.
     if (dxc_comp != NULL) { dxc_dcomp_release(dxc_comp); dxc_comp = NULL; }
+    dxc_comp_release_native();
     if (dxc_swapchain != NULL) { IDXGISwapChain1_Release(dxc_swapchain); dxc_swapchain = NULL; }
     if (dxc_on12 != NULL) { ID3D11On12Device_Release(dxc_on12); dxc_on12 = NULL; }
     if (dxc_d3d11_context != NULL) { ID3D11DeviceContext_Release(dxc_d3d11_context); dxc_d3d11_context = NULL; }
@@ -5716,8 +5917,20 @@ static int32_t dxc_open_window(
         HRESULT step = made;
         const char *failed_at = "CreateSwapChainForComposition";
         if (SUCCEEDED(step)) {
+            // The device the surface is written with: a native one unless
+            // DXC_DCOMP_UPLOAD=on12 asks for the D3D11On12 device (see DxcWin.comp_native).
+            const char *upload = getenv("DXC_DCOMP_UPLOAD");
+            int on12_asked = upload != NULL && strcmp(upload, "on12") == 0;
+            dxc_comp_native = !on12_asked && dxc_comp_make_native(adapter, device);
+            if (!dxc_comp_native) {
+                dxc_comp_device = d3d11;
+                dxc_comp_context = d3d11_context;
+            }
+            fprintf(stderr, "compose-rust: dcomp: surface written with the %s device%s\n",
+                    dxc_comp_native ? "native Direct3D 11" : "D3D11On12",
+                    on12_asked ? " (DXC_DCOMP_UPLOAD=on12)" : dxc_comp_native ? "" : " (the native one could not be made)");
             failed_at = "the surface and the visual";
-            step = dxc_dcomp_attach(dxc_comp, window, (IUnknown *)d3d11, (int32_t)pixel_width,
+            step = dxc_dcomp_attach(dxc_comp, window, (IUnknown *)dxc_comp_device, (int32_t)pixel_width,
                                     (int32_t)pixel_height) == 0 ? S_OK : E_FAIL;
         }
         if (FAILED(step)) {
@@ -5725,6 +5938,7 @@ static int32_t dxc_open_window(
                     failed_at, (unsigned long)step);
             dxc_dcomp_release(dxc_comp);
             dxc_comp = NULL;
+            dxc_comp_release_native();
             if (swapchain != NULL) IDXGISwapChain1_Release(swapchain);
             ID3D11On12Device_Release(on12);
             ID3D11DeviceContext_Release(d3d11_context);
@@ -5745,6 +5959,8 @@ static int32_t dxc_open_window(
         for (int named = 0; commit_at != NULL && named < 3; named++) {
             if (strcmp(commit_at, dxc_comp_commit_names[named]) == 0) dxc_comp_commit_mode = named;
         }
+        const char *drag_rule = getenv("DXC_DCOMP_DRAG_RULE");
+        dxc_comp_drag_rule = drag_rule != NULL && strcmp(drag_rule, "1") == 0;
         const char *wait_for = getenv("DXC_DCOMP_SHRINK_WAIT");
         dxc_comp_wait_mode = DXC_COMP_WAIT_COMMIT;
         for (int named = 0; wait_for != NULL && named < 3; named++) {
