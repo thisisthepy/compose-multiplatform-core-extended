@@ -343,6 +343,25 @@ jobs:
           ./c/test/run-lag-probe.ps1 -Fast
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # The lag probe prebuilt, for people without a compiler: the probe (MSVC, static CRT, so
+      # it needs only the DLLs Windows ships), the script and run-lag-probe.cmd beside it.
+      # Unzip and double-click the .cmd; lag-probe-summary.txt lands in the same folder. One
+      # build is enough, so only the windows-2022 job uploads it.
+      - name: Package the prebuilt lag probe
+        if: matrix.os == 'windows-2022'
+        run: |
+          mkdir out\lag-probe-windows-x64 || exit /b 1
+          copy out\win32_resize_probe.exe out\lag-probe-windows-x64\ || exit /b 1
+          copy c\test\run-lag-probe.ps1 out\lag-probe-windows-x64\ || exit /b 1
+          copy c\test\run-lag-probe.cmd out\lag-probe-windows-x64\ || exit /b 1
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'windows-2022'
+        with:
+          name: lag-probe-windows-x64
+          if-no-files-found: error
+          path: extended/window/windows-shared/out/lag-probe-windows-x64/
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:

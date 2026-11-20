@@ -14,6 +14,10 @@ Run it from "x64 Native Tools Command Prompt for VS 2022" (cl has to be on PATH)
 
     powershell -ExecutionPolicy Bypass -File extended\window\windows-shared\c\test\run-lag-probe.ps1
 
+When win32_resize_probe.exe sits beside this script, as in the workflow's
+lag-probe-windows-x64 artifact, it compiles nothing and needs no compiler: double-click
+run-lag-probe.cmd, and the logs and lag-probe-summary.txt land in this script's folder.
+
 It moves a window and the pointer on screen: leave the mouse and keyboard alone until it ends.
 
 .PARAMETER Runs
@@ -30,40 +34,46 @@ param(
 $ErrorActionPreference = 'Stop'
 if ($Fast) { $Runs = 1 }
 
-# windows-shared, two folders above this script.
-$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$out = Join-Path $root 'out\lag-probe'
-New-Item -ItemType Directory -Force -Path $out | Out-Null
+# A prebuilt probe beside the script (the workflow's artifact) runs as it is.
+$prebuilt = Join-Path $PSScriptRoot 'win32_resize_probe.exe'
+if (Test-Path $prebuilt) {
+    $out = $PSScriptRoot
+} else {
+    # windows-shared, two folders above this script.
+    $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    $out = Join-Path $root 'out\lag-probe'
+    New-Item -ItemType Directory -Force -Path $out | Out-Null
 
-if (-not (Get-Command cl -ErrorAction SilentlyContinue)) {
-    Write-Error 'cl is not on PATH. Run this from "x64 Native Tools Command Prompt for VS 2022".'
-    exit 2
-}
-
-function Invoke-Native([string]$what, [string[]]$arguments) {
-    & $what @arguments
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "$what failed ($LASTEXITCODE): $($arguments -join ' ')"
-        exit 3
+    if (-not (Get-Command cl -ErrorAction SilentlyContinue)) {
+        Write-Error 'cl is not on PATH. Run this from "x64 Native Tools Command Prompt for VS 2022".'
+        exit 2
     }
-}
 
-Push-Location $root
-try {
-    # The same commands as the workflow, into this script's own folder.
-    $o = "out\lag-probe"
-    Invoke-Native cl @('/nologo', '/c', '/O2', '/std:c11', '/W3', "/Fo$o\win32_window.obj", 'c\win32_window.c')
-    Invoke-Native cl @('/nologo', '/c', '/O2', '/std:c++17', '/GR-', '/EHs-c-', '/W3', "/Fo$o\win32_dcomp.obj", 'c\win32_dcomp.cpp')
-    Invoke-Native cl @('/nologo', '/c', '/O2', '/std:c11', '/W3', "/Fo$o\win32_file_dialog.obj", 'c\win32_file_dialog.c')
-    Invoke-Native cl @('/nologo', '/c', '/O2', '/std:c11', '/W3', "/Fo$o\win32_notifications.obj", 'c\win32_notifications.c')
-    Invoke-Native lib @('/nologo', "/OUT:$o\dxc_win32_window.lib", "$o\win32_window.obj", "$o\win32_dcomp.obj",
-        "$o\win32_file_dialog.obj", "$o\win32_notifications.obj")
-    Invoke-Native cl @('/nologo', '/std:c11', '/W3', '/Ic', '/Icinterop\include', "/Fo$o\", 'c\test\win32_resize_probe.c',
-        "/Fe$o\win32_resize_probe.exe", '/link', "$o\dxc_win32_window.lib", 'd3d12.lib', 'd3d11.lib', 'dxgi.lib',
-        'dxguid.lib', 'dcomp.lib', 'dwmapi.lib', 'user32.lib', 'gdi32.lib', 'uiautomationcore.lib', 'oleaut32.lib',
-        'imm32.lib', 'runtimeobject.lib', 'ole32.lib', 'shell32.lib', 'advapi32.lib')
-} finally {
-    Pop-Location
+    function Invoke-Native([string]$what, [string[]]$arguments) {
+        & $what @arguments
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "$what failed ($LASTEXITCODE): $($arguments -join ' ')"
+            exit 3
+        }
+    }
+
+    Push-Location $root
+    try {
+        # The same commands as the workflow, into this script's own folder.
+        $o = "out\lag-probe"
+        Invoke-Native cl @('/nologo', '/c', '/O2', '/std:c11', '/W3', "/Fo$o\win32_window.obj", 'c\win32_window.c')
+        Invoke-Native cl @('/nologo', '/c', '/O2', '/std:c++17', '/GR-', '/EHs-c-', '/W3', "/Fo$o\win32_dcomp.obj", 'c\win32_dcomp.cpp')
+        Invoke-Native cl @('/nologo', '/c', '/O2', '/std:c11', '/W3', "/Fo$o\win32_file_dialog.obj", 'c\win32_file_dialog.c')
+        Invoke-Native cl @('/nologo', '/c', '/O2', '/std:c11', '/W3', "/Fo$o\win32_notifications.obj", 'c\win32_notifications.c')
+        Invoke-Native lib @('/nologo', "/OUT:$o\dxc_win32_window.lib", "$o\win32_window.obj", "$o\win32_dcomp.obj",
+            "$o\win32_file_dialog.obj", "$o\win32_notifications.obj")
+        Invoke-Native cl @('/nologo', '/std:c11', '/W3', '/Ic', '/Icinterop\include', "/Fo$o\", 'c\test\win32_resize_probe.c',
+            "/Fe$o\win32_resize_probe.exe", '/link', "$o\dxc_win32_window.lib", 'd3d12.lib', 'd3d11.lib', 'dxgi.lib',
+            'dxguid.lib', 'dcomp.lib', 'dwmapi.lib', 'user32.lib', 'gdi32.lib', 'uiautomationcore.lib', 'oleaut32.lib',
+            'imm32.lib', 'runtimeobject.lib', 'ole32.lib', 'shell32.lib', 'advapi32.lib')
+    } finally {
+        Pop-Location
+    }
 }
 
 $probe = Join-Path $out 'win32_resize_probe.exe'
