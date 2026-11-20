@@ -7,6 +7,22 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
+- **Fix.** The Windows window (`windows-shared`) shows its frames through DirectComposition.
+  On restore, maximise and snap it showed the new size with the old picture now and then: the
+  rectangle and the picture reached DWM in separate steps (#223). The window now has no GDI
+  surface (`WS_EX_NOREDIRECTIONBITMAP`); its frames are written into two virtual surfaces that
+  take turns, with a Direct3D 11 device of their own, and each frame, its size and its clip
+  reach DWM in one commit. A frame that shrinks is committed and taken by DWM before the window
+  shrinks; one that grows is committed after the window grew; a snap draws one more frame, of
+  the size both rectangles hold. In CI (WARP), faulty frames in 247 size changes went from 11
+  and 81 (windows-2022, windows-2025) to 0 and 4, drags stayed at 0, and the window holds about
+  2 MB less at rest. A drag trails the pointer by about one composition more than before on
+  WARP (16 px median against 0); a real GPU is still to be measured, with
+  `c/test/run-lag-probe.ps1`. `DXC_DCOMP=0` keeps the previous route, which is also the
+  fallback where DirectComposition is missing. Applications that compile the window now also
+  compile `c/win32_dcomp.cpp` (`cl /c /std:c++17 /GR- /EHs-c-`); `dcomp.dll` is loaded at run
+  time. (#223, #245)
+
 - **Performance.** On the Kotlin/Native macOS window, a native view that moves without
   changing size (a scroll) is now moved with `setFrameOrigin:` rather than `setFrame:`, and one
   that only changes size with `setFrameSize:`. Four views moved with their size kept cost 69 to
