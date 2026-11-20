@@ -19,9 +19,16 @@ permissions:
 
 jobs:
   msvc:
-    name: windows-shared C (MSVC compile and test)
-    runs-on: windows-2022
-    timeout-minutes: 20
+    name: windows-shared C (MSVC compile and test, ${{ matrix.os }})
+    # Both generations of the compositor: Server 2022 is the Windows 10 one, Server 2025 the
+    # Windows 11 one, and the resize faults differ between them (issues 223 and 245).
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    # The probe steps run on both routes, the DirectComposition one and the GDI one.
+    timeout-minutes: 40
     defaults:
       run:
         shell: cmd
@@ -52,7 +59,7 @@ jobs:
             exit 1
           }
 
-      - name: The resize path keeps its proof lines and its one swapchain
+      - name: The resize path keeps its proof lines and its one swapchain per route
         shell: bash
         run: |
           set -euo pipefail
@@ -61,16 +68,19 @@ jobs:
           grep -q 'IDXGIOutputDuplication_AcquireNextFrame' c/win32_window.c
           count=$(grep -c 'CreateSwapChainForHwnd(' c/win32_window.c)
           test "$count" = 1 || { echo "expected one CreateSwapChainForHwnd call, found $count" >&2; exit 1; }
+          count=$(grep -c 'CreateSwapChainForComposition(' c/win32_window.c)
+          test "$count" = 1 || { echo "expected one CreateSwapChainForComposition call, found $count" >&2; exit 1; }
 
-      - name: Compile the window, the file dialogs and the toasts
+      - name: Compile the window, its composition unit, the file dialogs and the toasts
         run: |
           mkdir out
           cl /nologo /c /O2 /std:c11 /W3 /Foout\win32_window.obj c\win32_window.c || exit /b 1
+          cl /nologo /c /O2 /std:c++17 /GR- /EHs-c- /W3 /Foout\win32_dcomp.obj c\win32_dcomp.cpp || exit /b 1
           cl /nologo /c /O2 /std:c11 /W3 /Foout\win32_file_dialog.obj c\win32_file_dialog.c || exit /b 1
           cl /nologo /c /O2 /std:c11 /W3 /Foout\win32_notifications.obj c\win32_notifications.c || exit /b 1
 
       - name: Package the static library
-        run: lib /nologo /OUT:out\dxc_win32_window.lib out\win32_window.obj out\win32_file_dialog.obj out\win32_notifications.obj
+        run: lib /nologo /OUT:out\dxc_win32_window.lib out\win32_window.obj out\win32_dcomp.obj out\win32_file_dialog.obj out\win32_notifications.obj
 
       # The renderer's one native image carries the X11 window's calls on every desktop and
       # links every C function its reachable code names, so the Windows library defines them
@@ -89,12 +99,12 @@ jobs:
 
       - name: Link and run the check against the library
         run: |
-          cl /nologo /std:c11 /Ic /Icinterop\include /Foout\ c\test\win32_shared_test.c /Feout\win32_shared_test.exe /link out\dxc_win32_window.lib d3d12.lib dxgi.lib dxguid.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib || exit /b 1
+          cl /nologo /std:c11 /Ic /Icinterop\include /Foout\ c\test\win32_shared_test.c /Feout\win32_shared_test.exe /link out\dxc_win32_window.lib d3d12.lib dxgi.lib dxguid.lib dcomp.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib || exit /b 1
           out\win32_shared_test.exe
 
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-shared-msvc
+          name: windows-shared-msvc-${{ matrix.os }}
           path: |
             extended/window/windows-shared/out/dxc_win32_window.lib
             extended/window/windows-shared/cinterop/include/win32_window.h
@@ -103,32 +113,56 @@ jobs:
       # through DXGI desktop duplication (c/test/win32_resize_probe.c). FR-19.8 criterion 4,
       # compose-rust#684: no composed frame shows the window at one size with a picture drawn
       # for another.
+      #
+      # Every probe step below runs on both routes of the window, and each log name says which:
+      # probe-dcomp-* is DirectComposition (the default), probe-gdi-* is DXC_DCOMP=0, the GDI
+      # redirection surface and the swapchain's child window as before. Each log carries the
+      # window's "compose-rust: dcomp: route" line and two "compose-rust: metrics memory" lines
+      # (probe-idle, probe-end) that end in route=dcomp or route=gdi.
       - name: Build the resize probe
         run: |
-          cl /nologo /std:c11 /W3 /Ic /Icinterop\include /Foout\ c\test\win32_resize_probe.c /Feout\win32_resize_probe.exe /link out\dxc_win32_window.lib d3d12.lib d3d11.lib dxgi.lib dxguid.lib dwmapi.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib || exit /b 1
+          cl /nologo /std:c11 /W3 /Ic /Icinterop\include /Foout\ c\test\win32_resize_probe.c /Feout\win32_resize_probe.exe /link out\dxc_win32_window.lib d3d12.lib d3d11.lib dxgi.lib dxguid.lib dcomp.lib dwmapi.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib || exit /b 1
 
       # For comparison, not a gate: the size drawn in WM_SIZE after the window took it, as
       # before, and resize frames on the GPU, where the frame cannot be drawn ahead.
       - name: Resize probe, maximise, restore and snap, drawn after the window took the size (comparison)
         shell: bash
         run: |
-          DXC_RESIZE_PREDRAW=0 PROBE_SAVE='out\frames-states-after' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-after.log || true
-          DXC_RESIZE_PREDRAW=0 PROBE_DRAW_MS=30 PROBE_SAVE='out\frames-states-after-30ms' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-after-30ms.log || true
+          for route in dcomp gdi; do
+            flag=$([ "$route" = gdi ] && echo 0 || echo 1)
+            DXC_DCOMP=$flag DXC_RESIZE_PREDRAW=0 PROBE_SAVE="out\\frames-$route-states-after" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-after.log || true
+            DXC_DCOMP=$flag DXC_RESIZE_PREDRAW=0 PROBE_DRAW_MS=30 PROBE_SAVE="out\\frames-$route-states-after-30ms" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-after-30ms.log || true
+          done
 
       - name: Resize probe, maximise, restore and snap, resize frames on the GPU (comparison)
         shell: bash
         run: |
-          PROBE_RASTER=0 PROBE_SAVE='out\frames-states-gpu' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-gpu.log || true
-          PROBE_RASTER=0 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-gpu-30ms.log || true
+          for route in dcomp gdi; do
+            flag=$([ "$route" = gdi ] && echo 0 || echo 1)
+            DXC_DCOMP=$flag PROBE_RASTER=0 PROBE_SAVE="out\\frames-$route-states-gpu" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-gpu.log || true
+            DXC_DCOMP=$flag PROBE_RASTER=0 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-gpu-30ms.log || true
+          done
 
       # How far the edge lags the pointer in a right-edge drag, with a frame that costs
       # nothing and with one that costs 30 ms (about what Skia's raster backend takes on this
-      # runner). Measured, not a gate.
+      # runner), on each route. Measured, not a gate.
       - name: Resize probe, right-edge drag
         shell: bash
         run: |
-          PROBE_SAVE='out\frames-drag' ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-drag.log || true
-          PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-drag-30ms.log || true
+          for route in dcomp gdi; do
+            flag=$([ "$route" = gdi ] && echo 0 || echo 1)
+            DXC_DCOMP=$flag PROBE_SAVE="out\\frames-$route-drag" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-$route-drag.log || true
+            DXC_DCOMP=$flag PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-$route-drag-30ms.log || true
+          done
+          echo "right-edge drag, per route: composed and faulty frames of the drag, pointer lag"
+          for log in out/probe-dcomp-drag.log out/probe-dcomp-drag-30ms.log out/probe-gdi-drag.log out/probe-gdi-drag-30ms.log; do
+            name=$(basename "$log" .log)
+            grep -h 'compose-rust: dcomp: route' "$log" | head -1 | sed "s/^/  $name /" || true
+            grep -h 'probe: phase drag composed' "$log" | sed "s/^/  $name /" || true
+            grep -h 'probe: drag lag' "$log" | sed "s/^/  $name /" || echo "  $name: no lag line"
+            grep -h 'dcomp: drag timing' "$log" | sed "s/^/  $name /" || true
+            grep -h 'dcomp: drag upload parts' "$log" | sed "s/^/  $name /" || true
+          done
 
       # Issue 245: a step of a drag drawn in WM_SIZE leaves the window with its new rectangle
       # and the picture of the step before for the length of the draw, and a composition in
@@ -136,14 +170,15 @@ jobs:
       # right edge missing). Each way of drawing a step, eight drags out and back, with a frame
       # that takes 5 ms as the renderer's does: in WM_SIZE as before (after), ahead in
       # WM_NCCALCSIZE with what the build decides about the wait (ahead), ahead and never
-      # waiting for a composition (nowait), ahead and always waiting (wait). The table is the
-      # measurement; the gate is only that drawing ahead is not worse than drawing after.
+      # waiting for a composition (nowait), ahead and always waiting (wait). On each route.
+      # The table is the measurement; the gate is only that drawing ahead is not worse than
+      # drawing after, on each route.
       - name: Resize probe, right-edge drag, steps drawn ahead of the size (issue 245)
         shell: bash
         run: |
-          count() { # <way>: composed and faulty frames of the drag phase over its logs
+          count() { # <route> <way>: composed and faulty frames of the drag phase over its logs
             local composed=0 faulty=0 log line c f
-            for log in out/probe-drag245-$1-?.log; do
+            for log in out/probe-$1-drag245-$2-?.log; do
               line=$(grep 'probe: phase drag composed' "$log" | head -1 || true)
               c=$(sed -nE 's/.*composed ([0-9]+) frames, ([0-9]+) faulty.*/\1/p' <<<"$line")
               f=$(sed -nE 's/.*composed ([0-9]+) frames, ([0-9]+) faulty.*/\2/p' <<<"$line")
@@ -152,91 +187,171 @@ jobs:
             done
             echo "$composed $faulty"
           }
-          for run in 1 2 3 4 5 6 7 8; do
-            DXC_DRAG_PREDRAW=0 PROBE_DRAW_MS=5 PROBE_SAVE="out\\frames-drag245-after-$run" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-drag245-after-$run.log || true
-            PROBE_DRAW_MS=5 PROBE_SAVE="out\\frames-drag245-ahead-$run" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-drag245-ahead-$run.log || true
-            DXC_DRAG_FLUSH=0 PROBE_DRAW_MS=5 ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-drag245-nowait-$run.log || true
-            DXC_DRAG_FLUSH=1 PROBE_DRAW_MS=5 ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-drag245-wait-$run.log || true
+          for route in dcomp gdi; do
+            flag=$([ "$route" = gdi ] && echo 0 || echo 1)
+            for run in 1 2 3 4 5 6 7 8; do
+              DXC_DCOMP=$flag DXC_DRAG_PREDRAW=0 PROBE_DRAW_MS=5 PROBE_SAVE="out\\frames-$route-drag245-after-$run" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-$route-drag245-after-$run.log || true
+              DXC_DCOMP=$flag PROBE_DRAW_MS=5 PROBE_SAVE="out\\frames-$route-drag245-ahead-$run" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-$route-drag245-ahead-$run.log || true
+              DXC_DCOMP=$flag DXC_DRAG_FLUSH=0 PROBE_DRAW_MS=5 ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-$route-drag245-nowait-$run.log || true
+              DXC_DCOMP=$flag DXC_DRAG_FLUSH=1 PROBE_DRAW_MS=5 ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-$route-drag245-wait-$run.log || true
+            done
           done
-          for log in out/probe-drag245-*-?.log; do
+          for log in out/probe-*-drag245-*-?.log; do
             grep -q 'probe: verdict' "$log" || { echo "$log has no verdict: the probe did not finish" >&2; exit 1; }
           done
-          echo "issue 245, right-edge drag, 8 drags each, 5 ms frames: way, composed frames in the drag, faulty frames, lag lines"
-          for way in after ahead nowait wait; do
-            read -r composed faulty <<<"$(count $way)"
-            echo "drag245 $way: composed=$composed faulty=$faulty"
-            grep -h 'probe: drag lag' out/probe-drag245-$way-?.log | sed "s/^/  $way /" || true
-            grep -h 'resize-mode: drag steps drawn' out/probe-drag245-$way-1.log || true
-            grep -h 'resize-proof drag steps drawn ahead' out/probe-drag245-$way-1.log || true
+          echo "issue 245, right-edge drag, 8 drags each, 5 ms frames: route, way, composed frames in the drag, faulty frames, lag lines"
+          for route in dcomp gdi; do
+            grep -h 'compose-rust: dcomp: route' out/probe-$route-drag245-ahead-1.log | head -1 || true
+            for way in after ahead nowait wait; do
+              read -r composed faulty <<<"$(count $route $way)"
+              echo "drag245 $route $way: composed=$composed faulty=$faulty"
+              grep -h 'probe: drag lag' out/probe-$route-drag245-$way-?.log | sed "s/^/  $route $way /" || true
+              grep -h 'resize-mode: drag steps drawn' out/probe-$route-drag245-$way-1.log || true
+              grep -h 'resize-proof drag steps drawn ahead' out/probe-$route-drag245-$way-1.log || true
+              grep -h 'dcomp: drag steps shown before the window shrank' out/probe-$route-drag245-$way-1.log || true
+              grep -h 'dcomp: drag timing' out/probe-$route-drag245-$way-?.log | sed "s/^/  $route $way /" || true
+              grep -h 'dcomp: drag upload parts' out/probe-$route-drag245-$way-?.log | sed "s/^/  $route $way /" || true
+            done
           done
-          read -r after_composed after_faulty <<<"$(count after)"
-          read -r ahead_composed ahead_faulty <<<"$(count ahead)"
-          test "$ahead_composed" -gt 0 || { echo "the drags drawn ahead composed no frame" >&2; exit 1; }
-          grep -q 'resize-proof drag steps drawn ahead=[1-9]' out/probe-drag245-ahead-1.log || { echo "no step of the drag was drawn ahead" >&2; exit 1; }
-          grep -q 'resize-proof drag steps drawn ahead=0 ' out/probe-drag245-after-1.log || { echo "DXC_DRAG_PREDRAW=0 still drew steps ahead" >&2; exit 1; }
-          if [ "$ahead_faulty" -gt "$after_faulty" ] && [ $((ahead_faulty * 20)) -gt "$ahead_composed" ]; then
-            echo "drawing the steps ahead showed more faulty frames ($ahead_faulty) than drawing them in WM_SIZE ($after_faulty)" >&2
-            exit 1
-          fi
+          status=0
+          for route in dcomp gdi; do
+            read -r after_composed after_faulty <<<"$(count $route after)"
+            read -r ahead_composed ahead_faulty <<<"$(count $route ahead)"
+            test "$ahead_composed" -gt 0 || { echo "$route: the drags drawn ahead composed no frame" >&2; status=1; }
+            grep -q 'resize-proof drag steps drawn ahead=[1-9]' out/probe-$route-drag245-ahead-1.log || { echo "$route: no step of the drag was drawn ahead" >&2; status=1; }
+            grep -q 'resize-proof drag steps drawn ahead=0 ' out/probe-$route-drag245-after-1.log || { echo "$route: DXC_DRAG_PREDRAW=0 still drew steps ahead" >&2; status=1; }
+            if [ "$ahead_faulty" -gt "$after_faulty" ] && [ $((ahead_faulty * 20)) -gt "$ahead_composed" ]; then
+              echo "$route: drawing the steps ahead showed more faulty frames ($ahead_faulty) than drawing them in WM_SIZE ($after_faulty)" >&2
+              status=1
+            fi
+          done
+          # The composition route draws every step ahead with none faulty, whatever the wait
+          # (runs 44656676042 to 44666182474: 0 on both runners), so any is a regression.
+          for way in ahead nowait wait; do
+            read -r composed faulty <<<"$(count dcomp $way)"
+            test "$faulty" = 0 || { echo "dcomp $way: $faulty faulty frames in the drags, expected none" >&2; status=1; }
+          done
+          exit $status
 
       # For comparison, not a gate: the swapchain's child left visible until WM_SIZE, as before
       # it was hidden ahead of the size change; the frame drawn ahead presented through the
       # swapchain, and copied into the window's GDI surface with the child hidden in WM_SIZE.
-      # Both showed the child's old picture once on restore or snap (compose-rust#684).
+      # Both showed the child's old picture once on restore or snap (compose-rust#684). These
+      # switches name the GDI route's child, so they run on that route only.
       - name: Resize probe, maximise, restore and snap, child hidden in WM_SIZE (comparison)
         shell: bash
         run: |
-          DXC_RESIZE_HIDE_EARLY=0 PROBE_VERBOSE=1 PROBE_SAVE='out\frames-states-late' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-late.log || true
-          DXC_RESIZE_HIDE_EARLY=0 PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-late-30ms.log || true
-          DXC_RESIZE_HIDE_EARLY=0 DXC_RESIZE_SWAPCHAIN=0 PROBE_VERBOSE=1 PROBE_SAVE='out\frames-states-hidden' ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-hidden.log || true
-          DXC_RESIZE_HIDE_EARLY=0 DXC_RESIZE_SWAPCHAIN=0 PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-hidden-30ms.log || true
+          for route in gdi; do
+            flag=0
+            DXC_DCOMP=$flag DXC_RESIZE_HIDE_EARLY=0 PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-$route-states-late" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-late.log || true
+            DXC_DCOMP=$flag DXC_RESIZE_HIDE_EARLY=0 PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-late-30ms.log || true
+            DXC_DCOMP=$flag DXC_RESIZE_HIDE_EARLY=0 DXC_RESIZE_SWAPCHAIN=0 PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-$route-states-hidden" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-hidden.log || true
+            DXC_DCOMP=$flag DXC_RESIZE_HIDE_EARLY=0 DXC_RESIZE_SWAPCHAIN=0 PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-hidden-30ms.log || true
+          done
 
       # For comparison, not a gate: other ways of bringing the child hidden ahead of the size
-      # change back with the frame drawn ahead (DXC_SURFACE_RETURN in win32_window.c).
+      # change back with the frame drawn ahead (DXC_SURFACE_RETURN in win32_window.c). The GDI
+      # route's child again, so the GDI route only.
       - name: Resize probe, maximise, restore and snap, other returns of the child (comparison)
         shell: bash
         run: |
-          for way in wmsize showfirst; do
-            DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-return-$way.log || true
-            DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-return-$way-30ms.log || true
+          for route in gdi; do
+            flag=0
+            for way in wmsize showfirst; do
+              DXC_DCOMP=$flag DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-return-$way.log || true
+              DXC_DCOMP=$flag DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-return-$way-30ms.log || true
+            done
           done
 
-      # A gate on a rate, not on zero. A size change outside a drag is several steps (the
-      # window's rectangle, the copy into it, the child's show, the present) that take about
-      # 1.4 ms together, and DWM can begin a composition between them: it then shows the new
-      # size with the old picture once. No order or wait removed that (issue #223 of the fork
-      # has the runs): 11 faulty frames in 429 size changes with this order, 2.6 %, and 6.4 %
-      # in the worst run. Zero needs a surface that takes size and picture in one step, which
-      # #223 tracks. Until then this fails above 10 % of the size changes, which a regression
-      # to one faulty frame on every restore and snap (69 %) cannot pass.
+      # The gate is the composition route's, which brings the size and the picture to the screen
+      # in one commit. It fails above 2 % of its size changes (5 of 247): runs 44659612997 to
+      # 44666182474 showed 0 to 1 on windows-2022 and 1 to 4 on windows-2025, all of them
+      # maximise frames on the 2025 compositor, so a gate of zero would fail by chance there,
+      # while a regression to one fault on every restore or snap (69 %) cannot pass.
+      #
+      # The GDI route is printed beside it and not gated: it is the route issue #223 is about,
+      # where a size change is several steps (the rectangle, the copy, the child's show, the
+      # present) that DWM can compose between, and it keeps that (11 and 81 of 247 in run
+      # 44666182474).
       - name: Resize probe, maximise, restore and snap
         shell: bash
         run: |
-          for run in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
-            PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-states-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-$run.log || true
+          for route in dcomp gdi; do
+            flag=$([ "$route" = gdi ] && echo 0 || echo 1)
+            for run in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
+              DXC_DCOMP=$flag PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-$route-states-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-$run.log || true
+            done
+            for run in 1 2 3; do
+              DXC_DCOMP=$flag PROBE_VERBOSE=1 PROBE_DRAW_MS=30 PROBE_SAVE="out\\frames-$route-states-30ms-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-30ms-$run.log || true
+            done
           done
-          for run in 1 2 3; do
-            PROBE_VERBOSE=1 PROBE_DRAW_MS=30 PROBE_SAVE="out\\frames-states-30ms-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-states-30ms-$run.log || true
+          status=0
+          summary=""
+          for route in dcomp gdi; do
+            runs=0; changes=0; faulty=0
+            for log in out/probe-$route-states-?.log out/probe-$route-states-??.log out/probe-$route-states-30ms-?.log; do
+              grep -q 'probe: verdict' "$log" || { echo "$log has no verdict: the probe did not finish" >&2; exit 1; }
+              runs=$((runs + 1))
+              changes=$((changes + $(grep -c 'resize-mode: frames gpu -> cpu' "$log" || true)))
+              faulty=$((faulty + $(grep -c 'probe: FAULT' "$log" || true)))
+            done
+            by_phase=$(grep -h 'probe: phase .* composed' out/probe-$route-states-?.log out/probe-$route-states-??.log out/probe-$route-states-30ms-?.log |
+              sed -nE 's/.*phase ([a-z-]+) composed ([0-9]+) frames, ([0-9]+) faulty.*/\1 \3/p' |
+              awk '{f[$1] += $2} END {for (p in f) printf "%s=%d ", p, f[p]}' || true)
+            if [ "$route" = dcomp ]; then
+              limit=$(( (changes * 2 + 99) / 100 ))
+              line="resize probe states $route (the gate): $runs runs, $changes size changes, $faulty faulty frames (limit: 2 % of the size changes, $limit); faulty by phase: $by_phase"
+            else
+              line="resize probe states $route (comparison, not gated): $runs runs, $changes size changes, $faulty faulty frames; faulty by phase: $by_phase"
+            fi
+            summary="$summary$line"$'\n'
+            [ "$route" = dcomp ] || continue
+            if [ "$changes" -lt 200 ]; then
+              echo "$route: expected at least 200 size changes, counted $changes" >&2
+              status=1
+            elif [ "$faulty" -gt "$limit" ]; then
+              echo "$route: $faulty faulty frames, more than 2 % of the size changes ($limit)" >&2
+              status=1
+            fi
           done
-          runs=0; changes=0; faulty=0
-          for log in out/probe-states-?.log out/probe-states-??.log out/probe-states-30ms-?.log; do
-            grep -q 'probe: verdict' "$log" || { echo "$log has no verdict: the probe did not finish" >&2; exit 1; }
-            runs=$((runs + 1))
-            changes=$((changes + $(grep -c 'resize-mode: frames gpu -> cpu' "$log" || true)))
-            faulty=$((faulty + $(grep -c 'probe: FAULT' "$log" || true)))
+          printf '%s' "$summary"
+          for route in dcomp gdi; do
+            grep -h 'compose-rust: metrics memory probe-idle' out/probe-$route-states-1.log | sed "s/^/  $route /" || true
           done
-          echo "resize probe: $runs runs, $changes size changes, $faulty faulty frames (limit: 10 % of the size changes)"
-          test "$changes" -ge 200 || { echo "expected at least 200 size changes, counted $changes" >&2; exit 1; }
-          test $((faulty * 10)) -le "$changes" || { echo "more than 10 % of the size changes showed a faulty frame" >&2; exit 1; }
+          exit $status
+
+      # Idle memory of the window on each route, from the probe's rest point before any resize,
+      # over every probe log of this job.
+      - name: Window memory at rest, per route
+        if: always()
+        shell: bash
+        run: |
+          for route in dcomp gdi; do
+            lines=$(grep -h 'compose-rust: metrics memory probe-idle' out/probe-$route-*.log 2>/dev/null || true)
+            n=$(grep -c . <<<"$lines" || true)
+            ws=$(sed -nE 's/.*working_set_mb=([0-9.]+).*/\1/p' <<<"$lines" | sort -n | awk '{a[NR]=$1} END {if (NR) print a[int((NR+1)/2)]}')
+            pv=$(sed -nE 's/.*private_mb=([0-9.]+).*/\1/p' <<<"$lines" | sort -n | awk '{a[NR]=$1} END {if (NR) print a[int((NR+1)/2)]}')
+            routes=$(sed -nE 's/.* route=([a-z]+).*/\1/p' <<<"$lines" | sort | uniq -c | tr -s ' ' | tr '\n' ',')
+            echo "window memory at rest $route: $n runs, median working_set_mb=${ws:-none} private_mb=${pv:-none}, route lines: ${routes:-none}"
+          done
+
+      # The owner's lag probe (c/test/run-lag-probe.ps1), once in its short form, so the script
+      # people run on a real GPU builds and finishes here too.
+      - name: The lag probe script runs
+        shell: pwsh
+        run: |
+          ./c/test/run-lag-probe.ps1 -Fast
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: windows-shared-resize-probe
+          name: windows-shared-resize-probe-${{ matrix.os }}
           if-no-files-found: ignore
           path: |
             extended/window/windows-shared/out/probe-*.log
             extended/window/windows-shared/out/frames-*/
+            extended/window/windows-shared/out/lag-probe/
 
   kotlin:
     name: windows-shared Kotlin/Native (mingwX64 klib build and test)

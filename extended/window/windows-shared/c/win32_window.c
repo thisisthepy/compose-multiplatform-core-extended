@@ -50,6 +50,7 @@
 #include <dwmapi.h>
 #include <d3d11.h>
 #include <d3d11on12.h>
+#include <d3d11_4.h>
 #include <ole2.h>
 #include <shellapi.h>
 #include <winreg.h>
@@ -75,6 +76,7 @@
 #include "win32_scheme.h"
 #include "win32_edit_menu.h"
 #include "win32_dpi.h"
+#include "win32_dcomp.h"
 
 // What happened in the window, waiting to be read.
 //
@@ -134,6 +136,11 @@ struct dxc_event {
 // so the window's size and its content reach the screen together. Skia draws into a
 // Direct3D 12 texture of the same size, which is copied into that buffer each frame.
 #define DXC_BUFFER_COUNT 1
+// The composition route's swapchain is flip model (DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL), which
+// a composition swapchain has to be, and a flip model swapchain has at least two buffers. It is
+// never shown (the visual shows a surface), so it is made as small as a swapchain can be.
+#define DXC_COMP_BUFFER_COUNT 2
+#define DXC_COMP_SWAPCHAIN_SIZE 8
 
 // The format the swapchain and Skia have to agree on. Named here as a number because the
 // Kotlin side has to pass the same one to Skia and cannot see this header.
@@ -199,6 +206,44 @@ struct DxcWin {
     HWND window;
     HWND surface;
     IDXGISwapChain1 *swapchain;
+    // The composition route: the window has no GDI redirection surface
+    // (WS_EX_NOREDIRECTIONBITMAP) and no child window, and shows one DirectComposition visual
+    // whose content is a virtual surface (win32_dcomp.h). Every frame is written into the
+    // surface and committed: the frame, the surface's size and the visual's clip reach DWM
+    // with that commit as one change. The swapchain made on this route is never shown; it is
+    // the handle the renderer passes back with each frame. 0 on the GDI route: the redirection
+    // surface and the swapchain's child window (surface above), as before the composition
+    // route existed (DXC_DCOMP=0, or no device).
+    int on_comp;
+    dxc_dcomp *comp;
+    // The size of the surface's last frame.
+    int32_t comp_surface_width;
+    int32_t comp_surface_height;
+    // The size whose CPU frame drawn ahead is already in the surface, and whether it was also
+    // committed there (in WM_NCCALCSIZE), so WM_SIZE has nothing left to send.
+    int32_t comp_staged_width;
+    int32_t comp_staged_height;
+    int comp_staged_committed;
+    // A frame has been shown, so WM_PAINT has nothing to draw: the visual keeps it.
+    int comp_presented;
+    int comp_commit_failed;
+    int comp_first_show_logged;
+    // The Direct3D 11 device the surface is written with. Native (comp_native): a device of its
+    // own on the same adapter, made with D3D11CreateDevice; the GPU frame reaches it through the
+    // draw texture shared from Direct3D 12 and a shared fence (comp_fence12, comp_fence11).
+    // Otherwise (DXC_DCOMP_UPLOAD=on12, or where sharing could not be set up) the D3D11On12
+    // device the window already has, whose every write to a surface DWM reads has to drain the
+    // Direct3D 12 queue behind it first.
+    int comp_native;
+    int comp_surfaces;
+    ID3D11Device *comp_device;
+    ID3D11DeviceContext *comp_context;
+    ID3D11DeviceContext4 *comp_context4;
+    ID3D12Fence *comp_fence12;
+    ID3D11Fence *comp_fence11;
+    UINT64 comp_fence_value;
+    ID3D11Texture2D *comp_shared;
+    ID3D12Resource *comp_shared_from;
     ID3D11Device *d3d11;
     ID3D11DeviceContext *d3d11_context;
     ID3D11On12Device *on12;
@@ -330,6 +375,26 @@ struct DxcWin {
 #define dxc_window (dxc_w->window)
 #define dxc_surface (dxc_w->surface)
 #define dxc_swapchain (dxc_w->swapchain)
+#define dxc_on_comp (dxc_w->on_comp)
+#define dxc_comp (dxc_w->comp)
+#define dxc_comp_surface_width (dxc_w->comp_surface_width)
+#define dxc_comp_surface_height (dxc_w->comp_surface_height)
+#define dxc_comp_staged_width (dxc_w->comp_staged_width)
+#define dxc_comp_staged_height (dxc_w->comp_staged_height)
+#define dxc_comp_staged_committed (dxc_w->comp_staged_committed)
+#define dxc_comp_presented (dxc_w->comp_presented)
+#define dxc_comp_commit_failed (dxc_w->comp_commit_failed)
+#define dxc_comp_first_show_logged (dxc_w->comp_first_show_logged)
+#define dxc_comp_native (dxc_w->comp_native)
+#define dxc_comp_surfaces (dxc_w->comp_surfaces)
+#define dxc_comp_device (dxc_w->comp_device)
+#define dxc_comp_context (dxc_w->comp_context)
+#define dxc_comp_context4 (dxc_w->comp_context4)
+#define dxc_comp_fence12 (dxc_w->comp_fence12)
+#define dxc_comp_fence11 (dxc_w->comp_fence11)
+#define dxc_comp_fence_value (dxc_w->comp_fence_value)
+#define dxc_comp_shared (dxc_w->comp_shared)
+#define dxc_comp_shared_from (dxc_w->comp_shared_from)
 #define dxc_d3d11 (dxc_w->d3d11)
 #define dxc_d3d11_context (dxc_w->d3d11_context)
 #define dxc_on12 (dxc_w->on12)
@@ -559,13 +624,13 @@ void dxc_native_report_metrics(const char *label) {
     K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&counters, sizeof counters);
     fprintf(stderr,
             "compose-rust: metrics memory %s working_set_mb=%.1f private_mb=%.1f "
-            "video_local_mb=%.1f video_nonlocal_mb=%.1f draw_texture=%dx%d\n",
+            "video_local_mb=%.1f video_nonlocal_mb=%.1f draw_texture=%dx%d route=%s\n",
             label == NULL ? "" : label,
             (double)counters.WorkingSetSize / (1024.0 * 1024.0),
             (double)counters.PrivateUsage / (1024.0 * 1024.0),
             dxc_video_mb(DXGI_MEMORY_SEGMENT_GROUP_LOCAL),
             dxc_video_mb(DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL),
-            (int)dxc_texture_width, (int)dxc_texture_height);
+            (int)dxc_texture_width, (int)dxc_texture_height, dxc_on_comp || dxc_comp != NULL ? "dcomp" : "gdi");
     dxc_memory_point(label == NULL ? "" : label, dxc_adapter);
 }
 
@@ -2460,8 +2525,13 @@ static void dxc_return_to_gpu(HWND window, int32_t width, int32_t height) {
     if (dxc_surface != NULL) {
         ShowWindow(dxc_surface, SW_SHOWNA);
     }
-    fprintf(stderr, "compose-rust: resize-mode: surface shown at %dx%d after its frame was presented (at %.1f ms)\n",
-            (int)width, (int)height, dxc_now_ms());
+    if (dxc_on_comp) {
+        fprintf(stderr, "compose-rust: resize-mode: composition frames back on the GPU at %dx%d (at %.1f ms)\n",
+                (int)width, (int)height, dxc_now_ms());
+    } else {
+        fprintf(stderr, "compose-rust: resize-mode: surface shown at %dx%d after its frame was presented (at %.1f ms)\n",
+                (int)width, (int)height, dxc_now_ms());
+    }
     (void)window;
 }
 
@@ -2572,8 +2642,16 @@ void dxc_native_raster_end(void) {
     dxc_raster_copy();
 }
 
+static void dxc_comp_raster_copy(void);
+
 /** The copy of the frame in the bitmap into the window, and the child hidden after it. */
 static void dxc_raster_copy(void) {
+    // The composition route has no GDI surface to copy into: the frame goes into the
+    // composition swapchain's back buffer and is presented and committed instead.
+    if (dxc_on_comp) {
+        dxc_comp_raster_copy();
+        return;
+    }
     LARGE_INTEGER copy_started;
     QueryPerformanceCounter(&copy_started);
     // Into the top-level window, through GDI, before the message that asked for it returns.
@@ -2607,6 +2685,314 @@ static void dxc_raster_copy(void) {
     }
 }
 
+// When the frame drawn ahead of a size is committed, on the composition route
+// (DXC_DCOMP_COMMIT). order, the default: the frame of the size both rectangles hold (the
+// smaller width and the smaller height of the old and the new) is committed in WM_NCCALCSIZE
+// and waited for (DXC_DCOMP_SHRINK_WAIT) before the window takes the new rectangle, and the
+// frame of the new size, where it is another, is committed in WM_SIZE, after it. ahead: the
+// new size's frame committed in WM_NCCALCSIZE after one wait for a composition, without
+// waiting for it after. wmsize: committed in WM_SIZE. For comparing the three.
+//
+// Why order: a commit reaches the screen a composition after the rectangle about as often as
+// not, never reliably with it. A frame smaller than the window it is shown in leaves a
+// transparent margin inside the window's border for that composition; a frame larger than the
+// window is cut by it, which is the picture of another size. The frame of the size both hold
+// fits inside the old rectangle and the new one, so whichever composition shows it, it is
+// never cut. A size that only grows needs nothing first (that size is the old one, already
+// shown); one that only shrinks has its new frame first; one that grows a side and shrinks
+// the other (a snap to a half, and back) draws one more frame, of the size both hold.
+enum { DXC_COMP_COMMIT_ORDER, DXC_COMP_COMMIT_AHEAD, DXC_COMP_COMMIT_WM_SIZE };
+static const char *const dxc_comp_commit_names[] = {"order", "ahead", "wmsize"};
+static int dxc_comp_commit_mode;
+// How a frame committed ahead of a smaller rectangle is waited for (DXC_DCOMP_SHRINK_WAIT):
+// commit, the default: until DWM has taken the commit (WaitForCommitCompletion), so it is
+// composed no later than the rectangle sent after it; flush: that and one composition
+// (DwmFlush) as well, so it is on screen first; none: no wait. hold: a drag step that shrinks
+// waits for nothing; the window is held instead at the size of the last frame DWM has taken,
+// and follows it a step behind (dxc_comp_hold_step); outside a drag it is commit. For
+// comparing them.
+enum { DXC_COMP_WAIT_COMMIT, DXC_COMP_WAIT_FLUSH, DXC_COMP_WAIT_NONE, DXC_COMP_WAIT_HOLD };
+static const char *const dxc_comp_wait_names[] = {"commit", "flush", "none", "hold"};
+static int dxc_comp_wait_mode;
+// For DXC_DCOMP_SHRINK_WAIT=hold, during a drag: the size of the last frame DWM has taken (the
+// window may shrink to it), the frame committed since and not yet known to be taken, the edge
+// being dragged (WM_SIZING), and whether the size change in flight is one held here, whose
+// WM_NCCALCSIZE and WM_SIZE draw nothing (the frame for it is already committed).
+static int32_t dxc_comp_confirmed_width, dxc_comp_confirmed_height;
+static int32_t dxc_comp_held_width, dxc_comp_held_height;
+static WPARAM dxc_comp_sizing_edge;
+static int dxc_comp_hold_active;
+#define DXC_TIMER_COMP_HOLD 0x4443
+// For the current drag: steps whose frame was shown before the window took the size, and where
+// a step's time went, in ms (the upload into the surface, the wait for the commit, the
+// composition waited for after it, and the drag rule's wait before the commit).
+static int dxc_comp_frame_first_steps;
+static int dxc_comp_timed_steps;
+static double dxc_comp_upload_sum, dxc_comp_upload_max;
+static double dxc_comp_wait_sum, dxc_comp_wait_max;
+static double dxc_comp_flush_sum, dxc_comp_flush_max;
+static double dxc_comp_rule_sum, dxc_comp_rule_max;
+
+// DXC_DCOMP_DRAG_RULE=1: the composition route waits for a composition before each drag step
+// where the drag rule says so (dxc_drag_flush, builds below 22000), as the GDI route does. Off
+// by default: that wait put the GDI route's copy at the start of a composition interval, and on
+// this route the order of the commits (dxc_comp_commit_mode) already decides which frame is
+// shown with which rectangle. Run 44659612997 measured it at 24 ms a step on windows-2022, and
+// windows-2025, which never takes it, was as clean. Kept for comparing the two.
+static int dxc_comp_drag_rule;
+
+static void dxc_comp_time(double *sum, double *max, double ms) {
+    *sum += ms;
+    if (ms > *max) *max = ms;
+}
+
+// Where the upload of the current drag's frames went, in ms, summed over its uploads:
+// BeginDraw, the write (UpdateSubresource or the copy, and the context's Flush), EndDraw.
+static int dxc_comp_uploads;
+static double dxc_comp_begin_sum, dxc_comp_write_sum, dxc_comp_end_sum;
+
+static void dxc_comp_part(LARGE_INTEGER *mark, double *sum) {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    if (dxc_sizing.dragging) {
+        static LARGE_INTEGER frequency;
+        if (frequency.QuadPart == 0) QueryPerformanceFrequency(&frequency);
+        *sum += (double)(now.QuadPart - mark->QuadPart) * 1000.0 / (double)frequency.QuadPart;
+    }
+    *mark = now;
+}
+
+/**
+ * On the composition route: writes the CPU frame in the bitmap into the surface at width x
+ * height, which the visual's clip takes at the next commit. No commit. One when it was written.
+ */
+static int dxc_comp_upload_bitmap(int32_t width, int32_t height) {
+    if (dxc_comp == NULL || dxc_comp_context == NULL || dxc_dib_bits == NULL || width > dxc_dib_width ||
+        height > dxc_dib_height) {
+        return 0;
+    }
+    LARGE_INTEGER mark;
+    QueryPerformanceCounter(&mark);
+    void *texture = NULL;
+    int32_t x = 0, y = 0;
+    if (dxc_dcomp_begin_draw(dxc_comp, width, height, &texture, &x, &y) != 0) {
+        return 0;
+    }
+    dxc_comp_part(&mark, &dxc_comp_begin_sum);
+    // The bitmap is BGRA, top-down, the surface's format; the box is where in the surface's
+    // texture this update goes.
+    D3D11_BOX drawn = {(UINT)x, (UINT)y, 0, (UINT)(x + width), (UINT)(y + height), 1};
+    ID3D11DeviceContext_UpdateSubresource(dxc_comp_context, (ID3D11Resource *)texture, 0, &drawn, dxc_dib_bits,
+                                          (UINT)dxc_dib_width * 4, 0);
+    ID3D11DeviceContext_Flush(dxc_comp_context);
+    dxc_comp_part(&mark, &dxc_comp_write_sum);
+    int ended = dxc_dcomp_end_draw(dxc_comp, texture) == 0;
+    dxc_comp_part(&mark, &dxc_comp_end_sum);
+    if (dxc_sizing.dragging) dxc_comp_uploads++;
+    if (!ended) {
+        return 0;
+    }
+    dxc_comp_surface_width = width;
+    dxc_comp_surface_height = height;
+    dxc_resize_fitted(&dxc_sizing, width, height);
+    return 1;
+}
+
+/**
+ * The draw texture as the native device sees it, opened again whenever the draw texture was
+ * made again (it only grows). NULL where it cannot be shared.
+ */
+static ID3D11Texture2D *dxc_comp_shared_texture(void) {
+    if (dxc_buffers[0] == NULL) {
+        return NULL;
+    }
+    if (dxc_comp_shared != NULL && dxc_comp_shared_from == dxc_buffers[0]) {
+        return dxc_comp_shared;
+    }
+    if (dxc_comp_shared != NULL) {
+        ID3D11Texture2D_Release(dxc_comp_shared);
+        dxc_comp_shared = NULL;
+    }
+    dxc_comp_shared_from = NULL;
+    HANDLE handle = NULL;
+    ID3D11Device1 *device1 = NULL;
+    HRESULT shared = ID3D12Device_CreateSharedHandle(dxc_device, (ID3D12DeviceChild *)dxc_buffers[0], NULL,
+                                                     GENERIC_ALL, NULL, &handle);
+    HRESULT opened = E_FAIL;
+    if (SUCCEEDED(shared) &&
+        SUCCEEDED(ID3D11Device_QueryInterface(dxc_comp_device, &IID_ID3D11Device1, (void **)&device1))) {
+        opened = ID3D11Device1_OpenSharedResource1(device1, handle, &IID_ID3D11Texture2D, (void **)&dxc_comp_shared);
+        ID3D11Device1_Release(device1);
+    }
+    if (handle != NULL) CloseHandle(handle);
+    if (FAILED(opened)) {
+        fprintf(stderr, "compose-rust: dcomp: sharing the draw texture failed (CreateSharedHandle 0x%08lx, "
+                        "OpenSharedResource1 0x%08lx)\n", (unsigned long)shared, (unsigned long)opened);
+        dxc_comp_shared = NULL;
+        return NULL;
+    }
+    dxc_comp_shared_from = dxc_buffers[0];
+    return dxc_comp_shared;
+}
+
+/**
+ * On the composition route: copies the GPU frame (the top left width x height of the draw
+ * texture) into the surface. No commit. One when it was copied.
+ *
+ * Natively, the Direct3D 12 queue signals the shared fence after the frame, the native
+ * context waits for it on the GPU, copies, and signals back, and the queue waits for that
+ * before the next frame draws into the texture: nothing waits on the CPU.
+ */
+static int dxc_comp_upload_texture(int32_t width, int32_t height) {
+    if (dxc_comp == NULL || dxc_comp_context == NULL) {
+        return 0;
+    }
+    ID3D11Resource *source = NULL;
+    if (dxc_comp_native) {
+        source = (ID3D11Resource *)dxc_comp_shared_texture();
+    } else {
+        source = dxc_wrapped;
+    }
+    if (source == NULL) {
+        return 0;
+    }
+    LARGE_INTEGER mark;
+    QueryPerformanceCounter(&mark);
+    void *texture = NULL;
+    int32_t x = 0, y = 0;
+    if (dxc_dcomp_begin_draw(dxc_comp, width, height, &texture, &x, &y) != 0) {
+        return 0;
+    }
+    dxc_comp_part(&mark, &dxc_comp_begin_sum);
+    D3D11_BOX drawn = {0, 0, 0, (UINT)width, (UINT)height, 1};
+    if (dxc_comp_native) {
+        UINT64 drawn_mark = ++dxc_comp_fence_value;
+        ID3D12CommandQueue_Signal(dxc_queue, dxc_comp_fence12, drawn_mark);
+        ID3D11DeviceContext4_Wait(dxc_comp_context4, dxc_comp_fence11, drawn_mark);
+        ID3D11DeviceContext_CopySubresourceRegion(dxc_comp_context, (ID3D11Resource *)texture, 0, (UINT)x, (UINT)y, 0,
+                                                  source, 0, &drawn);
+        UINT64 copied_mark = ++dxc_comp_fence_value;
+        ID3D11DeviceContext4_Signal(dxc_comp_context4, dxc_comp_fence11, copied_mark);
+        ID3D11DeviceContext_Flush(dxc_comp_context);
+        ID3D12CommandQueue_Wait(dxc_queue, dxc_comp_fence12, copied_mark);
+    } else {
+        ID3D11On12Device_AcquireWrappedResources(dxc_on12, &dxc_wrapped, 1);
+        ID3D11DeviceContext_CopySubresourceRegion(dxc_comp_context, (ID3D11Resource *)texture, 0, (UINT)x, (UINT)y, 0,
+                                                  source, 0, &drawn);
+        ID3D11On12Device_ReleaseWrappedResources(dxc_on12, &dxc_wrapped, 1);
+        ID3D11DeviceContext_Flush(dxc_comp_context);
+    }
+    dxc_comp_part(&mark, &dxc_comp_write_sum);
+    int ended = dxc_dcomp_end_draw(dxc_comp, texture) == 0;
+    dxc_comp_part(&mark, &dxc_comp_end_sum);
+    if (!ended) {
+        return 0;
+    }
+    dxc_comp_surface_width = width;
+    dxc_comp_surface_height = height;
+    return 1;
+}
+
+/**
+ * Makes the native device the surface is written with, on the window's adapter, and the fence
+ * shared with the Direct3D 12 queue. One when all of it was made; otherwise nothing is kept
+ * and the surface is written with the D3D11On12 device.
+ */
+static int dxc_comp_make_native(IDXGIAdapter1 *adapter, ID3D12Device *device) {
+    HMODULE library = LoadLibraryW(L"d3d11.dll");
+    PFN_D3D11_CREATE_DEVICE create =
+        library == NULL ? NULL : (PFN_D3D11_CREATE_DEVICE)(void *)GetProcAddress(library, "D3D11CreateDevice");
+    D3D_FEATURE_LEVEL levels[2] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
+    HRESULT made = create == NULL ? E_NOINTERFACE
+                                  : create((IDXGIAdapter *)adapter, D3D_DRIVER_TYPE_UNKNOWN, NULL,
+                                           D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels, 2, D3D11_SDK_VERSION,
+                                           &dxc_comp_device, NULL, &dxc_comp_context);
+    HRESULT context4 = SUCCEEDED(made) ? ID3D11DeviceContext_QueryInterface(dxc_comp_context, &IID_ID3D11DeviceContext4,
+                                                                           (void **)&dxc_comp_context4)
+                                       : E_ABORT;
+    HRESULT fence12 = SUCCEEDED(context4) ? ID3D12Device_CreateFence(device, 0, D3D12_FENCE_FLAG_SHARED,
+                                                                      &IID_ID3D12Fence, (void **)&dxc_comp_fence12)
+                                          : E_ABORT;
+    HANDLE handle = NULL;
+    HRESULT shared = SUCCEEDED(fence12) ? ID3D12Device_CreateSharedHandle(device, (ID3D12DeviceChild *)dxc_comp_fence12,
+                                                                           NULL, GENERIC_ALL, NULL, &handle)
+                                        : E_ABORT;
+    HRESULT fence11 = E_ABORT;
+    if (SUCCEEDED(shared)) {
+        ID3D11Device5 *device5 = NULL;
+        fence11 = ID3D11Device_QueryInterface(dxc_comp_device, &IID_ID3D11Device5, (void **)&device5);
+        if (SUCCEEDED(fence11)) {
+            fence11 = ID3D11Device5_OpenSharedFence(device5, handle, &IID_ID3D11Fence, (void **)&dxc_comp_fence11);
+            ID3D11Device5_Release(device5);
+        }
+        CloseHandle(handle);
+    }
+    fprintf(stderr,
+            "compose-rust: dcomp: native device: D3D11CreateDevice 0x%08lx, DeviceContext4 0x%08lx, shared fence "
+            "0x%08lx/0x%08lx/0x%08lx\n",
+            (unsigned long)made, (unsigned long)context4, (unsigned long)fence12, (unsigned long)shared,
+            (unsigned long)fence11);
+    if (FAILED(fence11)) {
+        if (dxc_comp_fence11 != NULL) { ID3D11Fence_Release(dxc_comp_fence11); dxc_comp_fence11 = NULL; }
+        if (dxc_comp_fence12 != NULL) { ID3D12Fence_Release(dxc_comp_fence12); dxc_comp_fence12 = NULL; }
+        if (dxc_comp_context4 != NULL) { ID3D11DeviceContext4_Release(dxc_comp_context4); dxc_comp_context4 = NULL; }
+        if (dxc_comp_context != NULL) { ID3D11DeviceContext_Release(dxc_comp_context); dxc_comp_context = NULL; }
+        if (dxc_comp_device != NULL) { ID3D11Device_Release(dxc_comp_device); dxc_comp_device = NULL; }
+        return 0;
+    }
+    return 1;
+}
+
+/** Lets go of the native device and what is shared with it. */
+static void dxc_comp_release_native(void) {
+    if (dxc_comp_shared != NULL) { ID3D11Texture2D_Release(dxc_comp_shared); dxc_comp_shared = NULL; }
+    dxc_comp_shared_from = NULL;
+    if (dxc_comp_fence11 != NULL) { ID3D11Fence_Release(dxc_comp_fence11); dxc_comp_fence11 = NULL; }
+    if (dxc_comp_fence12 != NULL) { ID3D12Fence_Release(dxc_comp_fence12); dxc_comp_fence12 = NULL; }
+    if (dxc_comp_context4 != NULL) { ID3D11DeviceContext4_Release(dxc_comp_context4); dxc_comp_context4 = NULL; }
+    if (dxc_comp_native) {
+        if (dxc_comp_context != NULL) ID3D11DeviceContext_Release(dxc_comp_context);
+        if (dxc_comp_device != NULL) ID3D11Device_Release(dxc_comp_device);
+    }
+    dxc_comp_context = NULL;
+    dxc_comp_device = NULL;
+    dxc_comp_native = 0;
+}
+
+/**
+ * On the composition route: commits the frame written into the surface, with its size and
+ * clip, as one change. A failed commit makes the device again once (dxc_dcomp_commit), which
+ * leaves an empty surface, so a frame is asked for; a second failure is said once. One when
+ * it was committed.
+ */
+static int dxc_comp_show(const char *what) {
+    if (dxc_comp == NULL) {
+        return 0;
+    }
+    dxc_presents_in_change++;
+    int committed = dxc_dcomp_commit(dxc_comp);
+    if (!dxc_comp_first_show_logged) {
+        dxc_comp_first_show_logged = 1;
+        fprintf(stderr, "compose-rust: dcomp: first frame shown (%s): commit %d, surface %dx%d, fitted %dx%d\n",
+                what, committed, (int)dxc_comp_surface_width, (int)dxc_comp_surface_height,
+                (int)dxc_sizing.fitted_width, (int)dxc_sizing.fitted_height);
+    }
+    if (committed < 0) {
+        if (!dxc_comp_commit_failed) {
+            dxc_comp_commit_failed = 1;
+            fprintf(stderr, "compose-rust: dcomp: commit failed, frames may not reach the window\n");
+        }
+        return 0;
+    }
+    if (committed == 1) {
+        dxc_comp_presented = 0;
+        if (dxc_window != NULL) InvalidateRect(dxc_window, NULL, FALSE);
+        return 0;
+    }
+    dxc_comp_presented = 1;
+    return 1;
+}
+
 /**
  * Presents the CPU frame drawn ahead of a size change (dxc_predraw_resize) through the
  * swapchain, with its child left visible: the swapchain is refitted, the bitmap is copied
@@ -2627,6 +3013,10 @@ static int dxc_stage_bitmap(int32_t width, int32_t height) {
     if (dxc_swapchain == NULL || dxc_d3d11_context == NULL || dxc_dib_bits == NULL ||
         width > dxc_dib_width || height > dxc_dib_height) {
         return 0;
+    }
+    if (dxc_on_comp) {
+        // Into the composition surface instead of a swapchain buffer.
+        return dxc_comp_upload_bitmap(width, height);
     }
     if (dxc_sizing.fitted_width != width || dxc_sizing.fitted_height != height) {
         dxc_wait_for_gpu();
@@ -2669,7 +3059,161 @@ static int dxc_bitmap_to_swapchain(int32_t width, int32_t height) {
     return dxc_stage_bitmap(width, height) && dxc_present_staged();
 }
 
+/**
+ * The composition route's sink for a CPU frame, in place of the GDI copy: the frame in the
+ * bitmap is written into the surface and committed, before the message that asked for it
+ * returns. A frame drawn ahead in WM_NCCALCSIZE is already in the surface, and already
+ * committed there unless DXC_DCOMP_COMMIT=wmsize; only what is left is done. One when it was
+ * shown.
+ */
+static int dxc_comp_present_bitmap(int32_t width, int32_t height) {
+    int staged = dxc_comp_staged_width == width && dxc_comp_staged_height == height &&
+                 dxc_sizing.fitted_width == width && dxc_sizing.fitted_height == height;
+    int committed = staged && dxc_comp_staged_committed;
+    dxc_comp_staged_width = 0;
+    dxc_comp_staged_height = 0;
+    dxc_comp_staged_committed = 0;
+    if (committed) {
+        return 1;
+    }
+    if (!(staged || dxc_comp_upload_bitmap(width, height))) {
+        return 0;
+    }
+    return dxc_comp_show("a CPU frame");
+}
+
+/**
+ * On the composition route, in WM_NCCALCSIZE: the frame just drawn for the size the window is
+ * about to take goes into the surface, then, after the wait for a composition where the caller
+ * takes one, is committed, unless DXC_DCOMP_COMMIT=wmsize leaves the commit to WM_SIZE. The
+ * window's new rectangle is applied as this message returns, so the commit and the rectangle
+ * reach DWM microseconds apart, at the start of a composition interval where there was a wait,
+ * and land in the same composition. Committed in WM_SIZE instead, the rectangle went first and
+ * a composition between the two showed the old frame in the new rectangle.
+ */
+static int dxc_comp_stage_ahead(int32_t width, int32_t height) {
+    dxc_comp_staged_width = 0;
+    dxc_comp_staged_height = 0;
+    dxc_comp_staged_committed = 0;
+    LARGE_INTEGER started;
+    QueryPerformanceCounter(&started);
+    int written = dxc_comp_upload_bitmap(width, height);
+    if (dxc_sizing.dragging) dxc_comp_time(&dxc_comp_upload_sum, &dxc_comp_upload_max, dxc_elapsed_ms(started));
+    if (!written) {
+        return 0;
+    }
+    dxc_comp_staged_width = width;
+    dxc_comp_staged_height = height;
+    return 1;
+}
+
+/**
+ * Waits for a frame committed ahead of a smaller rectangle, as DXC_DCOMP_SHRINK_WAIT says, and
+ * accounts for it.
+ */
+static void dxc_comp_wait_shown(int32_t width, int32_t height, LARGE_INTEGER started) {
+    if (dxc_comp_wait_mode != DXC_COMP_WAIT_NONE) dxc_dcomp_wait(dxc_comp);
+    double taken_ms = dxc_elapsed_ms(started);
+    int flushed = dxc_comp_wait_mode == DXC_COMP_WAIT_FLUSH ? dxc_dwm_flush() : 0;
+    double flush_ms = dxc_elapsed_ms(started) - taken_ms;
+    if (dxc_sizing.dragging) {
+        dxc_comp_frame_first_steps++;
+        dxc_comp_time(&dxc_comp_wait_sum, &dxc_comp_wait_max, taken_ms);
+        dxc_comp_time(&dxc_comp_flush_sum, &dxc_comp_flush_max, flush_ms);
+    }
+    if (dxc_report_latency) {
+        fprintf(stderr,
+                "compose-rust: dcomp: frame %dx%d shown before the window took its size: commit and wait (%s) "
+                "%.2f ms, %s %.2f ms\n",
+                (int)width, (int)height, dxc_comp_wait_names[dxc_comp_wait_mode], taken_ms,
+                flushed ? "DwmFlush" : "no DwmFlush", flush_ms);
+    }
+}
+
+/** Commits the frame staged ahead in WM_NCCALCSIZE, where the order says it goes first. */
+static void dxc_comp_commit_ahead(int pure_shrink) {
+    if (dxc_comp_staged_width <= 0 || dxc_comp_commit_mode == DXC_COMP_COMMIT_WM_SIZE ||
+        (dxc_comp_commit_mode == DXC_COMP_COMMIT_ORDER && !pure_shrink)) {
+        return;
+    }
+    LARGE_INTEGER started;
+    QueryPerformanceCounter(&started);
+    dxc_comp_staged_committed = dxc_comp_show("a CPU frame drawn ahead");
+    if (dxc_comp_commit_mode == DXC_COMP_COMMIT_ORDER && dxc_comp_staged_committed) {
+        dxc_comp_wait_shown(dxc_comp_staged_width, dxc_comp_staged_height, started);
+    }
+}
+
+/**
+ * For a size that grows one side and shrinks the other: draws, writes and commits the frame
+ * of the size both rectangles hold (the smaller of each side), and waits for it, before the
+ * frame of the new size is drawn. The new size's frame is then committed in WM_SIZE, as for a
+ * size that grows.
+ */
+static void dxc_comp_show_both_hold(int32_t width, int32_t height, int32_t now_width, int32_t now_height) {
+    int32_t both_width = width < now_width ? width : now_width;
+    int32_t both_height = height < now_height ? height : now_height;
+    dxc_predrawn_set(&dxc_predrawn, 0, 0);
+    dxc_resize_target_width = both_width;
+    dxc_resize_target_height = both_height;
+    dxc_resizing = 1;
+    dxc_predrawing = 1;
+    dxc_draw_one_frame();
+    dxc_predrawing = 0;
+    dxc_resizing = 0;
+    if (dxc_predrawn.width != both_width || dxc_predrawn.height != both_height) {
+        return;
+    }
+    LARGE_INTEGER started;
+    QueryPerformanceCounter(&started);
+    if (!dxc_comp_upload_bitmap(both_width, both_height)) {
+        return;
+    }
+    if (dxc_sizing.dragging) dxc_comp_time(&dxc_comp_upload_sum, &dxc_comp_upload_max, dxc_elapsed_ms(started));
+    if (dxc_comp_show("the frame of the size both rectangles hold")) {
+        dxc_comp_wait_shown(both_width, both_height, started);
+    }
+}
+
+static void dxc_comp_raster_copy(void) {
+    LARGE_INTEGER copy_started;
+    QueryPerformanceCounter(&copy_started);
+    dxc_last_blit = dxc_comp_present_bitmap(dxc_raster_width, dxc_raster_height);
+    if (dxc_trace_state > 0) dxc_trace_event(DXC_TRACE_BLIT, dxc_raster_width, dxc_raster_height);
+    dxc_last_validated = ValidateRect(dxc_window, NULL) != 0;
+    if (dxc_trace_state > 0) dxc_trace_event(DXC_TRACE_VALID, dxc_raster_width, dxc_raster_height);
+    QueryPerformanceCounter(&dxc_blit_time);
+    dxc_step_copy_ms = dxc_elapsed_ms(copy_started);
+    if (dxc_last_blit) {
+        dxc_presented_width = dxc_raster_width;
+        dxc_presented_height = dxc_raster_height;
+    } else {
+        fprintf(stderr, "compose-rust: resize-mode: skipped frame %dx%d because the composition present failed\n",
+                (int)dxc_raster_width, (int)dxc_raster_height);
+    }
+}
+
 static int dxc_raster_present(int32_t width, int32_t height) {
+    if (dxc_on_comp) {
+        // A step of a drag goes through dxc_raster_copy, whose composition sink is the same
+        // present; this is the size given outside a drag (restore, maximise, snap, a change
+        // of DPI). DXC_RESIZE_SWAPCHAIN=0 names a GDI copy and has no meaning here.
+        if (dxc_sizing.dragging) {
+            return 0;
+        }
+        LARGE_INTEGER copy_started;
+        QueryPerformanceCounter(&copy_started);
+        if (!dxc_comp_present_bitmap(width, height)) {
+            return 0;
+        }
+        dxc_last_blit = 1;
+        dxc_last_validated = ValidateRect(dxc_window, NULL) != 0;
+        dxc_presented_width = width;
+        dxc_presented_height = height;
+        dxc_step_copy_ms = dxc_elapsed_ms(copy_started);
+        dxc_switch_frames(0, width, height, "the frame drawn ahead was committed through the composition surface");
+        return 1;
+    }
     if (dxc_raster_present_off || dxc_sizing.dragging || dxc_surface == NULL || !IsWindowVisible(dxc_surface)) {
         return 0;
     }
@@ -2880,9 +3424,144 @@ static uint32_t dxc_windows_build(void) {
  * window with the old picture cut by it. The child is not readied (it stays hidden for the
  * whole drag), and the wait for a composition is taken only where dxc_drag_flush says so.
  */
+/**
+ * For DXC_DCOMP_SHRINK_WAIT=hold: the frame committed last is known to be taken by DWM, so the
+ * window may shrink to its size. The wait is short by now: a step or a timer tick has passed
+ * since that commit.
+ */
+static void dxc_comp_confirm(void) {
+    if (dxc_comp_held_width <= 0) {
+        return;
+    }
+    LARGE_INTEGER started;
+    QueryPerformanceCounter(&started);
+    dxc_dcomp_wait(dxc_comp);
+    if (dxc_sizing.dragging) dxc_comp_time(&dxc_comp_wait_sum, &dxc_comp_wait_max, dxc_elapsed_ms(started));
+    dxc_comp_confirmed_width = dxc_comp_held_width;
+    dxc_comp_confirmed_height = dxc_comp_held_height;
+    dxc_comp_held_width = 0;
+    dxc_comp_held_height = 0;
+}
+
+/** Draws a CPU frame of width x height into the bitmap. One when it was drawn at that size. */
+static int dxc_comp_draw_cpu(int32_t width, int32_t height) {
+    dxc_switch_frames(1, width, height, "the edge is being dragged");
+    dxc_predrawn_set(&dxc_predrawn, 0, 0);
+    dxc_resize_target_width = width;
+    dxc_resize_target_height = height;
+    dxc_resizing = 1;
+    dxc_predrawing = 1;
+    dxc_draw_one_frame();
+    dxc_predrawing = 0;
+    dxc_resizing = 0;
+    int drawn = dxc_predrawn.width == width && dxc_predrawn.height == height;
+    dxc_predrawn_set(&dxc_predrawn, 0, 0);
+    return drawn;
+}
+
+/**
+ * For DXC_DCOMP_SHRINK_WAIT=hold, in WM_WINDOWPOSCHANGING during a drag, on the composition
+ * route: DSA's keep_to_frame for a step that shrinks. The frame of the size asked for is drawn
+ * and committed without waiting, and the window is given the size of the last frame DWM has
+ * taken instead (never smaller than asked): whichever of the two frames a composition shows,
+ * it fits inside the window, so nothing is cut, and nothing waits for DWM. The window follows a
+ * step behind; a timer brings it to the last frame once the pointer stops. A step that grows,
+ * or grows one side, goes the usual way. One when the size was held here.
+ */
+static int dxc_comp_hold_step(HWND window, WINDOWPOS *pos) {
+    if (!dxc_on_comp || dxc_comp_wait_mode != DXC_COMP_WAIT_HOLD || !dxc_sizing.dragging ||
+        (pos->flags & SWP_NOSIZE) != 0 || !dxc_raster_enabled || dxc_draw_frame == NULL || dxc_drawing ||
+        dxc_drag_predraw_off) {
+        return 0;
+    }
+    RECT outer, client;
+    if (!GetWindowRect(window, &outer) || !GetClientRect(window, &client)) {
+        return 0;
+    }
+    int32_t now_width = (int32_t)client.right;
+    int32_t now_height = (int32_t)client.bottom;
+    int32_t frame_width = (int32_t)(outer.right - outer.left) - now_width;
+    int32_t frame_height = (int32_t)(outer.bottom - outer.top) - now_height;
+    int32_t width = (int32_t)pos->cx - frame_width;
+    int32_t height = (int32_t)pos->cy - frame_height;
+    int shrinks = width < now_width || height < now_height;
+    int grows = width > now_width || height > now_height;
+    dxc_comp_confirm();
+    if (!shrinks || grows || width <= 0 || height <= 0) {
+        return 0;
+    }
+    LARGE_INTEGER started;
+    QueryPerformanceCounter(&started);
+    if (width != dxc_comp_confirmed_width || height != dxc_comp_confirmed_height) {
+        if (!dxc_comp_draw_cpu(width, height) || !dxc_comp_upload_bitmap(width, height) ||
+            !dxc_comp_show("a drag step held to its frame")) {
+            return 0;
+        }
+        dxc_comp_held_width = width;
+        dxc_comp_held_height = height;
+        dxc_presented_width = width;
+        dxc_presented_height = height;
+        dxc_drag_predrawn_steps++;
+    }
+    // Never smaller than the frame DWM may still show, never larger than the window is now.
+    int32_t keep_width = width;
+    int32_t keep_height = height;
+    if (dxc_comp_confirmed_width > keep_width) keep_width = dxc_comp_confirmed_width;
+    if (dxc_comp_confirmed_height > keep_height) keep_height = dxc_comp_confirmed_height;
+    if (keep_width > now_width) keep_width = now_width;
+    if (keep_height > now_height) keep_height = now_height;
+    int32_t keep_outer_width = keep_width + frame_width;
+    int32_t keep_outer_height = keep_height + frame_height;
+    // The edge not being dragged stays where it is.
+    if ((pos->flags & SWP_NOMOVE) == 0) {
+        if (pos->x != outer.left) pos->x += pos->cx - keep_outer_width;
+        if (pos->y != outer.top) pos->y += pos->cy - keep_outer_height;
+    }
+    pos->cx = keep_outer_width;
+    pos->cy = keep_outer_height;
+    dxc_comp_hold_active = 1;
+    if (keep_width != width || keep_height != height) {
+        SetTimer(window, DXC_TIMER_COMP_HOLD, 16, NULL);
+    }
+    if (dxc_report_latency) {
+        fprintf(stderr, "compose-rust: dcomp: drag step %dx%d held at %dx%d (%.2f ms)\n", (int)width, (int)height,
+                (int)keep_width, (int)keep_height, dxc_elapsed_ms(started));
+    }
+    return 1;
+}
+
+/** The hold timer: the window is brought to the last frame DWM has taken, once it is taken. */
+static void dxc_comp_hold_tick(HWND window) {
+    dxc_comp_confirm();
+    RECT outer, client;
+    if (!dxc_sizing.dragging || dxc_comp_confirmed_width <= 0 || !GetWindowRect(window, &outer) ||
+        !GetClientRect(window, &client)) {
+        KillTimer(window, DXC_TIMER_COMP_HOLD);
+        return;
+    }
+    int32_t now_width = (int32_t)client.right;
+    int32_t now_height = (int32_t)client.bottom;
+    if (dxc_comp_confirmed_width >= now_width && dxc_comp_confirmed_height >= now_height) {
+        KillTimer(window, DXC_TIMER_COMP_HOLD);
+        return;
+    }
+    int32_t outer_width = (int32_t)(outer.right - outer.left) - now_width + dxc_comp_confirmed_width;
+    int32_t outer_height = (int32_t)(outer.bottom - outer.top) - now_height + dxc_comp_confirmed_height;
+    WPARAM edge = dxc_comp_sizing_edge;
+    int left = edge == WMSZ_LEFT || edge == WMSZ_TOPLEFT || edge == WMSZ_BOTTOMLEFT;
+    int top = edge == WMSZ_TOP || edge == WMSZ_TOPLEFT || edge == WMSZ_TOPRIGHT;
+    int x = left ? outer.right - outer_width : outer.left;
+    int y = top ? outer.bottom - outer_height : outer.top;
+    SetWindowPos(window, NULL, x, y, outer_width, outer_height, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
 static int dxc_hide_surface_early(HWND window, int32_t width, int32_t height);
 static void dxc_predraw_resize(HWND window, const RECT *client) {
     if (dxc_predraw_off || dxc_swapchain == NULL || dxc_draw_frame == NULL || IsIconic(window)) {
+        return;
+    }
+    // A step held to its frame (dxc_comp_hold_step): that frame is already committed.
+    if (dxc_comp_hold_active) {
         return;
     }
     RECT now;
@@ -2907,6 +3586,13 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     QueryPerformanceCounter(&started);
     int hidden = dxc_hide_surface_early(window, (int32_t)(now.right - now.left), (int32_t)(now.bottom - now.top));
     dxc_switch_frames(1, width, height, dragging ? "the edge is being dragged" : "the size is about to change");
+    int32_t now_width = (int32_t)(now.right - now.left);
+    int32_t now_height = (int32_t)(now.bottom - now.top);
+    int shrinks = width < now_width || height < now_height;
+    int grows = width > now_width || height > now_height;
+    if (dxc_on_comp && dxc_comp_commit_mode == DXC_COMP_COMMIT_ORDER && shrinks && grows) {
+        dxc_comp_show_both_hold(width, height, now_width, now_height);
+    }
     dxc_predrawn_set(&dxc_predrawn, 0, 0);
     dxc_resize_target_width = width;
     dxc_resize_target_height = height;
@@ -2920,7 +3606,19 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
         // The child stays hidden until the drag is over, so nothing is readied for it. The
         // wait puts the size change and WM_SIZE's copy at the start of a composition interval.
         double step_drawn_ms = dxc_elapsed_ms(started);
-        int step_flushed = drawn && (hidden || dxc_drag_flush) ? dxc_dwm_flush() : 0;
+        // On the composition route the step goes into the surface before the wait and is
+        // committed after it, here rather than in WM_SIZE (dxc_comp_stage_ahead).
+        int step_staged = dxc_on_comp && drawn && dxc_comp_stage_ahead(width, height);
+        LARGE_INTEGER rule_started;
+        QueryPerformanceCounter(&rule_started);
+        int rule_wanted = hidden || dxc_drag_flush;
+        if (dxc_on_comp && !dxc_comp_drag_rule) rule_wanted = 0;
+        int step_flushed = drawn && rule_wanted ? dxc_dwm_flush() : 0;
+        if (dxc_on_comp) {
+            dxc_comp_timed_steps++;
+            dxc_comp_time(&dxc_comp_rule_sum, &dxc_comp_rule_max, dxc_elapsed_ms(rule_started));
+        }
+        if (step_staged) dxc_comp_commit_ahead(shrinks && !grows);
         if (drawn) dxc_drag_predrawn_steps++;
         if (step_flushed) dxc_drag_flushed_steps++;
         if (dxc_report_latency) {
@@ -2936,15 +3634,26 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     int ready = drawn && hidden &&
                 (dxc_surface_return == DXC_SURFACE_RETURN_NCCALC || dxc_surface_return == DXC_SURFACE_RETURN_STAGED) &&
                 dxc_ready_surface(width, height);
+    // The composition route has no child to hide (hidden is 0 there): the frame goes into the
+    // surface now, and is committed here or in WM_SIZE by whether the size shrinks
+    // (dxc_comp_commit_mode).
+    int staged = dxc_on_comp && drawn && dxc_comp_stage_ahead(width, height);
     double drawn_ms = dxc_elapsed_ms(started);
     // Only for the copy into the GDI surface. A frame presented through the swapchain is
-    // waited for after its present, in WM_SIZE, like any GPU resize frame.
-    int flushed = drawn && (dxc_raster_present_off || dxc_predraw_flush || hidden) ? dxc_dwm_flush() : 0;
+    // waited for after its present, in WM_SIZE, like any GPU resize frame. Always on the
+    // composition route, before its commit.
+    int flush_wanted = dxc_on_comp ? dxc_comp_commit_mode == DXC_COMP_COMMIT_AHEAD
+                                   : (dxc_raster_present_off || dxc_predraw_flush || hidden);
+    int flushed = drawn && flush_wanted ? dxc_dwm_flush() : 0;
+    if (staged) dxc_comp_commit_ahead(shrinks && !grows);
     fprintf(stderr,
             "compose-rust: resize-mode: drew %dx%d before the window took it (%s%s, draw %.2f ms, %s %.2f ms, at %.1f ms)\n",
             (int)width, (int)height, drawn ? "waiting for WM_SIZE" : "not drawn",
-            ready ? ", presented to the hidden surface" : "", drawn_ms,
-            flushed ? "DwmFlush" : "no DwmFlush", dxc_elapsed_ms(started) - drawn_ms, dxc_now_ms());
+            ready ? ", presented to the hidden surface"
+            : !staged ? ""
+            : dxc_comp_staged_committed ? ", committed to the composition surface"
+                                        : ", staged in the composition surface",
+            drawn_ms, flushed ? "DwmFlush" : "no DwmFlush", dxc_elapsed_ms(started) - drawn_ms, dxc_now_ms());
     dxc_state_marks[DXC_STATE_READY] = dxc_now_ms();
 }
 
@@ -3334,6 +4043,23 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         dxc_resize_begin_drag(&dxc_sizing);
         dxc_drag_predrawn_steps = 0;
         dxc_drag_flushed_steps = 0;
+        dxc_comp_frame_first_steps = 0;
+        dxc_comp_timed_steps = 0;
+        if (dxc_on_comp) {
+            RECT shown;
+            GetClientRect(window, &shown);
+            dxc_comp_confirmed_width = (int32_t)shown.right;
+            dxc_comp_confirmed_height = (int32_t)shown.bottom;
+            dxc_comp_held_width = 0;
+            dxc_comp_held_height = 0;
+            dxc_comp_hold_active = 0;
+        }
+        dxc_comp_upload_sum = dxc_comp_upload_max = 0.0;
+        dxc_comp_wait_sum = dxc_comp_wait_max = 0.0;
+        dxc_comp_flush_sum = dxc_comp_flush_max = 0.0;
+        dxc_comp_rule_sum = dxc_comp_rule_max = 0.0;
+        dxc_comp_uploads = 0;
+        dxc_comp_begin_sum = dxc_comp_write_sum = dxc_comp_end_sum = 0.0;
         dxc_mode("size-move", "off", "on", "WM_ENTERSIZEMOVE");
         // Each step of the drag has to be drawn and presented before DWM shows the new
         // size, so the thread doing it should not lose the CPU to background load.
@@ -3349,8 +4075,35 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         dxc_mode("size-move", "on", "off", "WM_EXITSIZEMOVE");
         fprintf(stderr, "compose-rust: resize-proof drag steps drawn ahead=%d waited for a composition=%d\n",
                 dxc_drag_predrawn_steps, dxc_drag_flushed_steps);
+        if (dxc_on_comp) {
+            fprintf(stderr, "compose-rust: dcomp: drag steps shown before the window shrank=%d (DXC_DCOMP_COMMIT=%s)\n",
+                    dxc_comp_frame_first_steps, dxc_comp_commit_names[dxc_comp_commit_mode]);
+            int timed = dxc_comp_timed_steps > 0 ? dxc_comp_timed_steps : 1;
+            int first = dxc_comp_frame_first_steps > 0 ? dxc_comp_frame_first_steps : 1;
+            fprintf(stderr,
+                    "compose-rust: dcomp: drag timing steps=%d shown_first=%d (DXC_DCOMP_SHRINK_WAIT=%s): "
+                    "upload avg %.2f max %.2f ms, drag rule wait avg %.2f max %.2f ms, "
+                    "commit wait avg %.2f max %.2f ms, composition wait avg %.2f max %.2f ms\n",
+                    dxc_comp_timed_steps, dxc_comp_frame_first_steps, dxc_comp_wait_names[dxc_comp_wait_mode],
+                    dxc_comp_upload_sum / timed, dxc_comp_upload_max, dxc_comp_rule_sum / timed, dxc_comp_rule_max,
+                    dxc_comp_wait_sum / first, dxc_comp_wait_max, dxc_comp_flush_sum / first, dxc_comp_flush_max);
+            int uploads = dxc_comp_uploads > 0 ? dxc_comp_uploads : 1;
+            fprintf(stderr,
+                    "compose-rust: dcomp: drag upload parts uploads=%d device=%s drag_rule=%s: BeginDraw avg %.2f ms, "
+                    "write and Flush avg %.2f ms, EndDraw avg %.2f ms\n",
+                    dxc_comp_uploads, dxc_comp_native ? "native" : "on12", dxc_comp_drag_rule ? "on" : "off",
+                    dxc_comp_begin_sum / uploads, dxc_comp_write_sum / uploads, dxc_comp_end_sum / uploads);
+        }
         // A step drawn ahead for a size the window never took is a frame nobody may show.
         dxc_predrawn_set(&dxc_predrawn, 0, 0);
+        if (dxc_on_comp) {
+            KillTimer(window, DXC_TIMER_COMP_HOLD);
+            dxc_comp_confirm();
+            dxc_comp_hold_active = 0;
+        }
+        dxc_comp_staged_width = 0;
+        dxc_comp_staged_height = 0;
+        dxc_comp_staged_committed = 0;
         if (dxc_external_drag) {
             // The window's side of an external drag: how many sizes it drew. None is a
             // failure of the drag, not a pass.
@@ -3530,11 +4283,35 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         dxc_w->active = LOWORD(wparam) != WA_INACTIVE;
         dxc_w->activation_pending = 1;
         break;
+    case WM_WINDOWPOSCHANGING:
+        // The composition route's hold of a shrinking drag step (DXC_DCOMP_SHRINK_WAIT=hold);
+        // otherwise, and always on the GDI route, the default handler alone.
+        if (dxc_on_comp && dxc_comp_wait_mode == DXC_COMP_WAIT_HOLD && dxc_sizing.dragging) {
+            LRESULT answer = DefWindowProcW(window, message, wparam, lparam);
+            dxc_comp_hold_step(window, (WINDOWPOS *)lparam);
+            return answer;
+        }
+        break;
+    case WM_SIZING:
+        if (dxc_on_comp) dxc_comp_sizing_edge = wparam;
+        break;
+    case WM_TIMER:
+        if (wparam == DXC_TIMER_COMP_HOLD) {
+            dxc_comp_hold_tick(window);
+            return 0;
+        }
+        break;
     case WM_WINDOWPOSCHANGED:
         // Moved or resized, by the user or by SetWindowPos. The default handler turns it into
         // WM_MOVE and WM_SIZE.
         dxc_w->moved_pending = 1;
         dxc_state_marks[DXC_STATE_CHANGED] = dxc_now_ms();
+        if (dxc_comp_hold_active) {
+            // A size held to its frame: its WM_SIZE draws nothing, and the next change is drawn.
+            LRESULT answer = DefWindowProcW(window, message, wparam, lparam);
+            dxc_comp_hold_active = 0;
+            return answer;
+        }
         break;
     case WM_MOVE:
         dxc_w->moved_pending = 1;
@@ -3574,8 +4351,11 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
             dxc_resize_note(&dxc_sizing, (int32_t)LOWORD(lparam), (int32_t)HIWORD(lparam));
             // Drawn here, inside the SetWindowPos that resized the window, whether or not
             // a drag is on: during one there is no other place that runs, and outside one
-            // the same ordering keeps the frame ahead of the next size.
-            dxc_draw_resize((int32_t)LOWORD(lparam), (int32_t)HIWORD(lparam));
+            // the same ordering keeps the frame ahead of the next size. Not a size held to the
+            // frame already committed for it (dxc_comp_hold_step).
+            if (!dxc_comp_hold_active) {
+                dxc_draw_resize((int32_t)LOWORD(lparam), (int32_t)HIWORD(lparam));
+            }
         }
         if (dxc_trace_state > 0) dxc_trace_event(DXC_TRACE_WM_SIZE_RET, (int)LOWORD(lparam), (int)HIWORD(lparam));
         if (dxc_external_drag && dxc_sizing.dragging) dxc_external_drag_steps++;
@@ -3587,10 +4367,16 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         // when the scene changed, so without this the window would stay black until it
         // did. During a drag WM_SIZE draws, and a second frame here would present the
         // same size twice.
+        //
+        // On the composition route there is no redirection surface to lose: the visual
+        // keeps the last frame presented, so the paint is only validated, once a frame has
+        // been presented at all and no size is waiting for one (a refit refused, asked for
+        // again through this message).
         PAINTSTRUCT paint;
         BeginPaint(window, &paint);
         EndPaint(window, &paint);
-        if (!dxc_resizing && !dxc_sizing.dragging) {
+        int comp_shown = dxc_on_comp && dxc_comp_presented && dxc_sizing.wanted_width <= 0;
+        if (!dxc_resizing && !dxc_sizing.dragging && !comp_shown) {
             dxc_draw_one_frame();
         }
         return 0;
@@ -4411,6 +5197,10 @@ static void dxc_capture_step(HWND window) {
         ((int)described.Width != width || (int)described.Height != height)) {
         failed = 1;
     }
+    // On the composition route the surface is what is shown, and it has to be the window's size.
+    if (dxc_on_comp && (dxc_comp_surface_width != width || dxc_comp_surface_height != height)) {
+        failed = 1;
+    }
     fprintf(stderr,
             "compose-rust: capture detail %dx%d buffer %ux%u rows_differing=%d first_row=%d last_row=%d "
             "frame_border_pixels=%ld frames_skipped=%d frame_minus_blit_qpc=%lld sample x=%d seen=%08x drawn=%08x\n",
@@ -4844,7 +5634,8 @@ static int32_t dxc_acquire_buffers(int32_t width, int32_t height) {
     description.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
     description.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
     if (FAILED(ID3D12Device_CreateCommittedResource(
-            dxc_device, &heap, D3D12_HEAP_FLAG_NONE, &description, D3D12_RESOURCE_STATE_PRESENT,
+            dxc_device, &heap, dxc_comp_native ? D3D12_HEAP_FLAG_SHARED : D3D12_HEAP_FLAG_NONE, &description,
+            D3D12_RESOURCE_STATE_PRESENT,
             NULL, &IID_ID3D12Resource, (void **)&dxc_buffers[0]))) {
         dxc_buffers[0] = NULL;
         return 1;
@@ -4882,6 +5673,9 @@ static void dxc_abandon_window(IDXGIAdapter1 *adapter) {
     if (dxc_fence != NULL) { ID3D12Fence_Release(dxc_fence); dxc_fence = NULL; }
     if (dxc_fence_signalled != NULL) { CloseHandle(dxc_fence_signalled); dxc_fence_signalled = NULL; }
     dxc_latency_wait = NULL;
+    // The visual holds the composition swapchain as its content, so it goes first.
+    if (dxc_comp != NULL) { dxc_dcomp_release(dxc_comp); dxc_comp = NULL; }
+    dxc_comp_release_native();
     if (dxc_swapchain != NULL) { IDXGISwapChain1_Release(dxc_swapchain); dxc_swapchain = NULL; }
     if (dxc_on12 != NULL) { ID3D11On12Device_Release(dxc_on12); dxc_on12 = NULL; }
     if (dxc_d3d11_context != NULL) { ID3D11DeviceContext_Release(dxc_d3d11_context); dxc_d3d11_context = NULL; }
@@ -5012,10 +5806,14 @@ static void dxc_memory_point(const char *where, IDXGIAdapter1 *adapter) {
     counters.cb = sizeof counters;
     K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&counters, sizeof counters);
     const double mb = 1024.0 * 1024.0;
+    // On the composition route what is shown is the surface, at the size of its last frame.
+    int32_t swapchain_width = dxc_on_comp ? dxc_comp_surface_width : dxc_sizing.fitted_width;
+    int32_t swapchain_height = dxc_on_comp ? dxc_comp_surface_height : dxc_sizing.fitted_height;
+    int swapchain_buffers = dxc_on_comp ? dxc_comp_surfaces : DXC_BUFFER_COUNT;
     fprintf(stderr,
             "compose-rust: memory-breakdown %s private_mb=%.1f working_set_mb=%.1f peak_working_set_mb=%.1f "
             "video_local_mb=%.1f video_nonlocal_mb=%.1f draw_texture=%dx%d (%.1f MB) "
-            "raster_bitmap=%dx%d (%.1f MB) swapchain=%dx%d x%d (%.1f MB)\n",
+            "raster_bitmap=%dx%d (%.1f MB) swapchain=%dx%d x%d (%.1f MB) route=%s\n",
             where, (double)counters.PrivateUsage / mb, (double)counters.WorkingSetSize / mb,
             (double)counters.PeakWorkingSetSize / mb,
             dxc_adapter_video_mb(adapter, DXGI_MEMORY_SEGMENT_GROUP_LOCAL),
@@ -5023,15 +5821,30 @@ static void dxc_memory_point(const char *where, IDXGIAdapter1 *adapter) {
             (int)dxc_texture_width, (int)dxc_texture_height,
             (double)dxc_texture_width * dxc_texture_height * 4.0 / mb,
             (int)dxc_dib_width, (int)dxc_dib_height, (double)dxc_dib_width * dxc_dib_height * 4.0 / mb,
-            (int)dxc_sizing.fitted_width, (int)dxc_sizing.fitted_height, DXC_BUFFER_COUNT,
-            (double)dxc_sizing.fitted_width * dxc_sizing.fitted_height * 4.0 * DXC_BUFFER_COUNT / mb);
+            (int)swapchain_width, (int)swapchain_height, swapchain_buffers,
+            (double)swapchain_width * swapchain_height * 4.0 * swapchain_buffers / mb, dxc_on_comp || dxc_comp != NULL ? "dcomp" : "gdi");
     fflush(stderr);
+}
+
+// dxc_open_window's answer when the window was made for the composition route and the
+// composition swapchain could not be put on it. Everything it made is gone again, and the
+// window is opened once more on the GDI route.
+#define DXC_OPEN_COMP_FAILED 13
+
+/**
+ * Whether a window opens on the composition route: unless DXC_DCOMP=0 says not, and where a
+ * composition device can be made (dxc_open_window).
+ */
+static int dxc_comp_wanted(void) {
+    const char *asked = getenv("DXC_DCOMP");
+    return !(asked != NULL && strcmp(asked, "0") == 0);
 }
 
 static int32_t dxc_open_window(
     const char *title,
     int32_t width,
     int32_t height,
+    int comp_wanted,
     struct dxc_native_window *out
 ) {
     // Asked for before the window exists, so the sizes below are read in real pixels
@@ -5051,10 +5864,20 @@ static int32_t dxc_open_window(
         wide_title[0] = L'\0';
     }
 
-    // With its redirection surface, as Flutter's view has one: while a resize is being
-    // drawn, DWM keeps showing the last presented frame instead of the desktop.
+    // The composition device first, because the window's extended style depends on it. Kept
+    // in the window's record from here, so every way out below lets go of it
+    // (dxc_abandon_window, or dxc_native_window_open after a failure).
+    dxc_comp = comp_wanted ? dxc_dcomp_create() : NULL;
+    int comp = dxc_comp != NULL;
+    fprintf(stderr, "compose-rust: dcomp: route %s because %s\n", comp ? "dcomp" : "gdi",
+            comp ? "a composition device was made"
+                 : comp_wanted ? "no composition device could be made" : "DXC_DCOMP=0 or the composition route failed");
+    // On the GDI route with its redirection surface, as Flutter's view has one: while a
+    // resize is being drawn, DWM keeps showing the last presented frame instead of the
+    // desktop. On the composition route without one: what DWM shows of the window is the
+    // visual, whose present and commit carry the picture and its size together.
     HWND window = CreateWindowExW(
-        0,
+        comp ? WS_EX_NOREDIRECTIONBITMAP : 0,
         DXC_WINDOW_CLASS,
         wide_title,
         dxc_window_style(),
@@ -5265,17 +6088,94 @@ static int32_t dxc_open_window(
     swapchain_description.Scaling = DXGI_SCALING_STRETCH;
     swapchain_description.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
     swapchain_description.Flags = 0;
-    // On a child window covering the client area, not on the window itself. A swapchain's
-    // presents reach DWM through a surface of their own over the window's GDI redirection
-    // surface, so on the same window a GDI copy made during a resize would not be what DWM
-    // shows. On a child, hiding the child during the size change leaves the top-level
-    // window's GDI surface, which DWM resizes and composes together with the window.
-    dxc_surface = CreateWindowExW(0, DXC_SURFACE_CLASS, L"", WS_CHILD | WS_VISIBLE, 0, 0,
-                                  (int)pixel_width, (int)pixel_height, window, NULL,
-                                  GetModuleHandleW(NULL), NULL);
     IDXGISwapChain1 *swapchain = NULL;
-    HRESULT made = dxc_surface == NULL ? E_FAIL : IDXGIFactory4_CreateSwapChainForHwnd(
-        factory, (IUnknown *)d3d11, dxc_surface, &swapchain_description, NULL, NULL, &swapchain);
+    HRESULT made = E_FAIL;
+    if (comp) {
+        // The composition route: the visual shows a virtual surface of the client area's
+        // size, on a surface factory of the Direct3D 11 device. The swapchain is made only as
+        // the handle the renderer hands back with each frame: a composition swapchain, never
+        // put on a visual, as small as one can be.
+        DXGI_SWAP_CHAIN_DESC1 comp_description = swapchain_description;
+        comp_description.Width = DXC_COMP_SWAPCHAIN_SIZE;
+        comp_description.Height = DXC_COMP_SWAPCHAIN_SIZE;
+        comp_description.BufferCount = DXC_COMP_BUFFER_COUNT;
+        comp_description.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+        comp_description.Scaling = DXGI_SCALING_STRETCH;
+        comp_description.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+        made = IDXGIFactory4_CreateSwapChainForComposition(factory, (IUnknown *)d3d11, &comp_description, NULL,
+                                                           &swapchain);
+        HRESULT step = made;
+        const char *failed_at = "CreateSwapChainForComposition";
+        if (SUCCEEDED(step)) {
+            // The device the surface is written with: a native one unless
+            // DXC_DCOMP_UPLOAD=on12 asks for the D3D11On12 device (see DxcWin.comp_native).
+            const char *upload = getenv("DXC_DCOMP_UPLOAD");
+            int on12_asked = upload != NULL && strcmp(upload, "on12") == 0;
+            dxc_comp_native = !on12_asked && dxc_comp_make_native(adapter, device);
+            if (!dxc_comp_native) {
+                dxc_comp_device = d3d11;
+                dxc_comp_context = d3d11_context;
+            }
+            fprintf(stderr, "compose-rust: dcomp: surface written with the %s device%s\n",
+                    dxc_comp_native ? "native Direct3D 11" : "D3D11On12",
+                    on12_asked ? " (DXC_DCOMP_UPLOAD=on12)" : dxc_comp_native ? "" : " (the native one could not be made)");
+            // DXC_DCOMP_SURFACES: how many surfaces the visual's content takes turns between, 2
+            // unless asked (1 to DXC_DCOMP_MAX_SURFACES). With one, BeginDraw waits for DWM to let
+            // go of the surface on screen: 7 to 18 ms a drag step in run 44662848036.
+            const char *surfaces_asked = getenv("DXC_DCOMP_SURFACES");
+            int surfaces = surfaces_asked != NULL ? atoi(surfaces_asked) : 2;
+            if (surfaces < 1 || surfaces > DXC_DCOMP_MAX_SURFACES) surfaces = 2;
+            fprintf(stderr, "compose-rust: dcomp: %d surfaces taking turns (DXC_DCOMP_SURFACES)\n", surfaces);
+            dxc_comp_surfaces = surfaces;
+            failed_at = "the surface and the visual";
+            step = dxc_dcomp_attach(dxc_comp, window, (IUnknown *)dxc_comp_device, (int32_t)pixel_width,
+                                    (int32_t)pixel_height, surfaces) == 0 ? S_OK : E_FAIL;
+        }
+        if (FAILED(step)) {
+            fprintf(stderr, "compose-rust: dcomp: %s failed with 0x%08lx, the window opens on the GDI route\n",
+                    failed_at, (unsigned long)step);
+            dxc_dcomp_release(dxc_comp);
+            dxc_comp = NULL;
+            dxc_comp_release_native();
+            if (swapchain != NULL) IDXGISwapChain1_Release(swapchain);
+            ID3D11On12Device_Release(on12);
+            ID3D11DeviceContext_Release(d3d11_context);
+            ID3D11Device_Release(d3d11);
+            ID3D12CommandQueue_Release(queue);
+            ID3D12Device_Release(device);
+            IDXGIAdapter1_Release(adapter);
+            IDXGIFactory4_Release(factory);
+            DestroyWindow(window);
+            return DXC_OPEN_COMP_FAILED;
+        }
+        swapchain_description.Flags = comp_description.Flags;
+        dxc_comp_surface_width = (int32_t)pixel_width;
+        dxc_comp_surface_height = (int32_t)pixel_height;
+        dxc_on_comp = 1;
+        const char *commit_at = getenv("DXC_DCOMP_COMMIT");
+        dxc_comp_commit_mode = DXC_COMP_COMMIT_ORDER;
+        for (int named = 0; commit_at != NULL && named < 3; named++) {
+            if (strcmp(commit_at, dxc_comp_commit_names[named]) == 0) dxc_comp_commit_mode = named;
+        }
+        const char *drag_rule = getenv("DXC_DCOMP_DRAG_RULE");
+        dxc_comp_drag_rule = drag_rule != NULL && strcmp(drag_rule, "1") == 0;
+        const char *wait_for = getenv("DXC_DCOMP_SHRINK_WAIT");
+        dxc_comp_wait_mode = DXC_COMP_WAIT_COMMIT;
+        for (int named = 0; wait_for != NULL && named < 4; named++) {
+            if (strcmp(wait_for, dxc_comp_wait_names[named]) == 0) dxc_comp_wait_mode = named;
+        }
+    } else {
+        // On a child window covering the client area, not on the window itself. A swapchain's
+        // presents reach DWM through a surface of their own over the window's GDI redirection
+        // surface, so on the same window a GDI copy made during a resize would not be what DWM
+        // shows. On a child, hiding the child during the size change leaves the top-level
+        // window's GDI surface, which DWM resizes and composes together with the window.
+        dxc_surface = CreateWindowExW(0, DXC_SURFACE_CLASS, L"", WS_CHILD | WS_VISIBLE, 0, 0,
+                                      (int)pixel_width, (int)pixel_height, window, NULL,
+                                      GetModuleHandleW(NULL), NULL);
+        made = dxc_surface == NULL ? E_FAIL : IDXGIFactory4_CreateSwapChainForHwnd(
+            factory, (IUnknown *)d3d11, dxc_surface, &swapchain_description, NULL, NULL, &swapchain);
+    }
     if (FAILED(made)) {
         ID3D11On12Device_Release(on12);
         ID3D11DeviceContext_Release(d3d11_context);
@@ -5304,11 +6204,19 @@ static int32_t dxc_open_window(
             dxc_priority() >= 1 ? "on" : "off",
             queue_description.Priority == D3D12_COMMAND_QUEUE_PRIORITY_HIGH ? "high" : "normal",
             gpu_priority_set ? "+5" : (dxc_priority() >= 2 ? "refused" : "off"));
-    fprintf(stderr, "compose-rust: swapchain on a child window of the window, copy model (sequential), 1 buffer, STRETCH, %ux%u\n",
-            pixel_width, pixel_height);
+    if (comp) {
+        fprintf(stderr,
+                "compose-rust: composition surface on a visual of the window, %ux%u; frames drawn ahead of a size "
+                "committed by DXC_DCOMP_COMMIT=%s, waited for by DXC_DCOMP_SHRINK_WAIT=%s\n",
+                pixel_width, pixel_height, dxc_comp_commit_names[dxc_comp_commit_mode],
+                dxc_comp_wait_names[dxc_comp_wait_mode]);
+    } else {
+        fprintf(stderr, "compose-rust: swapchain on a child window of the window, copy model (sequential), 1 buffer, STRETCH, %ux%u\n",
+                pixel_width, pixel_height);
+    }
     // DXGI answers alt-enter by putting the window into its own idea of full screen,
     // which is a mode nothing here knows how to draw in.
-    IDXGIFactory4_MakeWindowAssociation(factory, dxc_surface, DXGI_MWA_NO_ALT_ENTER);
+    IDXGIFactory4_MakeWindowAssociation(factory, comp ? window : dxc_surface, DXGI_MWA_NO_ALT_ENTER);
     IDXGIFactory4_Release(factory);
 
     dxc_window = window;
@@ -5412,12 +6320,32 @@ static int32_t dxc_open_window(
  * run against from the first of them, it is chosen for the calls that name no window, and
  * the window is found from its handle until dxc_native_window_release.
  */
+static int32_t dxc_open_window_record(const char *title, int32_t width, int32_t height, int comp_wanted,
+                                      struct dxc_native_window *out);
+
 int32_t dxc_native_window_open(
     const char *title,
     int32_t width,
     int32_t height,
     struct dxc_native_window *out
 ) {
+    // Where the window opens is taken by the first attempt, and a second attempt on the GDI
+    // route has to open it in the same place.
+    int32_t has_position = dxc_next_position.has;
+    int32_t position_x = dxc_next_position.x;
+    int32_t position_y = dxc_next_position.y;
+    int32_t result = dxc_open_window_record(title, width, height, dxc_comp_wanted(), out);
+    if (result == DXC_OPEN_COMP_FAILED) {
+        dxc_next_position.has = has_position;
+        dxc_next_position.x = position_x;
+        dxc_next_position.y = position_y;
+        result = dxc_open_window_record(title, width, height, 0, out);
+    }
+    return result;
+}
+
+static int32_t dxc_open_window_record(const char *title, int32_t width, int32_t height, int comp_wanted,
+                                      struct dxc_native_window *out) {
     if (dxc_table.count >= DXC_MAX_WINDOWS) {
         return 12;
     }
@@ -5439,9 +6367,14 @@ int32_t dxc_native_window_open(
     dxc_creating = win;
     dxc_shared_acquire(&dxc_shared_state);
     win->counted = 1;
-    int32_t result = dxc_open_window(title, width, height, out);
+    int32_t result = dxc_open_window(title, width, height, comp_wanted, out);
     dxc_creating = outer_creating;
     if (result != 0) {
+        // A composition device made before a failure that came ahead of dxc_abandon_window.
+        if (win->comp != NULL) {
+            dxc_dcomp_release(win->comp);
+            win->comp = NULL;
+        }
         dxc_uncount_window(win);
         dxc_w = outer;
         free(win);
@@ -5508,12 +6441,20 @@ int32_t dxc_native_frame_begin(void *swapchain_pointer, void **texture_out) {
         // refuses to be refitted while anything holds one.
         LARGE_INTEGER refit_started;
         QueryPerformanceCounter(&refit_started);
-        dxc_wait_for_gpu();
-        dxc_step_gpu_idle_ms = dxc_elapsed_ms(refit_started);
-        dxc_release_buffers();
-        HRESULT resized = IDXGISwapChain1_ResizeBuffers(
-            swapchain, DXC_BUFFER_COUNT, (UINT)wanted_width, (UINT)wanted_height,
-            DXC_SWAPCHAIN_FORMAT, dxc_swapchain_flags);
+        HRESULT resized;
+        if (dxc_on_comp) {
+            // Nothing to refit: the frame is written into the composition surface at its own
+            // size (dxc_native_frame_end), which the surface takes with that frame's commit.
+            dxc_step_gpu_idle_ms = 0.0;
+            resized = S_OK;
+        } else {
+            dxc_wait_for_gpu();
+            dxc_step_gpu_idle_ms = dxc_elapsed_ms(refit_started);
+            dxc_release_buffers();
+            resized = IDXGISwapChain1_ResizeBuffers(
+                swapchain, DXC_BUFFER_COUNT, (UINT)wanted_width, (UINT)wanted_height,
+                DXC_SWAPCHAIN_FORMAT, dxc_swapchain_flags);
+        }
         // A refusal leaves the swapchain the size it was, so the old buffers are taken
         // back; not taking them back is a window that stays black from here on. This frame
         // is skipped rather than drawn at the old size, which DXGI_SCALING_STRETCH would show
@@ -5611,6 +6552,23 @@ void dxc_native_frame_end(void *queue_pointer) {
                     : "that size was already presented",
                 (int)dxc_resize_target_width, (int)dxc_resize_target_height);
         dxc_wait_for_gpu();
+        return;
+    }
+    // The composition route: the frame is copied into the surface and committed, so its size
+    // changes with it, never before or after. Outside a resize the wait for a composition
+    // paces the frame loop, as the present's interval of one does on the GDI route. The
+    // swapchain is not presented to.
+    if (dxc_on_comp) {
+        LARGE_INTEGER comp_copy_started;
+        QueryPerformanceCounter(&comp_copy_started);
+        int written = dxc_comp_upload_texture(dxc_sizing.fitted_width, dxc_sizing.fitted_height);
+        dxc_step_copy_ms = dxc_elapsed_ms(comp_copy_started);
+        if (written && dxc_comp_show("a GPU frame")) {
+            dxc_presented_width = dxc_sizing.fitted_width;
+            dxc_presented_height = dxc_sizing.fitted_height;
+            if (!dxc_resizing) dxc_dwm_flush();
+        }
+        dxc_step_present_ms = dxc_elapsed_ms(present_started) - dxc_step_copy_ms;
         return;
     }
     // The copy into the swapchain's buffer, on the same queue after the barrier above,

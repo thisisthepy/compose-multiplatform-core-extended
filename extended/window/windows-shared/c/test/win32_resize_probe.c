@@ -16,6 +16,9 @@
 // PROBE_RASTER=0 draws resize frames on the GPU (the window's DXGI path) instead of the CPU.
 // PROBE_SAVE=<dir> writes the first faulty frames there as BMP files.
 // PROBE_VERBOSE=1 prints every composed frame judged, not only the faulty ones.
+// DXC_DCOMP=0 (read by the window) opens it on the GDI route instead of DirectComposition;
+// the window says which route it took ("compose-rust: dcomp: route"), and the memory lines
+// the probe asks for at rest and at the end carry it too ("route=").
 // Exit status: 0 when no composed frame was faulty (states) or always (drag), 1 otherwise.
 #define COBJMACROS
 #include <stdint.h>
@@ -563,6 +566,8 @@ int main(int argc, char **argv) {
     probe_draw(NULL);
     double settle_until = probe_now_ms() + 1500.0;
     while (probe_now_ms() < settle_until) dxc_native_pump(0.016);
+    // What the window holds at rest, before anything resizes it, to compare the two routes.
+    dxc_native_report_metrics("probe-idle");
 
     HANDLE capture = CreateThread(NULL, 0, capture_thread, NULL, 0, NULL);
     Sleep(300);
@@ -575,6 +580,7 @@ int main(int argc, char **argv) {
     }
     double tail_until = probe_now_ms() + 500.0;
     while (probe_now_ms() < tail_until) dxc_native_pump(0.016);
+    dxc_native_report_metrics("probe-end");
     InterlockedExchange(&probe_capture_stop, 1);
     WaitForSingleObject(capture, 5000);
 
