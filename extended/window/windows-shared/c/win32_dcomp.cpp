@@ -14,6 +14,7 @@
 
 #include "win32_dcomp.h"
 
+#include <d3d11.h>
 #include <dcomp.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,13 +23,16 @@ struct dxc_dcomp {
     IDCompositionDesktopDevice *device;
     IDCompositionTarget *target;
     IDCompositionVisual2 *visual;
-    // What the visual was given, kept so a commit that fails can make everything again.
+    IDCompositionSurfaceFactory *factory;
+    IDCompositionVirtualSurface *surface;
+    // What the tree was made for, kept so a commit that fails can make everything again.
     HWND window;
-    IUnknown *content;
+    IUnknown *render_device;
+    int32_t width;
+    int32_t height;
+    // The size the visual is clipped to, as last given to it.
     int32_t clip_width;
     int32_t clip_height;
-    int32_t buffer_width;
-    int32_t buffer_height;
 };
 
 namespace {
@@ -51,23 +55,23 @@ create_device2_fn create_device2() {
     return found;
 }
 
+template <typename T> void release(T *&object) {
+    if (object != nullptr) {
+        object->Release();
+        object = nullptr;
+    }
+}
+
 void release_tree(dxc_dcomp *comp) {
-    if (comp->visual != nullptr) {
-        comp->visual->Release();
-        comp->visual = nullptr;
-    }
-    if (comp->target != nullptr) {
-        comp->target->Release();
-        comp->target = nullptr;
-    }
+    release(comp->visual);
+    release(comp->target);
+    release(comp->surface);
+    release(comp->factory);
 }
 
 void release_device(dxc_dcomp *comp) {
     release_tree(comp);
-    if (comp->device != nullptr) {
-        comp->device->Release();
-        comp->device = nullptr;
-    }
+    release(comp->device);
 }
 
 bool make_device(dxc_dcomp *comp) {
@@ -84,56 +88,52 @@ bool make_device(dxc_dcomp *comp) {
     return true;
 }
 
-// The scale that undoes the swapchain's stretch of its source size to its buffer size, and the
-// clip, which is in the visual's coordinates (before that scale): the whole buffer, which the
-// scale brings to clip_width x clip_height on the window.
-bool apply_clip(dxc_dcomp *comp) {
-    if (comp->visual == nullptr || comp->clip_width <= 0 || comp->clip_height <= 0 ||
-        comp->buffer_width <= 0 || comp->buffer_height <= 0) {
-        return true;
-    }
-    D2D_MATRIX_3X2_F scale;
-    scale._11 = static_cast<float>(comp->clip_width) / static_cast<float>(comp->buffer_width);
-    scale._12 = 0.0f;
-    scale._21 = 0.0f;
-    scale._22 = static_cast<float>(comp->clip_height) / static_cast<float>(comp->buffer_height);
-    scale._31 = 0.0f;
-    scale._32 = 0.0f;
-    HRESULT scaled = comp->visual->SetTransform(scale);
+// The clip, in the visual's coordinates, which are the window's client pixels: the surface
+// shows at 1:1, so nothing is scaled.
+HRESULT apply_clip(dxc_dcomp *comp) {
     D2D_RECT_F clip;
     clip.left = 0.0f;
     clip.top = 0.0f;
-    clip.right = static_cast<float>(comp->buffer_width);
-    clip.bottom = static_cast<float>(comp->buffer_height);
+    clip.right = static_cast<float>(comp->width);
+    clip.bottom = static_cast<float>(comp->height);
     HRESULT clipped = comp->visual->SetClip(clip);
-    if (FAILED(scaled) || FAILED(clipped)) {
-        fprintf(stderr, "compose-rust: dcomp: SetTransform 0x%08lx SetClip 0x%08lx for %dx%d of %dx%d\n",
-                static_cast<unsigned long>(scaled), static_cast<unsigned long>(clipped), (int)comp->clip_width,
-                (int)comp->clip_height, (int)comp->buffer_width, (int)comp->buffer_height);
-        return false;
+    if (SUCCEEDED(clipped)) {
+        comp->clip_width = comp->width;
+        comp->clip_height = comp->height;
     }
-    return true;
+    return clipped;
 }
 
-// The target, the visual, its content and its clip, on the device there is. No commit.
+// The surface factory, the surface, the target, the visual, its content and its clip, on the
+// device there is. No commit. Every step's answer is said, once for each tree made (once a
+// window, again only if a failed commit makes it again).
 bool build_tree(dxc_dcomp *comp) {
-    if (comp->device == nullptr || comp->window == nullptr || comp->content == nullptr) {
+    if (comp->device == nullptr || comp->window == nullptr || comp->render_device == nullptr ||
+        comp->width <= 0 || comp->height <= 0) {
         return false;
     }
-    // Every step's answer is said, once for each tree made (once a window, again only if a
-    // failed commit makes it again), so a window that shows nothing is not a mystery.
-    HRESULT target = comp->device->CreateTargetForHwnd(comp->window, TRUE, &comp->target);
+    HRESULT factory = comp->device->CreateSurfaceFactory(comp->render_device, &comp->factory);
+    HRESULT surface = SUCCEEDED(factory)
+                          ? comp->factory->CreateVirtualSurface(static_cast<UINT>(comp->width),
+                                                                static_cast<UINT>(comp->height),
+                                                                DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_IGNORE,
+                                                                &comp->surface)
+                          : E_ABORT;
+    HRESULT target = SUCCEEDED(surface) ? comp->device->CreateTargetForHwnd(comp->window, TRUE, &comp->target)
+                                        : E_ABORT;
     HRESULT visual = SUCCEEDED(target) ? comp->device->CreateVisual(&comp->visual) : E_ABORT;
-    HRESULT content = SUCCEEDED(visual) ? comp->visual->SetContent(comp->content) : E_ABORT;
-    bool clipped = SUCCEEDED(content) && apply_clip(comp);
-    HRESULT root = clipped ? comp->target->SetRoot(comp->visual) : E_ABORT;
+    HRESULT content = SUCCEEDED(visual) ? comp->visual->SetContent(comp->surface) : E_ABORT;
+    HRESULT clipped = SUCCEEDED(content) ? apply_clip(comp) : E_ABORT;
+    HRESULT root = SUCCEEDED(clipped) ? comp->target->SetRoot(comp->visual) : E_ABORT;
     fprintf(stderr,
-            "compose-rust: dcomp: tree for window %p: CreateTargetForHwnd 0x%08lx CreateVisual 0x%08lx "
-            "SetContent 0x%08lx transform and clip %s SetRoot 0x%08lx, showing %dx%d of %dx%d buffers\n",
-            static_cast<void *>(comp->window), static_cast<unsigned long>(target),
-            static_cast<unsigned long>(visual), static_cast<unsigned long>(content), clipped ? "ok" : "failed",
-            static_cast<unsigned long>(root), (int)comp->clip_width, (int)comp->clip_height,
-            (int)comp->buffer_width, (int)comp->buffer_height);
+            "compose-rust: dcomp: tree for window %p: CreateSurfaceFactory 0x%08lx CreateVirtualSurface 0x%08lx "
+            "(%dx%d) CreateTargetForHwnd 0x%08lx CreateVisual 0x%08lx SetContent 0x%08lx SetClip 0x%08lx "
+            "SetRoot 0x%08lx\n",
+            static_cast<void *>(comp->window), static_cast<unsigned long>(factory),
+            static_cast<unsigned long>(surface), (int)comp->width, (int)comp->height,
+            static_cast<unsigned long>(target), static_cast<unsigned long>(visual),
+            static_cast<unsigned long>(content), static_cast<unsigned long>(clipped),
+            static_cast<unsigned long>(root));
     if (FAILED(root)) {
         release_tree(comp);
         return false;
@@ -155,17 +155,18 @@ extern "C" dxc_dcomp *dxc_dcomp_create(void) {
     return comp;
 }
 
-extern "C" int dxc_dcomp_attach(dxc_dcomp *comp, HWND window, IUnknown *swapchain) {
-    if (comp == nullptr || comp->device == nullptr || window == nullptr || swapchain == nullptr) {
+extern "C" int dxc_dcomp_attach(dxc_dcomp *comp, HWND window, IUnknown *d3d11_device, int32_t width,
+                                int32_t height) {
+    if (comp == nullptr || comp->device == nullptr || window == nullptr || d3d11_device == nullptr) {
         return 1;
     }
     release_tree(comp);
-    if (comp->content != nullptr) {
-        comp->content->Release();
-    }
+    release(comp->render_device);
     comp->window = window;
-    comp->content = swapchain;
-    swapchain->AddRef();
+    comp->render_device = d3d11_device;
+    d3d11_device->AddRef();
+    comp->width = width;
+    comp->height = height;
     if (!build_tree(comp)) {
         return 2;
     }
@@ -178,31 +179,56 @@ extern "C" int dxc_dcomp_attach(dxc_dcomp *comp, HWND window, IUnknown *swapchai
     return 0;
 }
 
-extern "C" int dxc_dcomp_set_content(dxc_dcomp *comp, IUnknown *swapchain) {
-    if (comp == nullptr || swapchain == nullptr) {
+extern "C" int dxc_dcomp_begin_draw(dxc_dcomp *comp, int32_t width, int32_t height, void **texture, int32_t *x,
+                                    int32_t *y) {
+    *texture = nullptr;
+    if (comp == nullptr || comp->surface == nullptr || comp->visual == nullptr || width <= 0 || height <= 0) {
         return 1;
     }
-    swapchain->AddRef();
-    if (comp->content != nullptr) {
-        comp->content->Release();
+    if (width != comp->width || height != comp->height) {
+        HRESULT resized = comp->surface->Resize(static_cast<UINT>(width), static_cast<UINT>(height));
+        if (FAILED(resized)) {
+            fprintf(stderr, "compose-rust: dcomp: Resize %dx%d failed with 0x%08lx\n", (int)width, (int)height,
+                    static_cast<unsigned long>(resized));
+            return 2;
+        }
+        comp->width = width;
+        comp->height = height;
     }
-    comp->content = swapchain;
-    if (comp->visual == nullptr) {
-        return 1;
+    if (comp->clip_width != width || comp->clip_height != height) {
+        HRESULT clipped = apply_clip(comp);
+        if (FAILED(clipped)) {
+            fprintf(stderr, "compose-rust: dcomp: SetClip %dx%d failed with 0x%08lx\n", (int)width, (int)height,
+                    static_cast<unsigned long>(clipped));
+        }
     }
-    return SUCCEEDED(comp->visual->SetContent(swapchain)) ? 0 : 1;
+    RECT whole = {0, 0, width, height};
+    POINT offset = {0, 0};
+    HRESULT began = comp->surface->BeginDraw(&whole, __uuidof(ID3D11Texture2D), texture, &offset);
+    if (FAILED(began) || *texture == nullptr) {
+        fprintf(stderr, "compose-rust: dcomp: BeginDraw %dx%d failed with 0x%08lx\n", (int)width, (int)height,
+                static_cast<unsigned long>(began));
+        *texture = nullptr;
+        return 3;
+    }
+    *x = static_cast<int32_t>(offset.x);
+    *y = static_cast<int32_t>(offset.y);
+    return 0;
 }
 
-extern "C" int dxc_dcomp_set_clip(dxc_dcomp *comp, int32_t width, int32_t height, int32_t buffer_width,
-                                  int32_t buffer_height) {
-    if (comp == nullptr) {
+extern "C" int dxc_dcomp_end_draw(dxc_dcomp *comp, void *texture) {
+    if (texture != nullptr) {
+        static_cast<IUnknown *>(texture)->Release();
+    }
+    if (comp == nullptr || comp->surface == nullptr) {
         return 1;
     }
-    comp->clip_width = width;
-    comp->clip_height = height;
-    comp->buffer_width = buffer_width;
-    comp->buffer_height = buffer_height;
-    return apply_clip(comp) ? 0 : 1;
+    HRESULT ended = comp->surface->EndDraw();
+    if (FAILED(ended)) {
+        fprintf(stderr, "compose-rust: dcomp: EndDraw failed with 0x%08lx\n", static_cast<unsigned long>(ended));
+        return 2;
+    }
+    return 0;
 }
 
 extern "C" int dxc_dcomp_commit(dxc_dcomp *comp) {
@@ -216,13 +242,19 @@ extern "C" int dxc_dcomp_commit(dxc_dcomp *comp) {
     fprintf(stderr, "compose-rust: dcomp: Commit failed with 0x%08lx, making the device again\n",
             static_cast<unsigned long>(committed));
     // A device can be lost (a display driver update, a session change). Made again once, with
-    // the content and the clip it had; a second failure is the caller's to report.
+    // the window, size and rendering device it had; a second failure is the caller's to report.
     release_device(comp);
-    if (!make_device(comp) || !build_tree(comp) || FAILED(comp->device->Commit())) {
-        fprintf(stderr, "compose-rust: dcomp: commit failed and the device could not be made again\n");
+    if (!make_device(comp) || !build_tree(comp)) {
+        fprintf(stderr, "compose-rust: dcomp: the device could not be made again\n");
         return -1;
     }
-    fprintf(stderr, "compose-rust: dcomp: commit failed, the device was made again\n");
+    HRESULT again = comp->device->Commit();
+    if (FAILED(again)) {
+        fprintf(stderr, "compose-rust: dcomp: Commit on the new device failed with 0x%08lx\n",
+                static_cast<unsigned long>(again));
+        return -1;
+    }
+    fprintf(stderr, "compose-rust: dcomp: the device was made again\n");
     return 1;
 }
 
@@ -231,9 +263,6 @@ extern "C" void dxc_dcomp_release(dxc_dcomp *comp) {
         return;
     }
     release_device(comp);
-    if (comp->content != nullptr) {
-        comp->content->Release();
-        comp->content = nullptr;
-    }
+    release(comp->render_device);
     free(comp);
 }

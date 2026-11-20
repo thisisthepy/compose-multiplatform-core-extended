@@ -40,13 +40,16 @@ The application links `user32`, `gdi32`, `ole32`, `oleaut32`, `imm32`, `uiautoma
 
 ## How frames reach the screen
 
-The window shows its swapchain through DirectComposition: it has no GDI redirection surface
-(`WS_EX_NOREDIRECTIONBITMAP`), and a composition swapchain is the content of one visual on
-the window. A size change outside a drag (maximise, restore, snap, a change of DPI) has its
-frame drawn on the CPU in `WM_NCCALCSIZE` and put into the swapchain's back buffer without a
-present; `WM_SIZE` presents it, clips the visual to the new size and commits, so the picture
-and the size reach DWM together. A step of an edge drag is drawn the same way and presented
-and committed in `WM_SIZE`.
+The window shows its frames through DirectComposition: it has no GDI redirection surface
+(`WS_EX_NOREDIRECTIONBITMAP`), and one visual on the window shows a virtual surface. Every
+frame is written into the surface and committed, so the frame, the surface's size and the
+visual's clip reach DWM as one change. A swapchain would not do that: its present reaches DWM
+on its own, a composition before or after the commit that sizes it. A size change (maximise,
+restore, snap, a change of DPI, a step of an edge drag) has its frame drawn on the CPU in
+`WM_NCCALCSIZE`, written into the surface, and committed there after a wait for one
+composition where the resize path takes one, just before the window's new rectangle applies,
+so the two land in the same composition. `DXC_DCOMP_COMMIT=wmsize` commits it in `WM_SIZE`
+instead, after the rectangle, for comparison.
 
 `DXC_DCOMP=0` opens the window on the GDI route instead, which is also what a machine without
 a composition device gets: the redirection surface and the swapchain on a child window, with

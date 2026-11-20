@@ -253,6 +253,21 @@ jobs:
             done
           done
 
+      # For comparison, not a gate: the composition route with the frame drawn ahead of a size
+      # committed in WM_SIZE, after the window took its rectangle, instead of in WM_NCCALCSIZE
+      # just before (DXC_DCOMP_COMMIT=wmsize). Logs probe-dcomp-wmsize-*.
+      - name: Resize probe, composition route committed in WM_SIZE (comparison)
+        shell: bash
+        run: |
+          for run in 1 2; do
+            DXC_DCOMP_COMMIT=wmsize PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-dcomp-wmsize-states-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-dcomp-wmsize-states-$run.log || true
+            DXC_DCOMP_COMMIT=wmsize PROBE_DRAW_MS=5 PROBE_SAVE="out\\frames-dcomp-wmsize-drag-$run" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-wmsize-drag-$run.log || true
+          done
+          for log in out/probe-dcomp-wmsize-*.log; do
+            echo "$(basename "$log" .log): $(grep -c 'probe: FAULT' "$log" || true) faulty"
+            grep -h 'probe: phase .* composed\|probe: drag lag' "$log" | sed 's/^/  /' || true
+          done
+
       # A gate on a rate, not on zero, on each route. On the GDI route a size change outside a
       # drag is several steps (the window's rectangle, the copy into it, the child's show, the
       # present) that take about 1.4 ms together, and DWM can begin a composition between them:
