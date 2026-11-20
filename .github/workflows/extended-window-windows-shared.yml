@@ -160,6 +160,7 @@ jobs:
             grep -h 'compose-rust: dcomp: route' "$log" | head -1 | sed "s/^/  $name /" || true
             grep -h 'probe: phase drag composed' "$log" | sed "s/^/  $name /" || true
             grep -h 'probe: drag lag' "$log" | sed "s/^/  $name /" || echo "  $name: no lag line"
+            grep -h 'dcomp: drag timing' "$log" | sed "s/^/  $name /" || true
           done
 
       # Issue 245: a step of a drag drawn in WM_SIZE leaves the window with its new rectangle
@@ -207,6 +208,7 @@ jobs:
               grep -h 'resize-mode: drag steps drawn' out/probe-$route-drag245-$way-1.log || true
               grep -h 'resize-proof drag steps drawn ahead' out/probe-$route-drag245-$way-1.log || true
               grep -h 'dcomp: drag steps shown before the window shrank' out/probe-$route-drag245-$way-1.log || true
+              grep -h 'dcomp: drag timing' out/probe-$route-drag245-$way-?.log | sed "s/^/  $route $way /" || true
             done
           done
           status=0
@@ -254,23 +256,29 @@ jobs:
             done
           done
 
-      # For comparison, not a gate: the composition route with the frame drawn ahead of a size
-      # always committed in WM_SIZE, after the window took its rectangle (wmsize), and always in
-      # WM_NCCALCSIZE after one wait, without waiting for it to be composed (ahead), against the
-      # default, which commits by whether the size shrinks (DXC_DCOMP_COMMIT in win32_window.c).
-      # Logs probe-dcomp-commit-<way>-*.
-      - name: Resize probe, composition route, other commit orders (comparison)
+      # For comparison, not a gate: other orders and waits of the composition route against the
+      # default (DXC_DCOMP_COMMIT=order, DXC_DCOMP_SHRINK_WAIT=commit; both in win32_window.c):
+      # the frame drawn ahead always committed in WM_SIZE (commit-wmsize) or always in
+      # WM_NCCALCSIZE without a wait after (commit-ahead), and the frame shown before a smaller
+      # rectangle waited for until composed (wait-flush) or not at all (wait-none).
+      # Logs probe-dcomp-<way>-*.
+      - name: Resize probe, composition route, other commit orders and waits (comparison)
         shell: bash
         run: |
-          for way in wmsize ahead; do
+          for way in commit-wmsize commit-ahead wait-flush wait-none; do
+            case $way in
+              commit-*) export DXC_DCOMP_COMMIT=${way#commit-}; unset DXC_DCOMP_SHRINK_WAIT ;;
+              wait-*) export DXC_DCOMP_SHRINK_WAIT=${way#wait-}; unset DXC_DCOMP_COMMIT ;;
+            esac
             for run in 1 2; do
-              DXC_DCOMP_COMMIT=$way PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-dcomp-commit-$way-states-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-dcomp-commit-$way-states-$run.log || true
-              DXC_DCOMP_COMMIT=$way PROBE_DRAW_MS=5 PROBE_SAVE="out\\frames-dcomp-commit-$way-drag-$run" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-commit-$way-drag-$run.log || true
+              PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-dcomp-$way-states-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-dcomp-$way-states-$run.log || true
+              DXC_REPORT_LATENCY=1 PROBE_DRAW_MS=5 PROBE_SAVE="out\\frames-dcomp-$way-drag-$run" ./out/win32_resize_probe.exe drag 2>&1 | tee out/probe-dcomp-$way-drag-$run.log || true
             done
           done
-          for log in out/probe-dcomp-commit-*.log; do
+          unset DXC_DCOMP_COMMIT DXC_DCOMP_SHRINK_WAIT
+          for log in out/probe-dcomp-commit-*.log out/probe-dcomp-wait-*.log; do
             echo "$(basename "$log" .log): $(grep -c 'probe: FAULT' "$log" || true) faulty"
-            grep -h 'probe: phase .* composed\|probe: drag lag' "$log" | sed 's/^/  /' || true
+            grep -h 'probe: phase .* composed\|probe: drag lag\|dcomp: drag timing' "$log" | sed 's/^/  /' || true
           done
 
       # A gate on a rate, not on zero, on each route. On the GDI route a size change outside a

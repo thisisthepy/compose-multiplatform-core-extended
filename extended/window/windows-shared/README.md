@@ -47,11 +47,14 @@ visual's clip reach DWM as one change. A swapchain would not do that: its presen
 on its own, a composition before or after the commit that sizes it. A size change (maximise,
 restore, snap, a change of DPI, a step of an edge drag) has its frame drawn on the CPU in
 `WM_NCCALCSIZE` and written into the surface. A commit reaches the screen a composition after
-the window's new rectangle about as often as not, so the order follows the direction: a size
-that shrinks has its frame committed and composed before the window takes the smaller
-rectangle, and a size that grows has it committed in `WM_SIZE`, after the rectangle. A late
-frame then only leaves a margin inside a larger window for one composition; it is never cut by
-a smaller one. `DXC_DCOMP_COMMIT=ahead` or `wmsize` commits every size the one way, for
+the window's new rectangle about as often as not, and a frame larger than its window is cut by
+it. So the frame of the size both rectangles hold (the smaller width and the smaller height of
+the old and the new) is committed first and waited for until DWM has taken it, before the
+window takes the new rectangle, and the frame of the new size follows in `WM_SIZE`. A size
+that only grows needs nothing first; one that only shrinks shows its new frame first; one that
+grows a side and shrinks the other (a snap to a half) draws one extra frame. A late frame then
+only leaves a margin inside a larger window for one composition. `DXC_DCOMP_COMMIT=ahead` or
+`wmsize`, and `DXC_DCOMP_SHRINK_WAIT=flush` or `none`, change the order and the wait for
 comparison.
 
 `DXC_DCOMP=0` opens the window on the GDI route instead, which is also what a machine without
