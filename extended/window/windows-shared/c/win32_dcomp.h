@@ -40,8 +40,8 @@ dxc_dcomp *dxc_dcomp_create(void);
 int dxc_dcomp_attach(dxc_dcomp *comp, HWND window, IUnknown *d3d11_device, int32_t width, int32_t height);
 
 /**
- * Begins drawing a frame of width x height: the surface takes that size (and the visual that
- * clip) at the next commit, and *texture is an ID3D11Texture2D to write the frame into at
+ * Begins drawing a frame of width x height into the surface's top left: the visual takes that
+ * clip at the next commit (the surface itself only ever grows), and *texture is an ID3D11Texture2D to write the frame into at
  * (*x, *y). Zero on success; then dxc_dcomp_end_draw has to follow.
  */
 int dxc_dcomp_begin_draw(dxc_dcomp *comp, int32_t width, int32_t height, void **texture, int32_t *x,
@@ -57,6 +57,9 @@ int dxc_dcomp_end_draw(dxc_dcomp *comp, void *texture);
  * failed too. Every failure is logged with its HRESULT.
  */
 int dxc_dcomp_commit(dxc_dcomp *comp);
+
+/** Waits until DWM has taken the last commit (IDCompositionDevice::WaitForCommitCompletion). */
+void dxc_dcomp_wait(dxc_dcomp *comp);
 
 /** Lets go of the surface, the visual, the target and the device, and of comp itself. */
 void dxc_dcomp_release(dxc_dcomp *comp);

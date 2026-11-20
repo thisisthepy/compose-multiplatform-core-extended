@@ -46,10 +46,13 @@ frame is written into the surface and committed, so the frame, the surface's siz
 visual's clip reach DWM as one change. A swapchain would not do that: its present reaches DWM
 on its own, a composition before or after the commit that sizes it. A size change (maximise,
 restore, snap, a change of DPI, a step of an edge drag) has its frame drawn on the CPU in
-`WM_NCCALCSIZE`, written into the surface, and committed there after a wait for one
-composition where the resize path takes one, just before the window's new rectangle applies,
-so the two land in the same composition. `DXC_DCOMP_COMMIT=wmsize` commits it in `WM_SIZE`
-instead, after the rectangle, for comparison.
+`WM_NCCALCSIZE` and written into the surface. A commit reaches the screen a composition after
+the window's new rectangle about as often as not, so the order follows the direction: a size
+that shrinks has its frame committed and composed before the window takes the smaller
+rectangle, and a size that grows has it committed in `WM_SIZE`, after the rectangle. A late
+frame then only leaves a margin inside a larger window for one composition; it is never cut by
+a smaller one. `DXC_DCOMP_COMMIT=ahead` or `wmsize` commits every size the one way, for
+comparison.
 
 `DXC_DCOMP=0` opens the window on the GDI route instead, which is also what a machine without
 a composition device gets: the redirection surface and the swapchain on a child window, with

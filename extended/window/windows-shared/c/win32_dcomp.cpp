@@ -30,6 +30,11 @@ struct dxc_dcomp {
     IUnknown *render_device;
     int32_t width;
     int32_t height;
+    // What the surface holds room for. It only grows: a resize of a virtual surface trims or
+    // reallocates it, which a drag would pay for on every step, so a smaller frame is written
+    // into its top left and the clip shows only that.
+    int32_t room_width;
+    int32_t room_height;
     // The size the visual is clipped to, as last given to it.
     int32_t clip_width;
     int32_t clip_height;
@@ -114,8 +119,8 @@ bool build_tree(dxc_dcomp *comp) {
     }
     HRESULT factory = comp->device->CreateSurfaceFactory(comp->render_device, &comp->factory);
     HRESULT surface = SUCCEEDED(factory)
-                          ? comp->factory->CreateVirtualSurface(static_cast<UINT>(comp->width),
-                                                                static_cast<UINT>(comp->height),
+                          ? comp->factory->CreateVirtualSurface(static_cast<UINT>(comp->room_width),
+                                                                static_cast<UINT>(comp->room_height),
                                                                 DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_IGNORE,
                                                                 &comp->surface)
                           : E_ABORT;
@@ -130,7 +135,7 @@ bool build_tree(dxc_dcomp *comp) {
             "(%dx%d) CreateTargetForHwnd 0x%08lx CreateVisual 0x%08lx SetContent 0x%08lx SetClip 0x%08lx "
             "SetRoot 0x%08lx\n",
             static_cast<void *>(comp->window), static_cast<unsigned long>(factory),
-            static_cast<unsigned long>(surface), (int)comp->width, (int)comp->height,
+            static_cast<unsigned long>(surface), (int)comp->room_width, (int)comp->room_height,
             static_cast<unsigned long>(target), static_cast<unsigned long>(visual),
             static_cast<unsigned long>(content), static_cast<unsigned long>(clipped),
             static_cast<unsigned long>(root));
@@ -167,6 +172,8 @@ extern "C" int dxc_dcomp_attach(dxc_dcomp *comp, HWND window, IUnknown *d3d11_de
     d3d11_device->AddRef();
     comp->width = width;
     comp->height = height;
+    comp->room_width = width;
+    comp->room_height = height;
     if (!build_tree(comp)) {
         return 2;
     }
@@ -185,16 +192,21 @@ extern "C" int dxc_dcomp_begin_draw(dxc_dcomp *comp, int32_t width, int32_t heig
     if (comp == nullptr || comp->surface == nullptr || comp->visual == nullptr || width <= 0 || height <= 0) {
         return 1;
     }
-    if (width != comp->width || height != comp->height) {
-        HRESULT resized = comp->surface->Resize(static_cast<UINT>(width), static_cast<UINT>(height));
+    if (width > comp->room_width || height > comp->room_height) {
+        int32_t room_width = width > comp->room_width ? width : comp->room_width;
+        int32_t room_height = height > comp->room_height ? height : comp->room_height;
+        HRESULT resized = comp->surface->Resize(static_cast<UINT>(room_width), static_cast<UINT>(room_height));
         if (FAILED(resized)) {
-            fprintf(stderr, "compose-rust: dcomp: Resize %dx%d failed with 0x%08lx\n", (int)width, (int)height,
-                    static_cast<unsigned long>(resized));
+            fprintf(stderr, "compose-rust: dcomp: Resize %dx%d failed with 0x%08lx\n", (int)room_width,
+                    (int)room_height, static_cast<unsigned long>(resized));
             return 2;
         }
-        comp->width = width;
-        comp->height = height;
+        comp->room_width = room_width;
+        comp->room_height = room_height;
+        fprintf(stderr, "compose-rust: dcomp: surface room -> %dx%d\n", (int)room_width, (int)room_height);
     }
+    comp->width = width;
+    comp->height = height;
     if (comp->clip_width != width || comp->clip_height != height) {
         HRESULT clipped = apply_clip(comp);
         if (FAILED(clipped)) {
@@ -256,6 +268,12 @@ extern "C" int dxc_dcomp_commit(dxc_dcomp *comp) {
     }
     fprintf(stderr, "compose-rust: dcomp: the device was made again\n");
     return 1;
+}
+
+extern "C" void dxc_dcomp_wait(dxc_dcomp *comp) {
+    if (comp != nullptr && comp->device != nullptr) {
+        comp->device->WaitForCommitCompletion();
+    }
 }
 
 extern "C" void dxc_dcomp_release(dxc_dcomp *comp) {

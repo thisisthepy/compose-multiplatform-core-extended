@@ -2658,9 +2658,23 @@ static void dxc_raster_copy(void) {
     }
 }
 
-// DXC_DCOMP_COMMIT=wmsize: a frame drawn ahead of a size is committed in WM_SIZE, after the
-// window took the size, instead of in WM_NCCALCSIZE just before it does. For comparing the two.
-static int dxc_comp_commit_in_size;
+// When the frame drawn ahead of a size is committed, on the composition route
+// (DXC_DCOMP_COMMIT). order, the default: a size that shrinks either side has its frame
+// committed in WM_NCCALCSIZE and waited for until DWM has composed it, before the window takes
+// the smaller rectangle; a size that only grows has it committed in WM_SIZE, after the window
+// took the rectangle. ahead: committed in WM_NCCALCSIZE after one wait for a composition,
+// without waiting for it after. wmsize: committed in WM_SIZE. For comparing the three.
+//
+// Why order: a commit reaches the screen a composition after the rectangle about as often as
+// not, never reliably with it. A frame smaller than the window it is shown in leaves a
+// transparent margin inside the window's border for that composition; a frame larger than the
+// window is cut by it, which is the picture of another size. So the frame may land late on a
+// size that grows, and has to land first on one that shrinks.
+enum { DXC_COMP_COMMIT_ORDER, DXC_COMP_COMMIT_AHEAD, DXC_COMP_COMMIT_WM_SIZE };
+static const char *const dxc_comp_commit_names[] = {"order", "ahead", "wmsize"};
+static int dxc_comp_commit_mode;
+// Steps of the current drag whose frame was shown before the window took the size.
+static int dxc_comp_frame_first_steps;
 
 /**
  * On the composition route: writes the CPU frame in the bitmap into the surface at width x
@@ -2863,9 +2877,29 @@ static int dxc_comp_stage_ahead(int32_t width, int32_t height) {
     return 1;
 }
 
-static void dxc_comp_commit_ahead(void) {
-    if (dxc_comp_staged_width > 0 && !dxc_comp_commit_in_size) {
-        dxc_comp_staged_committed = dxc_comp_show("a CPU frame drawn ahead");
+static void dxc_comp_commit_ahead(int shrinks) {
+    if (dxc_comp_staged_width <= 0 || dxc_comp_commit_mode == DXC_COMP_COMMIT_WM_SIZE ||
+        (dxc_comp_commit_mode == DXC_COMP_COMMIT_ORDER && !shrinks)) {
+        return;
+    }
+    LARGE_INTEGER started;
+    QueryPerformanceCounter(&started);
+    dxc_comp_staged_committed = dxc_comp_show("a CPU frame drawn ahead");
+    if (dxc_comp_commit_mode != DXC_COMP_COMMIT_ORDER || !dxc_comp_staged_committed) {
+        return;
+    }
+    // Taken by DWM, then composed once, so the smaller frame is on screen before the window
+    // shrinks around it.
+    dxc_dcomp_wait(dxc_comp);
+    double taken_ms = dxc_elapsed_ms(started);
+    int flushed = dxc_dwm_flush();
+    if (dxc_sizing.dragging) dxc_comp_frame_first_steps++;
+    if (dxc_report_latency) {
+        fprintf(stderr,
+                "compose-rust: dcomp: frame %dx%d shown before the window shrank: commit and WaitForCommitCompletion "
+                "%.2f ms, %s %.2f ms\n",
+                (int)dxc_comp_staged_width, (int)dxc_comp_staged_height, taken_ms,
+                flushed ? "DwmFlush" : "no DwmFlush", dxc_elapsed_ms(started) - taken_ms);
     }
 }
 
@@ -3162,7 +3196,9 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
         // committed after it, here rather than in WM_SIZE (dxc_comp_stage_ahead).
         int step_staged = dxc_on_comp && drawn && dxc_comp_stage_ahead(width, height);
         int step_flushed = drawn && (hidden || dxc_drag_flush) ? dxc_dwm_flush() : 0;
-        if (step_staged) dxc_comp_commit_ahead();
+        if (step_staged) {
+            dxc_comp_commit_ahead(width < (int32_t)(now.right - now.left) || height < (int32_t)(now.bottom - now.top));
+        }
         if (drawn) dxc_drag_predrawn_steps++;
         if (step_flushed) dxc_drag_flushed_steps++;
         if (dxc_report_latency) {
@@ -3179,17 +3215,19 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
                 (dxc_surface_return == DXC_SURFACE_RETURN_NCCALC || dxc_surface_return == DXC_SURFACE_RETURN_STAGED) &&
                 dxc_ready_surface(width, height);
     // The composition route has no child to hide (hidden is 0 there): the frame goes into the
-    // surface now, and is committed after one wait for a composition, so the commit and the
-    // rectangle the window takes as this message returns start the same composition interval
-    // (dxc_comp_stage_ahead).
+    // surface now, and is committed here or in WM_SIZE by whether the size shrinks
+    // (dxc_comp_commit_mode).
     int staged = dxc_on_comp && drawn && dxc_comp_stage_ahead(width, height);
     double drawn_ms = dxc_elapsed_ms(started);
     // Only for the copy into the GDI surface. A frame presented through the swapchain is
     // waited for after its present, in WM_SIZE, like any GPU resize frame. Always on the
     // composition route, before its commit.
-    int flush_wanted = dxc_on_comp ? 1 : (dxc_raster_present_off || dxc_predraw_flush || hidden);
+    int flush_wanted = dxc_on_comp ? dxc_comp_commit_mode == DXC_COMP_COMMIT_AHEAD
+                                   : (dxc_raster_present_off || dxc_predraw_flush || hidden);
     int flushed = drawn && flush_wanted ? dxc_dwm_flush() : 0;
-    if (staged) dxc_comp_commit_ahead();
+    if (staged) {
+        dxc_comp_commit_ahead(width < (int32_t)(now.right - now.left) || height < (int32_t)(now.bottom - now.top));
+    }
     fprintf(stderr,
             "compose-rust: resize-mode: drew %dx%d before the window took it (%s%s, draw %.2f ms, %s %.2f ms, at %.1f ms)\n",
             (int)width, (int)height, drawn ? "waiting for WM_SIZE" : "not drawn",
@@ -3587,6 +3625,7 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         dxc_resize_begin_drag(&dxc_sizing);
         dxc_drag_predrawn_steps = 0;
         dxc_drag_flushed_steps = 0;
+        dxc_comp_frame_first_steps = 0;
         dxc_mode("size-move", "off", "on", "WM_ENTERSIZEMOVE");
         // Each step of the drag has to be drawn and presented before DWM shows the new
         // size, so the thread doing it should not lose the CPU to background load.
@@ -3602,6 +3641,10 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         dxc_mode("size-move", "on", "off", "WM_EXITSIZEMOVE");
         fprintf(stderr, "compose-rust: resize-proof drag steps drawn ahead=%d waited for a composition=%d\n",
                 dxc_drag_predrawn_steps, dxc_drag_flushed_steps);
+        if (dxc_on_comp) {
+            fprintf(stderr, "compose-rust: dcomp: drag steps shown before the window shrank=%d (DXC_DCOMP_COMMIT=%s)\n",
+                    dxc_comp_frame_first_steps, dxc_comp_commit_names[dxc_comp_commit_mode]);
+        }
         // A step drawn ahead for a size the window never took is a frame nobody may show.
         dxc_predrawn_set(&dxc_predrawn, 0, 0);
         dxc_comp_staged_width = 0;
@@ -5606,7 +5649,10 @@ static int32_t dxc_open_window(
         dxc_comp_surface_height = (int32_t)pixel_height;
         dxc_on_comp = 1;
         const char *commit_at = getenv("DXC_DCOMP_COMMIT");
-        dxc_comp_commit_in_size = commit_at != NULL && strcmp(commit_at, "wmsize") == 0;
+        dxc_comp_commit_mode = DXC_COMP_COMMIT_ORDER;
+        for (int named = 0; commit_at != NULL && named < 3; named++) {
+            if (strcmp(commit_at, dxc_comp_commit_names[named]) == 0) dxc_comp_commit_mode = named;
+        }
     } else {
         // On a child window covering the client area, not on the window itself. A swapchain's
         // presents reach DWM through a surface of their own over the window's GDI redirection
@@ -5650,8 +5696,8 @@ static int32_t dxc_open_window(
     if (comp) {
         fprintf(stderr,
                 "compose-rust: composition surface on a visual of the window, %ux%u; frames drawn ahead of a size "
-                "committed in %s\n",
-                pixel_width, pixel_height, dxc_comp_commit_in_size ? "WM_SIZE (DXC_DCOMP_COMMIT=wmsize)" : "WM_NCCALCSIZE");
+                "committed by DXC_DCOMP_COMMIT=%s\n",
+                pixel_width, pixel_height, dxc_comp_commit_names[dxc_comp_commit_mode]);
     } else {
         fprintf(stderr, "compose-rust: swapchain on a child window of the window, copy model (sequential), 1 buffer, STRETCH, %ux%u\n",
                 pixel_width, pixel_height);
