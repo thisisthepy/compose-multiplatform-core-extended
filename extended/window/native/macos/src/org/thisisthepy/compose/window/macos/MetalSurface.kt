@@ -83,6 +83,10 @@ class MetalSurface {
         // The drawable can be larger than the window (see [resize]); what lies past the
         // window's edge is not shown.
         it.masksToBounds = true
+        // Two drawables rather than Core Animation's three: each is a texture the size of
+        // the window (6 MB at 1440 by 900 points on a 2x screen), and the third was only
+        // ever headroom. See [MAXIMUM_DRAWABLE_COUNT].
+        it.maximumDrawableCount = MAXIMUM_DRAWABLE_COUNT.toULong()
     }
 
     /** The window's size in pixels, which is the size every frame is drawn at. */
@@ -238,6 +242,29 @@ class MetalSurface {
         }
     }
 
+    /** How many times [purgeGpuResources] emptied the cache, for measuring. */
+    var gpuPurges = 0
+        private set
+
+    /**
+     * Gives back what Skia's GPU resource cache holds that no frame is using: the textures and
+     * buffers it keeps so the next frame need not make them again. The next frame that needs
+     * them makes them again, once.
+     *
+     * The skiko this fork uses (0.144.6) has no purge call on [DirectContext]; Skia's own
+     * `purgeUnlockedResources` is not bound. Setting the cache's limit makes Skia purge what
+     * it can until the cache is under the new limit (`GrResourceCache::setLimit`), so the
+     * limit is set to nothing and put back. Resources a frame in flight still refers to are
+     * not purgeable and stay.
+     */
+    fun purgeGpuResources() {
+        if (closed) return
+        val limit = context.resourceCacheLimit
+        context.resourceCacheLimit = 0L
+        context.resourceCacheLimit = limit
+        gpuPurges++
+    }
+
     private var closed = false
 
     fun close() {
@@ -247,6 +274,19 @@ class MetalSurface {
     }
 
     companion object {
+        /**
+         * How many drawables the layer keeps: one on the screen and one being drawn.
+         *
+         * Each costs a texture the size of the drawable for as long as the layer lives, so
+         * the third that Core Animation keeps by default was 6 MB of IOSurface memory at
+         * 1440 by 900 points on a 2x screen. Set to two on a running Ember window it went
+         * from 18 MB to 12 MB, and 32 screen switches drew normally. A frame waits for a
+         * drawable in [nextDrawable] only when both are taken: one on the screen and one
+         * presented in a transaction that has not been committed yet, which is a second
+         * frame drawn in one transaction (see [drawableWaitMillis]).
+         */
+        internal const val MAXIMUM_DRAWABLE_COUNT = 2
+
         /** What the drawable's size is rounded up to, in pixels. */
         internal const val DRAWABLE_STEP = 256
 

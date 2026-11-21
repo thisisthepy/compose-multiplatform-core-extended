@@ -83,6 +83,34 @@ class MetalSurfaceTest {
         }
     }
 
+    /**
+     * The layer keeps two drawables, not Core Animation's default three.
+     *
+     * Each one is a texture the size of the window for as long as the layer lives, so the
+     * third was 6 MB of memory at 1440 by 900 points on a 2x screen that nothing drew into
+     * while the window was idle.
+     */
+    @Test
+    fun nfr9_the_layer_keeps_two_drawables() {
+        val surface = MetalSurface()
+        try {
+            assertEquals(
+                2uL,
+                surface.layer.maximumDrawableCount,
+                "every drawable a layer keeps is a texture the size of the window",
+            )
+            // Still able to hand out a drawable and draw a frame at the window's size.
+            surface.withoutAnimation {
+                surface.resize(800.0, 600.0, 1.0)
+                var drawn = 0 to 0
+                assertTrue(surface.draw { _, w, h -> drawn = w to h }, "a frame was drawn")
+                assertEquals(800 to 600, drawn)
+            }
+        } finally {
+            surface.close()
+        }
+    }
+
     @Test
     fun nfr9_the_layer_is_sized_in_pixels_rather_than_points() {
         val surface = MetalSurface()
@@ -172,6 +200,46 @@ class MetalSurfaceTest {
         }
     }
     /**
+     * Emptying Skia's GPU cache leaves its limit as it was and the next frame draws.
+     *
+     * The purge sets the limit to nothing and back, since this skiko has no purge call of
+     * its own; a limit left at nothing would make every frame build its resources anew.
+     */
+    @Test
+    fun nfr3_emptying_the_gpu_cache_keeps_its_limit_and_the_next_frame_draws() {
+        val surface = MetalSurface()
+        try {
+            val layered = org.jetbrains.skia.Paint().apply { alpha = 128 }
+            val fill = org.jetbrains.skia.Paint().apply { color = 0xFF336699.toInt() }
+            surface.withoutAnimation {
+                surface.resize(400.0, 300.0, 1.0)
+                // A translucent layer, which Skia draws through an offscreen texture it caches.
+                assertTrue(
+                    surface.draw { canvas, w, h ->
+                        canvas.saveLayer(null, layered)
+                        canvas.drawRect(org.jetbrains.skia.Rect.makeWH(w.toFloat(), h.toFloat()), fill)
+                        canvas.restore()
+                    },
+                )
+            }
+            val limit = surface.cacheLimitBytes
+            surface.purgeGpuResources()
+            assertEquals(1, surface.gpuPurges)
+            assertEquals(limit, surface.cacheLimitBytes, "the cache keeps the limit it had")
+            surface.withoutAnimation {
+                var drawn = 0 to 0
+                assertTrue(surface.draw { _, w, h -> drawn = w to h }, "a frame draws after a purge")
+                assertEquals(400 to 300, drawn)
+            }
+        } finally {
+            surface.close()
+        }
+        // Closed, there is no context to purge, and asking does nothing.
+        surface.purgeGpuResources()
+        assertEquals(1, surface.gpuPurges)
+    }
+
+    /**
      * A frame gives its drawable back when it is done, however many frames are drawn
      * before the run loop next turns.
      *
@@ -181,7 +249,8 @@ class MetalSurfaceTest {
      * turns and nothing else allocates, so nothing but the frame's own pool gives them back.
      *
      * The bound is three drawables at the largest size drawn (Core Animation keeps up to
-     * three) and room for Skia's own resources. The leak was several times it.
+     * three by default; this layer keeps two, so the bound has room to spare) and room for
+     * Skia's own resources. The leak was several times it.
      */
     @Test
     fun nfr9_frames_drawn_in_one_turn_release_their_drawables() {
