@@ -44,6 +44,16 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   minimised or snapped window keeps the place it fills and gets its size back when it is
   restored. (DarkPyonix/compose-rust FR-82)
 
+### Publishing
+
+- Releases on Maven Central leave out tvOS, watchOS and Kotlin/JS (`CENTRAL_SKIP_TARGETS`; a
+  dispatch with `all_targets` publishes them) and write only the `.md5` and `.sha1` checksums
+  Central requires. On 1.11.1-ext.5's bundle that is 9,356 files instead of 17,844. Wasm, iOS,
+  macOS, Linux, Windows, the desktop JVM and Android stay.
+- No branch push, pull request or schedule starts a workflow that uploads:
+  `extended/publish/check_publish_triggers.py` fails the publish plan otherwise. The dev builds on
+  GitHub Packages, which nothing had started since 2026-11-14, are gone from the workflow.
+
 ## 1.11.1-ext.5 (2026-11-16)
 
 ### Window modules (`org.thisisthepy.compose.window`)
