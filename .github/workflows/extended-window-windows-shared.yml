@@ -27,8 +27,10 @@ jobs:
       matrix:
         os: [windows-2022, windows-2025]
     runs-on: ${{ matrix.os }}
-    # The probe steps run on both routes, the DirectComposition one and the GDI one.
-    timeout-minutes: 40
+    # The probe steps run on both routes, the DirectComposition one and the GDI one. 50: the
+    # judged drags (drag-left, drag-top, drag-topleft, drag-fast) add 24 probe runs and the
+    # lag probe script 8.
+    timeout-minutes: 50
     defaults:
       run:
         shell: cmd
@@ -120,6 +122,7 @@ jobs:
       # window's "compose-rust: dcomp: route" line and two "compose-rust: metrics memory" lines
       # (probe-idle, probe-end) that end in route=dcomp or route=gdi.
       - name: Build the resize probe
+        id: build_probe
         run: |
           cl /nologo /std:c11 /W3 /Ic /Icinterop\include /Foout\ c\test\win32_resize_probe.c /Feout\win32_resize_probe.exe /link out\dxc_win32_window.lib d3d12.lib d3d11.lib dxgi.lib dxguid.lib dcomp.lib dwmapi.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib || exit /b 1
 
@@ -331,6 +334,101 @@ jobs:
           done
           exit $status
 
+      # Issue 223, the two faults the owner saw on a real GPU on the DirectComposition route and
+      # the probe above cannot see (it drags the right edge only, slowly, and reads a see-through
+      # margin as a smaller window): the picture sliding when the left or top edge moves the
+      # window's origin, and the desktop showing through inside the border on a fast grow. The
+      # judged modes drag the left edge, the top edge and the top-left corner in and out, and grow
+      # the window fast by four edges and corners, at a real hand's pace; the window's border is
+      # drawn in pure blue (DWMWA_BORDER_COLOR, build 22000 and later, so windows-2025 only) and
+      # every composed frame is judged against it: the far markers in their place (anchor), no
+      # backdrop inside the border and the picture the size inside it (see-through).
+      #
+      # Gates: every run finishes with a verdict; on windows-2025 the judges are available; on
+      # the GDI route, the default, they judged frames and found none faulty. The
+      # DirectComposition route is printed, not gated: it is expected to be red until its fix
+      # lands, and that fix's PR turns it into a gate. Not asserted here either way.
+      #
+      # WARP (these runners) waits for a composition in BeginDraw, about 20 ms a step, so a step
+      # here takes as long as a composition and the see-through fault is rarer than on a real
+      # GPU; c/test/run-lag-probe.ps1 runs the same modes on a real machine.
+      - name: Resize probe, left, top and corner drags and fast grows judged against the window's border (issue 223)
+        if: always() && steps.build_probe.outcome == 'success'
+        shell: bash
+        run: |
+          modes="drag-left drag-top drag-topleft drag-fast"
+          for route in gdi dcomp; do
+            flag=$([ "$route" = gdi ] && echo 0 || echo 1)
+            for mode in $modes; do
+              for run in 1 2 3; do
+                DXC_DCOMP=$flag DXC_REPORT_LATENCY=1 PROBE_SAVE="out\\frames-judge-$route-$mode-$run" ./out/win32_resize_probe.exe $mode > out/judge-$route-$mode-$run.log 2>&1 || true
+              done
+            done
+          done
+          status=0
+          for log in out/judge-*.log; do
+            grep -q 'probe: verdict' "$log" || { echo "$log has no verdict: the probe did not finish" >&2; status=1; }
+          done
+          field() { # <regex with one group> <line>
+            sed -nE "s/$1/\1/p" <<<"$2"
+          }
+          echo "judged drags, 3 runs each: mode, route, composed frames in the drag, judged, faulty anchor, faulty see-through (of them: frame of another size, size unreadable), worst shift px, widest see-through px"
+          printf '%-13s %-6s %9s %7s %13s %18s %10s %10s %12s\n' mode route composed judged anchor see-through other-size unreadable worst-shift
+          for mode in $modes; do
+            for route in gdi dcomp; do
+              composed=0 judged=0 anchor=0 see=0 other=0 unreadable=0 worst=0 widest=0 available=yes
+              for log in out/judge-$route-$mode-?.log; do
+                line=$(grep -h "probe: phase $mode composed" "$log" | head -1 || true)
+                composed=$((composed + $(field '.*composed ([0-9]+) frames.*' "$line" | grep . || echo 0)))
+                if grep -q "probe: anchor $mode not available" "$log"; then
+                  available=no
+                  continue
+                fi
+                line=$(grep -h "probe: anchor $mode judged" "$log" | head -1 || true)
+                judged=$((judged + $(field '.* judged ([0-9]+) faulty.*' "$line" | grep . || echo 0)))
+                anchor=$((anchor + $(field '.* faulty ([0-9]+) max shift.*' "$line" | grep . || echo 0)))
+                s=$(field '.* max shift ([0-9]+) px.*' "$line" | grep . || echo 0)
+                if [ "$s" -gt "$worst" ]; then worst=$s; fi
+                line=$(grep -h "probe: see-through $mode judged" "$log" | head -1 || true)
+                see=$((see + $(field '.* faulty ([0-9]+) max.*' "$line" | grep . || echo 0)))
+                other=$((other + $(field '.*frame of another size ([0-9]+).*' "$line" | grep . || echo 0)))
+                unreadable=$((unreadable + $(field '.*size code unreadable ([0-9]+).*' "$line" | grep . || echo 0)))
+                w=$(field '.* max ([0-9]+) px at the.*' "$line" | grep . || echo 0)
+                if [ "$w" -gt "$widest" ]; then widest=$w; fi
+              done
+              if [ "$available" = no ]; then
+                printf '%-13s %-6s %9s %7s %13s %18s %10s %10s %12s\n' "$mode" "$route" "$composed" n/a n/a n/a n/a n/a n/a
+                echo "judged $mode $route: not available on this build"
+              else
+                printf '%-13s %-6s %9s %7s %13s %18s %10s %10s %12s\n' "$mode" "$route" "$composed" "$judged" "$anchor" "$see" "$other" "$unreadable" "$worst (see-through $widest)"
+                echo "judged $mode $route: composed=$composed judged=$judged anchor_faulty=$anchor see_through_faulty=$see other_size=$other unreadable=$unreadable worst_shift_px=$worst widest_see_through_px=$widest"
+              fi
+              if [ "$route" = gdi ]; then
+                if [ "$available" = no ]; then
+                  if [ "${{ matrix.os }}" = windows-2025 ]; then
+                    echo "gdi $mode: the judges are not available on windows-2025, where DWMWA_BORDER_COLOR exists" >&2
+                    status=1
+                  fi
+                elif [ "$judged" -eq 0 ]; then
+                  echo "gdi $mode: the judges judged no frame (no border found, or no calibration at rest)" >&2
+                  status=1
+                elif [ "$anchor" -ne 0 ] || [ "$see" -ne 0 ]; then
+                  echo "gdi $mode: $anchor frames shifted and $see frames see-through or of another size, expected none on the default route" >&2
+                  status=1
+                fi
+              fi
+            done
+          done
+          echo "The GDI route above is gated (0 faulty where the judges are available). The DirectComposition route is printed, not gated: it is expected to be red until the fix lands (the fix PR turns it into a gate)."
+          for route in gdi dcomp; do
+            echo "first judged faults, $route (run 1 of each mode):"
+            for mode in $modes; do
+              grep -h 'probe: calibrated at rest\|probe: calibration:\|edge: pressed at\|sides moved over\|pace moves' out/judge-$route-$mode-1.log | head -6 | sed "s/^/  $mode /" || true
+              grep -h 'probe: ANCHOR\|probe: SEE-THROUGH\|probe: OTHER-SIZE' out/judge-$route-$mode-1.log | head -4 | sed "s/^/  $mode /" || true
+            done
+          done
+          exit $status
+
       # Idle memory of the window on each route, from the probe's rest point before any resize,
       # over every probe log of this job.
       - name: Window memory at rest, per route
@@ -380,6 +478,7 @@ jobs:
           if-no-files-found: ignore
           path: |
             extended/window/windows-shared/out/probe-*.log
+            extended/window/windows-shared/out/judge-*.log
             extended/window/windows-shared/out/frames-*/
             extended/window/windows-shared/out/lag-probe/
 
