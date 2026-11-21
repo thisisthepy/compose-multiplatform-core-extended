@@ -40,6 +40,11 @@ enum {
     DXC_EVENT_FILES_EXITED = 12,
     // The Text size setting moved; `x` is the new percent (100 means unchanged, 0 unset).
     DXC_EVENT_TEXT_SCALE_CHANGED = 18,
+    // A reader asked a control to do something through UI Automation: `key_code` is the
+    // element's id and `code_point` the AccessibleAction. The new value of a SET_VALUE is kept
+    // apart, since it can be longer than an event's text, and read with
+    // dxc_native_take_accessibility_argument, one per SET_VALUE event, oldest first.
+    DXC_EVENT_ACCESSIBILITY_ACTION = 23,
 };
 
 // Room for what an input method is composing, which is a syllable or a word and never a
@@ -67,15 +72,42 @@ struct dxc_event {
     int64_t time_millis;
 };
 
+// Room for an element's value: a field's text, or how a ranged control reads.
+#define DXC_VALUE_BYTES 256
+
 struct dxc_element {
     int32_t role;
-    // In pixels from the top left of the client area, which is what the scene
-    // measures in on this platform.
+    // In window points from the top left of the client area, as the scene describes it; the
+    // window turns them into pixels at its own DPI when UI Automation asks.
     float x;
     float y;
     float width;
     float height;
     char label[DXC_TEXT_BYTES];
+    // The scene's id for it, stable while the control exists, or -1 for none. A request from a
+    // reader names it, and an element without one cannot be asked to do anything.
+    int32_t id;
+    // The id of the element it is inside, or -1 for one directly in the window.
+    int32_t parent_id;
+    // AccessibleState and AccessibleAction bits, as the common module numbers them.
+    int32_t states;
+    int32_t actions;
+    // DXC_ELEMENT_HAS_* below.
+    int32_t flags;
+    // A slider or progress indicator's range and where it is, with DXC_ELEMENT_HAS_RANGE.
+    float range_min;
+    float range_max;
+    float range_value;
+    // UTF-8, ending at the first zero, with DXC_ELEMENT_HAS_VALUE and DXC_ELEMENT_HAS_HINT.
+    char value[DXC_VALUE_BYTES];
+    char hint[DXC_TEXT_BYTES];
+};
+
+// What `flags` of an element says.
+enum {
+    DXC_ELEMENT_HAS_VALUE = 1 << 0,
+    DXC_ELEMENT_HAS_RANGE = 1 << 1,
+    DXC_ELEMENT_HAS_HINT = 1 << 2,
 };
 
 // The roles a scene can describe, as numbers, because a name would be a string
@@ -88,7 +120,14 @@ enum {
     DXC_ROLE_FIELD = 3,
     DXC_ROLE_CHECKBOX = 4,
     DXC_ROLE_IMAGE = 5,
-    // ElementRole's numbers; 6 to 13 are not told apart here yet and read as groups.
+    DXC_ROLE_SWITCH = 6,
+    DXC_ROLE_RADIO_BUTTON = 7,
+    DXC_ROLE_TAB = 8,
+    DXC_ROLE_SLIDER = 9,
+    DXC_ROLE_PROGRESS = 10,
+    DXC_ROLE_HEADING = 11,
+    DXC_ROLE_COMBO_BOX = 12,
+    DXC_ROLE_LINK = 13,
     DXC_ROLE_TAB_GROUP = 14,
     DXC_ROLE_OUTLINE = 15,
     DXC_ROLE_OUTLINE_ROW = 16,
@@ -119,8 +158,12 @@ void dxc_native_window_chrome(int32_t full_size_content, int32_t transparent_tit
                               int32_t title_hidden, int32_t unified_toolbar);
 void dxc_native_window_caption(void *view_pointer, float *height, float *buttons_width);
 void dxc_native_window_title_bar(void *view_pointer, float *out);
-// macOS only, defined here because the native image's shared Kotlin declares them: the
-// accessibility bridge's calls. No reader listens through them on this platform.
+// The accessibility bridge's calls, named as on macOS because the native image's shared
+// Kotlin declares them. dxc_native_take_accessibility_argument is real here: the new value of
+// the oldest DXC_EVENT_ACCESSIBILITY_ACTION with SET_VALUE still to be read, for the selected
+// window, as UTF-8 into out, and how many bytes it is; -1 when there is none. When it does
+// not fit in capacity nothing is taken and the answer is the size it needs. The other two
+// answer nothing on this platform.
 int32_t dxc_native_accessibility_active(void);
 int32_t dxc_native_take_accessibility_argument(char *out, int32_t capacity);
 int32_t dxc_native_accessibility_snapshot(char *out, int32_t capacity);
