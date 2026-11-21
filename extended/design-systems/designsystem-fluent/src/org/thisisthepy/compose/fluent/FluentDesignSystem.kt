@@ -6,6 +6,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -212,6 +213,16 @@ class FluentDesignSystem private constructor(
             pressedBorder = palette.stroke1,
             ripple = false,
         )
+        // A digit: the standard button, a step brighter than the standard fill in dark.
+        // Light has no brighter step than white, so the function key takes the step there.
+        ButtonVariant.Neutral -> neutralKey(
+            if (isDark) lerp(palette.background1, Color.White, NEUTRAL_LIFT) else palette.background1,
+        )
+        // A function key: the standard fill in dark, and in light a step from the white
+        // standard fill towards the page.
+        ButtonVariant.NeutralSecondary -> neutralKey(
+            if (isDark) palette.background1 else lerp(palette.background1, palette.canvas, NEUTRAL_SETTLE),
+        )
         ButtonVariant.Outlined -> ButtonStyle(
             container = Color.Transparent,
             content = palette.foreground1,
@@ -235,6 +246,19 @@ class FluentDesignSystem private constructor(
             ripple = false,
         )
     }
+
+    /** A standard button, with its stroke, filled with [container] and no accent anywhere. */
+    private fun neutralKey(container: Color): ButtonStyle = ButtonStyle(
+        container = container,
+        content = palette.foreground1,
+        border = palette.stroke1,
+        borderWidth = 1.dp,
+        shape = ShapeRole.Small,
+        pressedContainer = palette.backgroundPressed,
+        pressedContent = palette.foreground2,
+        pressedBorder = palette.stroke1,
+        ripple = false,
+    )
 
     /**
      * Fluent's fast duration for the press and its normal duration for the release, on
@@ -277,6 +301,12 @@ class FluentDesignSystem private constructor(
     )
 
     companion object {
+        /** How far a digit key's fill is lifted towards white above the standard fill in dark. */
+        private const val NEUTRAL_LIFT = 0.06f
+
+        /** How far a function key's fill settles from a white standard fill towards the page. */
+        private const val NEUTRAL_SETTLE = 0.5f
+
         val Light: FluentDesignSystem = FluentDesignSystem(FluentPalette.Light, isDark = false)
         val Dark: FluentDesignSystem = FluentDesignSystem(FluentPalette.Dark, isDark = true)
     }

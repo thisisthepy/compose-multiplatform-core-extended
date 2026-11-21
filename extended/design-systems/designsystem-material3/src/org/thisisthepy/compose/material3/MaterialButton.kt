@@ -32,7 +32,7 @@ fun MaterialButton(
     when (variant) {
         ButtonVariant.Filled ->
             Button(onClick = onClick, modifier = modifier, enabled = enabled, content = content)
-        ButtonVariant.Tonal, ButtonVariant.Operator ->
+        ButtonVariant.Tonal, ButtonVariant.Operator, ButtonVariant.Neutral, ButtonVariant.NeutralSecondary ->
             FilledTonalButton(onClick = onClick, modifier = modifier, enabled = enabled, content = content)
         ButtonVariant.Outlined ->
             OutlinedButton(onClick = onClick, modifier = modifier, enabled = enabled, content = content)

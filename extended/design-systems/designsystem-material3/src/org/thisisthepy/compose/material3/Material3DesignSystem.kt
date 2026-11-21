@@ -210,6 +210,18 @@ class Material3DesignSystem(
             content = colorScheme.primary,
             border = null,
         )
+        // The neutral tiers carry no accent anywhere: the pressed layer is the tier's own
+        // ink, which buttonStyle already derives from the content colour.
+        ButtonVariant.Neutral -> buttonStyle(
+            container = colorScheme.surfaceVariant,
+            content = colorScheme.onSurfaceVariant,
+            border = null,
+        )
+        ButtonVariant.NeutralSecondary -> buttonStyle(
+            container = colorScheme.outlineVariant,
+            content = colorScheme.onSurface,
+            border = null,
+        )
     }
 
     /**

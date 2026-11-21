@@ -335,6 +335,19 @@ class DeepinDesignSystem private constructor(
                 pressedBorder = null,
                 ripple = false,
             )
+            // Deepin's calculator draws digits and function keys in the same grey, so both
+            // neutral tiers are the plain grey fill a tonal button is.
+            ButtonVariant.Neutral, ButtonVariant.NeutralSecondary -> ButtonStyle(
+                container = tonal,
+                content = onTonal,
+                border = null,
+                borderWidth = 0.dp,
+                shape = ShapeRole.Medium,
+                pressedContainer = tonalPressed,
+                pressedContent = onTonal,
+                pressedBorder = null,
+                ripple = false,
+            )
             ButtonVariant.Outlined -> ButtonStyle(
                 container = Color.Transparent,
                 content = onTonal,
