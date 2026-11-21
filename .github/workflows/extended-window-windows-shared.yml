@@ -99,7 +99,7 @@ jobs:
 
       - name: Link and run the check against the library
         run: |
-          cl /nologo /std:c11 /Ic /Icinterop\include /Foout\ c\test\win32_shared_test.c /Feout\win32_shared_test.exe /link out\dxc_win32_window.lib d3d12.lib dxgi.lib dxguid.lib dcomp.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib || exit /b 1
+          cl /nologo /std:c11 /Ic /Icinterop\include /Foout\ c\test\win32_shared_test.c /Feout\win32_shared_test.exe /link out\dxc_win32_window.lib d3d12.lib dxgi.lib dxguid.lib dcomp.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib uuid.lib || exit /b 1
           out\win32_shared_test.exe
 
       - uses: actions/upload-artifact@v4

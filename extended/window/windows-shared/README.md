@@ -15,6 +15,10 @@ application for Windows without a JVM.
   them); it is header-only too and reads only the message and key names of `<windows.h>`.
   `c/win32_edit_menu.h` holds what the text edit menu offers and which keys ask for it; it
   compiles without Windows.
+  `c/win32_uia.h` decides what UI Automation is told about an element: which control patterns
+  it offers (Invoke, Toggle, Value, RangeValue, SelectionItem, ExpandCollapse), how the
+  elements' parent ids make a tree, what Expand and Collapse become, and the runtime id that
+  keeps a control the same element across pushes. It compiles without Windows.
 - `cinterop/include/win32_window.h`: the whole surface, functions and records. It includes
   no Windows header, so cinterop and any C compiler read it.
 - `cinterop/win32_window.def` and `src/`: the Kotlin/Native (`mingwX64`) layer.
@@ -238,3 +242,14 @@ GDI route is printed beside it for comparison.
 
 Source: compose-rust PR #174 (`feat/win32-resize-kn`) at 2d6ad3e3, where the C is
 `renderer/desktop/c/` and the Kotlin/Native window is `renderer/windows/src/Win32Window.kt`.
+
+## What a reader can ask
+
+UI Automation reads the tree from the last `dxc_native_set_accessibility` push: each element
+carries its id and its parent's, its states and actions, its value, range and hint, in window
+points. A reader's request (Invoke, Toggle, SetValue, Select, Expand, Collapse, SetFocus) is not
+done in the window. It is written to the window's event queue as
+`DXC_EVENT_ACCESSIBILITY_ACTION`, naming the element's id and the action, and the scene does it
+when the renderer drains the queue, on the same thread as a click. A new value is kept beside
+the event, because it can be longer than an event's text, and read with
+`dxc_native_take_accessibility_argument`, one per SET_VALUE event, oldest first.

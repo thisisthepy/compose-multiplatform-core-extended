@@ -2,12 +2,14 @@
 // window is made of resolve every symbol the header declares, and that the records have
 // the sizes the Kotlin/Native reader (src/.../Win32Records.kt) assumes. Compiled and run by the
 // extended-window-windows-shared workflow with MSVC.
+#define COBJMACROS
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <windows.h>
 #include <wchar.h>
+#include <uiautomation.h>
 
 #include "win32_buttons.h"
 #include "win32_resize.h"
@@ -22,14 +24,24 @@
 #include "win32_edit_menu.h"
 #include "win32_dpi.h"
 #include "win32_window.h"
+#include "win32_uia.h"
 
 // The records the Kotlin side reads and writes by offset. A field added on one side only is
 // a reader that silently reads the wrong bytes, so the sizes are fixed here.
 _Static_assert(sizeof(struct dxc_event) == 136, "struct dxc_event is 136 bytes");
 _Static_assert(offsetof(struct dxc_event, text) == 28, "dxc_event text starts at 28");
 _Static_assert(offsetof(struct dxc_event, time_millis) == 128, "dxc_event time_millis starts at 128");
-_Static_assert(sizeof(struct dxc_element) == 116, "struct dxc_element is 116 bytes");
+_Static_assert(sizeof(struct dxc_element) == 500, "struct dxc_element is 500 bytes");
 _Static_assert(offsetof(struct dxc_element, label) == 20, "dxc_element label starts at 20");
+_Static_assert(offsetof(struct dxc_element, id) == 116, "dxc_element id starts at 116");
+_Static_assert(offsetof(struct dxc_element, parent_id) == 120, "dxc_element parent_id starts at 120");
+_Static_assert(offsetof(struct dxc_element, states) == 124, "dxc_element states starts at 124");
+_Static_assert(offsetof(struct dxc_element, actions) == 128, "dxc_element actions starts at 128");
+_Static_assert(offsetof(struct dxc_element, flags) == 132, "dxc_element flags starts at 132");
+_Static_assert(offsetof(struct dxc_element, range_min) == 136, "dxc_element range_min starts at 136");
+_Static_assert(offsetof(struct dxc_element, range_value) == 144, "dxc_element range_value starts at 144");
+_Static_assert(offsetof(struct dxc_element, value) == 148, "dxc_element value starts at 148");
+_Static_assert(offsetof(struct dxc_element, hint) == 404, "dxc_element hint starts at 404");
 _Static_assert(sizeof(struct dxc_native_window) == 5 * sizeof(void *), "five pointers");
 
 static int failures;
@@ -1381,6 +1393,486 @@ static void edit_menu_entries(void) {
     CHECK(wcscmp(dxc_edit_menu_fallback_label(DXC_EDIT_SELECT_ALL), L"Select &All") == 0);
 }
 
+// ---------------------------------------------------------------------------
+// UI Automation (NFR-8, NFR-13 criterion 7)
+// ---------------------------------------------------------------------------
+
+static struct dxc_element uia_element(int32_t id, int32_t parent, int32_t role, const char *label,
+                                      float x, float y, int32_t states, int32_t actions) {
+    struct dxc_element el;
+    memset(&el, 0, sizeof el);
+    el.role = role;
+    el.x = x;
+    el.y = y;
+    el.width = 80;
+    el.height = 24;
+    strncpy_s(el.label, sizeof el.label, label, _TRUNCATE);
+    el.id = id;
+    el.parent_id = parent;
+    el.states = states;
+    el.actions = actions;
+    return el;
+}
+
+// The list becomes the tree its parent ids describe; an element whose parent is not in the list
+// is directly in the window, and siblings keep the list's order.
+static void nfr8_uia_parent_ids_make_the_tree(void) {
+    struct dxc_element els[5];
+    els[0] = uia_element(10, -1, DXC_ROLE_GROUP, "group", 0, 0, DXC_STATE_ENABLED, 0);
+    els[1] = uia_element(11, 10, DXC_ROLE_BUTTON, "one", 0, 0, DXC_STATE_ENABLED, DXC_ACTION_PRESS);
+    els[2] = uia_element(12, 10, DXC_ROLE_TEXT, "two", 0, 30, DXC_STATE_ENABLED, 0);
+    els[3] = uia_element(13, -1, DXC_ROLE_BUTTON, "three", 0, 60, DXC_STATE_ENABLED, DXC_ACTION_PRESS);
+    els[4] = uia_element(14, 99, DXC_ROLE_TEXT, "orphan", 0, 90, DXC_STATE_ENABLED, 0);
+    struct dxc_uia_links links[5];
+    dxc_uia_link(els, 5, links);
+    CHECK(links[0].parent == -1 && links[0].first_child == 1 && links[0].last_child == 2);
+    CHECK(links[1].parent == 0 && links[1].previous == -1 && links[1].next == 2);
+    CHECK(links[2].parent == 0 && links[2].previous == 1 && links[2].next == -1);
+    CHECK(links[0].next == 3 && links[3].previous == 0 && links[3].next == 4);
+    CHECK(links[4].parent == -1 && links[4].previous == 3 && links[4].next == -1);
+    CHECK(links[1].first_child == -1 && links[1].last_child == -1);
+    CHECK(dxc_uia_first_root(links, 5) == 0);
+    CHECK(dxc_uia_last_root(links, 5) == 4);
+}
+
+// Which patterns each kind of control offers.
+static void nfr8_uia_each_control_offers_its_patterns(void) {
+    struct dxc_element button = uia_element(1, -1, DXC_ROLE_BUTTON, "b", 0, 0, DXC_STATE_ENABLED, DXC_ACTION_PRESS);
+    CHECK(dxc_uia_patterns(&button) == DXC_UIA_INVOKE);
+    struct dxc_element check = uia_element(2, -1, DXC_ROLE_CHECKBOX, "c", 0, 0,
+                                           DXC_STATE_ENABLED | DXC_STATE_CHECKABLE, DXC_ACTION_PRESS);
+    CHECK(dxc_uia_patterns(&check) == DXC_UIA_TOGGLE);
+    struct dxc_element field = uia_element(3, -1, DXC_ROLE_FIELD, "f", 0, 0,
+                                           DXC_STATE_ENABLED | DXC_STATE_EDITABLE, DXC_ACTION_SET_VALUE);
+    CHECK(dxc_uia_patterns(&field) == DXC_UIA_VALUE);
+    CHECK(dxc_uia_value_settable(&field));
+    struct dxc_element shown = uia_element(4, -1, DXC_ROLE_FIELD, "r", 0, 0,
+                                           DXC_STATE_ENABLED | DXC_STATE_READ_ONLY, 0);
+    CHECK(dxc_uia_patterns(&shown) == DXC_UIA_VALUE);
+    CHECK(!dxc_uia_value_settable(&shown));
+    struct dxc_element slider = uia_element(5, -1, DXC_ROLE_SLIDER, "s", 0, 0, DXC_STATE_ENABLED,
+                                            DXC_ACTION_SET_VALUE | DXC_ACTION_INCREMENT | DXC_ACTION_DECREMENT);
+    slider.flags = DXC_ELEMENT_HAS_RANGE | DXC_ELEMENT_HAS_VALUE;
+    CHECK(dxc_uia_patterns(&slider) == DXC_UIA_RANGE_VALUE);
+    struct dxc_element tab = uia_element(6, -1, DXC_ROLE_TAB, "t", 0, 0,
+                                         DXC_STATE_ENABLED | DXC_STATE_SELECTED, DXC_ACTION_PRESS);
+    CHECK(dxc_uia_patterns(&tab) == (DXC_UIA_INVOKE | DXC_UIA_SELECTION_ITEM));
+    struct dxc_element row = uia_element(7, -1, DXC_ROLE_OUTLINE_ROW, "o", 0, 0,
+                                         DXC_STATE_ENABLED | DXC_STATE_EXPANDABLE, DXC_ACTION_PRESS);
+    CHECK(dxc_uia_patterns(&row) == (DXC_UIA_INVOKE | DXC_UIA_SELECTION_ITEM | DXC_UIA_EXPAND_COLLAPSE));
+    struct dxc_element text = uia_element(8, -1, DXC_ROLE_TEXT, "x", 0, 0, DXC_STATE_ENABLED, 0);
+    CHECK(dxc_uia_patterns(&text) == 0);
+    // A disabled field is not one a reader may write into.
+    field.states &= ~DXC_STATE_ENABLED;
+    CHECK(!dxc_uia_value_settable(&field));
+}
+
+static void nfr8_uia_states_read_as_uia_states(void) {
+    CHECK(dxc_uia_toggle_state(DXC_STATE_CHECKABLE) == DXC_UIA_TOGGLE_OFF);
+    CHECK(dxc_uia_toggle_state(DXC_STATE_CHECKABLE | DXC_STATE_CHECKED) == DXC_UIA_TOGGLE_ON);
+    CHECK(dxc_uia_toggle_state(DXC_STATE_CHECKABLE | DXC_STATE_MIXED | DXC_STATE_CHECKED) ==
+          DXC_UIA_TOGGLE_INDETERMINATE);
+    CHECK(dxc_uia_expand_state(0) == DXC_UIA_LEAF);
+    CHECK(dxc_uia_expand_state(DXC_STATE_EXPANDABLE) == DXC_UIA_COLLAPSED);
+    CHECK(dxc_uia_expand_state(DXC_STATE_EXPANDABLE | DXC_STATE_EXPANDED) == DXC_UIA_EXPANDED);
+    // The SDK's own numbers, which the rules repeat so they compile without it.
+    CHECK(DXC_UIA_TOGGLE_ON == ToggleState_On && DXC_UIA_TOGGLE_INDETERMINATE == ToggleState_Indeterminate);
+    CHECK(DXC_UIA_EXPANDED == ExpandCollapseState_Expanded && DXC_UIA_LEAF == ExpandCollapseState_LeafNode);
+}
+
+// Expand and Collapse use the control's own action, then a press that would change the state.
+static void nfr8_uia_expand_and_collapse_become_actions(void) {
+    struct dxc_element row = uia_element(1, -1, DXC_ROLE_OUTLINE_ROW, "r", 0, 0,
+                                         DXC_STATE_ENABLED | DXC_STATE_EXPANDABLE, DXC_ACTION_PRESS);
+    CHECK(dxc_uia_expand_action(&row, 1) == DXC_ACTION_PRESS);
+    CHECK(dxc_uia_expand_action(&row, 0) == 0);
+    row.states |= DXC_STATE_EXPANDED;
+    CHECK(dxc_uia_expand_action(&row, 1) == 0);
+    CHECK(dxc_uia_expand_action(&row, 0) == DXC_ACTION_PRESS);
+    row.actions = DXC_ACTION_EXPAND | DXC_ACTION_COLLAPSE;
+    CHECK(dxc_uia_expand_action(&row, 0) == DXC_ACTION_COLLAPSE);
+    CHECK(dxc_uia_expand_action(&row, 1) == DXC_ACTION_EXPAND);
+    struct dxc_element plain = uia_element(2, -1, DXC_ROLE_BUTTON, "p", 0, 0, DXC_STATE_ENABLED, DXC_ACTION_PRESS);
+    CHECK(dxc_uia_expand_action(&plain, 1) == 0);
+}
+
+// An element keeps its runtime id across pushes by its scene id; one without keeps it apart.
+static void nfr8_uia_runtime_ids_follow_the_scene_id(void) {
+    struct dxc_element el = uia_element(5, -1, DXC_ROLE_BUTTON, "b", 0, 0, DXC_STATE_ENABLED, 0);
+    CHECK(dxc_uia_runtime_key(&el, 0) == 6);
+    CHECK(dxc_uia_runtime_key(&el, 9) == 6);
+    el.id = -1;
+    CHECK(dxc_uia_runtime_key(&el, 3) == 0x40000003);
+    el.id = 0;
+    CHECK(dxc_uia_runtime_key(&el, 3) != 0);
+}
+
+static void nfr8_uia_focus_and_hit_test(void) {
+    struct dxc_element els[3];
+    els[0] = uia_element(1, -1, DXC_ROLE_GROUP, "g", 0, 0, DXC_STATE_ENABLED, 0);
+    els[0].width = 200;
+    els[0].height = 200;
+    els[1] = uia_element(2, 1, DXC_ROLE_BUTTON, "b", 10, 10, DXC_STATE_ENABLED, DXC_ACTION_PRESS);
+    els[2] = uia_element(3, 1, DXC_ROLE_FIELD, "f", 10, 50, DXC_STATE_ENABLED | DXC_STATE_FOCUSED, 0);
+    CHECK(dxc_uia_focused(els, 3) == 2);
+    CHECK(dxc_uia_hit(els, 3, 15, 15) == 1);
+    CHECK(dxc_uia_hit(els, 3, 150, 150) == 0);
+    CHECK(dxc_uia_hit(els, 3, 500, 5) == -1);
+    els[2].states = DXC_STATE_ENABLED;
+    CHECK(dxc_uia_focused(els, 3) == -1);
+}
+
+// What the client thread found, for the window's thread to check.
+struct uia_probe {
+    HWND window;
+    volatile LONG done;
+    HRESULT invoke;
+    HRESULT disabled_invoke;
+    HRESULT toggle;
+    HRESULT set_value;
+    HRESULT set_range;
+    HRESULT set_focus;
+    int found_button;
+    int button_enabled;
+    int disabled_enabled;
+    int toggle_state;
+    int field_read_only;
+    int has_invoke_on_text;
+    double range_value;
+    double range_max;
+    int nested_parent_ok;
+    int root_children;
+    int focused_ok;
+    int help_ok;
+};
+
+static IUIAutomationElement *uia_find(IUIAutomation *automation, IUIAutomationElement *root,
+                                      PROPERTYID property, VARIANT value) {
+    IUIAutomationCondition *condition = NULL;
+    IUIAutomationElement *found = NULL;
+    if (SUCCEEDED(IUIAutomation_CreatePropertyCondition(automation, property, value, &condition))) {
+        IUIAutomationElement_FindFirst(root, TreeScope_Descendants, condition, &found);
+        IUIAutomationCondition_Release(condition);
+    }
+    return found;
+}
+
+static IUIAutomationElement *uia_find_id(IUIAutomation *automation, IUIAutomationElement *root, const wchar_t *id) {
+    VARIANT value;
+    VariantInit(&value);
+    value.vt = VT_BSTR;
+    value.bstrVal = SysAllocString(id);
+    IUIAutomationElement *found = uia_find(automation, root, UIA_AutomationIdPropertyId, value);
+    VariantClear(&value);
+    return found;
+}
+
+static int uia_is_enabled(IUIAutomationElement *element) {
+    BOOL enabled = FALSE;
+    IUIAutomationElement_get_CurrentIsEnabled(element, &enabled);
+    return enabled != FALSE;
+}
+
+// A reader in the same process, on its own thread: the window's thread keeps pumping, which
+// is where UI Automation brings every call to the providers.
+static DWORD WINAPI uia_client(void *argument) {
+    struct uia_probe *probe = (struct uia_probe *)argument;
+    CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    IUIAutomation *automation = NULL;
+    IUIAutomationElement *root = NULL;
+    if (FAILED(CoCreateInstance(&CLSID_CUIAutomation, NULL, CLSCTX_INPROC_SERVER, &IID_IUIAutomation,
+                                (void **)&automation)) ||
+        FAILED(IUIAutomation_ElementFromHandle(automation, probe->window, &root)) || root == NULL) {
+        goto done;
+    }
+
+    // The button, found the way the completion criterion says: by control type and name.
+    {
+        VARIANT type;
+        VARIANT name;
+        VariantInit(&type);
+        VariantInit(&name);
+        type.vt = VT_I4;
+        type.lVal = UIA_ButtonControlTypeId;
+        name.vt = VT_BSTR;
+        name.bstrVal = SysAllocString(L"Save");
+        IUIAutomationCondition *by_type = NULL, *by_name = NULL, *both = NULL;
+        IUIAutomation_CreatePropertyCondition(automation, UIA_ControlTypePropertyId, type, &by_type);
+        IUIAutomation_CreatePropertyCondition(automation, UIA_NamePropertyId, name, &by_name);
+        IUIAutomation_CreateAndCondition(automation, by_type, by_name, &both);
+        IUIAutomationElement *button = NULL;
+        if (both != NULL) IUIAutomationElement_FindFirst(root, TreeScope_Descendants, both, &button);
+        if (button != NULL) {
+            probe->found_button = 1;
+            probe->button_enabled = uia_is_enabled(button);
+            IUIAutomationInvokePattern *invoke = NULL;
+            IUIAutomationElement_GetCurrentPatternAs(button, UIA_InvokePatternId, &IID_IUIAutomationInvokePattern,
+                                                     (void **)&invoke);
+            if (invoke != NULL) {
+                probe->invoke = IUIAutomationInvokePattern_Invoke(invoke);
+                IUIAutomationInvokePattern_Release(invoke);
+            }
+            BSTR help = NULL;
+            IUIAutomationElement_get_CurrentHelpText(button, &help);
+            probe->help_ok = help != NULL && wcscmp(help, L"Saves the file") == 0;
+            SysFreeString(help);
+            IUIAutomationElement_Release(button);
+        }
+        if (both) IUIAutomationCondition_Release(both);
+        if (by_type) IUIAutomationCondition_Release(by_type);
+        if (by_name) IUIAutomationCondition_Release(by_name);
+        VariantClear(&name);
+    }
+
+    // A disabled button says so and refuses.
+    IUIAutomationElement *disabled = uia_find_id(automation, root, L"12");
+    if (disabled != NULL) {
+        probe->disabled_enabled = uia_is_enabled(disabled);
+        IUIAutomationInvokePattern *invoke = NULL;
+        IUIAutomationElement_GetCurrentPatternAs(disabled, UIA_InvokePatternId, &IID_IUIAutomationInvokePattern,
+                                                 (void **)&invoke);
+        if (invoke != NULL) {
+            probe->disabled_invoke = IUIAutomationInvokePattern_Invoke(invoke);
+            IUIAutomationInvokePattern_Release(invoke);
+        }
+        IUIAutomationElement_Release(disabled);
+    }
+
+    // The checkbox reads its state and is toggled.
+    IUIAutomationElement *check = uia_find_id(automation, root, L"8");
+    if (check != NULL) {
+        IUIAutomationTogglePattern *toggle = NULL;
+        IUIAutomationElement_GetCurrentPatternAs(check, UIA_TogglePatternId, &IID_IUIAutomationTogglePattern,
+                                                 (void **)&toggle);
+        if (toggle != NULL) {
+            enum ToggleState state = ToggleState_Off;
+            IUIAutomationTogglePattern_get_CurrentToggleState(toggle, &state);
+            probe->toggle_state = (int)state;
+            probe->toggle = IUIAutomationTogglePattern_Toggle(toggle);
+            IUIAutomationTogglePattern_Release(toggle);
+        }
+        IUIAutomationElement_Release(check);
+    }
+
+    // The field takes a new value and focus.
+    IUIAutomationElement *field = uia_find_id(automation, root, L"9");
+    if (field != NULL) {
+        IUIAutomationValuePattern *value = NULL;
+        IUIAutomationElement_GetCurrentPatternAs(field, UIA_ValuePatternId, &IID_IUIAutomationValuePattern,
+                                                 (void **)&value);
+        if (value != NULL) {
+            BOOL read_only = TRUE;
+            IUIAutomationValuePattern_get_CurrentIsReadOnly(value, &read_only);
+            probe->field_read_only = read_only != FALSE;
+            BSTR text = SysAllocString(L"\xd55c\xae00 and more than ninety-six bytes of text, so the value cannot travel in an event's own text field");
+            probe->set_value = IUIAutomationValuePattern_SetValue(value, text);
+            SysFreeString(text);
+            IUIAutomationValuePattern_Release(value);
+        }
+        probe->set_focus = IUIAutomationElement_SetFocus(field);
+        IUIAutomationElement_Release(field);
+    }
+
+    // The slider reads its range and takes a value.
+    IUIAutomationElement *slider = uia_find_id(automation, root, L"15");
+    if (slider != NULL) {
+        IUIAutomationRangeValuePattern *range = NULL;
+        IUIAutomationElement_GetCurrentPatternAs(slider, UIA_RangeValuePatternId,
+                                                 &IID_IUIAutomationRangeValuePattern, (void **)&range);
+        if (range != NULL) {
+            IUIAutomationRangeValuePattern_get_CurrentValue(range, &probe->range_value);
+            IUIAutomationRangeValuePattern_get_CurrentMaximum(range, &probe->range_max);
+            probe->set_range = IUIAutomationRangeValuePattern_SetValue(range, 0.75);
+            IUIAutomationRangeValuePattern_Release(range);
+        }
+        IUIAutomationElement_Release(slider);
+    }
+
+    // Text offers no Invoke.
+    IUIAutomationElement *text = uia_find_id(automation, root, L"11");
+    if (text != NULL) {
+        IUnknown *pattern = NULL;
+        IUIAutomationElement_GetCurrentPattern(text, UIA_InvokePatternId, &pattern);
+        probe->has_invoke_on_text = pattern != NULL;
+        if (pattern != NULL) IUnknown_Release(pattern);
+
+        // It is inside the group, not directly in the window.
+        IUIAutomationTreeWalker *walker = NULL;
+        IUIAutomation_get_RawViewWalker(automation, &walker);
+        if (walker != NULL) {
+            IUIAutomationElement *parent = NULL;
+            IUIAutomationTreeWalker_GetParentElement(walker, text, &parent);
+            if (parent != NULL) {
+                BSTR id = NULL;
+                IUIAutomationElement_get_CurrentAutomationId(parent, &id);
+                probe->nested_parent_ok = id != NULL && wcscmp(id, L"10") == 0;
+                SysFreeString(id);
+                IUIAutomationElement_Release(parent);
+            }
+            IUIAutomationTreeWalker_Release(walker);
+        }
+        IUIAutomationElement_Release(text);
+    }
+
+    // The window's own children are the elements directly in it.
+    {
+        IUIAutomationCondition *all = NULL;
+        IUIAutomation_CreateTrueCondition(automation, &all);
+        IUIAutomationElementArray *children = NULL;
+        if (all != NULL) IUIAutomationElement_FindAll(root, TreeScope_Children, all, &children);
+        if (children != NULL) {
+            // By the scene's ids, since the window may also hold a child window of its own.
+            int length = 0;
+            IUIAutomationElementArray_get_Length(children, &length);
+            for (int i = 0; i < length; i++) {
+                IUIAutomationElement *child = NULL;
+                IUIAutomationElementArray_GetElement(children, i, &child);
+                if (child == NULL) continue;
+                BSTR id = NULL;
+                IUIAutomationElement_get_CurrentAutomationId(child, &id);
+                if (id != NULL && id[0] != 0) {
+                    int value = _wtoi(id);
+                    if (value == 11 || value == 13) probe->root_children = -100;
+                    else probe->root_children++;
+                }
+                SysFreeString(id);
+                IUIAutomationElement_Release(child);
+            }
+            IUIAutomationElementArray_Release(children);
+        }
+        if (all) IUIAutomationCondition_Release(all);
+    }
+
+    // The element the scene says has focus is the one a reader is told has it.
+    IUIAutomationElement *focused = uia_find_id(automation, root, L"13");
+    if (focused != NULL) {
+        BOOL has = FALSE;
+        IUIAutomationElement_get_CurrentHasKeyboardFocus(focused, &has);
+        probe->focused_ok = has != FALSE;
+        IUIAutomationElement_Release(focused);
+    }
+
+done:
+    if (root != NULL) IUIAutomationElement_Release(root);
+    if (automation != NULL) IUIAutomation_Release(automation);
+    CoUninitialize();
+    InterlockedExchange(&probe->done, 1);
+    return 0;
+}
+
+// A reader finds the button by its type and name and invokes it, toggles the checkbox, writes
+// into the field and the slider, and moves focus; each request reaches the window's queue as an
+// accessibility action naming the element and the action, and a new value is read beside it.
+static void nfr8_uia_reader_requests_reach_the_scene(void) {
+    if (!real_windows_ok) { printf("skip: nfr8_uia_reader_requests_reach_the_scene\n"); return; }
+    struct dxc_native_window window;
+    memset(&window, 0, sizeof window);
+    if (!open_test_window(&window, "uia")) return;
+    dxc_native_window_select(window.window);
+
+    struct dxc_element els[8];
+    els[0] = uia_element(7, -1, DXC_ROLE_BUTTON, "Save", 10, 10, DXC_STATE_ENABLED | DXC_STATE_FOCUSABLE,
+                         DXC_ACTION_PRESS | DXC_ACTION_FOCUS);
+    strncpy_s(els[0].hint, sizeof els[0].hint, "Saves the file", _TRUNCATE);
+    els[0].flags = DXC_ELEMENT_HAS_HINT;
+    els[1] = uia_element(8, -1, DXC_ROLE_CHECKBOX, "Wrap", 10, 40,
+                         DXC_STATE_ENABLED | DXC_STATE_CHECKABLE | DXC_STATE_CHECKED, DXC_ACTION_PRESS);
+    els[2] = uia_element(9, -1, DXC_ROLE_FIELD, "Name", 10, 70,
+                         DXC_STATE_ENABLED | DXC_STATE_FOCUSABLE | DXC_STATE_EDITABLE,
+                         DXC_ACTION_SET_VALUE | DXC_ACTION_FOCUS);
+    strncpy_s(els[2].value, sizeof els[2].value, "draft", _TRUNCATE);
+    els[2].flags = DXC_ELEMENT_HAS_VALUE;
+    els[3] = uia_element(10, -1, DXC_ROLE_GROUP, "Details", 100, 10, DXC_STATE_ENABLED, 0);
+    els[3].width = 200;
+    els[3].height = 100;
+    els[4] = uia_element(11, 10, DXC_ROLE_TEXT, "Inside", 110, 20, DXC_STATE_ENABLED, 0);
+    els[5] = uia_element(12, -1, DXC_ROLE_BUTTON, "Delete", 10, 100, 0, DXC_ACTION_PRESS);
+    els[6] = uia_element(13, 10, DXC_ROLE_FIELD, "Focused", 110, 50,
+                         DXC_STATE_ENABLED | DXC_STATE_FOCUSABLE | DXC_STATE_FOCUSED | DXC_STATE_EDITABLE,
+                         DXC_ACTION_SET_VALUE);
+    els[7] = uia_element(15, -1, DXC_ROLE_SLIDER, "Volume", 10, 130, DXC_STATE_ENABLED,
+                         DXC_ACTION_SET_VALUE | DXC_ACTION_INCREMENT | DXC_ACTION_DECREMENT);
+    els[7].flags = DXC_ELEMENT_HAS_RANGE;
+    els[7].range_min = 0;
+    els[7].range_max = 1;
+    els[7].range_value = 0.5f;
+    dxc_native_set_accessibility(els, 8, window.window);
+    pump_all();
+
+    struct uia_probe probe;
+    memset(&probe, 0, sizeof probe);
+    probe.window = (HWND)window.window;
+    probe.invoke = probe.disabled_invoke = probe.toggle = probe.set_value = probe.set_range = probe.set_focus = E_FAIL;
+    HANDLE thread = CreateThread(NULL, 0, uia_client, &probe, 0, NULL);
+    CHECK(thread != NULL);
+    ULONGLONG deadline = GetTickCount64() + 20000;
+    while (thread != NULL && InterlockedCompareExchange(&probe.done, 0, 0) == 0 && GetTickCount64() < deadline) {
+        dxc_native_window_select(window.window);
+        dxc_native_pump(0.01);
+    }
+    CHECK(InterlockedCompareExchange(&probe.done, 0, 0) == 1);
+    if (thread != NULL) {
+        WaitForSingleObject(thread, 5000);
+        CloseHandle(thread);
+    }
+
+    CHECK(probe.found_button);
+    CHECK(probe.button_enabled);
+    CHECK(probe.help_ok);
+    CHECK(probe.invoke == S_OK);
+    CHECK(!probe.disabled_enabled);
+    CHECK(probe.disabled_invoke == UIA_E_ELEMENTNOTENABLED);
+    CHECK(probe.toggle_state == ToggleState_On);
+    CHECK(probe.toggle == S_OK);
+    CHECK(!probe.field_read_only);
+    CHECK(probe.set_value == S_OK);
+    CHECK(probe.set_focus == S_OK);
+    CHECK(probe.range_value == 0.5 && probe.range_max == 1.0);
+    CHECK(probe.set_range == S_OK);
+    CHECK(!probe.has_invoke_on_text);
+    CHECK(probe.nested_parent_ok);
+    // Save, Wrap, Name, Details, Delete and Volume; Inside and Focused are in Details.
+    CHECK(probe.root_children == 6);
+    CHECK(probe.focused_ok);
+
+    // What the scene is asked, in the order the reader asked it.
+    int32_t expected_ids[] = {7, 8, 9, 9, 15};
+    int32_t expected_actions[] = {DXC_ACTION_PRESS, DXC_ACTION_PRESS, DXC_ACTION_SET_VALUE, DXC_ACTION_FOCUS,
+                                  DXC_ACTION_SET_VALUE};
+    int seen = 0;
+    char argument[512];
+    dxc_native_window_select(window.window);
+    struct dxc_event event;
+    while (dxc_native_poll_event(&event) != 0) {
+        if (event.kind != DXC_EVENT_ACCESSIBILITY_ACTION) continue;
+        if (seen < 5) {
+            CHECK(event.key_code == expected_ids[seen]);
+            CHECK(event.code_point == expected_actions[seen]);
+        }
+        if (event.code_point == DXC_ACTION_SET_VALUE) {
+            // Too small first: nothing is taken, and the answer is the room it needs.
+            int32_t needed = dxc_native_take_accessibility_argument(argument, 4);
+            CHECK(needed > 4);
+            int32_t length = dxc_native_take_accessibility_argument(argument, (int32_t)sizeof argument - 1);
+            CHECK(length == needed);
+            if (length >= 0) argument[length] = 0;
+            if (event.key_code == 9) {
+                CHECK(strncmp(argument, "\xed\x95\x9c\xea\xb8\x80 and more", 13) == 0);
+                CHECK(length > DXC_TEXT_BYTES);
+            } else {
+                CHECK(strcmp(argument, "0.75") == 0);
+            }
+        }
+        seen++;
+    }
+    CHECK(seen == 5);
+    CHECK(dxc_native_take_accessibility_argument(argument, (int32_t)sizeof argument) == -1);
+
+    dxc_native_window_destroy(window.window);
+    pump_all();
+    dxc_native_window_release(window.window);
+}
+
 int main(int argc, char **argv) {
     resize_decisions();
     resize_predraw_decisions();
@@ -1401,6 +1893,12 @@ int main(int argc, char **argv) {
     fr53_follow_pointer_keeps_anchor_under_pointer();
     fr53_second_pump_in_the_same_turn_does_not_wait();
     fr82_dpi_size_arithmetic();
+    nfr8_uia_parent_ids_make_the_tree();
+    nfr8_uia_each_control_offers_its_patterns();
+    nfr8_uia_states_read_as_uia_states();
+    nfr8_uia_expand_and_collapse_become_actions();
+    nfr8_uia_runtime_ids_follow_the_scene_id();
+    nfr8_uia_focus_and_hit_test();
     // The software adapter, for a runner with no GPU.
     _putenv("DXC_D3D12_WARP=1");
     fr19_9_app_caption_strip_is_client_area();
@@ -1413,6 +1911,7 @@ int main(int argc, char **argv) {
     fr53_close_request_reaches_only_its_window();
     fr53_destroying_one_window_does_not_quit();
     fr53_activate_reports_focus();
+    nfr8_uia_reader_requests_reach_the_scene();
     fr72_filter_lines_become_dialog_patterns();
     fr72_a_dialog_that_cannot_start_answers_nothing();
     fr72_an_open_dialog_does_not_hold_the_loop_and_answers_once();
