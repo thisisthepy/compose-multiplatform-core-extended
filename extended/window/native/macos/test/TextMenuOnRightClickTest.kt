@@ -75,6 +75,7 @@ class TextMenuOnRightClickTest {
     private var value by mutableStateOf(TextFieldValue("hello world", TextRange(0, 5)))
     private var windowPlatform: MacosWindowPlatform? = null
     private var menus = 0
+    private val menuDescriptions = mutableListOf<String>()
     private var observer: Any? = null
 
     private val listener = object : WindowListener {
@@ -110,15 +111,20 @@ class TextMenuOnRightClickTest {
             `object` = null,
             queue = null,
         ) { note ->
-            menus++
             val menu = note?.`object` as? NSMenu
+            // NSMenuDidBeginTrackingNotification fires for every menu that tracks, including
+            // system submenus (Writing Tools, AutoFill, Services) opened inside the one popup
+            // menu and the application menu bar. Count only top-level popup menus.
+            if (menu?.supermenu != null || menu === application.mainMenu) return@addObserverForName
+            menus++
+            menuDescriptions += "title='${menu?.title}' items=${menu?.numberOfItems}"
             if (capture != null && menus == 1) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 700_000_000L), dispatch_get_main_queue()) {
                     captureWindow(window, capture)
-                    menu?.cancelTracking()
+                    menu?.cancelTrackingWithoutAnimation()
                 }
             } else {
-                dispatch_async(dispatch_get_main_queue()) { menu?.cancelTracking() }
+                dispatch_async(dispatch_get_main_queue()) { menu?.cancelTrackingWithoutAnimation() }
             }
         }
         turns(300) { window.keyWindow }
@@ -181,7 +187,7 @@ class TextMenuOnRightClickTest {
         // Compose's old path draws a menu of its own; the new one puts up the system's.
         assertTrue(ComposeFoundationFlags.isNewContextMenuEnabled, "the field's menu is the system's")
         rightClick(window)
-        assertEquals(1, menus, "one NSMenu, Compose's, and not the window's beside it")
+        assertEquals(1, menus, "one NSMenu, Compose's, and not the window's beside it ($menuDescriptions)")
         assertEquals(TextRange(0, 5), value.selection, "a press inside the selection keeps it")
         // And again: the menu that closed left nothing behind that would add another.
         rightClick(window)
