@@ -7,6 +7,14 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
+- **Fix.** The Windows window (`windows-shared`) opens on the GDI route by default again;
+  `DXC_DCOMP=1` asks for the DirectComposition route. On a real GPU, with a real application
+  dragged by hand, the DirectComposition route left a see-through strip inside the border on
+  a fast drag that grows the window, and the picture slid on a drag of the left or top edge;
+  the GDI route showed neither. The probe saw neither (it drags the right edge, and takes a
+  see-through margin for a smaller window). Before this, the route was DirectComposition
+  unless `DXC_DCOMP=0`. (#223)
+
 - **Fix.** The Windows window (`windows-shared`) shows its frames through DirectComposition.
   On restore, maximise and snap it showed the new size with the old picture now and then: the
   rectangle and the picture reached DWM in separate steps (#223). The window now has no GDI

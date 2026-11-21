@@ -43,10 +43,15 @@ defines.
 
 ## How frames reach the screen
 
-The window has two routes. It takes the DirectComposition route unless `DXC_DCOMP=0` is set or
-the machine cannot give it one, and says which on standard error
+The window has two routes. It takes the GDI route unless `DXC_DCOMP=1` asks for the
+DirectComposition one and the machine can give it, and says which on standard error
 (`compose-rust: dcomp: route dcomp` or `route gdi`, with the reason). Its memory lines end in
 `route=dcomp` or `route=gdi`.
+
+The GDI route is the default because of what a real GPU showed (2026-11-21, a real
+application dragged by hand): the DirectComposition route left a see-through strip inside the
+border on a fast drag that grows the window, and the picture slid on a drag of the left or top
+edge. The GDI route showed neither. See "Known faults" under the DirectComposition route.
 
 ### The DirectComposition route
 
@@ -83,9 +88,24 @@ by it. So the frames are committed in this order:
 The wait before each drag step that the GDI route takes on builds below 22000 (issue #245) is
 not taken here: the order already decides which frame meets which rectangle.
 
+#### Known faults
+
+The window's rectangle is not part of the commit. The rectangle reaches DWM from the window
+manager and the picture from DirectComposition, and the two can land in different
+compositions. Two things follow, both seen on a real GPU and neither seen by the probe, which
+drags the right edge slowly and takes a see-through margin for a smaller window:
+
+- A step that grows is committed after the window grew. A composition in between shows the
+  larger window with the smaller picture, and with no GDI surface the rest is see-through.
+- The surface sits at the window's top left. A drag of the left or top edge moves that
+  origin, so for a composition the picture is drawn for one origin and shown at the other:
+  what should stay still on the right moves by the step. A step that shrinks commits first
+  and waits, so there it happens on every step.
+
 ### The GDI route
 
-`DXC_DCOMP=0`, a machine without a composition device, or a composition surface that cannot be
+The default. `DXC_DCOMP` unset or not `1`, a machine without a composition device, or a
+composition surface that cannot be
 put on the window (the window is then made again) gives the route the window had before: the
 GDI redirection surface, and the swapchain on a child window that covers the client area and
 passes every press to the window. During a size change the child is hidden, and each CPU frame
@@ -98,7 +118,7 @@ Read when a window opens. The defaults are what the probe runs below measured.
 
 | Variable | Values | What it does |
 |---|---|---|
-| `DXC_DCOMP` | `0` | The GDI route. |
+| `DXC_DCOMP` | `1` | The DirectComposition route. Anything else, or unset, is the GDI route. |
 | `DXC_DCOMP_SURFACES` | `1`, `2` (default), `3` | How many surfaces take turns. |
 | `DXC_DCOMP_UPLOAD` | `on12` | Write the surfaces with the D3D11On12 device. |
 | `DXC_DCOMP_COMMIT` | `order` (default), `ahead`, `wmsize` | The commit order above, every frame in `WM_NCCALCSIZE`, or every frame in `WM_SIZE`. |
