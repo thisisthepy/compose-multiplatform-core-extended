@@ -5,6 +5,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -330,6 +331,33 @@ class GnomeDesignSystem private constructor(
                 pressedBorder = null,
                 ripple = false,
             )
+            // The calculator's digit is the standard grey button as it stands.
+            ButtonVariant.Neutral -> ButtonStyle(
+                container = neutral,
+                content = onNeutral,
+                border = null,
+                borderWidth = 0.dp,
+                shape = ShapeRole.Small,
+                pressedContainer = neutralPressed,
+                pressedContent = onNeutral,
+                pressedBorder = null,
+                ripple = false,
+            )
+            // The function key beside it: the same grey one step towards the ink.
+            ButtonVariant.NeutralSecondary -> {
+                val deeper = lerp(neutral, onNeutral, NEUTRAL_STEP)
+                ButtonStyle(
+                    container = deeper,
+                    content = onNeutral,
+                    border = null,
+                    borderWidth = 0.dp,
+                    shape = ShapeRole.Small,
+                    pressedContainer = lerp(deeper, onNeutral, NEUTRAL_PRESS_MIX),
+                    pressedContent = onNeutral,
+                    pressedBorder = null,
+                    ripple = false,
+                )
+            }
             ButtonVariant.Outlined -> ButtonStyle(
                 container = Color.Transparent,
                 content = onNeutral,
@@ -410,6 +438,12 @@ class GnomeDesignSystem private constructor(
     )
 
     companion object {
+        /** How far a calculator's function key sits from its digit, towards the ink. */
+        private const val NEUTRAL_STEP = 0.08f
+
+        /** How much ink a pressed function key takes on. */
+        private const val NEUTRAL_PRESS_MIX = 0.1f
+
         val Light: GnomeDesignSystem = GnomeDesignSystem(isDark = false)
         val Dark: GnomeDesignSystem = GnomeDesignSystem(isDark = true)
 
