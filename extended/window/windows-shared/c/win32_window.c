@@ -5832,12 +5832,21 @@ static void dxc_memory_point(const char *where, IDXGIAdapter1 *adapter) {
 #define DXC_OPEN_COMP_FAILED 13
 
 /**
- * Whether a window opens on the composition route: unless DXC_DCOMP=0 says not, and where a
- * composition device can be made (dxc_open_window).
+ * Whether a window opens on the composition route: only where DXC_DCOMP=1 asks for it, and
+ * where a composition device can be made (dxc_open_window). Anything else is the GDI route.
+ *
+ * The GDI route is the default again. On a real GPU (2026-11-21, by eye, a real application)
+ * the composition route showed a see-through strip inside the border on a fast drag that
+ * grows the window, and the picture sliding on a drag of the left or top edge: the window's
+ * rectangle is not part of the commit, so the rectangle and the picture can land in different
+ * compositions, and the origin moves with the left and top edges. The GDI route showed
+ * neither. The probe did not see them (it drags the right edge and takes a see-through margin
+ * for a smaller window). The composition route stays behind the switch until it passes a
+ * probe that does.
  */
 static int dxc_comp_wanted(void) {
     const char *asked = getenv("DXC_DCOMP");
-    return !(asked != NULL && strcmp(asked, "0") == 0);
+    return asked != NULL && strcmp(asked, "1") == 0;
 }
 
 static int32_t dxc_open_window(
@@ -5871,7 +5880,7 @@ static int32_t dxc_open_window(
     int comp = dxc_comp != NULL;
     fprintf(stderr, "compose-rust: dcomp: route %s because %s\n", comp ? "dcomp" : "gdi",
             comp ? "a composition device was made"
-                 : comp_wanted ? "no composition device could be made" : "DXC_DCOMP=0 or the composition route failed");
+                 : comp_wanted ? "no composition device could be made" : "DXC_DCOMP is not 1 or the composition route failed");
     // On the GDI route with its redirection surface, as Flutter's view has one: while a
     // resize is being drawn, DWM keeps showing the last presented frame instead of the
     // desktop. On the composition route without one: what DWM shows of the window is the

@@ -5,7 +5,7 @@ Measures how the Windows window follows a dragged edge on this machine, on both 
 .DESCRIPTION
 Builds the window and its resize probe with cl, as the extended-window-windows-shared workflow
 does, then drags the probe window's right edge with real input on the DirectComposition route
-(the default) and on the GDI route (DXC_DCOMP=0): a drag with frames that cost nothing, one
+(DXC_DCOMP=1) and on the GDI route (the default, DXC_DCOMP=0): a drag with frames that cost nothing, one
 with 30 ms frames, and one with 5 ms frames drawn ahead of each size. Each run prints, and the
 summary file keeps, the faulty frames DWM composed, how far the edge lagged the pointer and
 the window's memory at rest.
@@ -83,7 +83,7 @@ $drags = @(
     @{ Name = 'drag245-ahead'; DrawMs = '5' }
 )
 $routes = @(
-    @{ Name = 'dcomp'; Flag = $null },
+    @{ Name = 'dcomp'; Flag = '1' },
     @{ Name = 'gdi'; Flag = '0' }
 )
 

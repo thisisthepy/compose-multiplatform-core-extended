@@ -115,8 +115,8 @@ jobs:
       # for another.
       #
       # Every probe step below runs on both routes of the window, and each log name says which:
-      # probe-dcomp-* is DirectComposition (the default), probe-gdi-* is DXC_DCOMP=0, the GDI
-      # redirection surface and the swapchain's child window as before. Each log carries the
+      # probe-dcomp-* is DirectComposition (DXC_DCOMP=1), probe-gdi-* is DXC_DCOMP=0, the GDI
+      # redirection surface and the swapchain's child window, which is the default. Each log carries the
       # window's "compose-rust: dcomp: route" line and two "compose-rust: metrics memory" lines
       # (probe-idle, probe-end) that end in route=dcomp or route=gdi.
       - name: Build the resize probe
@@ -163,6 +163,17 @@ jobs:
             grep -h 'dcomp: drag timing' "$log" | sed "s/^/  $name /" || true
             grep -h 'dcomp: drag upload parts' "$log" | sed "s/^/  $name /" || true
           done
+
+      # The route a window takes when nothing asks: the GDI one. DXC_DCOMP=1 alone asks for
+      # DirectComposition (its log is the drag above).
+      - name: The window opens on the GDI route unless DXC_DCOMP=1 asks otherwise
+        shell: bash
+        run: |
+          env -u DXC_DCOMP ./out/win32_resize_probe.exe drag > out/probe-default-drag.log 2>&1 || true
+          grep -h 'compose-rust: dcomp: route' out/probe-default-drag.log out/probe-dcomp-drag.log out/probe-gdi-drag.log || true
+          grep -q 'compose-rust: dcomp: route gdi because' out/probe-default-drag.log || { echo "with DXC_DCOMP unset the window did not open on the GDI route" >&2; exit 1; }
+          grep -q 'compose-rust: dcomp: route dcomp because' out/probe-dcomp-drag.log || { echo "with DXC_DCOMP=1 the window did not open on the DirectComposition route" >&2; exit 1; }
+          grep -q 'compose-rust: dcomp: route gdi because' out/probe-gdi-drag.log || { echo "with DXC_DCOMP=0 the window did not open on the GDI route" >&2; exit 1; }
 
       # Issue 245: a step of a drag drawn in WM_SIZE leaves the window with its new rectangle
       # and the picture of the step before for the length of the draw, and a composition in
