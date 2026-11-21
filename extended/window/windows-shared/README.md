@@ -295,9 +295,13 @@ and builds and tests the Kotlin/Native klib. On windows-2022 and windows-2025 it
 resize probe on both routes. The DirectComposition route fails the job above 2 % faulty frames
 in 247 maximise, restore and snap changes, and on any faulty frame in a drag drawn ahead. The
 GDI route is printed beside it for comparison. The judged drags run three times a mode on both
-routes: the GDI route, the default, fails the job on any frame shifted, see-through or of
-another size, and on windows-2025 when the judges are not available or judged nothing. The
-DirectComposition route's judged drags are printed, not gated, until its fix lands.
+routes: the GDI route, the default, fails the job above 2 % of its judged frames shifted,
+see-through or of another size, and on windows-2025 when the judges are not available or
+judged nothing. The DirectComposition route's judged drags are printed, not gated, until its
+fix lands. The first run with the judges (44920692034, windows-2025, WARP) counted 1 faulty
+frame of 163 on the GDI route (the window grown by its left edge and the copy not yet in it,
+109 px see-through) and 79 of 201 on the DirectComposition route (shifted by up to 382 px,
+see-through up to 666 px).
 
 Source: compose-rust PR #174 (`feat/win32-resize-kn`) at 2d6ad3e3, where the C is
 `renderer/desktop/c/` and the Kotlin/Native window is `renderer/windows/src/Win32Window.kt`.

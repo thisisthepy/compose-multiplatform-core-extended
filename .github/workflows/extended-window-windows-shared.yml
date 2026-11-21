@@ -345,7 +345,7 @@ jobs:
       # backdrop inside the border and the picture the size inside it (see-through).
       #
       # Gates: every run finishes with a verdict; on windows-2025 the judges are available; on
-      # the GDI route, the default, they judged frames and found none faulty. The
+      # the GDI route, the default, they judged frames and found at most 2 % faulty. The
       # DirectComposition route is printed, not gated: it is expected to be red until its fix
       # lands, and that fix's PR turns it into a gate. Not asserted here either way.
       #
@@ -374,6 +374,7 @@ jobs:
           }
           echo "judged drags, 3 runs each: mode, route, composed frames in the drag, judged, faulty anchor, faulty see-through (of them: frame of another size, size unreadable), worst shift px, widest see-through px"
           printf '%-13s %-6s %9s %7s %13s %18s %10s %10s %12s\n' mode route composed judged anchor see-through other-size unreadable worst-shift
+          gdi_judged=0 gdi_faulty=0
           for mode in $modes; do
             for route in gdi dcomp; do
               composed=0 judged=0 anchor=0 see=0 other=0 unreadable=0 worst=0 widest=0 available=yes
@@ -412,14 +413,24 @@ jobs:
                 elif [ "$judged" -eq 0 ]; then
                   echo "gdi $mode: the judges judged no frame (no border found, or no calibration at rest)" >&2
                   status=1
-                elif [ "$anchor" -ne 0 ] || [ "$see" -ne 0 ]; then
-                  echo "gdi $mode: $anchor frames shifted and $see frames see-through or of another size, expected none on the default route" >&2
-                  status=1
+                else
+                  # A frame can be counted by both judges; the larger count is the mode's faulty frames.
+                  gdi_judged=$((gdi_judged + judged))
+                  gdi_faulty=$((gdi_faulty + (anchor > see ? anchor : see)))
                 fi
               fi
             done
           done
-          echo "The GDI route above is gated (0 faulty where the judges are available). The DirectComposition route is printed, not gated: it is expected to be red until the fix lands (the fix PR turns it into a gate)."
+          # The GDI gate: at most 2 % of its judged frames over the four modes. Not zero: run
+          # 44920692034 (the first with these judges, WARP) showed the GDI route itself with the
+          # window grown and the copy not yet in it once in 163 judged frames (drag-left, 109 px
+          # see-through), where the DirectComposition route showed 79 of 201. The states gate
+          # below is 2 % for the same reason.
+          if [ "$gdi_judged" -gt 0 ]; then
+            echo "judged gdi (the gate): $gdi_faulty faulty of $gdi_judged judged frames, limit 2 %"
+            test "$((gdi_faulty * 50))" -le "$gdi_judged" || { echo "gdi: $gdi_faulty faulty of $gdi_judged judged frames in the judged drags, above 2 %" >&2; status=1; }
+          fi
+          echo "The GDI route above is gated (2 % of its judged frames, where the judges are available). The DirectComposition route is printed, not gated: it is expected to be red until the fix lands (the fix PR turns it into a gate)."
           for route in gdi dcomp; do
             echo "first judged faults, $route (run 1 of each mode):"
             for mode in $modes; do

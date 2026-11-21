@@ -332,6 +332,13 @@ static LONG desk_left, desk_top;  // the captured output's place on the virtual 
 // those out (win32_probe_judge.h) and count them here.
 static int judge_pointer_shown;
 static LONG judge_pointer_x, judge_pointer_y;
+// The places DXGI gave before that one. A composed frame can carry the pointer where it was a
+// move or two ago, 40 to 120 px away at this pace: run 44920692034 read a size code as
+// unreadable with the pointer's arrow drawn over it and DXGI's latest place elsewhere. So what
+// counts as under the pointer is the box around its last JUDGE_POINTER_TRAIL places.
+#define JUDGE_POINTER_TRAIL 4
+static LONG judge_pointer_trail_x[JUDGE_POINTER_TRAIL], judge_pointer_trail_y[JUDGE_POINTER_TRAIL];
+static int judge_pointer_trail_count;
 static int judge_covered_marks, judge_covered_codes;
 
 static void judge_line(const char *format, ...) {
@@ -419,6 +426,15 @@ static void judge_frame_on(const struct probe_image *image, LONG area_left, LONG
         pointer.top = (int32_t)(desk_top + judge_pointer_y - area_top) - 8;
         pointer.right = pointer.left + 112;
         pointer.bottom = pointer.top + 112;
+        // And where it was drawn the moves before (see judge_pointer_trail_x).
+        for (int past = 0; past < judge_pointer_trail_count; past++) {
+            int32_t left = (int32_t)(desk_left + judge_pointer_trail_x[past] - area_left) - 8;
+            int32_t top = (int32_t)(desk_top + judge_pointer_trail_y[past] - area_top) - 8;
+            if (left < pointer.left) pointer.left = left;
+            if (top < pointer.top) pointer.top = top;
+            if (left + 112 > pointer.right) pointer.right = left + 112;
+            if (top + 112 > pointer.bottom) pointer.bottom = top + 112;
+        }
     }
     judge_frames++;
     if (judge_calibrated != 1) {
@@ -626,6 +642,16 @@ static DWORD WINAPI capture_thread(LPVOID unused) {
         }
         LONG phase = probe_phase;
         if (info.LastMouseUpdateTime.QuadPart != 0) {
+            if (judge_pointer_shown &&
+                (judge_pointer_x != info.PointerPosition.Position.x || judge_pointer_y != info.PointerPosition.Position.y)) {
+                for (int past = JUDGE_POINTER_TRAIL - 1; past > 0; past--) {
+                    judge_pointer_trail_x[past] = judge_pointer_trail_x[past - 1];
+                    judge_pointer_trail_y[past] = judge_pointer_trail_y[past - 1];
+                }
+                judge_pointer_trail_x[0] = judge_pointer_x;
+                judge_pointer_trail_y[0] = judge_pointer_y;
+                if (judge_pointer_trail_count < JUDGE_POINTER_TRAIL) judge_pointer_trail_count++;
+            }
             judge_pointer_shown = info.PointerPosition.Visible ? 1 : 0;
             judge_pointer_x = info.PointerPosition.Position.x;
             judge_pointer_y = info.PointerPosition.Position.y;
