@@ -14,6 +14,7 @@ import platform.CoreGraphics.CGRectMake
 import platform.Foundation.NSMakeRect
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertSame
 
 /**
  * A control's accessibility frame is where it is drawn. AppKit takes the frame in screen
@@ -83,10 +84,15 @@ class AccessibilityFrameTest {
     @Test
     fun the_windows_reader_frames_are_where_its_view_draws_them() {
         // The window's own tree, against where its flipped drawing view puts the same
-        // rectangles on the screen.
+        // rectangles on the screen. The backdrop becomes the content view and the drawing view
+        // its subview only in initWindow (setContent calls it); before that neither is in the
+        // window, and the two sides of this comparison would be in different coordinates.
         NSApplication.sharedApplication()
         val window = MacosWindow(name = "ax frames", width = 400, height = 300)
         try {
+            window.initWindow()
+            assertSame(window.window, window.view.window, "the drawing view is in the window")
+            assertSame(window.view.superview, window.window.contentView, "and inside the backdrop")
             window.describeFrom(listOf(top, bottom))
             for (element in listOf(top, bottom)) {
                 val local = CGRectMake(
