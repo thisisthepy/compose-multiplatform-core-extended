@@ -1,4 +1,5 @@
-// Checks the parts of the shared Win32 window that are arithmetic, that the objects the
+// Checks the parts of the shared Win32 window that are arithmetic (and the resize probe's
+// judges, c/test/win32_probe_judge.h), that the objects the
 // window is made of resolve every symbol the header declares, and that the records have
 // the sizes the Kotlin/Native reader (src/.../Win32Records.kt) assumes. Compiled and run by the
 // extended-window-windows-shared workflow with MSVC.
@@ -22,6 +23,7 @@
 #include "win32_edit_menu.h"
 #include "win32_dpi.h"
 #include "win32_window.h"
+#include "win32_probe_judge.h"
 
 // The records the Kotlin side reads and writes by offset. A field added on one side only is
 // a reader that silently reads the wrong bytes, so the sizes are fixed here.
@@ -1381,9 +1383,239 @@ static void edit_menu_entries(void) {
     CHECK(wcscmp(dxc_edit_menu_fallback_label(DXC_EDIT_SELECT_ALL), L"Select &All") == 0);
 }
 
+// probe judge checks begin: the resize probe's picture and judges (win32_probe_judge.h).
+// A desktop as the capture sees it: the green backdrop, a window's border of [thick] px
+// around [inner] in the border colour, and inside it a picture of [width] x [height] drawn
+// with its top left at (inner.left + dx, inner.top + dy), cut by the area inside the border
+// (where it does not reach, the backdrop shows). The border is drawn over the picture.
+#define PROBE_DESK_WIDTH 480
+#define PROBE_DESK_HEIGHT 360
+static uint32_t probe_desk[PROBE_DESK_WIDTH * PROBE_DESK_HEIGHT];
+static uint32_t probe_picture[PROBE_DESK_WIDTH * PROBE_DESK_HEIGHT];
+
+static struct probe_image probe_desk_draw(struct probe_box inner, int32_t thick, int32_t width, int32_t height,
+                                          int32_t dx, int32_t dy) {
+    for (int32_t i = 0; i < PROBE_DESK_WIDTH * PROBE_DESK_HEIGHT; i++) probe_desk[i] = 0xFF00C800u;
+    probe_fill_marked((uint8_t *)probe_picture, width * 4, width, height);
+    for (int32_t y = 0; y < height; y++) {
+        for (int32_t x = 0; x < width; x++) {
+            int32_t at_x = inner.left + dx + x, at_y = inner.top + dy + y;
+            if (at_x >= inner.left - thick && at_x < inner.right && at_y >= inner.top - thick && at_y < inner.bottom) {
+                probe_desk[at_y * PROBE_DESK_WIDTH + at_x] = probe_picture[y * width + x];
+            }
+        }
+    }
+    for (int32_t y = inner.top - thick; y < inner.bottom + thick; y++) {
+        for (int32_t x = inner.left - thick; x < inner.right + thick; x++) {
+            if (x < inner.left || x >= inner.right || y < inner.top || y >= inner.bottom) {
+                probe_desk[y * PROBE_DESK_WIDTH + x] = 0xFF0000FFu;
+            }
+        }
+    }
+    struct probe_image image = {(const uint8_t *)probe_desk, PROBE_DESK_WIDTH * 4, PROBE_DESK_WIDTH, PROBE_DESK_HEIGHT};
+    return image;
+}
+
+static int probe_box_is(struct probe_box box, int32_t left, int32_t top, int32_t right, int32_t bottom) {
+    return box.left == left && box.top == top && box.right == right && box.bottom == bottom;
+}
+
+static void probe_judge_arithmetic(void) {
+    // The markers: 8 px, 16 px in from each corner.
+    CHECK(probe_box_is(probe_mark_box(PROBE_MARK_TOP_LEFT, 300, 200), 16, 16, 24, 24));
+    CHECK(probe_box_is(probe_mark_box(PROBE_MARK_TOP_RIGHT, 300, 200), 276, 16, 284, 24));
+    CHECK(probe_box_is(probe_mark_box(PROBE_MARK_BOTTOM_LEFT, 300, 200), 16, 176, 24, 184));
+    CHECK(probe_box_is(probe_mark_box(PROBE_MARK_BOTTOM_RIGHT, 300, 200), 276, 176, 284, 184));
+    // Room for them and the code: 192 x 72 at least.
+    CHECK(probe_marks_fit(192, 72) && !probe_marks_fit(191, 72) && !probe_marks_fit(192, 71));
+
+    // The size code reads back what it spells, and nothing when a block is lost.
+    static const int32_t sizes[][2] = {{1, 1}, {640, 480}, {2880, 1800}, {65535, 65535}, {12345, 321}};
+    for (size_t i = 0; i < sizeof sizes / sizeof sizes[0]; i++) {
+        uint8_t bits[PROBE_CODE_BLOCKS];
+        int32_t w = 0, h = 0;
+        probe_code_bits(sizes[i][0], sizes[i][1], bits);
+        CHECK(probe_code_read(bits, &w, &h) && w == sizes[i][0] && h == sizes[i][1]);
+        bits[5] = 2;
+        CHECK(!probe_code_read(bits, &w, &h));
+    }
+    uint8_t bits[PROBE_CODE_BLOCKS];
+    int32_t w = 0, h = 0;
+    probe_code_bits(640, 480, bits);
+    bits[0] = 0;
+    CHECK(!probe_code_read(bits, &w, &h));
+    probe_code_bits(0, 480, bits);
+    CHECK(!probe_code_read(bits, &w, &h));
+
+    // A picture read straight from its buffer: its top-left marker and its size.
+    probe_fill_marked((uint8_t *)probe_picture, 300 * 4, 300, 200);
+    struct probe_image picture = {(const uint8_t *)probe_picture, 300 * 4, 300, 200};
+    struct probe_box all = {0, 0, 300, 200}, found;
+    CHECK(probe_find_mark(&picture, all, PROBE_MARK_TOP_LEFT, &found) && probe_box_is(found, 16, 16, 24, 24));
+    CHECK(probe_find_mark(&picture, all, PROBE_MARK_BOTTOM_RIGHT, &found) && probe_box_is(found, 276, 176, 284, 184));
+    CHECK(probe_read_size(&picture, probe_mark_box(PROBE_MARK_TOP_LEFT, 300, 200), &w, &h) && w == 300 && h == 200);
+    // The picture's own colours are none of the judges' others: no border, no backdrop.
+    int stray = 0;
+    for (int32_t i = 0; i < 300 * 200; i++) {
+        const uint8_t *pixel = (const uint8_t *)&probe_picture[i];
+        if (probe_is_border(pixel) || probe_is_backdrop(pixel)) stray++;
+    }
+    CHECK(stray == 0);
+
+    // The border found where it was drawn, 1 px and 2 px thick.
+    struct probe_calibration calibration;
+    struct probe_box inner = {60, 50, 360, 250};
+    struct probe_border border;
+    struct probe_image desk = probe_desk_draw(inner, 1, 300, 200, 0, 0);
+    CHECK(probe_find_border(&desk, 4, &border));
+    CHECK(border.left == 59 && border.top == 49 && border.right == 360 && border.bottom == 250);
+    CHECK(probe_box_is(border.inner, 60, 50, 360, 250));
+    desk = probe_desk_draw(inner, 2, 300, 200, 0, 0);
+    CHECK(probe_find_border(&desk, 4, &border) && probe_box_is(border.inner, 60, 50, 360, 250));
+    // No line along the top (the client area covers it): the side lines' ends stand for it.
+    desk = probe_desk_draw(inner, 1, 300, 200, 0, 0);
+    for (int32_t x = inner.left; x < inner.right; x++) probe_desk[(inner.top - 1) * PROBE_DESK_WIDTH + x] = PROBE_GREY;
+    CHECK(probe_find_border(&desk, 4, &border) && probe_box_is(border.inner, 60, 49, 360, 250));
+    CHECK(probe_calibrate(&desk, 300, 200, &calibration) && calibration.extra_height == -1);
+    CHECK(calibration.bottom_left_y == 16 && calibration.top_right_x == 16);
+    // No border, no rectangle.
+    for (int32_t i = 0; i < PROBE_DESK_WIDTH * PROBE_DESK_HEIGHT; i++) probe_desk[i] = 0xFF00C800u;
+    CHECK(!probe_find_border(&desk, 4, &border));
+
+    // At rest: the far markers 16 px inside the border, the picture the inner size.
+    desk = probe_desk_draw(inner, 1, 300, 200, 0, 0);
+    CHECK(probe_calibrate(&desk, 300, 200, &calibration));
+    CHECK(calibration.ok && calibration.top_right_x == 16 && calibration.bottom_right_x == 16);
+    CHECK(calibration.bottom_left_y == 16 && calibration.bottom_right_y == 16);
+    CHECK(calibration.extra_width == 0 && calibration.extra_height == 0);
+    // A client size the code does not spell is no calibration.
+    CHECK(!probe_calibrate(&desk, 301, 200, &calibration) && !calibration.ok);
+    // A border drawn over the picture's top row: the inner area is a row shorter.
+    struct probe_box covered = {60, 50, 360, 249};
+    desk = probe_desk_draw(covered, 1, 300, 200, 0, -1);
+    CHECK(probe_calibrate(&desk, 300, 200, &calibration) && calibration.extra_height == 1);
+    CHECK(calibration.extra_width == 0 && calibration.bottom_left_y == 16 && calibration.top_right_x == 16);
+
+    // Judged against the calibration at rest.
+    struct probe_box nowhere = {0, 0, 0, 0};
+    desk = probe_desk_draw(inner, 1, 300, 200, 0, 0);
+    CHECK(probe_calibrate(&desk, 300, 200, &calibration));
+    struct probe_anchor anchor;
+    struct probe_see see;
+    // A frame in its place: nothing.
+    CHECK(probe_find_border(&desk, 4, &border));
+    probe_judge_anchor(&desk, &border, &calibration, nowhere, &anchor);
+    probe_judge_see(&desk, &border, &calibration, nowhere, &see);
+    CHECK(!anchor.faulty && anchor.shift == 0 && anchor.missing == 0 && anchor.cut == 0);
+    CHECK(!see.faulty && see.total == 0 && see.picture_width == 300 && see.picture_height == 200);
+    // The pointer drawn over the top-right marker and over the size code: faulty unless the
+    // judges are told where it is, and then not judged there.
+    for (int32_t y = 50 + 10; y < 50 + 42; y++) {
+        for (int32_t x = 360 - 34; x < 360 - 2; x++) probe_desk[y * PROBE_DESK_WIDTH + x] = 0xFFFFFFFFu;
+    }
+    for (int32_t y = 50 + 30; y < 50 + 62; y++) {
+        for (int32_t x = 60 + 70; x < 60 + 102; x++) probe_desk[y * PROBE_DESK_WIDTH + x] = 0xFF000000u;
+    }
+    CHECK(probe_find_border(&desk, 4, &border));
+    probe_judge_anchor(&desk, &border, &calibration, nowhere, &anchor);
+    probe_judge_see(&desk, &border, &calibration, nowhere, &see);
+    CHECK(anchor.faulty && see.faulty && see.unreadable);
+    struct probe_box pointer = {360 - 34, 50 + 10, 360 - 2, 50 + 42};
+    probe_judge_anchor(&desk, &border, &calibration, pointer, &anchor);
+    CHECK(!anchor.faulty && anchor.covered == 1);
+    struct probe_box pointer_on_code = {60 + 70, 50 + 30, 60 + 102, 50 + 62};
+    probe_judge_see(&desk, &border, &calibration, pointer_on_code, &see);
+    CHECK(!see.faulty && see.covered);
+    // One pixel off: within the tolerance.
+    desk = probe_desk_draw(inner, 1, 300, 200, 1, 0);
+    CHECK(probe_find_border(&desk, 4, &border));
+    probe_judge_anchor(&desk, &border, &calibration, nowhere, &anchor);
+    CHECK(!anchor.faulty && anchor.shift == -1);
+
+    // The left edge dragged 20 px in, and the new (smaller) frame shown at the old origin:
+    // the right markers 20 px left of their place, the top-left marker cut, the desktop
+    // showing through 20 px at the right.
+    struct probe_box shrunk = {80, 50, 360, 250};
+    desk = probe_desk_draw(shrunk, 1, 280, 200, -20, 0);
+    CHECK(probe_find_border(&desk, 4, &border) && probe_box_is(border.inner, 80, 50, 360, 250));
+    probe_judge_anchor(&desk, &border, &calibration, nowhere, &anchor);
+    probe_judge_see(&desk, &border, &calibration, nowhere, &see);
+    CHECK(anchor.faulty && anchor.shift == 20 && anchor.missing == 0);
+    CHECK(see.faulty && see.px == 20 && see.edge == PROBE_EDGE_RIGHT && see.unreadable);
+
+    // The left edge dragged 20 px out, and the old frame shown at the new origin: shifted by
+    // 20, a strip at the right, and a frame of another size.
+    struct probe_box grown = {40, 50, 360, 250};
+    desk = probe_desk_draw(grown, 1, 300, 200, 0, 0);
+    CHECK(probe_find_border(&desk, 4, &border));
+    probe_judge_anchor(&desk, &border, &calibration, nowhere, &anchor);
+    probe_judge_see(&desk, &border, &calibration, nowhere, &see);
+    CHECK(anchor.faulty && anchor.shift == 20 && anchor.worst == PROBE_MARK_TOP_RIGHT);
+    CHECK(see.faulty && see.px == 20 && see.edge == PROBE_EDGE_RIGHT && !see.unreadable && see.other_size);
+    CHECK(see.picture_width == 300 && see.picture_height == 200);
+
+    // The bottom edge grown 20 px with the old frame: the strip at the bottom, the bottom
+    // markers 20 px above their place.
+    struct probe_box taller = {60, 50, 360, 270};
+    desk = probe_desk_draw(taller, 1, 300, 200, 0, 0);
+    CHECK(probe_find_border(&desk, 4, &border));
+    probe_judge_anchor(&desk, &border, &calibration, nowhere, &anchor);
+    probe_judge_see(&desk, &border, &calibration, nowhere, &see);
+    CHECK(anchor.faulty && anchor.shift == 20 && anchor.worst == PROBE_MARK_BOTTOM_LEFT);
+    CHECK(see.faulty && see.px == 20 && see.edge == PROBE_EDGE_BOTTOM && see.other_size);
+
+    // The top-left corner dragged in by 30 and 10 with the new frame at the old origin: the
+    // picture 30 px left and 10 px up of its place.
+    struct probe_box corner = {90, 60, 360, 250};
+    desk = probe_desk_draw(corner, 1, 270, 190, -30, -10);
+    CHECK(probe_find_border(&desk, 4, &border));
+    probe_judge_anchor(&desk, &border, &calibration, nowhere, &anchor);
+    CHECK(anchor.faulty && anchor.shift == 30);
+
+    // The right edge grown fast, the frame of the new size in place: nothing, however large.
+    struct probe_box wide = {60, 50, 420, 250};
+    desk = probe_desk_draw(wide, 1, 360, 200, 0, 0);
+    CHECK(probe_find_border(&desk, 4, &border));
+    probe_judge_anchor(&desk, &border, &calibration, nowhere, &anchor);
+    probe_judge_see(&desk, &border, &calibration, nowhere, &see);
+    CHECK(!anchor.faulty && !see.faulty && see.picture_width == 360);
+
+    // The drags' pointer paths: steps of 40 to 120 px, through each target in turn, back where
+    // they started, the same for the same seed.
+    struct probe_rng rng = {7}, again = {7};
+    static const int32_t targets[] = {200, -150, 200, 0};
+    int32_t path[256], path_again[256];
+    int count = probe_path(&rng, targets, 4, 40, 120, path, 256);
+    CHECK(count > 0 && count == probe_path(&again, targets, 4, 40, 120, path_again, 256));
+    CHECK(memcmp(path, path_again, (size_t)count * sizeof path[0]) == 0);
+    CHECK(path[count - 1] == 0);
+    int32_t at = 0, low = 0, high = 0;
+    int bad_step = 0, reached = 0;
+    for (int i = 0; i < count; i++) {
+        int32_t step = path[i] - at;
+        if (step < 0) step = -step;
+        int on_target = path[i] == targets[reached];
+        if (step > 120 || (step < 40 && !on_target)) bad_step++;
+        if (on_target && reached < 3) reached++;
+        if (path[i] < low) low = path[i];
+        if (path[i] > high) high = path[i];
+        at = path[i];
+    }
+    CHECK(bad_step == 0 && low == -150 && high == 200 && reached == 3);
+    int ends = 0;
+    for (int i = 0; i < 1000; i++) {
+        int32_t pause = probe_rng_between(&rng, 4, 8);
+        if (pause < 4 || pause > 8) ends = -1000;
+        if (pause == 4 || pause == 8) ends++;
+    }
+    CHECK(ends > 0);
+}
+// probe judge checks end
+
 int main(int argc, char **argv) {
     resize_decisions();
     resize_predraw_decisions();
+    probe_judge_arithmetic();
     function_keys_reach_the_scene();
     pointer_buttons();
     first_window_placement();
