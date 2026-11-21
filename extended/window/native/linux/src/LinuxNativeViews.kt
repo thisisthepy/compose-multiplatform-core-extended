@@ -103,18 +103,29 @@ internal class LinuxNativeViews(
         applyLayout(slot)
     }
 
+    private fun focusEvent(kind: Int, slotId: Int): WindowEvent = WindowEvent(
+        kind = kind,
+        x = 0f,
+        y = 0f,
+        buttons = 0,
+        keyCode = slotId,
+        modifiers = 0,
+        codePoint = 0,
+        text = "",
+    )
+
     override fun focus(id: Int) {
         val slot = slots[id] ?: return
         val display = displayProvider() ?: return
         val previous = focusedSlotId
         if (previous != null && previous != id) {
             focusedSlotId = null
-            dispatchEvent(WindowEvent(kind = WindowEvent.NATIVE_VIEW_FOCUS_OUT, keyCode = previous))
+            dispatchEvent(focusEvent(WindowEvent.NATIVE_VIEW_FOCUS_OUT, previous))
         }
         XSetInputFocus(display, slot.childWindow, RevertToParent, CurrentTime.toULong())
         XFlush(display)
         focusedSlotId = id
-        dispatchEvent(WindowEvent(kind = WindowEvent.NATIVE_VIEW_FOCUS_IN, keyCode = id))
+        dispatchEvent(focusEvent(WindowEvent.NATIVE_VIEW_FOCUS_IN, id))
     }
 
     override fun focusScene() {
@@ -126,7 +137,7 @@ internal class LinuxNativeViews(
             XSetInputFocus(display, parent, RevertToParent, CurrentTime.toULong())
             XFlush(display)
         }
-        dispatchEvent(WindowEvent(kind = WindowEvent.NATIVE_VIEW_FOCUS_OUT, keyCode = previous))
+        dispatchEvent(focusEvent(WindowEvent.NATIVE_VIEW_FOCUS_OUT, previous))
     }
 
     override fun detach(id: Int) {
