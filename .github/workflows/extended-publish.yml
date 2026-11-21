@@ -102,10 +102,9 @@ env:
     -Dorg.gradle.internal.repository.initial.backoff=1000
     -Dorg.gradle.internal.http.connectionTimeout=120000
     -Dorg.gradle.internal.http.socketTimeout=120000
-  # Targets built and left out of the bundle. No consumer of the fork asks for them (2026-11-21:
-  # compose-rust builds its Compose from source; Gemstone, PythonMultiplatform and the plugin's
-  # samples use android, desktop, iosArm64, iosSimulatorArm64, macosArm64, linuxX64 and wasmJs),
-  # and they were 3,810 of the 17,844 files 1.11.1-ext.5 uploaded. all_targets publishes them.
+  # Targets built and left out of the bundle (fork owner, 2026-11-21). They were 3,810 of the
+  # 17,844 files 1.11.1-ext.5 uploaded. Every python-multiplatform developer pulls this fork from
+  # Central, so a target is cut only when none of them can need it. all_targets publishes them.
   CENTRAL_SKIP_TARGETS: >-
     tvosArm64 tvosSimulatorArm64 watchosArm64 watchosArm32 watchosSimulatorArm64 js
   # Every coordinate the bundle must carry. The check also follows every dependency and
