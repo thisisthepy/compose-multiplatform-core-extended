@@ -83,6 +83,10 @@ class MetalSurface {
         // The drawable can be larger than the window (see [resize]); what lies past the
         // window's edge is not shown.
         it.masksToBounds = true
+        // Two drawables rather than Core Animation's three: each is a texture the size of
+        // the window (6 MB at 1440 by 900 points on a 2x screen), and the third was only
+        // ever headroom. See [MAXIMUM_DRAWABLE_COUNT].
+        it.maximumDrawableCount = MAXIMUM_DRAWABLE_COUNT.toULong()
     }
 
     /** The window's size in pixels, which is the size every frame is drawn at. */
@@ -247,6 +251,19 @@ class MetalSurface {
     }
 
     companion object {
+        /**
+         * How many drawables the layer keeps: one on the screen and one being drawn.
+         *
+         * Each costs a texture the size of the drawable for as long as the layer lives, so
+         * the third that Core Animation keeps by default was 6 MB of IOSurface memory at
+         * 1440 by 900 points on a 2x screen. Set to two on a running Ember window it went
+         * from 18 MB to 12 MB, and 32 screen switches drew normally. A frame waits for a
+         * drawable in [nextDrawable] only when both are taken: one on the screen and one
+         * presented in a transaction that has not been committed yet, which is a second
+         * frame drawn in one transaction (see [drawableWaitMillis]).
+         */
+        internal const val MAXIMUM_DRAWABLE_COUNT = 2
+
         /** What the drawable's size is rounded up to, in pixels. */
         internal const val DRAWABLE_STEP = 256
 
