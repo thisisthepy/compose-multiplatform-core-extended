@@ -371,52 +371,35 @@ kotlin {
 
 ## GitHub Packages 의 개발 빌드
 
-`extended` 에 병합할 때마다 위의 모든 것(Compose, 창 모듈, 그리고 `org.thisisthepy` 아래로 옮긴 뒤의
-skiko-awt)을 GitHub Packages 에 `<version>-dev.<commit>` 으로 배포합니다. `<commit>` 은 병합 커밋의
-앞 열 글자입니다. 예: `1.11.1-ext.5-dev.0123456789`. 릴리스에는 `-dev.` 가 붙지 않으므로 둘이 섞이지
-않습니다. `.github/workflows/extended-publish.yml` 이 이 일을 합니다. 올리기 전에, 빌드 안의 어떤 POM
-이나 Gradle 모듈도 이 접미사 없는 포크 버전을 가리키지 않는지 확인하고, 작은 소비자
-(`extended/publish/consumer`)로 창 모듈과 그 아래 Compose 를 실제로 해석해 봅니다. 서명은 하지 않습니다.
-
-저장소는 `https://maven.pkg.github.com/thisisthepy/compose-multiplatform-core-extended` 입니다.
-GitHub Packages 는 공개 패키지라도 Maven 다운로드마다 인증을 요구합니다.
-
-- 이 저장소의 워크플로에서는 `packages: read` 를 준 `GITHUB_TOKEN` 으로 됩니다.
-- 다른 저장소의 워크플로를 포함해 그 밖의 곳에서는 `read:packages` 범위의 개인 액세스 토큰
-  (classic)을 씁니다. Maven 레지스트리는 배포한 저장소의 권한을 그대로 따르므로, 다른 저장소의
-  `GITHUB_TOKEN` 을 들여보내는 패키지별 접근 설정이 없습니다.
-
-```kotlin
-// settings.gradle.kts
-dependencyResolutionManagement {
-    repositories {
-        maven("https://maven.pkg.github.com/thisisthepy/compose-multiplatform-core-extended") {
-            credentials {
-                username = providers.environmentVariable("GITHUB_ACTOR").orNull ?: "token"
-                password = providers.environmentVariable("GITHUB_PACKAGES_TOKEN").get()
-            }
-            content { includeGroupByRegex("org\\.thisisthepy(\\..*)?") }
-        }
-        mavenCentral()
-        google()
-    }
-}
-```
-
-```yaml
-# 소비하는 쪽 워크플로
-env:
-  GITHUB_PACKAGES_TOKEN: ${{ secrets.THISISTHEPY_PACKAGES_TOKEN }}  # read:packages 를 준 PAT
-```
-
-포크 아티팩트는 모두 같은 `-dev.<commit>` 버전으로 지정합니다. 두 커밋의 빌드를 한 앱에 섞은 조합은
-아무도 시험하지 않았습니다. 패키지 목록은
-<https://github.com/orgs/thisisthepy/packages?repo_name=compose-multiplatform-core-extended> 에 있습니다.
+2026-11-14 부터 `extended` 에 병합해도 아무것도 배포하지 않습니다. `extended-publish.yml` 은 릴리스
+태그나 수동 실행(dispatch)으로만 시작하고, 업로드하는 워크플로가 브랜치 푸시, 풀 리퀘스트, 일정으로
+시작될 수 있으면 `extended/publish/check_publish_triggers.py` 가 실행을 실패시킵니다. 그 전에 배포한
+`<version>-dev.<commit>` 빌드는
+<https://github.com/orgs/thisisthepy/packages?repo_name=compose-multiplatform-core-extended> 에 남아
+있습니다(GitHub Packages 는 공개 패키지라도 다운로드마다 `read:packages` 토큰을 요구합니다). 로컬
+빌드는 `extended/publish-local-all.sh` 입니다.
 
 ## Maven Central 릴리스
 
-릴리스는 같은 워크플로가 Maven Central 로 냅니다. 릴리스가 되는 병합 커밋에 태그 `v<version>` 을
-달면, 서명해서 Sonatype Central Portal 로 올립니다. 아직 Central 에 올린 것은 없습니다
-([#124](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/124)). 배포 대상을
-건드리는 풀 리퀘스트는 릴리스 전체를 시험 삼아 돌립니다. 그 실행만을 위해 만든 키로 서명하고, 번들을
-Central 과 같은 기준으로 검사합니다.
+릴리스는 `.github/workflows/extended-publish.yml` 이 Maven Central 로 냅니다. 릴리스가 되는 병합
+커밋에 태그 `v<version>` 을 달거나, 그 태그를 지정해 수동 실행하면 서명해서 Sonatype Central Portal 로
+올리고, 수동 실행에서 `AUTOMATIC` 을 고르지 않는 한 누군가 Publish 를 누를 때까지 그곳에서 기다립니다.
+태그 없는 수동 실행(그리고 `suites: extended_publish` 로 실행한 CI)은 시험 실행입니다. 같은 번들을 그
+실행만을 위해 만든 키로 서명하고 Central 과 같은 기준으로 검사하며, 어디에도 올리지 않습니다.
+
+Sonatype 는 네임스페이스가 한 달에 올리는 파일 수와 바이트를 모두 세고, Central 의 버전은 바꿀 수
+없습니다. 그래서 릴리스에는 빌드가 만드는 전부가 아니라 소비자가 쓰는 것만 담습니다.
+
+- 워크플로의 `CENTRAL_SKIP_TARGETS` 에 있는 타깃(tvOS, watchOS, Kotlin/JS. Wasm 은 남습니다)은
+  라이브러리의 공유 메타데이터가 이름을 부르므로 빌드는 하되 번들에서 뺍니다
+  (`central_bundle.py stage --skip-target`). 루트도 남은 타깃만 나열하므로, 뺀 타깃의 소비자는 모듈이
+  그 타깃을 지원하지 않는다는 안내를 받습니다. `all_targets` 를 켜고 수동 실행하면 모든 타깃을 냅니다.
+- 파일마다 Central 이 요구하는 `.md5`, `.sha1` 과 `.asc` 만 붙이고, 선택인 `.sha256`, `.sha512` 는
+  붙이지 않습니다(`central_bundle.py sign --all-checksums` 가 붙입니다).
+- Javadoc jar 는 Central 이 허용하는 대로 비어 있고, sources jar 는 실제 소스입니다.
+- 릴리스마다 모든 모듈이 하나의 버전으로 나갑니다. 바뀌지 않은 모듈도 마찬가지입니다. 각 모듈의
+  메타데이터가 형제 모듈을 바로 그 버전으로 가리키므로, 하나라도 빠지면 아무도 배포하지 않은 좌표를
+  가리키게 됩니다. 변경은 한 릴리스로 모아서 냅니다.
+
+1.11.1-ext.5 기준으로 17,844 개 파일, 287 MB 가 9,356 개 파일, 약 256 MB 가 됩니다.
+

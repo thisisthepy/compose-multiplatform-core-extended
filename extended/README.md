@@ -400,55 +400,37 @@ the groups differ. Anything used with this fork has to be built against it.
 
 ## Dev builds on GitHub Packages
 
-Every merge into `extended` publishes everything above (Compose, the window modules and, once
-it moves under `org.thisisthepy`, skiko-awt) to GitHub Packages as
-`<version>-dev.<commit>`, where `<commit>` is the first ten characters of the merge commit:
-`1.11.1-ext.5-dev.0123456789`, for example. The `-dev.` part keeps these apart from releases,
-which never carry it. `.github/workflows/extended-publish.yml` does it, and before uploading
-it checks that no POM or Gradle module in the build names a fork version without that suffix,
-and resolves a window module and the Compose under it from a small consumer
-(`extended/publish/consumer`). The builds are not signed.
-
-The repository is `https://maven.pkg.github.com/thisisthepy/compose-multiplatform-core-extended`.
-GitHub Packages asks for credentials on every Maven download, public packages included:
-
-- In a workflow of this repository, `GITHUB_TOKEN` with `packages: read` works.
-- Anywhere else, including another repository's workflow, use a personal access token
-  (classic) with the `read:packages` scope. The Maven registry takes its permissions from the
-  repository it was published from, so it has no per-package access setting that would let
-  another repository's `GITHUB_TOKEN` in.
-
-```kotlin
-// settings.gradle.kts
-dependencyResolutionManagement {
-    repositories {
-        maven("https://maven.pkg.github.com/thisisthepy/compose-multiplatform-core-extended") {
-            credentials {
-                username = providers.environmentVariable("GITHUB_ACTOR").orNull ?: "token"
-                password = providers.environmentVariable("GITHUB_PACKAGES_TOKEN").get()
-            }
-            content { includeGroupByRegex("org\\.thisisthepy(\\..*)?") }
-        }
-        mavenCentral()
-        google()
-    }
-}
-```
-
-```yaml
-# In the consumer's workflow
-env:
-  GITHUB_PACKAGES_TOKEN: ${{ secrets.THISISTHEPY_PACKAGES_TOKEN }}  # a PAT with read:packages
-```
-
-Ask for every fork artifact at the same `-dev.<commit>` version; two commits' builds mixed in
-one application are not a combination anyone tested. The packages are listed at
-<https://github.com/orgs/thisisthepy/packages?repo_name=compose-multiplatform-core-extended>.
+Merges into `extended` no longer publish anything (2026-11-14): `extended-publish.yml` starts
+only from a release tag or a dispatch, and `extended/publish/check_publish_triggers.py` fails
+its run when any workflow that uploads could be started by a branch push, a pull request or a
+schedule. The `<version>-dev.<commit>` builds published before then stay at
+<https://github.com/orgs/thisisthepy/packages?repo_name=compose-multiplatform-core-extended>
+(GitHub Packages asks for a token with `read:packages` on every download, public packages
+included). A local build is `extended/publish-local-all.sh`.
 
 ## Releases on Maven Central
 
-Releases go to Maven Central from the same workflow: a tag `v<version>` on the merge commit that
-makes the release, through the Sonatype Central Portal, signed. Nothing is on Central yet
-([#124](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/124)). A pull
-request that touches what is published runs the whole release as a dry run, signed with a key
-made for that run, and checks the bundle the way Central does.
+Releases go to Maven Central from `.github/workflows/extended-publish.yml`: a tag `v<version>`
+on the merge commit that makes the release, or a dispatch naming that tag, through the Sonatype
+Central Portal, signed, waiting there for someone to press Publish unless the dispatch asks for
+`AUTOMATIC`. A dispatch without a tag (and the dispatched CI, `suites: extended_publish`) is a
+dry run: the same bundle, signed with a key made for that run, checked the way Central checks
+it, and uploaded nowhere.
+
+Sonatype counts every file and byte a namespace uploads in a month, and a version on Central is
+never replaced, so a release carries what its consumers use, not everything the build makes:
+
+- The targets in the workflow's `CENTRAL_SKIP_TARGETS` (tvOS, watchOS and Kotlin/JS; Wasm stays)
+  are built, because the libraries' shared metadata names them, and left out of the bundle
+  (`central_bundle.py stage --skip-target`); the roots then list only the targets that are
+  there, so a consumer on a left-out target is told the module does not support it. A dispatch
+  with `all_targets` publishes every target.
+- Each file gets the `.md5` and `.sha1` Central requires and its `.asc`, not the optional
+  `.sha256` and `.sha512` (`central_bundle.py sign --all-checksums` writes them).
+- Javadoc jars are empty, as Central allows; sources jars are the real ones.
+- Every module goes out at the one version line on each release, unchanged ones included: each
+  module's metadata names its siblings at that exact version, so a release without one of them
+  would point consumers at a coordinate nobody published. Batch changes into one release.
+
+For 1.11.1-ext.5 that is 9,356 files and about 256 MB instead of 17,844 files and 287 MB.
+
