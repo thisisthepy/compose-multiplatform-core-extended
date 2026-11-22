@@ -56,6 +56,15 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   are the crosshair, and grab and grabbing are the hand. The Windows window sets them with
   `dxc_native_set_cursor_id` (`Win32Loop.setCursorShape`) and the X11 window with
   `X11Window.setCursorShape`. The six-shape `setCursor` calls are unchanged.
+- **Feature.** Entry menus as Windows' own popup menu (compose-rust FR-33.2, the Windows part):
+  `dxc_native_popup_menu` builds a Win32 menu from common's `encodePopupMenu` lines
+  (`win32_popup_menu.h`) and puts it up with `TrackPopupMenuEx` below the anchor, keeping the anchor
+  uncovered (`TPMPARAMS.rcExclude`), and answers the chosen path; `dxc_native_popup_menu_close` takes
+  it down (`EndMenu`). The shortcut is text after a tab, which Windows lines up itself, never an
+  accelerator; an ampersand is shown, not a mnemonic; pictures are 32-bit premultiplied bitmaps.
+  Reached from the Kotlin/Native window as `Win32PopupMenu.show`/`close` and from the GraalVM window
+  as `Win32GraalWindow.showPopupMenu`/`closePopupMenu`, the same C on both paths.
+
 - **Feature.** Entry menus as the operating system's own on macOS (compose-rust FR-33.2): common
   `PopupMenuEntry` (item with label, shortcut text, enabled, checked and an optional picture;
   separator; submenu) and the line form both macOS paths read (`encodePopupMenu`). The Kotlin/Native

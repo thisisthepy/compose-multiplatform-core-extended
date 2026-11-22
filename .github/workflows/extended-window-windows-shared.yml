@@ -105,6 +105,15 @@ jobs:
           cl /nologo /std:c11 /Ic /Icinterop\include /Foout\ c\test\win32_shared_test.c /Feout\win32_shared_test.exe /link out\dxc_win32_window.lib d3d12.lib dxgi.lib dxguid.lib dcomp.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib || exit /b 1
           out\win32_shared_test.exe
 
+      # FR-33.2 (compose-rust) criterion 9: the entry menu is a Win32 popup menu. A window puts
+      # one up with dxc_native_popup_menu, a timer saves the screen around it and ends it. The
+      # picture is uploaded for a person to look at; the step checks only that the menu came up
+      # and ended with nothing chosen.
+      - name: Entry menu capture (FR-33.2)
+        run: |
+          cl /nologo /std:c11 /Ic /Icinterop\include /Foout\ c\test\win32_popup_menu_shot.c /Feout\win32_popup_menu_shot.exe /link out\dxc_win32_window.lib d3d12.lib dxgi.lib dxguid.lib dcomp.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib || exit /b 1
+          out\win32_popup_menu_shot.exe out\popup-menu.bmp || exit /b 1
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-shared-msvc-${{ matrix.os }}
@@ -613,6 +622,7 @@ jobs:
             extended/window/windows-shared/out/set-display-scale.log
             extended/window/windows-shared/out/frames-*/
             extended/window/windows-shared/out/lag-probe/
+            extended/window/windows-shared/out/popup-menu.bmp
 
   kotlin:
     name: windows-shared Kotlin/Native (mingwX64 klib build and test)
