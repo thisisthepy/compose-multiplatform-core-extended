@@ -601,7 +601,13 @@ static NSMenu *dxc_text_menu(id target) {
     return menu;
 }
 
-@interface DxcView : NSView <NSTextInputClient>
+@interface DxcView : NSView <NSTextInputClient> {
+@public
+    BOOL _inSetFrameSize;
+    BOOL _hasCachedTitleBar;
+    float _cachedTitleBar[6];
+}
+- (void)dxcRefreshTitleBar;
 @end
 
 /** True once the window has been closed, so the renderer knows to stop. */
@@ -625,6 +631,24 @@ int32_t dxc_native_window_closed(void) {
 }
 - (void)windowDidResignKey:(NSNotification *)notification {
     atomic_store(&dxc_window_key, false);
+}
+- (void)windowDidResize:(NSNotification *)notification {
+    NSWindow *window = notification.object;
+    if ([window.contentView isKindOfClass:[DxcView class]]) {
+        [(DxcView *)window.contentView dxcRefreshTitleBar];
+    }
+}
+- (void)windowDidEnterFullScreen:(NSNotification *)notification {
+    NSWindow *window = notification.object;
+    if ([window.contentView isKindOfClass:[DxcView class]]) {
+        [(DxcView *)window.contentView dxcRefreshTitleBar];
+    }
+}
+- (void)windowDidExitFullScreen:(NSNotification *)notification {
+    NSWindow *window = notification.object;
+    if ([window.contentView isKindOfClass:[DxcView class]]) {
+        [(DxcView *)window.contentView dxcRefreshTitleBar];
+    }
 }
 @end
 
@@ -1054,17 +1078,51 @@ void dxc_native_set_cursor(int32_t shape) {
     dxc_push_event(record);
 }
 
+// Reads the title bar geometry once AppKit has laid the window out. Never called inside
+// setFrameSize:, because AppKit updates window.frame before window.contentLayoutRect and a
+// read in between inflates the bar height by the change in window height.
+- (void)dxcRefreshTitleBar {
+    NSWindow *window = self.window;
+    if (window == nil || _inSetFrameSize) {
+        return;
+    }
+    [window layoutIfNeeded];
+    _cachedTitleBar[0] = (float)window.frame.size.height;
+    _cachedTitleBar[1] = (float)window.contentLayoutRect.size.height;
+    _cachedTitleBar[2] = -1;
+    _cachedTitleBar[3] = -1;
+    NSButton *close = [window standardWindowButton:NSWindowCloseButton];
+    NSButton *zoom = [window standardWindowButton:NSWindowZoomButton];
+    if (close != nil && zoom != nil) {
+        _cachedTitleBar[2] = (float)close.frame.origin.x;
+        _cachedTitleBar[3] = (float)NSMaxX(zoom.frame);
+    }
+    _cachedTitleBar[4] = window.toolbar != nil ? 1 : 0;
+    _cachedTitleBar[5] = (float)NSProcessInfo.processInfo.operatingSystemVersion.majorVersion;
+    _hasCachedTitleBar = YES;
+}
+
 // The window changed size. The layer is told first, because a drawable handed out at the
 // old size would be drawn into at the new one, and the scene is told through the queue so
 // that it changes its mind between frames rather than during one.
 - (void)setFrameSize:(NSSize)size {
+    BOOL wasInSetFrameSize = _inSetFrameSize;
+    _inSetFrameSize = YES;
+    CAMetalLayer *layer = [self.layer isKindOfClass:[CAMetalLayer class]]
+        ? (CAMetalLayer *)self.layer : nil;
+    BOOL prevPresentsWithTransaction = layer != nil ? layer.presentsWithTransaction : NO;
+    if (layer != nil && !dxc_legacy_resize()) {
+        layer.presentsWithTransaction = YES;
+    }
     NSSize old_size = self.frame.size;
     [super setFrameSize:size];
     dxc_vprobe_set_frame(old_size, size);
-    CAMetalLayer *layer = (CAMetalLayer *)self.layer;
     CGFloat scale = self.window.backingScaleFactor > 0 ? self.window.backingScaleFactor : 1;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
     layer.contentsScale = scale;
     layer.drawableSize = CGSizeMake(size.width * scale, size.height * scale);
+    [CATransaction commit];
 
     struct dxc_event record;
     memset(&record, 0, sizeof record);
@@ -1090,20 +1148,24 @@ void dxc_native_set_cursor(int32_t shape) {
             dxc_resize_stats.callback_max_ticks = spent;
         }
     }
+    if (layer != nil && !self.inLiveResize) {
+        layer.presentsWithTransaction = prevPresentsWithTransaction;
+    }
+    _inSetFrameSize = wasInSetFrameSize;
 }
 
-// A drag of an edge is a run of frames that must reach the screen in step with the
-// window's own geometry. The layer presents inside the transaction that moves the window
-// for as long as the drag lasts, so a frame and the edge it was drawn for appear together
-// rather than the edge arriving first and the picture a frame later.
 - (void)viewWillStartLiveResize {
     [super viewWillStartLiveResize];
-    ((CAMetalLayer *)self.layer).presentsWithTransaction = !dxc_legacy_resize();
+    if (!dxc_legacy_resize() && [self.layer isKindOfClass:[CAMetalLayer class]]) {
+        ((CAMetalLayer *)self.layer).presentsWithTransaction = YES;
+    }
 }
 
 - (void)viewDidEndLiveResize {
     [super viewDidEndLiveResize];
-    ((CAMetalLayer *)self.layer).presentsWithTransaction = NO;
+    if (!dxc_legacy_resize() && [self.layer isKindOfClass:[CAMetalLayer class]]) {
+        ((CAMetalLayer *)self.layer).presentsWithTransaction = NO;
+    }
     dxc_native_resize_report();
 }
 
@@ -1288,9 +1350,11 @@ int32_t dxc_native_window_open(
             window.contentMinSize = NSMakeSize(dxc_options.min_width, dxc_options.min_height);
         }
         window.releasedWhenClosed = NO;
-        // Held for the life of the window, which owns it through the delegate reference.
+        // Held for the life of the process; stateless across windows.
         static DxcWindowDelegate *delegate;
-        delegate = [[DxcWindowDelegate alloc] init];
+        if (delegate == nil) {
+            delegate = [[DxcWindowDelegate alloc] init];
+        }
         window.delegate = delegate;
 
         DxcView *view = [[DxcView alloc] initWithFrame:frame];
@@ -1301,8 +1365,13 @@ int32_t dxc_native_window_open(
         layer.framebufferOnly = NO;
         // Where the layer and its drawable disagree about size, anchored to the corner
         // and cropped rather than scaled: a stale frame then looks like an old picture
-        // that has not caught up, not like a stretched one.
-        if (!dxc_legacy_resize()) layer.contentsGravity = kCAGravityTopLeft;
+        // that has not caught up, not like a stretched one. Presenting with the Core
+        // Animation transaction is enabled only during live resize and setFrameSize: so
+        // steady-state rendering avoids main-thread present stalls.
+        if (!dxc_legacy_resize()) {
+            layer.contentsGravity = kCAGravityTopLeft;
+        }
+        layer.masksToBounds = YES;
         // Drawn at the density of the screen the window is on rather than in points, so
         // text is as sharp as the display can draw it.
         layer.contentsScale = window.backingScaleFactor;
@@ -1310,6 +1379,10 @@ int32_t dxc_native_window_open(
                                         height * layer.contentsScale);
         view.wantsLayer = YES;
         view.layer = layer;
+        view.layerContentsRedrawPolicy = NSViewLayerContentsRedrawDuringViewResize;
+        if (@available(macOS 14.0, *)) {
+            view.clipsToBounds = YES;
+        }
 
         // The application itself, named before anything is asked of it. The toolkit used
         // to do this on its way past and nothing does now.
@@ -1349,6 +1422,7 @@ int32_t dxc_native_window_open(
         }
         [window center];
         [window makeKeyAndOrderFront:nil];
+        [view dxcRefreshTitleBar];
         [NSApp activateIgnoringOtherApps:YES];
         dxc_vprobe_start(window, view, layer);
 
@@ -1391,14 +1465,13 @@ void dxc_native_window_title_bar(void *view_pointer, float *out) {
         if (window == nil) {
             return;
         }
-        out[4] = window.toolbar != nil ? 1 : 0;
-        out[0] = (float)window.frame.size.height;
-        out[1] = (float)window.contentLayoutRect.size.height;
-        NSButton *close = [window standardWindowButton:NSWindowCloseButton];
-        NSButton *zoom = [window standardWindowButton:NSWindowZoomButton];
-        if (close != nil && zoom != nil) {
-            out[2] = (float)close.frame.origin.x;
-            out[3] = (float)NSMaxX(zoom.frame);
+        if (!view->_inSetFrameSize) {
+            [view dxcRefreshTitleBar];
+        }
+        if (view->_hasCachedTitleBar) {
+            memcpy(out, view->_cachedTitleBar, sizeof view->_cachedTitleBar);
+        } else {
+            out[4] = window.toolbar != nil ? 1 : 0;
         }
     }
     });
