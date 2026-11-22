@@ -149,6 +149,9 @@ internal class Win32CWindowBackend(private val native: Win32NativeWindow) : Win3
 
     override fun bounds(): WindowBounds? = on(null) { readBounds { x, y, w, h -> dxc_native_window_bounds(x, y, w, h) } }
 
+    override val nativeViews: org.thisisthepy.compose.window.NativeViews?
+        get() = if (released) null else native.nativeViews
+
     override fun focus(): Boolean = on(false) { dxc_native_window_focus() != 0 }
 
     override val isActive: Boolean get() = on(false) { dxc_native_window_is_active() != 0 }
@@ -189,7 +192,12 @@ internal class Win32CWindowBackend(private val native: Win32NativeWindow) : Win3
 
     override fun takeCloseRequest(): Boolean = on(false) { dxc_native_take_close_request() != 0 }
 
-    override fun destroy() = on(Unit) { dxc_native_window_destroy(native.window) }
+    override fun destroy() = on(Unit) {
+        // The window takes the views out itself as it goes; through the views here, so they
+        // forget their slots and the keyboard is given back first.
+        native.nativeViews.detachAll()
+        dxc_native_window_destroy(native.window)
+    }
 
     override fun release() {
         if (released) return
