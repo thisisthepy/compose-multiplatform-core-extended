@@ -871,6 +871,11 @@ static int edge_gap_count, edge_step_low, edge_step_high;
 // between where the pointer asked a dragged side to be and where that side was just before
 // the next move (or 100 ms after the last).
 static long follow_pointer_px, follow_side_px;
+// Where each drag ended: the largest distance, over the mode's drags, between the dragged sides
+// and where the pointer let go, once the window has settled. Waiting for a composition before
+// each step (fix/926) merges fast moves, so the sides cover less of the pointer's path; they
+// must still end where the pointer did.
+static int settle_worst = -1;
 static int follow_lags[8192];
 static int follow_lag_count;
 
@@ -930,7 +935,8 @@ static void edge_calibrate(HWND window, const char *name) {
 }
 
 /** The lag of a dragged side: where the pointer asked it to be against where it is. */
-static void follow_lag(const RECT *at, const RECT *outer, int gx, int gy, int ysign, int32_t asked) {
+/** How far the dragged sides of [at] are from where the pointer asked them to be ([asked] px along the drag). */
+static int side_lag(const RECT *at, const RECT *outer, int gx, int gy, int ysign, int32_t asked) {
     int lag = 0;
     if (gx != 0) {
         LONG want = (gx < 0 ? outer->left : outer->right) + gx * asked;
@@ -943,6 +949,11 @@ static void follow_lag(const RECT *at, const RECT *outer, int gx, int gy, int ys
         int y = (int)(want > have ? want - have : have - want);
         if (y > lag) lag = y;
     }
+    return lag;
+}
+
+static void follow_lag(const RECT *at, const RECT *outer, int gx, int gy, int ysign, int32_t asked) {
+    int lag = side_lag(at, outer, gx, gy, ysign, asked);
     if (follow_lag_count < (int)(sizeof follow_lags / sizeof follow_lags[0])) follow_lags[follow_lag_count++] = lag;
 }
 
@@ -1063,6 +1074,12 @@ static void edge_drag(HWND window, struct probe_rng *rng, int gx, int gy, int ys
     send_mouse(MOUSEEVENTF_LEFTUP, x, y);
     // Settled frames of the drag's end are judged too: they must be clean.
     Sleep(400);
+    if (moves > 0) {
+        RECT settled;
+        GetWindowRect(window, &settled);
+        int off = side_lag(&settled, &outer, gx, gy, ysign, path[moves - 1]);
+        if (off > settle_worst) settle_worst = off;
+    }
     // The pointer's travel along each moving axis (the path starts at 0), against the
     // dragged sides' travel.
     int32_t path_low = 0, path_high = 0;
@@ -1158,8 +1175,8 @@ static DWORD WINAPI edge_thread(LPVOID unused) {
     if (follow_pointer_px > 0) {
         qsort(follow_lags, (size_t)follow_lag_count, sizeof follow_lags[0], compare_ints);
         fprintf(stderr,
-                "probe: follow %s sides %ld px of pointer %ld px = %ld %%; lag moves=%d px median %d p95 %d max %d\n",
-                probe_mode, follow_side_px, follow_pointer_px, follow_side_px * 100 / follow_pointer_px,
+                "probe: follow %s sides %ld px of pointer %ld px = %ld %%; settled worst %d px; lag moves=%d px median %d p95 %d max %d\n",
+                probe_mode, follow_side_px, follow_pointer_px, follow_side_px * 100 / follow_pointer_px, settle_worst,
                 follow_lag_count, follow_lag_count > 0 ? follow_lags[follow_lag_count / 2] : 0,
                 follow_lag_count > 0 ? follow_lags[follow_lag_count * 95 / 100] : 0,
                 follow_lag_count > 0 ? follow_lags[follow_lag_count - 1] : 0);

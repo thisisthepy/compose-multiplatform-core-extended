@@ -349,10 +349,12 @@ jobs:
       #
       # Gates: every run finishes with a verdict; on windows-2025 the judges are available; on
       # the GDI route, the default, they judged frames in every mode, found at most 2 % faulty
-      # over all modes, and in every mode the dragged sides followed at least 80 % of the
-      # pointer's travel ("probe: follow"), so a route cannot pass by not following (run
-      # 44985517612: GDI followed all of it in every drag, DirectComposition 41 of 248 px on
-      # the right drag and 75 to 215 of 312 on the top-left one; 80 leaves room for WARP). The
+      # over all modes, and in every mode every drag ended with the dragged sides within 2 px of
+      # where the pointer let go ("probe: follow ... settled worst N px"), so a route cannot pass
+      # by not following. How much of the pointer's path the sides covered is printed, not
+      # gated: waiting for a composition before every step (fix/926, the pace cost the owner
+      # accepted) merges fast moves, and fork-train-4 (45064211320) had GDI covering 43 to 100 %
+      # with 1 faulty frame of 809 judged. The
       # DirectComposition route is printed, not gated, with two comparison ways beside it; its
       # gate comes in its own PR once a run shows its order and backing under 2 %.
       #
@@ -437,14 +439,16 @@ jobs:
               fi
               # How far the dragged sides followed the pointer, over the mode's runs (printed for
               # both routes; gated on GDI below). Each run's own line follows.
-              side=0 pointer=0
+              side=0 pointer=0 settled=-1
               for log in out/judge-$route-$mode-?.log; do
                 line=$(grep -h "probe: follow $mode sides" "$log" | head -1 || true)
                 side=$((side + $(field '.* sides ([0-9]+) px of pointer.*' "$line" | grep . || echo 0)))
                 pointer=$((pointer + $(field '.* of pointer ([0-9]+) px.*' "$line" | grep . || echo 0)))
+                s=$(field '.* settled worst ([0-9]+) px.*' "$line" | grep . || echo -1)
+                if [ "$s" -gt "$settled" ]; then settled=$s; fi
               done
               followed=$([ "$pointer" -gt 0 ] && echo $((side * 100 / pointer)) || echo 0)
-              echo "follow $mode $route: sides $side px of pointer $pointer px = $followed %"
+              echo "follow $mode $route: sides $side px of pointer $pointer px = $followed %, settled worst $settled px"
               grep -h "probe: follow $mode sides" out/judge-$route-$mode-?.log | sed "s/^/  $route /" || true
               grep -h 'compose-rust: drag pace' out/judge-$route-$mode-?.log |
                 sed -nE 's/.*= ([0-9.]+) steps\/s.*/\1/p' |
@@ -453,8 +457,11 @@ jobs:
                 if [ "$pointer" -eq 0 ]; then
                   echo "gdi $mode: no follow line (the probe did not drag)" >&2
                   status=1
-                elif [ "$followed" -lt 80 ]; then
-                  echo "gdi $mode: the window followed $followed % of the pointer's travel, under 80 %" >&2
+                elif [ "$settled" -lt 0 ]; then
+                  echo "gdi $mode: no settled line (the probe did not read where the drag ended)" >&2
+                  status=1
+                elif [ "$settled" -gt 2 ]; then
+                  echo "gdi $mode: a drag ended with the dragged sides $settled px from where the pointer let go, over 2 px" >&2
                   status=1
                 fi
               fi
@@ -484,7 +491,7 @@ jobs:
             echo "judged gdi (the gate): $gdi_faulty faulty of $gdi_judged judged frames, limit 2 %"
             test "$((gdi_faulty * 50))" -le "$gdi_judged" || { echo "gdi: $gdi_faulty faulty of $gdi_judged judged frames in the judged drags, above 2 %" >&2; status=1; }
           fi
-          echo "The GDI route above is gated (2 % of its judged frames over all modes, where the judges are available, and 80 % of the pointer's travel followed in every mode). The DirectComposition rows are printed, not gated; dcomp-nobacking and dcomp-order are comparisons."
+          echo "The GDI route above is gated (2 % of its judged frames over all modes, where the judges are available, and every drag ending within 2 px of where the pointer let go). The DirectComposition rows are printed, not gated; dcomp-nobacking and dcomp-order are comparisons."
           echo "judged drags, every mode together: route, faulty frames of judged frames"
           for route in $routes; do
             awk -v r="$route" '$1 == r { j += $2; f += $3 } END { if (j > 0) printf "judged total %s: %d faulty of %d judged (%.1f %%)\n", r, f, j, 100 * f / j }' out/judge-totals.txt 2>/dev/null || true
@@ -579,7 +586,7 @@ jobs:
               grep -h 'probe: dpi\|probe: mode' "$log" | head -1 | sed "s/^/  /" || true
               anchor=$(grep -h "probe: anchor $mode judged" "$log" | sed -nE 's/.* judged ([0-9]+) faulty ([0-9]+) max shift ([0-9]+) px.*/judged=\1 anchor_faulty=\2 worst_shift_px=\3/p')
               see=$(grep -h "probe: see-through $mode judged" "$log" | sed -nE 's/.* faulty ([0-9]+) max ([0-9]+) px.*/see_through_faulty=\1 widest_px=\2/p')
-              follow=$(grep -h "probe: follow $mode sides" "$log" | sed -nE 's/.*= ([0-9]+) %; lag (.*)/followed=\1% lag \2/p')
+              follow=$(grep -h "probe: follow $mode sides" "$log" | sed -nE 's/.*= ([0-9]+) %; settled worst ([0-9-]+) px; lag (.*)/followed=\1% settled=\2px lag \3/p')
               echo "judged2x $mode $route: ${anchor:-not judged} ${see} ${follow}"
             done
           done
