@@ -29,6 +29,7 @@ Derived placeholders (computed by the implementation, never read from the app):
 | `{{app_id}}` | MSIX application id: `name` reduced to ASCII letters and digits, `App` if it does not start with a letter |
 | `{{min_windows}}` / `{{max_windows_tested}}` | `10.0.17763.0` / `10.0.26100.0` |
 | `{{min_macos}}` | `13.0` |
+| `{{upgrade_code}}` | MSI `UpgradeCode` GUID derived deterministically (UUID v5) from `{{identifier}}` |
 
 How each value maps per format:
 

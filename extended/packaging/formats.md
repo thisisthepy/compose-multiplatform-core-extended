@@ -13,7 +13,8 @@ the table adds to them.
 Notes:
 
 - The Windows installer `.exe` is built with Velopack (`vpk pack`): `Setup.exe` plus the
-  full and delta release packages. There is no NSIS. The `.msi` (WiX) is on hold.
+  full and delta release packages. There is no NSIS. The `.msi` (WiX) build integration is
+  on hold; the WiX source template lives in `templates/app.wxs.in`.
 - `.pkg`, `.msix` and Flatpak are store formats. They are documented for store
   submission, or for use when a certificate exists. `.msi`, `.exe`, `.dmg` and the plain
   `.app` install unsigned and are the default distribution path.
