@@ -108,6 +108,9 @@ class TextMenuOnRightClickTest {
         window.makeKeyAndOrderFront(null)
         application.activateIgnoringOtherApps(true)
         val capture = platform.posix.getenv("DXC_TEXT_MENU_CAPTURE")?.toKString()
+        phase = "open"
+        turns(300) { window.keyWindow }
+        if (capture != null) pointAtMiddle(window)
         observer = NSNotificationCenter.defaultCenter.addObserverForName(
             name = NSMenuDidBeginTrackingNotification,
             `object` = null,
@@ -116,8 +119,10 @@ class TextMenuOnRightClickTest {
             val menu = note?.`object` as? NSMenu
             // NSMenuDidBeginTrackingNotification fires for every menu that tracks, including
             // system submenus (Writing Tools, AutoFill, Services) opened inside the one popup
-            // menu and the application menu bar. Count only top-level popup menus.
-            if (menu?.supermenu != null || menu === application.mainMenu) return@addObserverForName
+            // menu and the application menu bar. Compare with `==` (Obj-C isEqual:) rather than
+            // `===`, because Kotlin/Native wraps the same NSMenu pointer in distinct Kotlin
+            // references across calls.
+            if (menu?.supermenu != null || menu == application.mainMenu) return@addObserverForName
             menus++
             val items = menu?.itemArray?.mapNotNull { (it as? NSMenuItem)?.title } ?: emptyList()
             menuDescriptions += "phase=$phase title='${menu?.title}' items=$items"
@@ -130,9 +135,6 @@ class TextMenuOnRightClickTest {
                 dispatch_async(dispatch_get_main_queue()) { menu?.cancelTrackingWithoutAnimation() }
             }
         }
-        phase = "open"
-        turns(300) { window.keyWindow }
-        if (capture != null) pointAtMiddle(window)
         return window
     }
 
