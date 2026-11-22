@@ -5,10 +5,12 @@ package org.thisisthepy.compose.window.macos
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.TextToolbar
 import androidx.compose.ui.platform.TextToolbarStatus
+import kotlinx.cinterop.CValue
 import kotlinx.cinterop.useContents
 import platform.AppKit.NSMenu
 import platform.AppKit.NSMenuItem
 import platform.AppKit.NSView
+import platform.CoreGraphics.CGPoint
 import platform.CoreGraphics.CGPointMake
 
 /**
@@ -37,29 +39,37 @@ class MacosTextToolbar(private val view: () -> NSView) : TextToolbar {
         onCutRequested: (() -> Unit)?,
         onSelectAllRequested: (() -> Unit)?,
     ) {
-        val menu = NSMenu()
-        // In the order every other application on this platform puts them.
-        add(menu, TextCommand.Cut.title, onCutRequested)
-        add(menu, TextCommand.Copy.title, onCopyRequested)
-        add(menu, TextCommand.Paste.title, onPasteRequested)
-        if (onSelectAllRequested != null) {
-            menu.addItem(NSMenuItem.separatorItem())
-            add(menu, TextCommand.SelectAll.title, onSelectAllRequested)
-        }
+        val menu = buildMenu(onCopyRequested, onPasteRequested, onCutRequested, onSelectAllRequested)
         if (menu.numberOfItems.toInt() == 0) return
 
         val host = view()
-        // The rectangle is the selection's, in the scene's coordinates, which count down
-        // from the top; the view's count up from the bottom, so the menu goes at the
-        // bottom edge of the selection turned over.
+        val scale = host.window?.backingScaleFactor ?: 1.0
         val where = host.frame.useContents {
-            CGPointMake(rect.left.toDouble(), size.height - rect.bottom.toDouble())
+            menuLocation(rect, size.height, host.isFlipped(), scale)
         }
         shown = true
         status = TextToolbarStatus.Shown
         menu.popUpMenuPositioningItem(null, where, host)
         shown = false
         status = TextToolbarStatus.Hidden
+    }
+
+    internal fun buildMenu(
+        onCopyRequested: (() -> Unit)?,
+        onPasteRequested: (() -> Unit)?,
+        onCutRequested: (() -> Unit)?,
+        onSelectAllRequested: (() -> Unit)?,
+    ): NSMenu {
+        val menu = NSMenu()
+        // In the order every other application on this platform puts them.
+        add(menu, TextCommand.Cut.title, onCutRequested)
+        add(menu, TextCommand.Copy.title, onCopyRequested)
+        add(menu, TextCommand.Paste.title, onPasteRequested)
+        if (onSelectAllRequested != null) {
+            if (menu.numberOfItems.toInt() > 0) menu.addItem(NSMenuItem.separatorItem())
+            add(menu, TextCommand.SelectAll.title, onSelectAllRequested)
+        }
+        return menu
     }
 
     override fun hide() {
@@ -77,6 +87,22 @@ class MacosTextToolbar(private val view: () -> NSView) : TextToolbar {
         item.setAction(platform.darwin.sel_registerName("perform"))
         menu.addItem(item)
     }
+}
+
+/**
+ * Converts a selection rectangle in scene pixels to the bottom-left anchor point in the host
+ * view's point coordinates, accounting for backing scale and whether the view is flipped.
+ */
+internal fun menuLocation(
+    rect: Rect,
+    viewHeight: Double,
+    flipped: Boolean,
+    scale: Double,
+): CValue<CGPoint> {
+    val factor = if (scale > 0.0) scale else 1.0
+    val x = rect.left.toDouble() / factor
+    val y = if (flipped) rect.bottom.toDouble() / factor else viewHeight - rect.bottom.toDouble() / factor
+    return CGPointMake(x, y)
 }
 
 /** Holds the closure a menu item runs, because a menu item calls a selector on a target. */

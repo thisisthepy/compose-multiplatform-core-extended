@@ -1,4 +1,8 @@
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+@file:OptIn(
+    kotlinx.cinterop.ExperimentalForeignApi::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+    kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
+)
 
 package org.thisisthepy.compose.window.macos
 
@@ -7,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalTextToolbar
 import org.thisisthepy.compose.window.scene.PlatformCompositionLocals
 import kotlinx.cinterop.useContents
 import org.thisisthepy.compose.window.AccessibleElement
@@ -38,6 +43,8 @@ import platform.Foundation.NSMakeSize
 import platform.Foundation.NSRunLoop
 import platform.Foundation.dateWithTimeIntervalSinceNow
 import platform.Foundation.runMode
+import platform.darwin.dispatch_async
+import platform.darwin.dispatch_get_main_queue
 
 /** Where [WindowConfig] asks the window to open, when it gives both coordinates. */
 private fun WindowConfig.topLeft(): Pair<Int, Int>? {
@@ -77,6 +84,9 @@ class MacosWindowPlatform(
     private val clipboard = MacosClipboard(pasteboard)
     @Suppress("DEPRECATION")
     private val clipboardManager = MacosClipboardManager(pasteboard)
+    private val textToolbar = MacosTextToolbar {
+        checkNotNull(window) { "the window is not open" }.view
+    }
 
     /**
      * Whether the window puts up an edit menu of its own (Cut, Copy, Paste, Select All) on a
@@ -102,7 +112,7 @@ class MacosWindowPlatform(
     var systemTextMenu: Boolean = true
     private val idleSoak = IdleSoak()
 
-    /** Where the input method was last told the caret is, in points from the content's top left. */
+    /** Where the input method was last told the caret is, in pixels from the content's top left. */
     var imeSpot: Pair<Int, Int> = 0 to 0
         private set
 
@@ -139,6 +149,7 @@ class MacosWindowPlatform(
             created.initWindow()
             window = created
         }
+        created.imeSpot = imeSpot
         if (this !in MacosProcess.platforms) MacosProcess.platforms += this
         created.onEvent = { event ->
             if (event.kind == WindowEvent.KEY_DOWN && event.keyCode == KEY_ESCAPE) MacosProcess.escapePressed = true
@@ -187,10 +198,18 @@ class MacosWindowPlatform(
     @Composable
     @Suppress("DEPRECATION")
     override fun Provide(content: @Composable () -> Unit) {
-        CompositionLocalProvider(
-            LocalClipboard provides clipboard,
-            LocalClipboardManager provides clipboardManager,
-        ) { content() }
+        if (window != null) {
+            CompositionLocalProvider(
+                LocalClipboard provides clipboard,
+                LocalClipboardManager provides clipboardManager,
+                LocalTextToolbar provides textToolbar,
+            ) { content() }
+        } else {
+            CompositionLocalProvider(
+                LocalClipboard provides clipboard,
+                LocalClipboardManager provides clipboardManager,
+            ) { content() }
+        }
     }
 
     /**
@@ -214,9 +233,10 @@ class MacosWindowPlatform(
                 inPump = false
             }
         } else {
+            val effectiveWait = if (MacosProcess.wakePending.exchange(0) != 0) 0L else wait
             NSRunLoop.currentRunLoop.runMode(
                 NSDefaultRunLoopMode,
-                beforeDate = NSDate.dateWithTimeIntervalSinceNow(wait / 1000.0),
+                beforeDate = NSDate.dateWithTimeIntervalSinceNow(effectiveWait / 1000.0),
             )
             val current = window
             val sink = listener
@@ -225,6 +245,14 @@ class MacosWindowPlatform(
             }
         }
         for (each in MacosProcess.platforms.toList()) each.reportWindowChanges()
+    }
+
+    override fun wake() {
+        if (MacosProcess.wakePending.compareAndSet(0, 1)) {
+            dispatch_async(dispatch_get_main_queue()) {
+                MacosProcess.wakePending.store(0)
+            }
+        }
     }
 
     private fun turnHostWithoutWaiting() {
