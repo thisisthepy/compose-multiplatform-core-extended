@@ -22,6 +22,7 @@
 #include "win32_scheme.h"
 #include "win32_edit_menu.h"
 #include "win32_dpi.h"
+#include "win32_native_views.h"
 #include "win32_window.h"
 #include "win32_probe_judge.h"
 
@@ -1289,6 +1290,294 @@ static void fr72_dialogs_answer_what_the_reader_chose(void) {
     dxc_native_window_release(a.window);
 }
 
+// native view checks begin
+// Where a native view slot's container and view go, what of it shows and what its holes cut
+// (win32_native_views.h, compose-rust FR-81): the rules of common's NativeViewRegion.
+static int nv_rect_is(struct dxc_nv_rect r, int32_t x, int32_t y, int32_t width, int32_t height) {
+    return r.x == x && r.y == y && r.width == width && r.height == height;
+}
+
+static void fr81_native_view_placement_arithmetic(void) {
+    struct dxc_nv_rect frame = dxc_nv_rect_of(100, 100, 200, 200);
+    struct dxc_nv_rect clip = dxc_nv_rect_of(0, 150, 1000, 1000);
+    // Cut by the clip above: the container is the lower part, the view keeps its whole frame
+    // and starts 50 pixels above the container, so its lower part is what shows.
+    struct dxc_nv_rect bounds = dxc_nv_bounds(frame, 1, clip);
+    CHECK(nv_rect_is(bounds, 100, 150, 200, 150));
+    CHECK(nv_rect_is(dxc_nv_view_in_container(frame, bounds), 0, -50, 200, 200));
+    // No clip: the frame, and the view fills the container.
+    CHECK(nv_rect_is(dxc_nv_bounds(frame, 0, clip), 100, 100, 200, 200));
+    CHECK(nv_rect_is(dxc_nv_view_in_container(frame, frame), 0, 0, 200, 200));
+    // A clip on the right and bottom leaves the view where it was in the container.
+    struct dxc_nv_rect right = dxc_nv_bounds(frame, 1, dxc_nv_rect_of(0, 0, 250, 260));
+    CHECK(nv_rect_is(right, 100, 100, 150, 160));
+    CHECK(nv_rect_is(dxc_nv_view_in_container(frame, right), 0, 0, 200, 200));
+    // Scrolled all the way out of its clip: nothing shows, and a hidden slot never shows.
+    struct dxc_nv_rect gone = dxc_nv_bounds(frame, 1, dxc_nv_rect_of(0, 400, 1000, 100));
+    CHECK(dxc_nv_rect_empty(gone));
+    CHECK(!dxc_nv_shows(1, gone));
+    CHECK(dxc_nv_shows(1, bounds));
+    CHECK(!dxc_nv_shows(0, bounds));
+    // A negative size is no size.
+    CHECK(nv_rect_is(dxc_nv_rect_of(5, 5, -3, 4), 5, 5, 0, 4));
+    CHECK(dxc_nv_rect_empty(dxc_nv_intersect(dxc_nv_rect_of(0, 0, 10, 10), dxc_nv_rect_of(20, 20, 5, 5))));
+    // A hole is cut in the container's own coordinates, and only where it meets it.
+    struct dxc_nv_rect local = {0, 0, 0, 0};
+    CHECK(dxc_nv_hole_in_container(dxc_nv_rect_of(250, 250, 100, 100), bounds, &local));
+    CHECK(nv_rect_is(local, 150, 100, 100, 100));
+    CHECK(!dxc_nv_hole_in_container(dxc_nv_rect_of(400, 400, 10, 10), bounds, &local));
+    CHECK(!dxc_nv_hole_in_container(dxc_nv_rect_of(150, 160, 0, 10), bounds, &local));
+    // Corners: at most half the shorter side, never negative.
+    CHECK(dxc_nv_hole_radius(dxc_nv_rect_of(0, 0, 100, 40), 30) == 20);
+    CHECK(dxc_nv_hole_radius(dxc_nv_rect_of(0, 0, 100, 100), -5) == 0);
+    CHECK(dxc_nv_hole_radius(dxc_nv_rect_of(0, 0, 10, 10), 3) == 3);
+    // A rounded hole's region box is a pixel wider and taller; a square one is the hole.
+    CHECK(nv_rect_is(dxc_nv_round_region_box(dxc_nv_rect_of(4, 6, 20, 10), 3), 4, 6, 21, 11));
+    CHECK(nv_rect_is(dxc_nv_round_region_box(dxc_nv_rect_of(4, 6, 20, 10), 0), 4, 6, 20, 10));
+}
+
+static int nv_focus_is(const struct dxc_nv_focus_event *event, int32_t in, int32_t id) {
+    return event->in == in && event->id == id;
+}
+
+// The focus reports of common's NativeViewsTest, on the window's own copy of the rules, and
+// the event numbers they go out as, which are common's WindowEvent kinds.
+static void fr81_native_view_focus_reports(void) {
+    CHECK(DXC_EVENT_NATIVE_VIEW_FOCUS_IN == 19 && DXC_EVENT_NATIVE_VIEW_FOCUS_OUT == 20);
+    CHECK(DXC_EVENT_POINTER_ENTER == 21 && DXC_EVENT_POINTER_EXIT == 22);
+    struct dxc_nv_focus focus = {1, 0, 0};
+    struct dxc_nv_focus_event events[2];
+    CHECK(dxc_nv_focus_moved(&focus, 1, 1, events) == 1 && nv_focus_is(&events[0], 1, 1));
+    CHECK(dxc_nv_focus_moved(&focus, 1, 1, events) == 0);
+    CHECK(dxc_nv_focus_moved(&focus, 1, 2, events) == 2 && nv_focus_is(&events[0], 0, 1) &&
+          nv_focus_is(&events[1], 1, 2));
+    CHECK(dxc_nv_focus_moved(&focus, 0, 0, events) == 1 && nv_focus_is(&events[0], 0, 2));
+    CHECK(!focus.has_focused);
+    CHECK(dxc_nv_focus_moved(&focus, 0, 0, events) == 0);
+
+    // Deactivated: out; again: nothing; activated: in. The scene's focus is never reported.
+    CHECK(dxc_nv_focus_moved(&focus, 1, 3, events) == 1);
+    CHECK(dxc_nv_focus_key(&focus, 0, events) == 1 && nv_focus_is(&events[0], 0, 3));
+    CHECK(dxc_nv_focus_key(&focus, 0, events) == 0);
+    CHECK(dxc_nv_focus_key(&focus, 1, events) == 1 && nv_focus_is(&events[0], 1, 3));
+    CHECK(dxc_nv_focus_moved(&focus, 0, 0, events) == 1);
+    CHECK(dxc_nv_focus_key(&focus, 0, events) == 0);
+    CHECK(dxc_nv_focus_key(&focus, 1, events) == 0);
+
+    // A move while not active is kept and reported on activation.
+    struct dxc_nv_focus inactive = {0, 0, 0};
+    CHECK(dxc_nv_focus_moved(&inactive, 1, 4, events) == 0);
+    CHECK(inactive.has_focused && inactive.focused == 4);
+    CHECK(dxc_nv_focus_key(&inactive, 1, events) == 1 && nv_focus_is(&events[0], 1, 4));
+    // Slot 0 is a slot like any other.
+    struct dxc_nv_focus zero = {1, 0, 0};
+    CHECK(dxc_nv_focus_moved(&zero, 1, 0, events) == 1 && nv_focus_is(&events[0], 1, 0));
+    CHECK(dxc_nv_focus_moved(&zero, 0, 0, events) == 1 && nv_focus_is(&events[0], 0, 0));
+}
+// native view checks end
+
+// The native view events in the selected window's queue, in order: kind and slot (or x).
+static int nv_events(int32_t *kinds, int32_t *ids, int capacity) {
+    struct dxc_event event;
+    int count = 0;
+    while (dxc_native_poll_event(&event)) {
+        if (event.kind < DXC_EVENT_NATIVE_VIEW_FOCUS_IN || event.kind > DXC_EVENT_POINTER_EXIT) continue;
+        if (count < capacity) {
+            kinds[count] = event.kind;
+            ids[count] = event.key_code;
+        }
+        count++;
+    }
+    return count;
+}
+
+static int nv_client_rect_is(HWND parent, HWND child, LONG left, LONG top, LONG right, LONG bottom) {
+    RECT rect;
+    if (!GetWindowRect(child, &rect)) return 0;
+    MapWindowPoints(HWND_DESKTOP, parent, (POINT *)&rect, 2);
+    if (rect.left == left && rect.top == top && rect.right == right && rect.bottom == bottom) return 1;
+    printf("note: rect %ld,%ld,%ld,%ld, expected %ld,%ld,%ld,%ld\n", (long)rect.left, (long)rect.top,
+           (long)rect.right, (long)rect.bottom, (long)left, (long)top, (long)right, (long)bottom);
+    return 0;
+}
+
+/** Whether [above] is above [below] among their parent's children. */
+static int nv_above(HWND above, HWND below) {
+    for (HWND at = GetWindow(above, GW_HWNDNEXT); at != NULL; at = GetWindow(at, GW_HWNDNEXT)) {
+        if (at == below) return 1;
+    }
+    return 0;
+}
+
+// FR-81 on a real window, on the route [comp] names: two plain views of the application's (a
+// STATIC and an EDIT) attached, placed, clipped, holed, ordered, focused and detached, and
+// alive after the window closed. Pixels are not read; what the windows were given is.
+static void fr81_native_views_in_a_real_window(int comp) {
+    const char *route = comp ? "dcomp" : "gdi";
+    if (!real_windows_ok) { printf("skip: fr81_native_views_in_a_real_window %s\n", route); return; }
+    _putenv(comp ? "DXC_DCOMP=1" : "DXC_DCOMP=0");
+    struct dxc_native_window w;
+    memset(&w, 0, sizeof w);
+    int opened = open_test_window(&w, comp ? "native views dcomp" : "native views gdi");
+    _putenv("DXC_DCOMP=");
+    if (!opened) {
+        printf("fail: fr81 the window could not be made on the %s route\n", route);
+        failures++;
+        return;
+    }
+    HWND hwnd = (HWND)w.window;
+    dxc_native_window_select(w.window);
+    pump_all();
+    int32_t kinds[16], ids[16];
+    nv_events(kinds, ids, 16);
+
+    CHECK(dxc_native_view_parent(w.window) == (int64_t)(intptr_t)hwnd);
+    HWND view = CreateWindowExW(0, L"STATIC", L"view", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, hwnd, NULL, NULL, NULL);
+    HWND field = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0, 10, 10, hwnd, NULL, NULL, NULL);
+    CHECK(view != NULL && field != NULL);
+    if (view == NULL || field == NULL) return;
+
+    // What is refused: no handle, the window itself, a view already in a slot, an id in use.
+    CHECK(dxc_native_view_attach(w.window, 1, 0) == 0);
+    CHECK(dxc_native_view_attach(w.window, 1, (int64_t)(intptr_t)hwnd) == 0);
+    CHECK(dxc_native_view_attach(w.window, 1, (int64_t)(intptr_t)view) == 1);
+    CHECK(dxc_native_view_attach(w.window, 2, (int64_t)(intptr_t)view) == 0);
+    CHECK(dxc_native_view_attach(w.window, 1, (int64_t)(intptr_t)field) == 0);
+    HWND box = GetParent(view);
+    CHECK(box != NULL && box != hwnd && GetParent(box) == hwnd);
+    // Hidden until placed and shown.
+    CHECK(!IsWindowVisible(box));
+
+    dxc_native_view_place(w.window, 1, 10, 20, 100, 80, 0, 0, 0, 0, 0, NULL, 0);
+    dxc_native_view_set_visible(w.window, 1, 1);
+    pump_all();
+    CHECK(IsWindowVisible(box) && IsWindowVisible(view));
+    CHECK(nv_client_rect_is(hwnd, box, 10, 20, 110, 100));
+    CHECK(nv_client_rect_is(box, view, 0, 0, 100, 80));
+
+    // Clipped from above by 40 pixels: the container is the lower part, the view starts above it.
+    dxc_native_view_place(w.window, 1, 10, 20, 100, 80, 1, 0, 60, 300, 300, NULL, 0);
+    pump_all();
+    CHECK(nv_client_rect_is(hwnd, box, 10, 60, 110, 100));
+    CHECK(nv_client_rect_is(box, view, 0, -40, 100, 40));
+
+    // A hole: cut out of the container's region, in its own coordinates.
+    int32_t hole[5] = {30, 70, 20, 20, 0};
+    dxc_native_view_place(w.window, 1, 10, 20, 100, 80, 0, 0, 0, 0, 0, hole, 1);
+    pump_all();
+    HRGN shape = CreateRectRgn(0, 0, 0, 0);
+    CHECK(GetWindowRgn(box, shape) != ERROR);
+    CHECK(!PtInRegion(shape, 30, 60));
+    CHECK(PtInRegion(shape, 5, 5));
+    CHECK(PtInRegion(shape, 50, 70));
+    // No hole any more: no region.
+    dxc_native_view_place(w.window, 1, 10, 20, 100, 80, 0, 0, 0, 0, 0, NULL, 0);
+    pump_all();
+    CHECK(GetWindowRgn(box, shape) == ERROR);
+    DeleteObject(shape);
+
+    // Clipped away entirely, hidden; back, shown.
+    dxc_native_view_place(w.window, 1, 10, 20, 100, 80, 1, 0, 200, 300, 10, NULL, 0);
+    pump_all();
+    CHECK(!IsWindowVisible(box));
+    dxc_native_view_place(w.window, 1, 10, 20, 100, 80, 0, 0, 0, 0, 0, NULL, 0);
+    pump_all();
+    CHECK(IsWindowVisible(box));
+
+    // The second slot is above the first, and both are above the swapchain's child.
+    CHECK(dxc_native_view_attach(w.window, 2, (int64_t)(intptr_t)field) == 1);
+    HWND field_box = GetParent(field);
+    dxc_native_view_place(w.window, 2, 50, 50, 120, 30, 0, 0, 0, 0, 0, NULL, 0);
+    dxc_native_view_set_visible(w.window, 2, 1);
+    pump_all();
+    CHECK(nv_above(field_box, box));
+    // The composition route has no swapchain child; a machine without composition falls back
+    // to the GDI route, which has one.
+    HWND surface = FindWindowExW(hwnd, NULL, L"ComposeRustSurface", NULL);
+    if (comp && surface != NULL) printf("note: fr81 asked for dcomp, the window took the gdi route\n");
+    if (surface == NULL) {
+        CHECK(comp);
+        printf("note: fr81 dcomp container layered=%d\n",
+               (GetWindowLongPtrW(box, GWL_EXSTYLE) & WS_EX_LAYERED) != 0 ? 1 : 0);
+    } else {
+        CHECK(nv_above(box, surface));
+        CHECK((GetWindowLongPtrW(surface, GWL_STYLE) & WS_CLIPSIBLINGS) != 0);
+    }
+
+    // The pointer over a view: the window sets no cursor and the scene hears it leave, once;
+    // back over the scene, it hears it come in before the move.
+    nv_events(kinds, ids, 16);
+    CHECK(SendMessageW(hwnd, WM_SETCURSOR, (WPARAM)view, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE)) == FALSE);
+    SendMessageW(hwnd, WM_SETCURSOR, (WPARAM)view, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+    SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(200, 150));
+    SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(201, 150));
+    int count = nv_events(kinds, ids, 16);
+    CHECK(count == 2 && kinds[0] == DXC_EVENT_POINTER_EXIT && kinds[1] == DXC_EVENT_POINTER_ENTER);
+
+    // Focus, with the window active as the system would make it.
+    SendMessageW(hwnd, WM_ACTIVATE, WA_ACTIVE, 0);
+    nv_events(kinds, ids, 16);
+    if (GetFocus() != hwnd) {
+        printf("skip: fr81 focus on the %s route (the window has no keyboard here)\n", route);
+    } else {
+        int32_t id = -1;
+        dxc_native_view_focus(w.window, 2);
+        CHECK(GetFocus() == field);
+        CHECK(dxc_native_view_focused(w.window, &id) == 1 && id == 2);
+        count = nv_events(kinds, ids, 16);
+        CHECK(count == 1 && kinds[0] == DXC_EVENT_NATIVE_VIEW_FOCUS_IN && ids[0] == 2);
+        dxc_native_view_focus_scene(w.window);
+        CHECK(GetFocus() == hwnd);
+        count = nv_events(kinds, ids, 16);
+        CHECK(count == 1 && kinds[0] == DXC_EVENT_NATIVE_VIEW_FOCUS_OUT && ids[0] == 2);
+        // Deactivated and activated again: out, then in, and the field has the keyboard back.
+        dxc_native_view_focus(w.window, 2);
+        nv_events(kinds, ids, 16);
+        SendMessageW(hwnd, WM_ACTIVATE, WA_INACTIVE, 0);
+        count = nv_events(kinds, ids, 16);
+        CHECK(count == 1 && kinds[0] == DXC_EVENT_NATIVE_VIEW_FOCUS_OUT && ids[0] == 2);
+        SendMessageW(hwnd, WM_ACTIVATE, WA_ACTIVE, 0);
+        CHECK(GetFocus() == field);
+        count = nv_events(kinds, ids, 16);
+        CHECK(count == 1 && kinds[0] == DXC_EVENT_NATIVE_VIEW_FOCUS_IN && ids[0] == 2);
+        // A press in the scene takes it back.
+        SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(250, 200));
+        SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(250, 200));
+        CHECK(GetFocus() == hwnd);
+        count = nv_events(kinds, ids, 16);
+        CHECK(count == 1 && kinds[0] == DXC_EVENT_NATIVE_VIEW_FOCUS_OUT && ids[0] == 2);
+        // Hidden with the keyboard: it goes to the scene at once.
+        dxc_native_view_focus(w.window, 2);
+        nv_events(kinds, ids, 16);
+        dxc_native_view_set_visible(w.window, 2, 0);
+        CHECK(GetFocus() == hwnd);
+        count = nv_events(kinds, ids, 16);
+        CHECK(count == 1 && kinds[0] == DXC_EVENT_NATIVE_VIEW_FOCUS_OUT && ids[0] == 2);
+        CHECK(dxc_native_view_focused(w.window, &id) == 0);
+        dxc_native_view_set_visible(w.window, 2, 1);
+        pump_all();
+    }
+
+    // Detached: out of the window, hidden, alive, and the container gone.
+    dxc_native_view_detach(w.window, 1);
+    CHECK(IsWindow(view));
+    CHECK(!IsWindowVisible(view));
+    CHECK(GetParent(view) != box && !IsChild(hwnd, view));
+    CHECK(!IsWindow(box));
+    // A detached view can be attached again.
+    CHECK(dxc_native_view_attach(w.window, 1, (int64_t)(intptr_t)view) == 1);
+
+    // The window closes with both still attached: both are taken out, neither destroyed.
+    dxc_native_window_destroy(w.window);
+    pump_all();
+    CHECK(IsWindow(view) && IsWindow(field));
+    CHECK(!IsChild(hwnd, view) && !IsChild(hwnd, field));
+    CHECK(dxc_native_view_parent(w.window) == 0);
+    DestroyWindow(view);
+    DestroyWindow(field);
+    dxc_native_window_release(w.window);
+}
+
 // Changing an open window's resizable and color scheme (FR-53).
 static void open_window_scheme(void) {
     uint32_t base = 0x10CF0000u; // WS_OVERLAPPEDWINDOW | WS_VISIBLE
@@ -1633,6 +1922,8 @@ int main(int argc, char **argv) {
     fr53_follow_pointer_keeps_anchor_under_pointer();
     fr53_second_pump_in_the_same_turn_does_not_wait();
     fr82_dpi_size_arithmetic();
+    fr81_native_view_placement_arithmetic();
+    fr81_native_view_focus_reports();
     // The software adapter, for a runner with no GPU.
     _putenv("DXC_D3D12_WARP=1");
     fr19_9_app_caption_strip_is_client_area();
@@ -1645,6 +1936,8 @@ int main(int argc, char **argv) {
     fr53_close_request_reaches_only_its_window();
     fr53_destroying_one_window_does_not_quit();
     fr53_activate_reports_focus();
+    fr81_native_views_in_a_real_window(0);
+    fr81_native_views_in_a_real_window(1);
     fr72_filter_lines_become_dialog_patterns();
     fr72_a_dialog_that_cannot_start_answers_nothing();
     fr72_an_open_dialog_does_not_hold_the_loop_and_answers_once();

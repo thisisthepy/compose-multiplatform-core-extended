@@ -141,7 +141,11 @@ bool build_tree(dxc_dcomp *comp) {
     }
     comp->shown = 0;
     comp->next = 0;
-    HRESULT target = SUCCEEDED(surface) ? comp->device->CreateTargetForHwnd(comp->window, TRUE, &comp->target)
+    // Below the window's child windows (topmost FALSE): the native view slots, child windows
+    // of this window (win32_window.c, dxc_native_view_*), are composed above the frame. A window
+    // with no child window, which is every window without a native view, composes the same
+    // either way: the window has no GDI surface for the visual to be above or below.
+    HRESULT target = SUCCEEDED(surface) ? comp->device->CreateTargetForHwnd(comp->window, FALSE, &comp->target)
                                         : E_ABORT;
     HRESULT visual = SUCCEEDED(target) ? comp->device->CreateVisual(&comp->visual) : E_ABORT;
     HRESULT content = SUCCEEDED(visual) ? comp->visual->SetContent(comp->surfaces[0]) : E_ABORT;

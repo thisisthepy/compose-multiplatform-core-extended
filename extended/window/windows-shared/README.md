@@ -9,7 +9,8 @@ application for Windows without a JVM.
   dialogs. `c/win32_notifications.c`: toasts.
   `c/win32_resize.h`, `c/win32_ime_text.h`, `c/win32_buttons.h`, `c/win32_wheel.h` (the wheel's scroll
   direction), `c/win32_dpi.h` (the size a window keeps across a change of DPI) and
-  `c/win32_file_dialog_spec.h` (a dialog's type list) are header-only logic that compiles without
+  `c/win32_file_dialog_spec.h` (a dialog's type list) and `c/win32_native_views.h` (where a native
+  view slot goes and which focus changes it reports) are header-only logic that compiles without
   Windows.
   `c/win32_keys.h` decides which key messages stay the scene's (F10 and the menu key among
   them); it is header-only too and reads only the message and key names of `<windows.h>`.
@@ -146,6 +147,40 @@ drag step's `BeginDraw` waits for DWM's next composition (about 20 ms on the run
 shrinking step's commit wait for DWM to take it (about 45 to 53 ms). A GDI step waits on
 nothing of DWM's. How this looks on a real GPU is still to be measured, with the lag probe
 below.
+
+## Native views
+
+`WindowsNativeViews` (common's `NativeViews`, compose-rust FR-81), over `dxc_native_view_*` in
+`c/win32_window.c`, with its arithmetic and focus rules in `c/win32_native_views.h`. The
+application makes an HWND against `dxc_native_view_parent` (the window) and hands it over; the
+window puts it in a container, a child window of its own with `WS_CLIPSIBLINGS`, above every
+slot attached before it. The container is the slot's frame cut to its clip; the view inside
+keeps the whole frame, so a view half scrolled out shows the half that is in. Holes are a window
+region on the container, which also sends a click in a hole to the scene. Positions are client
+pixels; a change of DPI needs nothing here, the caller lays out again and sends the new frames.
+
+What is asked for during a frame is given to the windows after that frame is presented
+(`dxc_native_frame_end`), copied (`dxc_raster_copy`, during a size change) or committed (the
+DirectComposition route), and otherwise at the end of the next pump.
+
+- GDI route: the swapchain's child window is given `WS_CLIPSIBLINGS` with the first slot, so it
+  is cut around the containers above it. While a size changes it is hidden and the frame is
+  copied into the window with GDI, cut around the slots (`dxc_nv_exclude`), which draw into
+  the same GDI surface. The slots are never hidden with it.
+- DirectComposition route: the visual's target is made below the window's child windows
+  (`CreateTargetForHwnd` with topmost false), so DWM composes the slots above the frame. The
+  window has no GDI surface, so a container is a layered child window (Windows 8 and later, as
+  the application's manifest declares) for a view that draws with GDI; where one cannot be
+  made the window says so on standard error.
+
+Focus is read from the system at the end of every pump (`GetFocus`) and reported as
+`NATIVE_VIEW_FOCUS_IN` and `_OUT`. A press in the scene gives the keyboard back to it;
+deactivated, the window reports the slot's loss, and activated again gives the slot the
+keyboard back and reports it. Over a slot the window sets no cursor and the scene hears
+`POINTER_EXIT`, then `POINTER_ENTER` when the pointer comes back. A view leaves hidden, under the
+message-only window, for the application to destroy; the window takes every view out this way
+when it closes. The shared test runs it on a real window on both routes
+(`fr81_native_views_in_a_real_window`).
 
 ## File dialogs
 
