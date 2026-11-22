@@ -3,6 +3,8 @@ package org.thisisthepy.compose.window.graalvm.linux
 import java.io.File
 import java.util.concurrent.TimeUnit
 import org.thisisthepy.compose.window.DoubleClick
+import org.thisisthepy.compose.window.LinuxTheme
+import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.TextScale
 
 /** Reads the desktop's text size: GNOME's `text-scaling-factor`, or KDE's forced font DPI over its global scale. */
@@ -30,11 +32,13 @@ internal object LinuxTextScale {
         kdeConfig("kdeglobals"),
     )
 
-    private fun gsettings(
+    internal fun gsettings(
         schema: String = "org.gnome.desktop.interface",
         key: String = "text-scaling-factor",
-    ): String? = try {
-        val process = ProcessBuilder("gsettings", "get", schema, key)
+    ): String? = runCommand("gsettings", "get", schema, key)
+
+    internal fun runCommand(vararg command: String): String? = try {
+        val process = ProcessBuilder(*command)
             .redirectErrorStream(false)
             .start()
         process.errorStream.close()
@@ -45,7 +49,7 @@ internal object LinuxTextScale {
         null
     }
 
-    private fun kdeConfig(name: String): String? {
+    internal fun kdeConfig(name: String): String? {
         val base = System.getenv("XDG_CONFIG_HOME")?.takeIf { it.isNotEmpty() }
             ?: System.getenv("HOME")?.let { "$it/.config" } ?: return null
         return try {
@@ -53,5 +57,60 @@ internal object LinuxTextScale {
         } catch (_: Exception) {
             null
         }
+    }
+}
+
+/**
+ * Reads the desktop's dark or light preference: `GTK_THEME` first, then the XDG desktop
+ * portal `color-scheme`, then GNOME `gsettings` / KDE `kdeglobals` ordered by
+ * `XDG_CURRENT_DESKTOP`, defaulting to [SystemTheme.Light].
+ */
+internal object LinuxSystemTheme {
+    fun read(): SystemTheme {
+        val gtkTheme = System.getenv("GTK_THEME")
+        LinuxTheme.fromGtkTheme(gtkTheme)?.let { return it }
+
+        val portalOutput = if (!System.getenv("DBUS_SESSION_BUS_ADDRESS").isNullOrEmpty()) {
+            LinuxTextScale.runCommand(
+                "dbus-send",
+                "--session",
+                "--reply-timeout=200",
+                "--print-reply=literal",
+                "--dest=org.freedesktop.portal.Desktop",
+                "/org/freedesktop/portal/desktop",
+                "org.freedesktop.portal.Settings.Read",
+                "string:org.freedesktop.appearance",
+                "string:color-scheme",
+            )
+        } else {
+            null
+        }
+        LinuxTheme.fromPortalColorScheme(portalOutput)?.let { return it }
+
+        val currentDesktop = System.getenv("XDG_CURRENT_DESKTOP")
+        val onKde = LinuxTheme.isKdeDesktop(currentDesktop)
+        var kdeGlobals: String? = null
+        if (onKde) {
+            kdeGlobals = LinuxTextScale.kdeConfig("kdeglobals")
+            LinuxTheme.fromKdeGlobals(kdeGlobals)?.let { return it }
+        }
+
+        val gnomeColorScheme = LinuxTextScale.gsettings("org.gnome.desktop.interface", "color-scheme")
+        LinuxTheme.fromGnomeColorScheme(gnomeColorScheme)?.let { return it }
+
+        val gnomeGtkTheme = LinuxTextScale.gsettings("org.gnome.desktop.interface", "gtk-theme")
+        LinuxTheme.fromGnomeGtkTheme(gnomeGtkTheme)?.let { return it }
+
+        if (!onKde) {
+            kdeGlobals = LinuxTextScale.kdeConfig("kdeglobals")
+        }
+        return LinuxTheme.resolve(
+            gtkTheme = gtkTheme,
+            portalOutput = portalOutput,
+            gnomeColorScheme = gnomeColorScheme,
+            gnomeGtkTheme = gnomeGtkTheme,
+            kdeGlobals = kdeGlobals,
+            currentDesktop = currentDesktop,
+        )
     }
 }

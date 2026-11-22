@@ -9,13 +9,13 @@ Korean: [README_ko.md](https://github.com/thisisthepy/compose-multiplatform-core
 Status is as of 2026-10-17. Items marked in progress or planned are not on `extended` yet.
 
 - Two paths to a desktop application with no AWT: GraalVM native-image and Kotlin/Native. Each one ships an application as one executable, with no Java runtime beside it and nothing unpacked at start.
-- AWT-free desktop windows on both paths. macOS works on both: the Kotlin/Native window (AppKit and Metal) and the GraalVM native-image window. Linux (X11) works on both: the GraalVM window and the Kotlin/Native window (Xlib, GLX, XIM and AT-SPI). Windows is in progress: the shared Win32 window, `windows-shared`, is not merged ([#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32)). Until it is, compose-rust's Kotlin/Native renderer keeps its own Windows window ([DarkPyonix/compose-rust#26](https://github.com/DarkPyonix/compose-rust/issues/26)).
+- AWT-free desktop windows on both paths. macOS works on both: the Kotlin/Native window (AppKit and Metal) and the GraalVM native-image window. Linux (X11) works on both: the GraalVM window and the Kotlin/Native window (Xlib, GLX, XIM and AT-SPI). Windows uses the shared Win32 window, `windows-shared`, which is merged in `extended/window/project.yaml` with CI (`extended-window-windows-shared.yml`).
 - The window modules, under `extended/window` with the group `org.thisisthepy.compose.window`. The window, its pointer, key and IME input, the text and edit menus, the clipboard, file drops and the window chrome live there, not in any renderer. Their `common` module holds the window state machine, minimum size, event normalisation, frame-request coalescing, IME composition state, dark mode and DPI, and depends on the Kotlin standard library only. Both paths use it. Parity tests that run the same checks against both are planned ([#70](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/70)). See [Window modules](#window-modules).
 - Windows executables are linked by MSVC on both paths. JetBrains builds Skia for Windows with MSVC, so the final link is MSVC's, and there is no MinGW route. Both paths link this way: GraalVM's native image, and Kotlin/Native through `org.thisisthepy.kotlin.native.desktop` (see [MinGW x64 target](#mingw-x64-target)).
 - Design systems and Liquid Glass: Material 3, Cupertino, Fluent, GNOME, Breeze and Deepin themes, and the Liquid Glass material, as standalone libraries in `extended/design-systems`. They depend on published Compose only and never on a renderer, so they can be published on their own.
 - skiko without JAWT: a static skiko archive that a native image links, with no dependency on the JDK's `libjawt`.
 - AWT-free clipboard and pointer icons, so a window without AWT still copies, pastes and changes its cursor.
-- `linuxX64`, `linuxArm64` and `mingwX64` Kotlin/Native source sets for the Compose UI modules are in the tree. The Linux ones are built on CI: the "Extended window linux" workflow publishes them before it builds and tests `native/linux`. No CI job builds the `mingwX64` ones yet, and running a renderer linked from them on Windows is open in [#3](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/3).
+- `linuxX64`, `linuxArm64` and `mingwX64` Kotlin/Native source sets for the Compose UI modules are in the tree. The Linux ones are built on CI: the "Extended window linux" workflow publishes them before it builds and tests `native/linux`. `mingwX64` CI is active in `extended-publish-local.yml`, and running a renderer linked from them on Windows is open in [#3](https://github.com/thisisthepy/compose-multiplatform-core-extended/issues/3).
 - An upstream public API guard: a workflow compares the public API of the Compose modules with upstream's, so existing Compose code keeps compiling. The fork's own API is in separate modules under `extended/`.
 
 To package an application that uses these, see the Gradle plugin fork,
@@ -39,7 +39,7 @@ adds is either a platform source set inside a Compose module or a script under `
 | skiko's JVM natives as a static archive, for a GraalVM native image (macOS arm64, Linux x64, Windows x64) | implemented | [`extended/skiko`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/skiko/README.md) |
 | Skia's ICU data compiled into the Windows static archive | implemented | `extended/skiko/embedded_icu.cpp` |
 | skiko-awt with an AWT switch, so a toolkit-free native image keeps no Swing or `UIManager` | implemented | `extended/skiko/build-skiko-awt.sh` |
-| The window modules: window, input, IME, menus and chrome for both paths | implemented for macOS and Linux; Windows open in [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32) | [`extended/window`](#window-modules) |
+| The window modules: window, input, IME, menus and chrome for both paths | implemented for macOS, Linux and Windows (`windows-shared` in `extended/window/project.yaml`, CI in `extended-window-windows-shared.yml`) | [`extended/window`](#window-modules) |
 | Compose's window procedure for Windows (caption, title bar, icon) | planned | branch [`feature/windows-window-chrome`](https://github.com/thisisthepy/compose-multiplatform-core-extended/tree/feature/windows-window-chrome), [DarkPyonix/compose-rust#26](https://github.com/DarkPyonix/compose-rust/issues/26) |
 | `org.thisisthepy.compose` coordinates, on one version line `1.11.1-ext.<N>` | implemented | [`extended/COORDINATES.md`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/COORDINATES.md), [Maven coordinates](#maven-coordinates) |
 | Six design systems and the Liquid Glass material, as compose-rust had them | imported | [`extended/design-systems`](https://github.com/thisisthepy/compose-multiplatform-core-extended/blob/extended/extended/design-systems/README.md) |
@@ -116,10 +116,11 @@ says so), so any Compose application can open a window through it.
 | `graalvm/graalvm-linux` | `org.thisisthepy.compose.window:graalvm-linux` | JVM (native image) | The X11 window for a native image: `x11_window.c` and its Kotlin side, and `x11WindowSurface`, the GL surface a `scene` draws into |
 | `graalvm/graalvm-windows` | `org.thisisthepy.compose.window:graalvm-windows` | JVM (native image) | The Win32 window for a native image: the `@CFunction` calls into `windows-shared`'s `win32_window.c`, the window object, the frame door and the upcall a resize draws through. It times its own frames from a monotonic `FrameClock` |
 
-Each is at the fork's one version, `1.11.1-ext.5`. The "Extended window publish" workflow publishes them to the local
-Maven repository the way compose-rust consumes them; `native/linux` joins it in
-[#111](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/111). Nothing is on a public repository yet. The Windows window,
-`windows-shared`, is open in [#32](https://github.com/thisisthepy/compose-multiplatform-core-extended/pull/32).
+Each is at the fork's one version, `1.11.1-ext.5`. The "Extended window publish" workflow
+(`extended-window-publish.yml`) and `extended-publish.yml` publish them, including `native/linux`,
+to the local Maven repository the way compose-rust consumes them. Nothing is on a public repository
+yet. The Windows window, `windows-shared`, is merged in `extended/window/project.yaml` with CI
+(`extended-window-windows-shared.yml`).
 
 ### macOS title bar and accessibility
 

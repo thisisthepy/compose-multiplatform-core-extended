@@ -50,6 +50,7 @@ class X11Window : WindowPlatform {
     private var frameWanted = false
     private var lastScale = 0f
     private var lastTheme: SystemTheme? = null
+    private var nextThemeCheck = 0L
     private var lastTextScale = TextScale.DEFAULT
     private var nextTextScaleCheck = 0L
 
@@ -138,6 +139,7 @@ class X11Window : WindowPlatform {
         sizeBuffer = UnmanagedMemory.calloc<Pointer>(12).rawValue()
         lastScale = measure().scale
         lastTheme = systemTheme()
+        nextThemeCheck = System.nanoTime() + THEME_POLL_NANOS
         return true
     }
 
@@ -183,11 +185,7 @@ class X11Window : WindowPlatform {
             listener?.onScaleChanged(scale)
         }
         checkTextScale()
-        val theme = systemTheme()
-        if (theme != lastTheme) {
-            lastTheme = theme
-            listener?.onThemeChanged(theme)
-        }
+        checkTheme()
         if (X11Natives.windowClosed() != 0 && listener?.onCloseRequested() != false) {
             close()
             return
@@ -384,7 +382,19 @@ class X11Window : WindowPlatform {
         return text
     }
 
-    override fun systemTheme(): SystemTheme = X11Theme.fromGtkTheme(System.getenv("GTK_THEME"))
+    /** Read again every few seconds: portal and desktop theme changes are not announced on X11. */
+    private fun checkTheme() {
+        val now = System.nanoTime()
+        if (now < nextThemeCheck) return
+        nextThemeCheck = now + THEME_POLL_NANOS
+        val theme = systemTheme()
+        if (theme != lastTheme) {
+            lastTheme = theme
+            listener?.onThemeChanged(theme)
+        }
+    }
+
+    override fun systemTheme(): SystemTheme = LinuxSystemTheme.read()
 
     /**
      * Makes the window's GL context current for the frame about to be drawn. False where
@@ -567,5 +577,6 @@ class X11Window : WindowPlatform {
         /** `DXC_EVENT_TEXT_PASTE`: not a shared event kind, so outside their numbers. */
         const val EVENT_TEXT_PASTE = 64
         const val IME_RESET_BYTES = 4096
+        const val THEME_POLL_NANOS = 3_000_000_000L
     }
 }

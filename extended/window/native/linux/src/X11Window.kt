@@ -53,6 +53,7 @@ import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.WindowPlatform
 import org.thisisthepy.compose.window.WindowVisibility
 import org.thisisthepy.compose.window.X11Scale
+import org.thisisthepy.compose.window.X11Title
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
 import platform.posix.CLOCK_MONOTONIC
@@ -94,6 +95,8 @@ class X11Window : WindowPlatform {
     private var display: CPointer<Display>? = null
     private var lastTextScale = TextScale.DEFAULT
     private var nextTextScaleCheck = 0L
+    private var lastTheme: SystemTheme? = null
+    private var nextThemeCheck = 0L
     private var window: Window = 0uL
     private var context: GLXContext? = null
     private var colormap: Colormap = 0uL
@@ -103,6 +106,7 @@ class X11Window : WindowPlatform {
     private var syncCounter: XSyncCounter = 0uL
     private var clipboardAtom: Atom = 0uL
     private var utf8Atom: Atom = 0uL
+    private var netWmNameAtom: Atom = 0uL
     private var targetsAtom: Atom = 0uL
     private var transferAtom: Atom = 0uL
     private var surface: GlSurface? = null
@@ -264,15 +268,7 @@ class X11Window : WindowPlatform {
         val height = pixelsOf(config.height, scale).coerceAtLeast(1)
         val atX = config.x?.let { pixelsOf(it, scale) }
         val atY = config.y?.let { pixelsOf(it, scale) }
-        val visual = glXChooseVisual(
-            display,
-            screen,
-            cValuesOf(
-                GLX_RGBA, GLX_DOUBLEBUFFER,
-                GLX_RED_SIZE, 8, GLX_GREEN_SIZE, 8, GLX_BLUE_SIZE, 8,
-                0,
-            ),
-        )
+        val visual = chooseVisual(display, screen, config.transparent)
         if (visual == null) {
             shared.release()
             return false
@@ -282,6 +278,8 @@ class X11Window : WindowPlatform {
             val settings = alloc<XSetWindowAttributes>()
             settings.colormap = colormap
             settings.event_mask = EVENT_MASK
+            settings.background_pixel = 0uL
+            settings.border_pixel = 0uL
             XCreateWindow(
                 display,
                 XRootWindow(display, screen),
@@ -291,7 +289,7 @@ class X11Window : WindowPlatform {
                 visual.pointed.depth,
                 InputOutput.convert(),
                 visual.pointed.visual,
-                (CWColormap or CWEventMask).convert(),
+                (CWColormap or CWEventMask or CWBackPixel or CWBorderPixel).convert(),
                 settings.ptr,
             )
         }
@@ -317,6 +315,7 @@ class X11Window : WindowPlatform {
         syncRequest = shared.syncRequest
         clipboardAtom = shared.clipboard
         utf8Atom = shared.utf8
+        netWmNameAtom = shared.netWmName
         targetsAtom = shared.targets
         transferAtom = shared.transfer
         syncCounter = createSyncCounter(display, window)
@@ -330,7 +329,7 @@ class X11Window : WindowPlatform {
             }
             XSetWMProtocols(display, window, protocols, count)
         }
-        XStoreName(display, window, config.title)
+        applyTitle(display, window, config.title)
         // Before the window is mapped, so a tool that looks the window up by process
         // (`xdotool search --pid`) finds it from the first map on.
         setClientIdentity(display, window)
@@ -355,6 +354,8 @@ class X11Window : WindowPlatform {
         shared.register(window, this)
         XMapWindow(display, window)
         XFlush(display)
+        lastTheme = systemTheme()
+        nextThemeCheck = monotonicClockNanos() + THEME_POLL_NANOS
         return true
     }
 
@@ -394,6 +395,7 @@ class X11Window : WindowPlatform {
             listener?.onScaleChanged(scale)
         }
         checkTextScale()
+        checkTheme()
         // After the events, so that a reader's action lands after the input that came before
         // it, and on this thread, which is the one the scene is on.
         accessibility.setGeometry(measured.width, measured.height, measured.scale)
@@ -611,17 +613,97 @@ class X11Window : WindowPlatform {
         }
     }
 
-    override fun systemTheme(): SystemTheme {
-        val gtk = getenv("GTK_THEME")?.toKString().orEmpty().lowercase()
-        return if (gtk.endsWith(":dark") || gtk.endsWith("-dark")) SystemTheme.Dark else SystemTheme.Light
+    private fun checkTheme() {
+        if (isClosed) return
+        val now = monotonicClockNanos()
+        if (now < nextThemeCheck) return
+        nextThemeCheck = now + THEME_POLL_NANOS
+        val theme = systemTheme()
+        if (theme != lastTheme) {
+            lastTheme = theme
+            listener?.onThemeChanged(theme)
+        }
     }
+
+    override fun systemTheme(): SystemTheme = LinuxSystemTheme.read()
 
     override fun setTitle(title: String) {
         this.title = title
         accessibility.setTitle(title)
         val display = display ?: return
-        XStoreName(display, window, title)
+        applyTitle(display, window, title)
         XFlush(display)
+    }
+
+    private fun applyTitle(display: CPointer<Display>, window: Window, title: String) {
+        XStoreName(display, window, title)
+        val bytes = X11Title.netWmNameBytes(title)
+        memScoped {
+            val data = allocArray<UByteVar>(bytes.size + 1)
+            for (index in bytes.indices) data[index] = bytes[index].toUByte()
+            XChangeProperty(
+                display, window, netWmNameAtom, utf8Atom, 8,
+                PropModeReplace, data, bytes.size,
+            )
+        }
+    }
+
+    private fun chooseVisual(display: CPointer<Display>, screen: Int, transparent: Boolean): CPointer<XVisualInfo>? {
+        if (transparent) {
+            chooseArgbVisual(display, screen)?.let { return it }
+        }
+        return glXChooseVisual(
+            display,
+            screen,
+            cValuesOf(
+                GLX_RGBA, GLX_DOUBLEBUFFER,
+                GLX_RED_SIZE, 8, GLX_GREEN_SIZE, 8, GLX_BLUE_SIZE, 8,
+                0,
+            ),
+        )
+    }
+
+    private fun chooseArgbVisual(display: CPointer<Display>, screen: Int): CPointer<XVisualInfo>? = memScoped {
+        val count = alloc<IntVar>()
+        val configs = glXChooseFBConfig(
+            display,
+            screen,
+            cValuesOf(
+                GLX_X_RENDERABLE, 1,
+                GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT,
+                GLX_RENDER_TYPE, GLX_RGBA_BIT,
+                GLX_X_VISUAL_TYPE, GLX_TRUE_COLOR,
+                GLX_RED_SIZE, 8,
+                GLX_GREEN_SIZE, 8,
+                GLX_BLUE_SIZE, 8,
+                GLX_ALPHA_SIZE, 8,
+                GLX_DOUBLEBUFFER, 1,
+                0,
+            ),
+            count.ptr,
+        )
+        if (configs != null) {
+            var chosen: CPointer<XVisualInfo>? = null
+            for (index in 0 until count.value) {
+                val candidate = glXGetVisualFromFBConfig(display, configs[index]) ?: continue
+                if (candidate.pointed.depth == ARGB_DEPTH) {
+                    chosen = candidate
+                    break
+                }
+                XFree(candidate)
+            }
+            XFree(configs)
+            if (chosen != null) return chosen
+        }
+        glXChooseVisual(
+            display,
+            screen,
+            cValuesOf(
+                GLX_RGBA, GLX_DOUBLEBUFFER,
+                GLX_RED_SIZE, 8, GLX_GREEN_SIZE, 8, GLX_BLUE_SIZE, 8, GLX_ALPHA_SIZE, 8,
+                0,
+            ),
+        )
     }
 
     override fun setMinimumSize(width: Int, height: Int) {
@@ -1408,6 +1490,8 @@ class X11Window : WindowPlatform {
 
     private companion object {
         const val TEXT_SCALE_POLL_NANOS = 3_000_000_000L
+        const val THEME_POLL_NANOS = 3_000_000_000L
+        const val ARGB_DEPTH = 32
         const val EVENT_MASK = ExposureMask or StructureNotifyMask or PointerMotionMask or
             ButtonPressMask or ButtonReleaseMask or KeyPressMask or KeyReleaseMask or FocusChangeMask or
             0L
