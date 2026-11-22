@@ -156,13 +156,24 @@ class CheckTargets(unittest.TestCase):
 
     def test_design_systems_are_read(self):
         modules = {artifact: platforms for _, _, artifact, platforms in ct.read_amper_project(DESIGN_SYSTEMS)}
-        self.assertEqual(8, len(modules), modules)
+        self.assertEqual(9, len(modules), modules)
+        self.assertIn("designsystem-adaptive", modules)
         for artifact, platforms in modules.items():
             self.assertTrue(artifact == "designsystem" or artifact.startswith("designsystem-"), artifact)
-            for wanted in ("jvm", "android", "iosArm64", "iosSimulatorArm64", "macosArm64", "linuxX64"):
+            for wanted in ("jvm", "android", "iosArm64", "iosSimulatorArm64", "macosArm64", "linuxX64", "wasmJs"):
                 self.assertIn(wanted, platforms, artifact)
         self.assertEqual({"org.thisisthepy.compose.designsystem"},
                          {group for _, group, _, _ in ct.read_amper_project(DESIGN_SYSTEMS)})
+
+    def test_publish_workflow_requires_all_design_systems_and_native_linux_scene(self):
+        workflow_path = os.path.join(ROOT, ".github", "workflows", "extended-publish.yml")
+        with open(workflow_path, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn("org.thisisthepy.compose.window:native-linux-scene", text)
+        for _, group, artifact, _ in ct.read_amper_project(DESIGN_SYSTEMS):
+            self.assertIn(f"{group}:{artifact}", text)
+        self.assertNotIn("build-skiko-awt.sh published nothing under org.thisisthepy; Central refuses", text)
+        self.assertNotIn("skiko-awt is not under org.thisisthepy yet", text)
 
     def test_design_system_target_is_named(self):
         make_bundle(self.work)
