@@ -423,10 +423,12 @@ private fun style(
 )
 
 /**
- * The code colours, after Xcode's Default (Light) and Default (Dark), moved in tone where a
- * value missed 4.5:1 on the panel. Unverified: Xcode's themes are not published as files, so
- * these need checking against Xcode itself. The same values as the renderer's token table, so
- * a code block reads the same through either.
+ * Code and diff colours matched to Apple Xcode's bundled Default (Light) and Default (Dark)
+ * `.xccolortheme` palettes. Plain text uses opaque equivalents (`0xFF000000` in light,
+ * `0xFFDFDFE0` in dark) rather than Xcode's 85% alpha values so every token stands on its own,
+ * and dark comments are lifted from Xcode's `#6C7986` (3.82:1) to `#798693` (4.57:1) so every
+ * syntax token clears WCAG AA 4.5:1 on the dark code panel (`#1C1C1E`). The same values as the
+ * renderer's token table, so a code block reads the same through either.
  */
 private val LIGHT_CODE: Map<ColorRole, Color> = mapOf(
     ColorRole.SyntaxKeyword to Color(0xFF9B2393),
