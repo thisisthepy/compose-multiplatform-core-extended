@@ -358,9 +358,10 @@ jobs:
           modes="drag-left drag-top drag-topleft drag-fast"
           # Beside the two routes, the DirectComposition route's earlier ways of a drag step, by
           # its switches (printed, the comparison the route's own order is measured against):
-          #   dcomp               the route's own order (DXC_DCOMP_DRAG=sized, the default): a
-          #                       composition waited for, the frame written, the rectangle, the
-          #                       commit in WM_SIZE, the same for every step
+          #   dcomp               the route's own order (DXC_DCOMP_DRAG=sized, the default): where
+          #                       a step moves the origin or grows, a composition waited for, the
+          #                       frame written, the rectangle, the commit in WM_SIZE; a step that
+          #                       shrinks at the same origin committed first
           #   dcomp-noflush       that order without the wait for a composition
           #   dcomp-order         the order before: a step that shrinks committed first and waited
           #                       for, one that grows committed after, no wait before a step

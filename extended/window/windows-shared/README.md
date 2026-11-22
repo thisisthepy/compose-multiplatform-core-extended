@@ -89,33 +89,47 @@ by it. So the frames are committed in this order:
 
 #### A step of a drag
 
-Every step of an edge drag reaches the screen the same way, whichever edge moves and whether
-the window grows or shrinks (`DXC_DCOMP_DRAG=sized`, the default):
+A step of an edge drag reaches the screen by what it does to the window (`DXC_DCOMP_DRAG=sized`,
+the default):
 
-1. In `WM_NCCALCSIZE` the frame for the new size is drawn into the bitmap.
-2. One composition is waited for (`DwmFlush`). It has taken the commit of the step before, so
-   the surface about to be written is no longer on screen.
-3. The frame is written into that surface, and the message returns: the window takes its
-   rectangle.
-4. `WM_SIZE` commits, a millisecond later.
+- A step that moves the window's top left (the left or top edge, a corner with either) or only
+  grows:
+  1. In `WM_NCCALCSIZE` the frame for the new size is drawn into the bitmap.
+  2. One composition is waited for (`DwmFlush`). It has taken the commit of the step before,
+     so the surface about to be written is no longer on screen.
+  3. The frame is written into that surface, and the message returns: the window takes its
+     rectangle.
+  4. `WM_SIZE` commits, a millisecond later.
 
-The rectangle and the commit so start a composition interval together and land in the same
-composition, and a drag makes one step a composition. Nothing is committed before the
-rectangle: the window's rectangle is not part of a commit, and the surface sits at the
-window's top left, so a frame committed first is shown at the old origin until the rectangle
-arrives. That is what the earlier order did on every step that shrank (`DXC_DCOMP_DRAG=order`:
-by size, a step that shrinks committed first and waited for, one that grows committed after):
-on a drag of the left or top edge what should stay still on the right moved by the step, and
-a step that grew showed the larger window see-through beyond the old picture when a
+  The rectangle and the commit start a composition interval together and land in the same
+  composition. Nothing is committed before the rectangle: the rectangle is not part of a commit
+  and the surface sits at the window's top left, so a frame committed first would be shown at
+  the old origin until the rectangle arrived.
+- A step that shrinks and leaves the top left where it is (the right or bottom edge going in):
+  the frame is committed in `WM_NCCALCSIZE` and waited for until DWM has taken it, before the
+  window takes the smaller rectangle. That frame fits inside both rectangles at the same origin,
+  so whichever composition shows it, nothing is cut; the rectangle first would cut the larger
+  picture for a composition.
+
+`DXC_DCOMP_DRAG=order` gives the earlier order for every step, by size alone: on a drag of the
+left or top edge what should stay still on the right moved by the step on every step that
+shrank, and a step that grew showed the larger window see-through beyond the old picture when a
 composition fell between the rectangle and the commit. Both were seen on a real GPU
-(2026-11-21) and missed by the probe of the time, which dragged the right edge slowly and
-took a see-through margin for a smaller window.
+(2026-11-21) and missed by the probe of the time, which dragged the right edge slowly and took a
+see-through margin for a smaller window.
 
-Judged against the window's border on windows-2025 (WARP, run 44946565463, before this order
-was the route's own): 79 faulty frames of 200 in the earlier order, 5 of 219 with every step
-committed in `WM_SIZE` after a wait but written before it, 1 of 166 on the GDI route.
+Judged against the window's border on windows-2025 (WARP), faulty frames of judged frames over
+the left, top, corner and fast drags:
 
-The GDI route stays the default until a real GPU, by eye, says this order is as good.
+| Order | Run | Faulty |
+|---|---|---|
+| By size for every step (`order`) | 44971407875 | 86 of 198 |
+| Rectangle first for every step | 44971407875 | 0 of 209, but 62 to 113 a way on right-edge drags going in |
+| The GDI route | 44971407875 | 0 of 155 |
+
+The order described above is the second row with the right and bottom edges going in left to
+the first; its own numbers are in its CI run. The GDI route stays the default until a real GPU,
+by eye, says this order is as good.
 
 ### The GDI route
 

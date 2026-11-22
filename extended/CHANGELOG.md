@@ -7,16 +7,17 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
-- **Fix.** On the Windows window's DirectComposition route (`DXC_DCOMP=1`), every step of an
-  edge drag now reaches the screen the same way: a composition is waited for, the frame is
-  written, the window takes its rectangle, and the commit follows in `WM_SIZE`. Before, a step
-  that shrank was committed first and waited for. The surface sits at the window's top left
-  and the rectangle is not part of a commit, so on a drag of the left or top edge that showed
-  the new frame at the old origin on every such step (what should stay still on the right
-  moved), and a step that grew showed the window see-through beyond the old picture when a
-  composition fell between the rectangle and the commit. `DXC_DCOMP_DRAG=order` keeps the
-  earlier order. The resize probe judges both faults against the window's border now. The GDI
-  route stays the default. (#223)
+- **Fix.** On the Windows window's DirectComposition route (`DXC_DCOMP=1`), a step of an edge
+  drag that moves the window's top left or only grows now waits for a composition, writes the
+  frame, takes the rectangle and commits in `WM_SIZE`; nothing is committed before the
+  rectangle. Before, a step that shrank was always committed first and waited for. The surface
+  sits at the window's top left and the rectangle is not part of a commit, so on a drag of the
+  left or top edge the new frame showed at the old origin on every step that shrank (what should
+  stay still on the right moved), and a step that grew showed the window see-through beyond the
+  old picture when a composition fell between the rectangle and the commit. A step that shrinks
+  and leaves the top left where it is keeps being committed first. `DXC_DCOMP_DRAG=order` keeps
+  the earlier order. The resize probe judges both faults against the window's border now. The
+  GDI route stays the default. (#223)
 
 - **Fix.** The Windows window (`windows-shared`) opens on the GDI route by default again;
   `DXC_DCOMP=1` asks for the DirectComposition route. On a real GPU, with a real application
