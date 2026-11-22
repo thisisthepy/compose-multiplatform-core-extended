@@ -85,13 +85,25 @@ case "$(uname -s)-$(uname -m)" in
 esac
 
 # skiko compiles its Windows bindings with clang-cl, which Visual Studio's C++ workload does
-# not install by default. GitHub's Windows runners carry LLVM; a developer's machine may not.
+# not install by default. When Visual Studio's own LLVM component is installed, prefer it over
+# a standalone LLVM earlier on PATH: vcvarsall appends VC\Tools\Llvm\x64\bin to the end of
+# PATH, so an older standalone LLVM (such as 20.1.8 on GitHub's Windows runners) otherwise
+# shadows Visual Studio's clang-cl and trips MSVC STL's minimum Clang version check (STL1000).
 if [[ "$host" == "windows" ]]; then
+    if [[ -n "${VCINSTALLDIR:-}" ]]; then
+        vs_llvm="$(cygpath -u "$VCINSTALLDIR")"
+        vs_llvm="${vs_llvm%/}/Tools/Llvm/x64/bin"
+        if [[ -x "$vs_llvm/clang-cl.exe" ]]; then
+            export PATH="$vs_llvm:$PATH"
+        fi
+    fi
     command -v clang-cl.exe >/dev/null ||
         die "clang-cl.exe is not on PATH" \
             "skiko compiles its Windows bindings with it. Install LLVM (winget install LLVM.LLVM)" \
             "and put C:\\Program Files\\LLVM\\bin on PATH, or add Visual Studio's" \
             "\"C++ Clang Compiler for Windows\" component."
+    clang_ver="$(clang-cl.exe --version | tr -d '\r')"
+    echo "==> using $(command -v clang-cl.exe) (${clang_ver%%$'\n'*})"
 fi
 
 [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/java" ]] ||
@@ -110,7 +122,9 @@ git -C "$checkout" -c advice.detachedHead=false checkout --quiet --force "$REVIS
 echo "==> compiling skiko's JVM bindings for $platform (Skia is downloaded prebuilt)"
 (
     cd "$checkout/skiko"
-    ./gradlew --no-daemon --quiet "${tasks[@]}"
+    # skiko's CompileSkikoCppTask logs compiler stderr at WARN level, so --quiet would hide
+    # compiler errors on failure.
+    ./gradlew --no-daemon --console=plain "${tasks[@]}"
 )
 
 out="$WORK/out/$platform"
