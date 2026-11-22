@@ -931,9 +931,9 @@ class X11Window : WindowPlatform {
 
     /** A cursor of one transparent pixel, which is how X hides the pointer over a window. */
     private fun blankCursor(display: CPointer<Display>): ULong = memScoped {
-        val bits = allocArray<ByteVar>(1)
-        bits[0] = 0
-        val pixmap = XCreateBitmapFromData(display, window, bits, 1u, 1u)
+        // The binding takes the bits as a C string. An empty one is a single zero byte: the one
+        // clear pixel of a 1 by 1 bitmap.
+        val pixmap = XCreateBitmapFromData(display, window, "", 1u, 1u)
         val black = alloc<XColor>()
         val cursor = XCreatePixmapCursor(display, pixmap, pixmap, black.ptr, black.ptr, 0u, 0u)
         XFreePixmap(display, pixmap)
