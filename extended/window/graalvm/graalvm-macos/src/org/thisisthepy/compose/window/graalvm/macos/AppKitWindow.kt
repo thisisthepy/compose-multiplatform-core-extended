@@ -71,6 +71,9 @@ private external fun setCursorShape(shape: Int)
 @CFunction("dxc_native_pump")
 private external fun pumpEvents(seconds: Double)
 
+@CFunction("dxc_native_wake")
+private external fun nativeWake()
+
 @CFunction("dxc_native_frame_time_nanos")
 private external fun nativeFrameTimeNanos(): Long
 
@@ -460,6 +463,9 @@ fun setApplicationIcon(rgba: ByteArray, width: Int, height: Int) {
  * loop that never gave it a turn would be a window that heard nothing.
  */
 fun pumpWindowEvents(seconds: Double) = pumpEvents(seconds)
+
+/** Ends a wait in [pumpWindowEvents] early. Safe to call from any thread. */
+fun wakeWindowPump() = nativeWake()
 
 /**
  * When the frame drawn now will be on the screen, in nanoseconds of host time: the display

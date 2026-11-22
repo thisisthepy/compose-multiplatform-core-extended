@@ -420,6 +420,11 @@ static void dxc_link_idle(void) {
 }
 #pragma clang diagnostic pop
 
+#define DXC_WAKE_EVENT_SUBTYPE 0x4458
+
+/** Set when another thread called dxc_native_wake and pump has not yet consumed it. */
+static atomic_bool dxc_wake_pending = false;
+
 /**
  * Lets the window answer for itself for a moment.
  *
@@ -432,6 +437,8 @@ static void dxc_link_idle(void) {
  */
 void dxc_native_pump(double seconds) {
     dxc_link_idle();
+    bool woken = atomic_exchange(&dxc_wake_pending, false);
+    double wait_seconds = woken ? 0.0 : seconds;
     // A native image on macOS runs main on a thread of its own and leaves the first thread
     // in a run loop, and AppKit refuses to take events from any thread but that one.
     dxc_on_main(^{
@@ -440,7 +447,9 @@ void dxc_native_pump(double seconds) {
         // what reaches out to the window server for what has been pressed: asking only
         // for what has already arrived returns the events the toolkit makes for itself
         // and never a single click. The frame's length is how long it is willing to wait.
-        NSDate *until = [NSDate dateWithTimeIntervalSinceNow:seconds];
+        NSDate *until = wait_seconds > 0.0
+            ? [NSDate dateWithTimeIntervalSinceNow:wait_seconds]
+            : NSDate.distantPast;
         for (;;) {
             NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskAny
                                                 untilDate:until
@@ -448,6 +457,12 @@ void dxc_native_pump(double seconds) {
                                                   dequeue:YES];
             if (event == nil) {
                 break;
+            }
+            if (event.type == NSEventTypeApplicationDefined &&
+                event.subtype == DXC_WAKE_EVENT_SUBTYPE) {
+                atomic_store(&dxc_wake_pending, false);
+                until = NSDate.distantPast;
+                continue;
             }
             [NSApp sendEvent:event];
             // Whatever else is waiting is taken without waiting again: one turn should
@@ -1803,14 +1818,37 @@ void dxc_native_set_edit_menu(void *window_pointer, int32_t flags) {
 }
 
 /*
+ * Ends a wait in dxc_native_pump early. Safe to call from any thread at any time.
+ */
+void dxc_native_wake(void) {
+    if (NSApp == nil) {
+        return;
+    }
+    if (atomic_exchange(&dxc_wake_pending, true)) {
+        return;
+    }
+    @autoreleasepool {
+        NSEvent *wake = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
+                                           location:NSZeroPoint
+                                      modifierFlags:0
+                                          timestamp:0
+                                       windowNumber:0
+                                            context:nil
+                                            subtype:DXC_WAKE_EVENT_SUBTYPE
+                                              data1:0
+                                              data2:0];
+        if (wake != nil) {
+            [NSApp postEvent:wake atStart:YES];
+        }
+    }
+}
+
+/*
  * Calls of the X11 window (graalvm-linux) that the renderer's one native image also carries on
  * macOS, because its code can reach them. A native image links every C function its reachable
  * code names, and macOS binds them lazily, so a name left undefined here kills the process the
- * first time anything near it runs. None of them is used on this desktop: the AppKit window
- * is woken by its run loop, joins no AT-SPI bus, composes text through NSTextInputClient and
- * counts its resize with appkit_resize.h. Each answers that it has nothing.
+ * first time anything near it runs.
  */
-void dxc_native_wake(void) {}
 
 void dxc_native_window_origin(int32_t *x, int32_t *y) {
     *x = 0;

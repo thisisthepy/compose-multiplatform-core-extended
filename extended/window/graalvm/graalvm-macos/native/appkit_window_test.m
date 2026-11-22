@@ -393,6 +393,50 @@ static void check_right_click_menus(NSWindow *window, void *view_pointer) {
     while (dxc_native_poll_event(&event)) {}
 }
 
+static void *wake_after_delay(void *unused) {
+    (void)unused;
+    usleep(80000);
+    dxc_native_wake();
+    return NULL;
+}
+
+static double uptime_millis(void) {
+    return NSProcessInfo.processInfo.systemUptime * 1000.0;
+}
+
+static void check_wake(void) {
+    // Drain any events left from previous checks so the idle pump below actually waits.
+    for (int i = 0; i < 10; i++) {
+        dxc_native_pump(0.0);
+    }
+
+    double t0 = uptime_millis();
+    dxc_native_pump(0.25);
+    double idle_ms = uptime_millis() - t0;
+    CHECK(idle_ms >= 180.0, "idle pump returned early after %.1f ms", idle_ms);
+
+    pthread_t worker;
+    CHECK(pthread_create(&worker, NULL, wake_after_delay, NULL) == 0, "failed to create wake thread");
+    double t1 = uptime_millis();
+    dxc_native_pump(5.0);
+    double woken_ms = uptime_millis() - t1;
+    pthread_join(worker, NULL);
+    CHECK(woken_ms < 1000.0, "wake from another thread did not end 5s pump (%.1f ms)", woken_ms);
+
+    // Multiple wakes before a pump coalesce and are consumed by one turn.
+    dxc_native_wake();
+    dxc_native_wake();
+    double t2 = uptime_millis();
+    dxc_native_pump(5.0);
+    double pre_ms = uptime_millis() - t2;
+    CHECK(pre_ms < 1000.0, "wake sent before pump did not end it (%.1f ms)", pre_ms);
+
+    double t3 = uptime_millis();
+    dxc_native_pump(0.25);
+    double after_ms = uptime_millis() - t3;
+    CHECK(after_ms >= 180.0, "wake was consumed by more than one pump (%.1f ms)", after_ms);
+}
+
 int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];
@@ -432,6 +476,7 @@ int main(void) {
         check_function_keys(windows[0], opened[0].view);
         check_editing_shortcuts(windows[0], opened[0].view);
         check_right_click_menus(windows[0], opened[0].view);
+        check_wake();
         for (int index = 0; index < 3; index++) [windows[index] orderOut:nil];
     }
     if (failures > 0) {

@@ -124,6 +124,8 @@ class AppKitWindowPlatform : WindowPlatform {
         }
     }
 
+    override fun wake() = wakeWindowPump()
+
     override fun measure(): WindowMeasurement =
         checkNotNull(window) { "the window is not open" }.measure()
 

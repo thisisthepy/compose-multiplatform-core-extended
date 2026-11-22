@@ -1,7 +1,11 @@
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+@file:OptIn(
+    kotlinx.cinterop.ExperimentalForeignApi::class,
+    kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
+)
 
 package org.thisisthepy.compose.window.macos
 
+import kotlin.concurrent.atomics.AtomicInt
 import org.thisisthepy.compose.window.WindowApplication
 import platform.AppKit.NSApplication
 import platform.AppKit.NSApplicationActivationPolicy
@@ -21,6 +25,9 @@ internal object MacosProcess {
 
     /** Set when Escape reached any window; read and cleared by a follow in progress. */
     var escapePressed = false
+
+    /** Non-zero while a cross-thread wake has not yet been consumed by a pump turn. */
+    val wakePending = AtomicInt(0)
 
     private var installed = false
     private var appDelegate: MacosAppDelegate? = null
