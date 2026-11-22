@@ -121,6 +121,7 @@ env:
     org.thisisthepy.compose.window:scene
     org.thisisthepy.compose.window:native-macos
     org.thisisthepy.compose.window:native-linux
+    org.thisisthepy.compose.window:native-linux-scene
     org.thisisthepy.compose.window:graalvm-macos
     org.thisisthepy.compose.window:graalvm-linux
     org.thisisthepy.compose.window:graalvm-windows
@@ -133,6 +134,7 @@ env:
     org.thisisthepy.compose.designsystem:designsystem-gnome
     org.thisisthepy.compose.designsystem:designsystem-breeze
     org.thisisthepy.compose.designsystem:designsystem-deepin
+    org.thisisthepy.compose.designsystem:designsystem-adaptive
 
 jobs:
   plan:
@@ -425,19 +427,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/repo/org"
-          if [[ -d ~/.m2/repository/org/thisisthepy ]]; then
-            cp -R ~/.m2/repository/org/thisisthepy "$RUNNER_TEMP/repo/org/"
-          else
-            echo "::warning::build-skiko-awt.sh published nothing under org.thisisthepy; Central refuses org.jetbrains.skiko"
+          if [[ ! -d ~/.m2/repository/org/thisisthepy/compose/skiko/skiko-awt ]]; then
+            echo "::error::build-skiko-awt.sh published nothing under org.thisisthepy.compose.skiko:skiko-awt"
+            exit 1
           fi
-          touch "$RUNNER_TEMP/repo/.keep"
+          mkdir -p "$RUNNER_TEMP/repo/org"
+          cp -R ~/.m2/repository/org/thisisthepy "$RUNNER_TEMP/repo/org/"
+          find "$RUNNER_TEMP/repo" -name '*.pom' | sed "s|$RUNNER_TEMP/repo/||" | sort
 
       - uses: actions/upload-artifact@v4
         with:
           name: repo-skiko-awt
           path: ${{ runner.temp }}/repo
-          include-hidden-files: true
           retention-days: 7
 
   bundle:
@@ -528,15 +529,7 @@ jobs:
         run: |
           set -euo pipefail
           req_args=()
-          for coordinate in $REQUIRED; do
-            # skiko-awt reaches org.thisisthepy with the one-version-line change; until then a
-            # dev build goes out without it rather than not at all.
-            if [[ "$coordinate" == *:skiko-awt && ! -d "$RUNNER_TEMP/dev/org/thisisthepy/compose/skiko" ]]; then
-              echo "::warning::skiko-awt is not under org.thisisthepy yet; this dev build leaves it out"
-              continue
-            fi
-            req_args+=(--require "$coordinate")
-          done
+          for coordinate in $REQUIRED; do req_args+=(--require "$coordinate"); done
           python3 -I extended/publish/central_bundle.py validate "$RUNNER_TEMP/dev" \
             --dev="$SUFFIX" --unsigned "${req_args[@]}"
 
