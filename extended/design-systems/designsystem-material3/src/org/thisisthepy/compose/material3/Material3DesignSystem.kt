@@ -217,8 +217,10 @@ class Material3DesignSystem(
             content = colorScheme.onSurfaceVariant,
             border = null,
         )
+        // A 12% layer of the body ink over the digit tier: outlineVariant equals
+        // surfaceVariant in the dark scheme, so it cannot separate the two tiers.
         ButtonVariant.NeutralSecondary -> buttonStyle(
-            container = colorScheme.outlineVariant,
+            container = colorScheme.onSurface.copy(alpha = 0.12f).compositeOver(colorScheme.surfaceVariant),
             content = colorScheme.onSurface,
             border = null,
         )
