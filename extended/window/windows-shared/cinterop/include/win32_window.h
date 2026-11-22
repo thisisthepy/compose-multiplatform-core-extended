@@ -181,6 +181,8 @@ int64_t dxc_native_double_click_millis(void);
 
 // Input, text and the system's own services.
 void dxc_native_set_cursor(int32_t shape);
+// The system cursor IDC_* number [idc] (common's CursorShape.win32Idc), or hidden for 0 (FR-47.1).
+void dxc_native_set_cursor_id(int32_t idc);
 void dxc_native_set_ime_spot(float x, float y);
 void dxc_native_set_accessibility(const struct dxc_element *elements, int32_t count,
                                   void *window_pointer);
