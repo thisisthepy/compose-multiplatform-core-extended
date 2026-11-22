@@ -105,6 +105,8 @@ class X11Window : WindowPlatform {
     private var utf8Atom: Atom = 0uL
     private var targetsAtom: Atom = 0uL
     private var transferAtom: Atom = 0uL
+    private var netWmNameAtom: Atom = 0uL
+    private var lastTheme: SystemTheme = SystemTheme.Light
     private var surface: GlSurface? = null
     private var listener: WindowListener? = null
     private var title = ""
@@ -264,7 +266,19 @@ class X11Window : WindowPlatform {
         val height = pixelsOf(config.height, scale).coerceAtLeast(1)
         val atX = config.x?.let { pixelsOf(it, scale) }
         val atY = config.y?.let { pixelsOf(it, scale) }
-        val visual = glXChooseVisual(
+        val visual = if (config.transparent) {
+            glXChooseVisual(
+                display,
+                screen,
+                cValuesOf(
+                    GLX_RGBA, GLX_DOUBLEBUFFER,
+                    GLX_RED_SIZE, 8, GLX_GREEN_SIZE, 8, GLX_BLUE_SIZE, 8, GLX_ALPHA_SIZE, 8,
+                    0,
+                ),
+            )
+        } else {
+            null
+        } ?: glXChooseVisual(
             display,
             screen,
             cValuesOf(
@@ -281,6 +295,8 @@ class X11Window : WindowPlatform {
         val window = memScoped {
             val settings = alloc<XSetWindowAttributes>()
             settings.colormap = colormap
+            settings.background_pixel = 0uL
+            settings.border_pixel = 0uL
             settings.event_mask = EVENT_MASK
             XCreateWindow(
                 display,
@@ -291,7 +307,7 @@ class X11Window : WindowPlatform {
                 visual.pointed.depth,
                 InputOutput.convert(),
                 visual.pointed.visual,
-                (CWColormap or CWEventMask).convert(),
+                (CWColormap or CWBackPixel or CWBorderPixel or CWEventMask).convert(),
                 settings.ptr,
             )
         }
@@ -319,6 +335,8 @@ class X11Window : WindowPlatform {
         utf8Atom = shared.utf8
         targetsAtom = shared.targets
         transferAtom = shared.transfer
+        netWmNameAtom = shared.netWmName
+        lastTheme = systemTheme()
         syncCounter = createSyncCounter(display, window)
         memScoped {
             val protocols = allocArray<ULongVar>(2)
@@ -330,7 +348,7 @@ class X11Window : WindowPlatform {
             }
             XSetWMProtocols(display, window, protocols, count)
         }
-        XStoreName(display, window, config.title)
+        setWindowTitle(display, window, config.title)
         // Before the window is mapped, so a tool that looks the window up by process
         // (`xdotool search --pid`) finds it from the first map on.
         setClientIdentity(display, window)
@@ -392,6 +410,13 @@ class X11Window : WindowPlatform {
         if (scalePending && !isClosed) {
             scalePending = false
             listener?.onScaleChanged(scale)
+        }
+        if (!isClosed) {
+            val theme = systemTheme()
+            if (theme != lastTheme) {
+                lastTheme = theme
+                listener?.onThemeChanged(theme)
+            }
         }
         checkTextScale()
         // After the events, so that a reader's action lands after the input that came before
@@ -620,8 +645,21 @@ class X11Window : WindowPlatform {
         this.title = title
         accessibility.setTitle(title)
         val display = display ?: return
-        XStoreName(display, window, title)
+        setWindowTitle(display, window, title)
         XFlush(display)
+    }
+
+    /** Writes both legacy Latin-1 WM_NAME and UTF-8 _NET_WM_NAME. */
+    private fun setWindowTitle(display: CPointer<Display>, window: Window, title: String) {
+        XStoreName(display, window, title)
+        val bytes = title.encodeToByteArray()
+        memScoped {
+            val data = allocArray<UByteVar>(bytes.size + 1)
+            for (index in bytes.indices) data[index] = bytes[index].toUByte()
+            XChangeProperty(
+                display, window, netWmNameAtom, utf8Atom, 8, PropModeReplace, data, bytes.size,
+            )
+        }
     }
 
     override fun setMinimumSize(width: Int, height: Int) {

@@ -17,6 +17,7 @@ import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.macosCornerRadius
 import org.thisisthepy.compose.window.WindowMeasurement
+import java.util.concurrent.atomic.AtomicBoolean
 
 // The Kotlin face of `native/appkit_window.m`, for the GraalVM native-image path.
 //
@@ -130,6 +131,18 @@ private external fun droppedPaths(out: Pointer?, capacity: Int): Int
 @CFunction("dxc_native_window_closed")
 private external fun windowClosed(): Int
 
+@CFunction("dxc_native_window_take_close_requested")
+private external fun windowTakeCloseRequested(): Int
+
+@CFunction("dxc_native_window_close")
+private external fun closeWindow(
+    window: Pointer?,
+    view: Pointer?,
+    device: Pointer?,
+    queue: Pointer?,
+    layer: Pointer?,
+)
+
 @CFunction("dxc_native_window_focused")
 private external fun windowFocused(): Int
 
@@ -209,8 +222,22 @@ class NativeWindow internal constructor(
         )
     }
 
+    private val closed = AtomicBoolean(false)
+
     /** Current Metal allocated bytes on this window's device, rounded to megabytes. */
     fun metalAllocatedMb(): Int = nativeMetalAllocatedMb(WordFactory.pointer(device))
+
+    /** Closes the native window and releases its handles. Safe to call more than once. */
+    fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        closeWindow(
+            WordFactory.pointer(window),
+            WordFactory.pointer(view),
+            WordFactory.pointer(device),
+            WordFactory.pointer(queue),
+            WordFactory.pointer(layer),
+        )
+    }
 
 }
 
@@ -473,6 +500,9 @@ fun frameTimeNanos(): Long = nativeFrameTimeNanos()
 
 /** True once the reader has closed the window. */
 fun isWindowClosed(): Boolean = windowClosed() != 0
+
+/** True once when the user asked to close the window since the last check. */
+fun takeWindowCloseRequested(): Boolean = windowTakeCloseRequested() != 0
 
 /** True while the window is the key window. */
 fun isWindowFocused(): Boolean = windowFocused() != 0

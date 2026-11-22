@@ -606,10 +606,16 @@ static NSMenu *dxc_text_menu(id target) {
 
 /** True once the window has been closed, so the renderer knows to stop. */
 static atomic_bool dxc_window_closed;
+/** True when the user asked to close the window and the listener has not answered yet. */
+static atomic_bool dxc_window_close_requested;
 static atomic_bool dxc_window_key = true;
 
 int32_t dxc_native_window_closed(void) {
     return atomic_load(&dxc_window_closed) ? 1 : 0;
+}
+
+int32_t dxc_native_window_take_close_requested(void) {
+    return atomic_exchange(&dxc_window_close_requested, false) ? 1 : 0;
 }
 
 // Hears the close button, which is the system's and not ours to draw or to wire up.
@@ -617,6 +623,11 @@ int32_t dxc_native_window_closed(void) {
 @end
 
 @implementation DxcWindowDelegate
+- (BOOL)windowShouldClose:(NSWindow *)sender {
+    (void)sender;
+    atomic_store(&dxc_window_close_requested, true);
+    return NO;
+}
 - (void)windowWillClose:(NSNotification *)notification {
     atomic_store(&dxc_window_closed, true);
 }
@@ -1354,6 +1365,8 @@ int32_t dxc_native_window_open(
 
         // Held past this scope. The window owns the view, and the renderer owns the
         // window until it closes it.
+        atomic_store(&dxc_window_closed, false);
+        atomic_store(&dxc_window_close_requested, false);
         out->window = (__bridge_retained void *)window;
         out->view = (__bridge_retained void *)view;
         out->device = (__bridge_retained void *)device;
@@ -1363,6 +1376,44 @@ int32_t dxc_native_window_open(
     }
     });
     return status;
+}
+
+/** Closes the native window and releases the retained AppKit and Metal handles. */
+void dxc_native_window_close(
+    void *window_pointer,
+    void *view_pointer,
+    void *device_pointer,
+    void *queue_pointer,
+    void *layer_pointer
+) {
+    dxc_on_main(^{
+    @autoreleasepool {
+        if (window_pointer != NULL) {
+            NSWindow *window = (__bridge_transfer NSWindow *)window_pointer;
+            window.delegate = nil;
+            [window orderOut:nil];
+            [window close];
+        }
+        if (view_pointer != NULL) {
+            NSView *view = (__bridge_transfer NSView *)view_pointer;
+            (void)view;
+        }
+        if (layer_pointer != NULL) {
+            CAMetalLayer *layer = (__bridge_transfer CAMetalLayer *)layer_pointer;
+            (void)layer;
+        }
+        if (queue_pointer != NULL) {
+            id<MTLCommandQueue> queue = (__bridge_transfer id<MTLCommandQueue>)queue_pointer;
+            (void)queue;
+        }
+        if (device_pointer != NULL) {
+            id<MTLDevice> device = (__bridge_transfer id<MTLDevice>)device_pointer;
+            (void)device;
+        }
+        atomic_store(&dxc_window_closed, true);
+        atomic_store(&dxc_window_close_requested, false);
+    }
+    });
 }
 
 /**

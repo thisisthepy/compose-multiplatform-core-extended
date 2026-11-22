@@ -393,6 +393,30 @@ static void check_right_click_menus(NSWindow *window, void *view_pointer) {
     while (dxc_native_poll_event(&event)) {}
 }
 
+// A close button request is deferred so the listener can veto it, and dxc_native_window_close
+// destroys the native window and marks it closed.
+static void check_close_and_veto(void) {
+    struct dxc_native_window opened;
+    dxc_native_window_configure(1, 0, 0, 1, 0);
+    dxc_native_window_chrome(0, 0, 0, 0);
+    int32_t status = dxc_native_window_open("close-test", 320, 200, &opened);
+    CHECK(status == 0, "close-test: window did not open (status %d)", status);
+    if (status != 0) return;
+    spin(0.1);
+
+    NSWindow *window = (__bridge NSWindow *)opened.window;
+    CHECK(dxc_native_window_closed() == 0, "close-test: newly opened window must not report closed");
+    CHECK(dxc_native_window_take_close_requested() == 0, "close-test: no pending close request initially");
+    CHECK(![window.delegate windowShouldClose:window], "close-test: windowShouldClose defers closing to listener");
+    CHECK(dxc_native_window_take_close_requested() == 1, "close-test: close request recorded");
+    CHECK(dxc_native_window_take_close_requested() == 0, "close-test: close request cleared after take");
+    CHECK(dxc_native_window_closed() == 0, "close-test: vetoed close leaves window open");
+
+    dxc_native_window_close(opened.window, opened.view, opened.device, opened.queue, opened.layer);
+    spin(0.05);
+    CHECK(dxc_native_window_closed() == 1, "close-test: dxc_native_window_close marks window closed");
+}
+
 int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];
@@ -432,7 +456,11 @@ int main(void) {
         check_function_keys(windows[0], opened[0].view);
         check_editing_shortcuts(windows[0], opened[0].view);
         check_right_click_menus(windows[0], opened[0].view);
-        for (int index = 0; index < 3; index++) [windows[index] orderOut:nil];
+        for (int index = 0; index < 3; index++) {
+            dxc_native_window_close(opened[index].window, opened[index].view,
+                                    opened[index].device, opened[index].queue, opened[index].layer);
+        }
+        check_close_and_veto();
     }
     if (failures > 0) {
         fprintf(stderr, "%d check(s) failed\n", failures);

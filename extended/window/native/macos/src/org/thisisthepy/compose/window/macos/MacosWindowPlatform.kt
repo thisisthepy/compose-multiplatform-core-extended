@@ -31,6 +31,7 @@ import platform.AppKit.NSEvent
 import platform.AppKit.currentEvent
 import platform.AppKit.NSMenu
 import platform.AppKit.NSMenuItem
+import platform.AppKit.NSWindowStyleMaskFullScreen
 import platform.CoreGraphics.CGPointMake
 import platform.Foundation.NSDate
 import platform.Foundation.NSDefaultRunLoopMode
@@ -135,6 +136,9 @@ class MacosWindowPlatform(
                 minimumSize = minimum,
                 chrome = MacosWindowChrome.of(config.chrome, config.titleBar).also { macosTitleBar = it.toTitleBar() },
                 topLeft = config.topLeft(),
+                resizable = config.resizable,
+                decorated = config.decorated,
+                transparent = config.transparent,
             )
             created.initWindow()
             window = created
@@ -361,6 +365,10 @@ class MacosWindowPlatform(
 
     override fun setVisibility(visibility: WindowVisibility) {
         val w = window?.window ?: return
+        val full = (w.styleMask and NSWindowStyleMaskFullScreen) != 0uL
+        if (visibility != WindowVisibility.Fullscreen && full) {
+            w.toggleFullScreen(null)
+        }
         when (visibility) {
             WindowVisibility.Hidden -> w.orderOut(null)
             WindowVisibility.Visible -> {
@@ -368,7 +376,7 @@ class MacosWindowPlatform(
                 w.makeKeyAndOrderFront(null)
             }
             WindowVisibility.Minimized -> w.miniaturize(null)
-            WindowVisibility.Fullscreen -> w.toggleFullScreen(null)
+            WindowVisibility.Fullscreen -> if (!full) w.toggleFullScreen(null)
         }
     }
 
