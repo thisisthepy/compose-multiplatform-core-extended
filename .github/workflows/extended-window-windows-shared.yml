@@ -183,8 +183,10 @@ jobs:
       # that time shows a smaller window with the old picture cut by it (the strip along the
       # right edge missing). Each way of drawing a step, eight drags out and back, with a frame
       # that takes 5 ms as the renderer's does: in WM_SIZE as before (after), ahead in
-      # WM_NCCALCSIZE with what the build decides about the wait (ahead), ahead and never
-      # waiting for a composition (nowait), ahead and always waiting (wait). On each route.
+      # WM_NCCALCSIZE as the window does by default, waiting for a composition on every build
+      # since compose-rust#926 (ahead), ahead and never waiting (nowait, the Windows 11 default
+      # before), ahead and always waiting (wait). On each route. The pace lines say how many
+      # steps a second the window took a size in, before (nowait) and after (ahead) the wait.
       # The table is the measurement; the gate is only that drawing ahead is not worse than
       # drawing after, on each route.
       - name: Resize probe, right-edge drag, steps drawn ahead of the size (issue 245)
@@ -222,6 +224,10 @@ jobs:
               grep -h 'probe: drag lag' out/probe-$route-drag245-$way-?.log | sed "s/^/  $route $way /" || true
               grep -h 'resize-mode: drag steps drawn' out/probe-$route-drag245-$way-1.log || true
               grep -h 'resize-proof drag steps drawn ahead' out/probe-$route-drag245-$way-1.log || true
+              grep -h 'compose-rust: drag pace' out/probe-$route-drag245-$way-?.log |
+                sed -nE 's/.*= ([0-9.]+) steps\/s.*/\1/p' |
+                awk -v name="$route $way" '{s += $1; n++; if (min == "" || $1 < min) min = $1; if ($1 > max) max = $1}
+                  END {if (n) printf "  drag pace %s: %.1f steps/s mean over %d drags (min %.1f, max %.1f)\n", name, s / n, n, min, max}' || true
               grep -h 'dcomp: drag steps shown before the window shrank' out/probe-$route-drag245-$way-1.log || true
               grep -h 'dcomp: drag timing' out/probe-$route-drag245-$way-?.log | sed "s/^/  $route $way /" || true
               grep -h 'dcomp: drag upload parts' out/probe-$route-drag245-$way-?.log | sed "s/^/  $route $way /" || true
@@ -264,17 +270,28 @@ jobs:
           done
 
       # For comparison, not a gate: other ways of bringing the child hidden ahead of the size
-      # change back with the frame drawn ahead (DXC_SURFACE_RETURN in win32_window.c). The GDI
-      # route's child again, so the GDI route only.
+      # change back with the frame drawn ahead (DXC_SURFACE_RETURN in win32_window.c), staged
+      # being the default. parked (compose-rust#926) is here until a run shows its present taken
+      # by frame statistics ("present taken", not "assumed taken") and fewer faulty frames than
+      # staged; its log lines are listed below. The GDI route's child again, so the GDI route only.
       - name: Resize probe, maximise, restore and snap, other returns of the child (comparison)
         shell: bash
         run: |
           for route in gdi; do
             flag=0
-            for way in wmsize showfirst; do
+            for way in parked wmsize showfirst; do
               DXC_DCOMP=$flag DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-return-$way.log || true
               DXC_DCOMP=$flag DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-return-$way-30ms.log || true
             done
+            for way in parked wmsize showfirst; do
+              changes=0; faulty=0
+              for log in out/probe-$route-states-return-$way.log out/probe-$route-states-return-$way-30ms.log; do
+                changes=$((changes + $(grep -c 'resize-mode: frames gpu -> cpu' "$log" || true)))
+                faulty=$((faulty + $(grep -c 'probe: FAULT' "$log" || true)))
+              done
+              echo "states return $way ($route, comparison): $changes size changes, $faulty faulty frames"
+            done
+            grep -ho 'present [a-z ,]*taken[a-z ,]*' out/probe-$route-states-return-parked*.log | sort | uniq -c | sed 's/^/states return parked present: /' || true
           done
 
       # The gate is the composition route's, which brings the size and the picture to the screen

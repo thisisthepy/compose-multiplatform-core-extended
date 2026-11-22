@@ -193,17 +193,17 @@ static int dxc_resize_drag_predraw_wanted(const struct dxc_resize *resize, int r
  * its size, so the size change and the copy that follows it start a composition interval
  * together rather than straddle one.
  *
- * The wait costs up to one composition per step, which is the pace the GPU path has. So it
- * is taken only where the fault is common: on the Windows 10 generation of the compositor
- * (build below DXC_WINDOWS_11_BUILD), where 15 of 24 drags showed it against 0 or 1 of 24 on
- * the Windows 11 generation. [asked] overrides the build: 1 always waits, 0 never does,
- * anything else follows the build (DXC_DRAG_FLUSH). An unknown build (zero) does not wait.
+ * The wait costs up to one composition per step, which is the pace the GPU path has. It is
+ * taken on every build. It was once taken only on the Windows 10 generation of the
+ * compositor (build below DXC_WINDOWS_11_BUILD), where 15 of 24 drags showed the fault, but
+ * the Windows 11 generation shows it too, in 1 of 24 drags (a shrinking step of a right-edge
+ * drag on windows-2025, compose-rust#926), and a picture cut by its window is worse than a
+ * slower step (owner, 2026-11-22). [asked] 0 never waits (DXC_DRAG_FLUSH=0, for comparing);
+ * anything else waits. [build] is kept for the log line and no longer decides.
  */
 static int dxc_resize_drag_flush_wanted(int asked, uint32_t build) {
-    if (asked == 0 || asked == 1) {
-        return asked;
-    }
-    return build != 0 && build < DXC_WINDOWS_11_BUILD;
+    (void)build;
+    return asked != 0;
 }
 
 /**
