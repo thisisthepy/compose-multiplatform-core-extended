@@ -192,6 +192,15 @@ data class WindowEvent(
          */
         const val POINTER_EXIT = 22
 
+        /**
+         * A reader asked a control to do something, on a window whose platform writes such
+         * requests to its event queue (Windows' UI Automation): `keyCode` is the
+         * [AccessibleElement.id], `codePoint` the [AccessibleAction], and `text` the new value
+         * of an [AccessibleAction.SET_VALUE] (empty for every other action). The renderer
+         * hands it to the control, not to the scene as input.
+         */
+        const val ACCESSIBILITY_ACTION = 23
+
         @Suppress("FunctionName")
         fun NativeViewFocusIn(id: Int): WindowEvent = WindowEvent(
             kind = NATIVE_VIEW_FOCUS_IN, x = 0f, y = 0f, buttons = 0, modifiers = 0,

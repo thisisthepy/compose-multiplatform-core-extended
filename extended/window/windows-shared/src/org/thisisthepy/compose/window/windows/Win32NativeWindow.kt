@@ -14,6 +14,7 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.value
+import org.thisisthepy.compose.window.AccessibleAction
 import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.Win32Chrome
@@ -37,6 +38,7 @@ import org.thisisthepy.compose.window.windows.c.dxc_native_set_accessibility
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_cursor
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_draw_callback
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_raster_resize
+import org.thisisthepy.compose.window.windows.c.dxc_native_take_accessibility_argument
 import org.thisisthepy.compose.window.windows.c.dxc_native_text_scale_percent
 import org.thisisthepy.compose.window.windows.c.dxc_native_window
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_action
@@ -257,7 +259,14 @@ object Win32Loop {
                 // drop is read from its own buffer. The window reports it like the macOS and
                 // Linux windows do: the paths in `text`, NUL between them.
                 events.add(
-                    if (event.kind == WindowEvent.FILES_DROPPED) event.copy(text = readDroppedPaths()) else event,
+                    when {
+                        event.kind == WindowEvent.FILES_DROPPED -> event.copy(text = readDroppedPaths())
+                        // A reader's new value is kept beside the event, since it can be longer
+                        // than the event's text, and is read here in the same order.
+                        event.kind == WindowEvent.ACCESSIBILITY_ACTION &&
+                            event.codePoint == AccessibleAction.SET_VALUE -> event.copy(text = takeAccessibilityArgument())
+                        else -> event
+                    },
                 )
             }
         }
@@ -275,6 +284,28 @@ object Win32Loop {
     }
 
     private const val DROPPED_PATHS_BYTES = 64 * 1024
+
+    /**
+     * The new value of the oldest SET_VALUE request a reader made that has not been read, or
+     * empty when there is none. Asked once with room for most values and again with the room
+     * the window says a longer one needs.
+     */
+    fun takeAccessibilityArgument(): String = memScoped {
+        val first = allocArray<ByteVar>(ARGUMENT_BYTES)
+        val length = dxc_native_take_accessibility_argument(first, ARGUMENT_BYTES)
+        when {
+            length < 0 -> ""
+            length <= ARGUMENT_BYTES -> if (length == 0) "" else first.readBytes(length).decodeToString()
+            else -> {
+                // Nothing was taken; the window said how much room the value needs.
+                val room = allocArray<ByteVar>(length)
+                val taken = dxc_native_take_accessibility_argument(room, length)
+                if (taken <= 0 || taken > length) "" else room.readBytes(taken).decodeToString()
+            }
+        }
+    }
+
+    private const val ARGUMENT_BYTES = 1024
 
     /** The pointer's shape: [Win32Cursor.ARROW], [Win32Cursor.HAND], [Win32Cursor.TEXT] or [Win32Cursor.CROSSHAIR]. */
     fun setCursor(shape: Int) = dxc_native_set_cursor(shape)
