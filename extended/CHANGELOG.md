@@ -49,6 +49,13 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   window its height, so a renderer whose design system says another one is answered for it too;
   `Win32NativeWindow.open(config)` configures it from `Win32Chrome`. The buttons stay three of 46
   points at the trailing end. `Chrome::System` is unchanged.
+- **Feature.** The pointer's shape can be any of the 36 CSS `cursor` keywords (`CursorShape`, in
+  common, numbered as compose-rust's `Cursor` property; FR-47.1). Each has the closest shape on
+  every desktop window: `win32Idc` (Windows `IDC_*`), `x11Font` (the X cursor font) and `appKit`
+  (`NSCursor`), with `None` hiding the pointer; Windows has no magnifier, so the zoom keywords
+  are the crosshair, and grab and grabbing are the hand. The Windows window sets them with
+  `dxc_native_set_cursor_id` (`Win32Loop.setCursorShape`) and the X11 window with
+  `X11Window.setCursorShape`. The six-shape `setCursor` calls are unchanged.
 
 - **Fix.** The Windows window (`windows-shared`) opens on the GDI route by default again;
   `DXC_DCOMP=1` asks for the DirectComposition route. On a real GPU, with a real application

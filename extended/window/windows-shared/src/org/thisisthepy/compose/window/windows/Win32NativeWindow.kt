@@ -17,6 +17,7 @@ import kotlinx.cinterop.value
 import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.Win32Chrome
+import org.thisisthepy.compose.window.CursorShape
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowMeasurement
@@ -35,6 +36,7 @@ import org.thisisthepy.compose.window.windows.c.dxc_native_raster_end
 import org.thisisthepy.compose.window.windows.c.dxc_native_report_metrics
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_accessibility
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_cursor
+import org.thisisthepy.compose.window.windows.c.dxc_native_set_cursor_id
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_draw_callback
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_raster_resize
 import org.thisisthepy.compose.window.windows.c.dxc_native_text_scale_percent
@@ -287,6 +289,12 @@ object Win32Loop {
 
     /** The pointer's shape: [Win32Cursor.ARROW], [Win32Cursor.HAND], [Win32Cursor.TEXT] or [Win32Cursor.CROSSHAIR]. */
     fun setCursor(shape: Int) = dxc_native_set_cursor(shape)
+
+    /**
+     * The pointer's shape by its CSS keyword (FR-47.1): the closest system cursor
+     * ([CursorShape.win32Idc]), or hidden for [CursorShape.None].
+     */
+    fun setCursorShape(shape: CursorShape) = dxc_native_set_cursor_id(shape.win32Idc)
 
     /** What a caption button asks of the window: 0 minimises, 1 maximises or restores, 2 closes. */
     fun action(which: Int) = dxc_native_window_action(which)
