@@ -284,9 +284,16 @@ int32_t dxc_native_file_dialog_take(int64_t request, char *out, int32_t capacity
 int32_t dxc_notify_start(void);
 void dxc_notify_request_permission(void);
 void dxc_notify_refresh_permission(void);
+// deliver_at_ms is a Unix time in milliseconds (UTC). 0, or a time that is not in the future,
+// shows the toast now. A later time hands it to Windows to show then, even if this process has
+// ended by that time. Posting again under the same key replaces a pending toast as well as a
+// shown one.
 void dxc_notify_post(const char *key, const char *title, const char *body, const char *channel,
-                     const char *action1, const char *action2, int32_t urgent);
+                     const char *action1, const char *action2, int32_t urgent,
+                     int64_t deliver_at_ms);
+// Removes the toast with this key, shown or still pending.
 void dxc_notify_withdraw(const char *key);
+// Removes the toasts this process showed. Pending ones stay: a reminder outlives the process.
 void dxc_notify_withdraw_all(void);
 int32_t dxc_notify_next_event(char *key, int32_t capacity, int32_t *value);
 

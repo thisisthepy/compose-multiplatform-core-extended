@@ -20,6 +20,7 @@
 #include "win32_file_dialog_spec.h"
 #include "win32_placement.h"
 #include "win32_scheme.h"
+#include "win32_toast_time.h"
 #include "win32_edit_menu.h"
 #include "win32_dpi.h"
 #include "win32_window.h"
@@ -1289,6 +1290,26 @@ static void fr72_dialogs_answer_what_the_reader_chose(void) {
     dxc_native_window_release(a.window);
 }
 
+// A scheduled toast's delivery time (FR-36).
+static void fr36_scheduled_toast_time(void) {
+    // The Unix epoch is 11644473600 seconds after the Windows one, in 100 ns ticks.
+    CHECK(dxc_toast_ticks_from_unix_ms(0) == 116444736000000000LL);
+    // 2026-01-01T00:00:00Z.
+    CHECK(dxc_toast_ticks_from_unix_ms(1767225600000LL) == 134116992000000000LL);
+    // A millisecond is 10000 ticks.
+    CHECK(dxc_toast_ticks_from_unix_ms(1767225600001LL) - dxc_toast_ticks_from_unix_ms(1767225600000LL) == 10000LL);
+    // Zero and a time already past show now; a later one is scheduled.
+    CHECK(dxc_toast_is_scheduled(0, 1000) == 0);
+    CHECK(dxc_toast_is_scheduled(-5, 1000) == 0);
+    CHECK(dxc_toast_is_scheduled(999, 1000) == 0);
+    CHECK(dxc_toast_is_scheduled(1000, 1000) == 0);
+    CHECK(dxc_toast_is_scheduled(1001, 1000) == 1);
+    // A time too far out to hold as ticks is shown now rather than wrapped.
+    CHECK(dxc_toast_is_scheduled(DXC_TOAST_MAX_DELIVER_MS, 1000) == 1);
+    CHECK(dxc_toast_is_scheduled(DXC_TOAST_MAX_DELIVER_MS + 1, 1000) == 0);
+    CHECK(dxc_toast_ticks_from_unix_ms(DXC_TOAST_MAX_DELIVER_MS) > 0);
+}
+
 // Changing an open window's resizable and color scheme (FR-53).
 static void open_window_scheme(void) {
     uint32_t base = 0x10CF0000u; // WS_OVERLAPPEDWINDOW | WS_VISIBLE
@@ -1619,6 +1640,7 @@ int main(int argc, char **argv) {
     function_keys_reach_the_scene();
     pointer_buttons();
     first_window_placement();
+    fr36_scheduled_toast_time();
     open_window_scheme();
     wheel_direction();
     utf8_conversion();

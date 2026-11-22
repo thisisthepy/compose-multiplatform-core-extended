@@ -18,6 +18,21 @@
  * the C++ runtime and of the size of those headers. Each one lists its methods in the order
  * the ABI fixes, including the ones not called, because a slot is found by its position.
  *
+ * A toast can be scheduled: handed to Windows with a delivery time, after which the system
+ * shows it by itself, with this process running or not. A pending toast is the system's, not
+ * this process's, so it is not taken back when the process ends; only withdrawing it, or
+ * posting again under its key, does. Nothing needs doing for "only when the application is
+ * not in front": the system shows a scheduled toast without asking the application.
+ *
+ * A toast the system delivers while the application is closed is pressed into a new process.
+ * For an unpackaged application Windows starts it through the COM class named by the
+ * shortcut's System.AppUserModel.ToastActivatorCLSID, calling its
+ * INotificationActivationCallback with the toast's launch arguments (the same "<action>:<key>"
+ * text a live press carries). That class is registered here at start, from the CLSID the
+ * shortcut carries beside the identity, so the press becomes the first activation event. A
+ * shortcut without the CLSID still gets its toasts, but a press on one that arrives with the
+ * application closed starts nothing.
+ *
  * Every dxc_notify_* call comes from the renderer's UI thread. A toast is activated on a
  * thread of the system's; the press is put on a list here and the renderer is asked for a
  * frame, and the frame takes it off the list on the UI thread.
@@ -35,6 +50,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+
+#include "win32_toast_time.h"
 
 void compose_rust_renderer_request_frame(void);
 
@@ -85,6 +102,16 @@ static const IID DXC_IID_IPersistFile =
     {0x0000010b, 0x0000, 0x0000, {0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
 static const IID DXC_IID_IPropertyStore =
     {0x886d8eeb, 0x8cf2, 0x4446, {0x8d, 0x02, 0xcd, 0xba, 0x1d, 0xbd, 0xcf, 0x99}};
+static const IID DXC_IID_IScheduledToastNotification2 =
+    {0xa66ea09c, 0x31b4, 0x43b0, {0xb5, 0xdd, 0x7a, 0x40, 0xe8, 0x53, 0x63, 0xb1}};
+static const IID DXC_IID_IScheduledToastNotificationFactory =
+    {0xe7bed191, 0x0bb9, 0x4189, {0x83, 0x94, 0x31, 0x76, 0x1b, 0x47, 0x6f, 0xd7}};
+static const IID DXC_IID_IClassFactory =
+    {0x00000001, 0x0000, 0x0000, {0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+/* INotificationActivationCallback, what Windows calls on a toast's press when the process
+ * that showed it is gone. */
+static const IID DXC_IID_INotificationActivationCallback =
+    {0x53e31837, 0x6600, 0x4a81, {0x93, 0x95, 0x75, 0xcf, 0xfe, 0x74, 0x6f, 0x94}};
 /* The user's own Start menu programs, and everyone's. */
 static const KNOWNFOLDERID DXC_FOLDERID_Programs =
     {0xa77f5d77, 0x2e2b, 0x44c3, {0xa6, 0xa2, 0xab, 0xa6, 0x01, 0x05, 0x4a, 0x51}};
@@ -93,6 +120,10 @@ static const KNOWNFOLDERID DXC_FOLDERID_CommonPrograms =
 /* System.AppUserModel.ID, the property a shortcut carries its identity in. */
 static const PROPERTYKEY DXC_PKEY_AppUserModel_ID =
     {{0x9f4c2855, 0x9f79, 0x4b39, {0xa8, 0xd0, 0xe1, 0xd4, 0x2d, 0xe1, 0xd5, 0xf3}}, 5};
+/* System.AppUserModel.ToastActivatorCLSID, the property a shortcut names its activation
+ * class in. It shares a format id with the identity above. */
+static const PROPERTYKEY DXC_PKEY_AppUserModel_ToastActivatorCLSID =
+    {{0x9f4c2855, 0x9f79, 0x4b39, {0xa8, 0xd0, 0xe1, 0xd4, 0x2d, 0xe1, 0xd5, 0xf3}}, 26};
 
 /* What adding an event handler answers with. The SDK declares it in eventtoken.h; it is one
  * 64-bit value, declared here so that this file needs no header beyond the C ones. */
@@ -149,6 +180,55 @@ typedef struct {
 } DxcToastNotification2Vtbl;
 struct DxcToastNotification2 { const DxcToastNotification2Vtbl *lpVtbl; };
 
+/* Windows.Foundation.DateTime: 100 nanosecond ticks since 1601-01-01 UTC. */
+typedef struct {
+    int64_t UniversalTime;
+} DxcDateTime;
+
+typedef struct DxcScheduledToast DxcScheduledToast;
+typedef struct {
+    DXC_INSPECTABLE_SLOTS(DxcScheduledToast)
+    void *get_Content;
+    void *get_DeliveryTime;
+    void *get_SnoozeInterval;
+    void *get_MaximumSnoozeCount;
+    void *put_Id;
+    void *get_Id;
+} DxcScheduledToastVtbl;
+struct DxcScheduledToast { const DxcScheduledToastVtbl *lpVtbl; };
+
+/* IScheduledToastNotification2: the tag and group live here, not on the first interface. */
+typedef struct DxcScheduledToast2 DxcScheduledToast2;
+typedef struct {
+    DXC_INSPECTABLE_SLOTS(DxcScheduledToast2)
+    HRESULT(STDMETHODCALLTYPE *put_Tag)(DxcScheduledToast2 *, HSTRING);
+    HRESULT(STDMETHODCALLTYPE *get_Tag)(DxcScheduledToast2 *, HSTRING *);
+    HRESULT(STDMETHODCALLTYPE *put_Group)(DxcScheduledToast2 *, HSTRING);
+    void *get_Group;
+    void *put_SuppressPopup;
+    void *get_SuppressPopup;
+} DxcScheduledToast2Vtbl;
+struct DxcScheduledToast2 { const DxcScheduledToast2Vtbl *lpVtbl; };
+
+typedef struct DxcScheduledToastFactory DxcScheduledToastFactory;
+typedef struct {
+    DXC_INSPECTABLE_SLOTS(DxcScheduledToastFactory)
+    HRESULT(STDMETHODCALLTYPE *CreateScheduledToastNotification)(DxcScheduledToastFactory *, DxcInspectable *, DxcDateTime, DxcScheduledToast **);
+    void *CreateScheduledToastNotificationRecurring;
+} DxcScheduledToastFactoryVtbl;
+struct DxcScheduledToastFactory { const DxcScheduledToastFactoryVtbl *lpVtbl; };
+
+/* IVectorView<ScheduledToastNotification>, as the notifier's schedule is read back. */
+typedef struct DxcScheduledToastList DxcScheduledToastList;
+typedef struct {
+    DXC_INSPECTABLE_SLOTS(DxcScheduledToastList)
+    HRESULT(STDMETHODCALLTYPE *GetAt)(DxcScheduledToastList *, UINT32, DxcScheduledToast **);
+    HRESULT(STDMETHODCALLTYPE *get_Size)(DxcScheduledToastList *, UINT32 *);
+    void *IndexOf;
+    void *GetMany;
+} DxcScheduledToastListVtbl;
+struct DxcScheduledToastList { const DxcScheduledToastListVtbl *lpVtbl; };
+
 typedef struct DxcToastNotificationFactory DxcToastNotificationFactory;
 typedef struct {
     DXC_INSPECTABLE_SLOTS(DxcToastNotificationFactory)
@@ -162,9 +242,9 @@ typedef struct {
     HRESULT(STDMETHODCALLTYPE *Show)(DxcToastNotifier *, DxcToastNotification *);
     void *Hide;
     HRESULT(STDMETHODCALLTYPE *get_Setting)(DxcToastNotifier *, int32_t *);
-    void *AddToSchedule;
-    void *RemoveFromSchedule;
-    void *GetScheduledToastNotifications;
+    HRESULT(STDMETHODCALLTYPE *AddToSchedule)(DxcToastNotifier *, DxcScheduledToast *);
+    HRESULT(STDMETHODCALLTYPE *RemoveFromSchedule)(DxcToastNotifier *, DxcScheduledToast *);
+    HRESULT(STDMETHODCALLTYPE *GetScheduledToastNotifications)(DxcToastNotifier *, DxcScheduledToastList **);
 } DxcToastNotifierVtbl;
 struct DxcToastNotifier { const DxcToastNotifierVtbl *lpVtbl; };
 
@@ -350,6 +430,10 @@ static wchar_t dxc_app_id[1024];
 static DxcToastNotificationManagerStatics *dxc_manager;
 static DxcToastNotificationHistory *dxc_history;
 static DxcToastNotificationFactory *dxc_factory;
+static DxcScheduledToastFactory *dxc_scheduled_factory;
+/* The activation class the shortcut names, when it names one. */
+static CLSID dxc_activator_clsid;
+static int dxc_activator_known;
 static DxcToastNotifier *dxc_notifier;
 
 /*
@@ -432,6 +516,19 @@ static ULONG STDMETHODCALLTYPE dxc_handler_add_ref(DxcActivatedHandler *self) { 
 static ULONG STDMETHODCALLTYPE dxc_handler_release(DxcActivatedHandler *self) { return 1; }
 
 /*
+ * Turns a toast's arguments, "<action>:<key>", into the activation event. Shared by a live
+ * press (the Activated handler) and a press the system hands over through the activation
+ * class, which is the only way one arrives for a toast it delivered by itself.
+ */
+static void dxc_deliver_arguments(const wchar_t *text, UINT32 length) {
+    if (length >= 2 && text[0] >= L'0' && text[0] <= L'2' && text[1] == L':') {
+        int32_t action = (int32_t)(text[0] - L'0');
+        if (action == 0) dxc_bring_to_front();
+        dxc_notify_push(DXC_NOTIFY_ACTIVATED, action, dxc_narrow(text + 2, length - 2));
+    }
+}
+
+/*
  * A press. The arguments are what the toast was given: "<action>:<key>", where the action
  * is 0 for the body and 1 or 2 for a button.
  */
@@ -446,11 +543,7 @@ static HRESULT STDMETHODCALLTYPE dxc_handler_invoke(DxcActivatedHandler *self, D
     if (SUCCEEDED(activated->lpVtbl->get_Arguments(activated, &arguments)) && arguments != NULL) {
         UINT32 length = 0;
         const wchar_t *text = WindowsGetStringRawBuffer(arguments, &length);
-        if (length >= 2 && text[0] >= L'0' && text[0] <= L'2' && text[1] == L':') {
-            int32_t action = (int32_t)(text[0] - L'0');
-            if (action == 0) dxc_bring_to_front();
-            dxc_notify_push(DXC_NOTIFY_ACTIVATED, action, dxc_narrow(text + 2, length - 2));
-        }
+        dxc_deliver_arguments(text, length);
         WindowsDeleteString(arguments);
     }
     DXC_RELEASE(activated);
@@ -461,6 +554,79 @@ static const DxcActivatedHandlerVtbl dxc_handler_vtbl = {
     dxc_handler_query, dxc_handler_add_ref, dxc_handler_release, dxc_handler_invoke,
 };
 static DxcActivatedHandler dxc_handler = {&dxc_handler_vtbl};
+
+/* ---------------------------------------------------------------------------------------
+ * The activation class: what Windows starts when a delivered toast is pressed.
+ *
+ * Two static objects, a class factory and the callback it makes, alive for the life of the
+ * process. Registered at start, because Windows starts the application with -Embedding and
+ * waits for the class to appear. The registration is on the thread that called start, so
+ * the callback runs on the UI thread, where the event list is read.
+ * ------------------------------------------------------------------------------------ */
+
+typedef struct DxcActivationCallback DxcActivationCallback;
+typedef struct {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(DxcActivationCallback *, REFIID, void **);
+    ULONG(STDMETHODCALLTYPE *AddRef)(DxcActivationCallback *);
+    ULONG(STDMETHODCALLTYPE *Release)(DxcActivationCallback *);
+    HRESULT(STDMETHODCALLTYPE *Activate)(DxcActivationCallback *, LPCWSTR, LPCWSTR, const void *, ULONG);
+} DxcActivationCallbackVtbl;
+struct DxcActivationCallback { const DxcActivationCallbackVtbl *lpVtbl; };
+
+static HRESULT STDMETHODCALLTYPE dxc_callback_query(DxcActivationCallback *self, REFIID iid, void **out) {
+    if (IsEqualIID(iid, &DXC_IID_IUnknown) || IsEqualIID(iid, &DXC_IID_INotificationActivationCallback)) {
+        *out = self;
+        return S_OK;
+    }
+    *out = NULL;
+    return E_NOINTERFACE;
+}
+static ULONG STDMETHODCALLTYPE dxc_callback_add_ref(DxcActivationCallback *self) { return 2; }
+static ULONG STDMETHODCALLTYPE dxc_callback_release(DxcActivationCallback *self) { return 1; }
+
+/* A press. `arguments` is the toast's launch attribute for the body or the button's own. */
+static HRESULT STDMETHODCALLTYPE dxc_callback_activate(DxcActivationCallback *self, LPCWSTR app_id,
+                                                       LPCWSTR arguments, const void *input, ULONG count) {
+    if (arguments != NULL) dxc_deliver_arguments(arguments, (UINT32)wcslen(arguments));
+    return S_OK;
+}
+
+static const DxcActivationCallbackVtbl dxc_callback_vtbl = {
+    dxc_callback_query, dxc_callback_add_ref, dxc_callback_release, dxc_callback_activate,
+};
+static DxcActivationCallback dxc_callback = {&dxc_callback_vtbl};
+
+typedef struct DxcClassFactory DxcClassFactory;
+typedef struct {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(DxcClassFactory *, REFIID, void **);
+    ULONG(STDMETHODCALLTYPE *AddRef)(DxcClassFactory *);
+    ULONG(STDMETHODCALLTYPE *Release)(DxcClassFactory *);
+    HRESULT(STDMETHODCALLTYPE *CreateInstance)(DxcClassFactory *, IUnknown *, REFIID, void **);
+    HRESULT(STDMETHODCALLTYPE *LockServer)(DxcClassFactory *, BOOL);
+} DxcClassFactoryVtbl;
+struct DxcClassFactory { const DxcClassFactoryVtbl *lpVtbl; };
+
+static HRESULT STDMETHODCALLTYPE dxc_factory_query(DxcClassFactory *self, REFIID iid, void **out) {
+    if (IsEqualIID(iid, &DXC_IID_IUnknown) || IsEqualIID(iid, &DXC_IID_IClassFactory)) {
+        *out = self;
+        return S_OK;
+    }
+    *out = NULL;
+    return E_NOINTERFACE;
+}
+static ULONG STDMETHODCALLTYPE dxc_factory_add_ref(DxcClassFactory *self) { return 2; }
+static ULONG STDMETHODCALLTYPE dxc_factory_release(DxcClassFactory *self) { return 1; }
+static HRESULT STDMETHODCALLTYPE dxc_factory_create(DxcClassFactory *self, IUnknown *outer, REFIID iid, void **out) {
+    *out = NULL;
+    if (outer != NULL) return CLASS_E_NOAGGREGATION;
+    return dxc_callback_query(&dxc_callback, iid, out);
+}
+static HRESULT STDMETHODCALLTYPE dxc_factory_lock(DxcClassFactory *self, BOOL lock) { return S_OK; }
+
+static const DxcClassFactoryVtbl dxc_class_factory_vtbl = {
+    dxc_factory_query, dxc_factory_add_ref, dxc_factory_release, dxc_factory_create, dxc_factory_lock,
+};
+static DxcClassFactory dxc_class_factory = {&dxc_class_factory_vtbl};
 
 /* ---------------------------------------------------------------------------------------
  * Finding this application's identity.
@@ -500,6 +666,13 @@ static int dxc_shortcut_identity(const wchar_t *path, const wchar_t *executable)
                 value.vt == VT_LPWSTR && value.pwszVal != NULL && value.pwszVal[0] != L'\0') {
                 wcscpy_s(dxc_app_id, sizeof(dxc_app_id) / sizeof(wchar_t), value.pwszVal);
                 found = 1;
+            }
+            PropVariantClear(&value);
+            /* The activation class, if the installer wrote one beside the identity. */
+            if (found && SUCCEEDED(IPropertyStore_GetValue(store, &DXC_PKEY_AppUserModel_ToastActivatorCLSID, &value)) &&
+                value.vt == VT_CLSID && value.puuid != NULL) {
+                dxc_activator_clsid = *value.puuid;
+                dxc_activator_known = 1;
             }
             PropVariantClear(&value);
         }
@@ -568,6 +741,55 @@ static int32_t dxc_current_state(void) {
 }
 
 /* ---------------------------------------------------------------------------------------
+ * The schedule.
+ * ------------------------------------------------------------------------------------ */
+
+/* Now as a Unix time in milliseconds, UTC, the unit a delivery time is given in. */
+static int64_t dxc_now_ms(void) {
+    FILETIME now;
+    GetSystemTimeAsFileTime(&now);
+    uint64_t ticks = ((uint64_t)now.dwHighDateTime << 32) | now.dwLowDateTime;
+    return (int64_t)(ticks / 10000ull) - DXC_TOAST_EPOCH_GAP_MS;
+}
+
+/*
+ * Takes back every pending toast under `tag`.
+ *
+ * The notifier's schedule is read back as a list and each entry's tag compared, because
+ * the schedule has no remove-by-tag call. The list is a snapshot, so removing while walking
+ * it is safe.
+ */
+static void dxc_cancel_scheduled(const wchar_t *tag) {
+    if (dxc_notifier == NULL) return;
+    DxcScheduledToastList *list = NULL;
+    if (FAILED(dxc_notifier->lpVtbl->GetScheduledToastNotifications(dxc_notifier, &list)) || list == NULL) {
+        return;
+    }
+    UINT32 size = 0;
+    list->lpVtbl->get_Size(list, &size);
+    for (UINT32 index = 0; index < size; index++) {
+        DxcScheduledToast *pending = NULL;
+        DxcScheduledToast2 *pending2 = NULL;
+        if (FAILED(list->lpVtbl->GetAt(list, index, &pending)) || pending == NULL) continue;
+        if (SUCCEEDED(pending->lpVtbl->QueryInterface(pending, &DXC_IID_IScheduledToastNotification2,
+                                                      (void **)&pending2))) {
+            HSTRING found = NULL;
+            if (SUCCEEDED(pending2->lpVtbl->get_Tag(pending2, &found)) && found != NULL) {
+                UINT32 length = 0;
+                const wchar_t *text = WindowsGetStringRawBuffer(found, &length);
+                if (wcslen(tag) == length && wcsncmp(text, tag, length) == 0) {
+                    dxc_notifier->lpVtbl->RemoveFromSchedule(dxc_notifier, pending);
+                }
+                WindowsDeleteString(found);
+            }
+            DXC_RELEASE(pending2);
+        }
+        DXC_RELEASE(pending);
+    }
+    list->lpVtbl->Release(list);
+}
+
+/* ---------------------------------------------------------------------------------------
  * The names the renderer calls.
  * ------------------------------------------------------------------------------------ */
 
@@ -591,6 +813,7 @@ int32_t dxc_notify_start(void) {
     HSTRING manager_name = dxc_hstring(L"Windows.UI.Notifications.ToastNotificationManager");
     HSTRING toast_name = dxc_hstring(L"Windows.UI.Notifications.ToastNotification");
     HSTRING app_id = dxc_hstring(dxc_app_id);
+    HSTRING scheduled_name = dxc_hstring(L"Windows.UI.Notifications.ScheduledToastNotification");
     DxcToastNotificationManagerStatics2 *statics2 = NULL;
     if (SUCCEEDED(RoGetActivationFactory(manager_name, &DXC_IID_IToastNotificationManagerStatics,
                                          (void **)&dxc_manager)) &&
@@ -602,6 +825,9 @@ int32_t dxc_notify_start(void) {
             statics2->lpVtbl->get_History(statics2, &dxc_history);
             DXC_RELEASE(statics2);
         }
+        /* Without this only scheduling is lost; showing a toast now still works. */
+        RoGetActivationFactory(scheduled_name, &DXC_IID_IScheduledToastNotificationFactory,
+                               (void **)&dxc_scheduled_factory);
     } else {
         DXC_RELEASE(dxc_notifier);
         DXC_RELEASE(dxc_factory);
@@ -610,6 +836,14 @@ int32_t dxc_notify_start(void) {
     WindowsDeleteString(manager_name);
     WindowsDeleteString(toast_name);
     WindowsDeleteString(app_id);
+    WindowsDeleteString(scheduled_name);
+    /* A packaged application's activation class is in its manifest; an unpackaged one is
+     * registered here, under the CLSID its shortcut names. */
+    if (dxc_notifier != NULL && dxc_activator_known) {
+        DWORD cookie = 0;
+        CoRegisterClassObject(&dxc_activator_clsid, (IUnknown *)&dxc_class_factory, CLSCTX_LOCAL_SERVER,
+                              REGCLS_MULTIPLEUSE, &cookie);
+    }
     return dxc_state = dxc_current_state();
 }
 
@@ -627,7 +861,8 @@ void dxc_notify_refresh_permission(void) {
 }
 
 void dxc_notify_post(const char *key, const char *title, const char *body, const char *channel,
-                     const char *action1, const char *action2, int32_t urgent) {
+                     const char *action1, const char *action2, int32_t urgent,
+                     int64_t deliver_at_ms) {
     if (dxc_notifier == NULL || dxc_factory == NULL) return;
     wchar_t *wide_key = dxc_wide(key);
     wchar_t *wide_title = dxc_wide(title);
@@ -687,28 +922,53 @@ void dxc_notify_post(const char *key, const char *title, const char *body, const
     dxc_tag(wide_key, tag, sizeof(tag) / sizeof(wchar_t));
     HSTRING tag_string = dxc_hstring(tag);
     HSTRING group_string = dxc_hstring(DXC_GROUP);
+    dxc_cancel_scheduled(tag);
     if (SUCCEEDED(RoActivateInstance(document_name, (IInspectable **)&document)) &&
         SUCCEEDED(document->lpVtbl->QueryInterface(document, &DXC_IID_IXmlDocumentIO, (void **)&io)) &&
         SUCCEEDED(io->lpVtbl->LoadXml(io, source)) &&
-        SUCCEEDED(document->lpVtbl->QueryInterface(document, &DXC_IID_IXmlDocument, (void **)&xml_document)) &&
-        SUCCEEDED(dxc_factory->lpVtbl->CreateToastNotification(dxc_factory, xml_document, &toast))) {
-        /* The tag and group are what a second post under the same key replaces, and what
-         * withdrawing it removes. */
-        if (SUCCEEDED(toast->lpVtbl->QueryInterface(toast, &DXC_IID_IToastNotification2, (void **)&toast2))) {
-            toast2->lpVtbl->put_Tag(toast2, tag_string);
-            toast2->lpVtbl->put_Group(toast2, group_string);
-        }
-        DxcEventToken token;
-        toast->lpVtbl->add_Activated(toast, &dxc_handler, &token);
-        if (SUCCEEDED(dxc_notifier->lpVtbl->Show(dxc_notifier, toast))) {
-            dxc_forget(tag);
-            dxc_shown *entry = calloc(1, sizeof(dxc_shown));
-            if (entry != NULL) {
-                wcscpy_s(entry->tag, sizeof(entry->tag) / sizeof(wchar_t), tag);
-                entry->toast = toast;
-                toast = NULL;
-                entry->next = dxc_shown_list;
-                dxc_shown_list = entry;
+        SUCCEEDED(document->lpVtbl->QueryInterface(document, &DXC_IID_IXmlDocument, (void **)&xml_document))) {
+        if (dxc_toast_is_scheduled(deliver_at_ms, dxc_now_ms())) {
+            /* Handed to the system, which shows it at the time with this process running or
+             * not, and without asking the application, so nothing here depends on whether
+             * the application is in front. There is no Activated event to hook on a toast
+             * the system shows: a press reaches the activation class instead. A post under
+             * a key replaces what the key already has, which is why the pending one was
+             * cancelled above. If the scheduling factory is missing the toast is dropped
+             * rather than shown early, because an early reminder is a wrong one. */
+            DxcDateTime when = {dxc_toast_ticks_from_unix_ms(deliver_at_ms)};
+            DxcScheduledToast *scheduled = NULL;
+            DxcScheduledToast2 *scheduled2 = NULL;
+            if (dxc_scheduled_factory != NULL &&
+                SUCCEEDED(dxc_scheduled_factory->lpVtbl->CreateScheduledToastNotification(
+                    dxc_scheduled_factory, (DxcInspectable *)xml_document, when, &scheduled))) {
+                if (SUCCEEDED(scheduled->lpVtbl->QueryInterface(scheduled, &DXC_IID_IScheduledToastNotification2,
+                                                                (void **)&scheduled2))) {
+                    scheduled2->lpVtbl->put_Tag(scheduled2, tag_string);
+                    scheduled2->lpVtbl->put_Group(scheduled2, group_string);
+                }
+                dxc_notifier->lpVtbl->AddToSchedule(dxc_notifier, scheduled);
+            }
+            DXC_RELEASE(scheduled2);
+            DXC_RELEASE(scheduled);
+        } else if (SUCCEEDED(dxc_factory->lpVtbl->CreateToastNotification(dxc_factory, xml_document, &toast))) {
+            /* The tag and group are what a second post under the same key replaces, and what
+             * withdrawing it removes. */
+            if (SUCCEEDED(toast->lpVtbl->QueryInterface(toast, &DXC_IID_IToastNotification2, (void **)&toast2))) {
+                toast2->lpVtbl->put_Tag(toast2, tag_string);
+                toast2->lpVtbl->put_Group(toast2, group_string);
+            }
+            DxcEventToken token;
+            toast->lpVtbl->add_Activated(toast, &dxc_handler, &token);
+            if (SUCCEEDED(dxc_notifier->lpVtbl->Show(dxc_notifier, toast))) {
+                dxc_forget(tag);
+                dxc_shown *entry = calloc(1, sizeof(dxc_shown));
+                if (entry != NULL) {
+                    wcscpy_s(entry->tag, sizeof(entry->tag) / sizeof(wchar_t), tag);
+                    entry->toast = toast;
+                    toast = NULL;
+                    entry->next = dxc_shown_list;
+                    dxc_shown_list = entry;
+                }
             }
         }
     }
@@ -732,12 +992,17 @@ done:
     (void)channel;
 }
 
+/* Takes the key's toast back whether it is on screen or still waiting for its time. */
 void dxc_notify_withdraw(const char *key) {
-    if (dxc_history == NULL) return;
     wchar_t *wide_key = dxc_wide(key);
     if (wide_key == NULL) return;
     wchar_t tag[80];
     dxc_tag(wide_key, tag, sizeof(tag) / sizeof(wchar_t));
+    dxc_cancel_scheduled(tag);
+    if (dxc_history == NULL) {
+        free(wide_key);
+        return;
+    }
     HSTRING tag_string = dxc_hstring(tag);
     HSTRING group_string = dxc_hstring(DXC_GROUP);
     HSTRING app_id = dxc_hstring(dxc_app_id);
@@ -749,7 +1014,14 @@ void dxc_notify_withdraw(const char *key) {
     free(wide_key);
 }
 
-/* The process is ending: what it showed is taken out of the action centre with it. */
+/*
+ * The process is ending: what it showed is taken out of the action centre with it.
+ *
+ * Pending scheduled toasts are left alone on purpose. They belong to the system, which
+ * shows them when their time comes, and a reminder set for tomorrow has to outlive the
+ * application that set it. (A scheduled toast the system already delivered while this
+ * process ran is in the action centre under the same group, and goes with the rest.)
+ */
 void dxc_notify_withdraw_all(void) {
     if (dxc_history == NULL) return;
     HSTRING group_string = dxc_hstring(DXC_GROUP);

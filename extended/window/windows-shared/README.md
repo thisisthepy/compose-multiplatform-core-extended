@@ -6,7 +6,7 @@ application for Windows without a JVM.
 - `c/win32_window.c`: Win32, Direct3D 12 frames shown through DirectComposition, IMM32
   composition, UI Automation, the clipboard, file drops and the live resize.
   `c/win32_dcomp.cpp` (with `c/win32_dcomp.h`) is its DirectComposition half, the one C++ file. `c/win32_file_dialog.c`: the file open and save
-  dialogs. `c/win32_notifications.c`: toasts.
+  dialogs. `c/win32_notifications.c`: toasts (`c/win32_toast_time.h` holds the delivery time arithmetic and compiles without Windows).
   `c/win32_resize.h`, `c/win32_ime_text.h`, `c/win32_buttons.h`, `c/win32_wheel.h` (the wheel's scroll
   direction), `c/win32_dpi.h` (the size a window keeps across a change of DPI) and
   `c/win32_file_dialog_spec.h` (a dialog's type list) are header-only logic that compiles without
@@ -40,6 +40,33 @@ The application links `user32`, `gdi32`, `ole32`, `oleaut32`, `imm32`, `uiautoma
 `dcomp` are loaded at run time, so linking `dcomp.lib` is not needed. The toasts call
 `compose_rust_renderer_request_frame(void)` when an answer arrives, which the application
 defines.
+
+## Toasts
+
+`dxc_notify_post` shows a toast now, or schedules one: its last argument, `deliver_at_ms`, is a
+Unix time in milliseconds (UTC). `0`, or a time that is not in the future, shows the toast at
+once. A later time hands it to Windows as a `ScheduledToastNotification`, and the system shows
+it then without asking the application.
+
+- Posting again under the same key replaces the toast, shown or pending.
+- `dxc_notify_withdraw` takes back a shown toast and cancels a pending one with that key.
+- `dxc_notify_withdraw_all`, called when the process ends, removes only the toasts the
+  process showed. A pending toast stays, so a reminder outlives the application that set it.
+
+A toast needs the application's identity, which the renderer reads from the Start menu
+shortcut's `System.AppUserModel.ID` (see the top of `c/win32_notifications.c`). A press on a
+toast the system delivered while the application was closed has to start the application, and
+for an unpackaged application Windows does that through a COM class named by the shortcut's
+`System.AppUserModel.ToastActivatorCLSID`. The installer must write that property, a CLSID of
+its own choosing that is fixed for the application, on the same shortcut, next to the
+identity. At `dxc_notify_start` the renderer reads it and registers a class under it that
+implements `INotificationActivationCallback`; Windows starts the executable with `-Embedding`,
+and the press becomes the first activation event (`"<action>:<key>"`, as for a live press).
+`dxc_notify_start` should therefore run early in the process, since Windows waits for the class
+to appear. Windows looks the class up to start the executable, so the installer also writes
+`HKCU\Software\Classes\CLSID\{clsid}\LocalServer32` with the executable's path. Without the
+CLSID on the shortcut the toast is still shown, but a press that arrives with the application
+closed opens nothing. A packaged (MSIX) application declares the class in its manifest instead.
 
 ## How frames reach the screen
 

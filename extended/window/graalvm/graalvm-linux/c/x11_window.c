@@ -1389,7 +1389,9 @@ void dxc_notify_request_permission(void) {}
 void dxc_notify_refresh_permission(void) {}
 
 void dxc_notify_post(const char *key, const char *title, const char *body, const char *channel,
-                     const char *action1, const char *action2, int32_t urgent) {
+                     const char *action1, const char *action2, int32_t urgent,
+                     int64_t deliver_at_ms) {
+    (void)deliver_at_ms;
     (void)key;
     (void)title;
     (void)body;
