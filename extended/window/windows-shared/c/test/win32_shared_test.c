@@ -2118,24 +2118,35 @@ static void nfr8_uia_reader_requests_reach_the_scene(void) {
     CHECK(probe.root_children == 6);
     CHECK(probe.focused_ok);
 
-    // What the scene is asked, in the order the reader asked it.
-    int32_t expected_ids[] = {7, 8, 9, 9, 15};
-    int32_t expected_actions[] = {DXC_ACTION_PRESS, DXC_ACTION_PRESS, DXC_ACTION_SET_VALUE, DXC_ACTION_FOCUS,
-                                  DXC_ACTION_SET_VALUE};
+    // What the scene is asked, in the order the reader asked it. UI Automation itself also
+    // focuses an element before it invokes it or sets its value, where the element can take
+    // focus (7 and 9 here, not 8 or 15): those focus requests are passed on as they come
+    // (runs 44949827173, 44971132673: focus 7 before its press, focus 9 before its new
+    // value), so they are counted apart from the order of the reader's own requests.
+    int32_t expected_ids[] = {7, 8, 9, 15};
+    int32_t expected_actions[] = {DXC_ACTION_PRESS, DXC_ACTION_PRESS, DXC_ACTION_SET_VALUE, DXC_ACTION_SET_VALUE};
     int seen = 0;
+    int focus_on_9 = 0;
+    int focus_elsewhere = 0;
     char argument[512];
     dxc_native_window_select(window.window);
     struct dxc_event event;
     while (dxc_native_poll_event(&event) != 0) {
         if (event.kind != DXC_EVENT_ACCESSIBILITY_ACTION) continue;
-        if (seen < 5) {
+        if (event.code_point == DXC_ACTION_FOCUS) {
+            if (event.key_code == 9) focus_on_9++;
+            else if (event.key_code != 7) focus_elsewhere++;
+            continue;
+        }
+        if (seen < 4) {
             CHECK(event.key_code == expected_ids[seen]);
             CHECK(event.code_point == expected_actions[seen]);
         }
         if (event.code_point == DXC_ACTION_SET_VALUE) {
-            // Too small first: nothing is taken, and the answer is the room it needs.
-            int32_t needed = dxc_native_take_accessibility_argument(argument, 4);
-            CHECK(needed > 4);
+            // Too small first: nothing is taken, and the answer is the room it needs. One
+            // byte is too small for either value ("0.75" is exactly four).
+            int32_t needed = dxc_native_take_accessibility_argument(argument, 1);
+            CHECK(needed > 1);
             int32_t length = dxc_native_take_accessibility_argument(argument, (int32_t)sizeof argument - 1);
             CHECK(length == needed);
             if (length >= 0) argument[length] = 0;
@@ -2148,7 +2159,11 @@ static void nfr8_uia_reader_requests_reach_the_scene(void) {
         }
         seen++;
     }
-    CHECK(seen == 5);
+    CHECK(seen == 4);
+    // The reader's own SetFocus on the field, at least, and none for an element that cannot
+    // take focus.
+    CHECK(focus_on_9 >= 1);
+    CHECK(focus_elsewhere == 0);
     CHECK(dxc_native_take_accessibility_argument(argument, (int32_t)sizeof argument) == -1);
 
     dxc_native_window_destroy(window.window);
