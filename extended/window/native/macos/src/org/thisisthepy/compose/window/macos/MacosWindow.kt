@@ -287,6 +287,24 @@ class MacosWindow(
 
     var onFrameDrawn: ((widthInPixels: Int, heightInPixels: Int) -> Unit)? = null
 
+    /** Decides when Skia's GPU cache is emptied once the window stops drawing; see [IdleGpuPurge]. */
+    internal var idlePurge = IdleGpuPurge()
+
+    /** A frame reached the layer, by either way of drawing one. */
+    internal fun frameDrawn() {
+        idlePurge.frameDrawn(uptimeNanos())
+    }
+
+    /**
+     * Empties Skia's GPU cache if the window has drawn nothing for [IdleGpuPurge.IDLE_PURGE_SECONDS].
+     * Asked on every pump turn, which the loop takes anyway; it draws nothing and asks for
+     * nothing, so an idle window stays idle.
+     */
+    internal fun purgeIfIdle() {
+        if (closed) return
+        if (idlePurge.shouldPurge(uptimeNanos())) metal.purgeGpuResources()
+    }
+
     fun measure(): WindowMeasurement {
         val scale = window.backingScaleFactor
         return view.bounds.useContents {
@@ -588,7 +606,10 @@ class MacosWindow(
             bounds.useContents {
                 ResizeMetrics.frameEnd((size.width * scale).toInt(), (size.height * scale).toInt())
             }
-            if (drew) onFrameDrawn?.invoke(measured.width, measured.height)
+            if (drew) {
+                frameDrawn()
+                onFrameDrawn?.invoke(measured.width, measured.height)
+            }
         }
 
         override fun setFrameSize(newSize: CValue<CGSize>) {

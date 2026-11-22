@@ -22,7 +22,6 @@ import org.jetbrains.skia.Typeface as SkTypeface
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontStyle
 import kotlin.experimental.ExperimentalNativeApi
-import org.jetbrains.skia.Data
 import org.jetbrains.skia.FontMgr
 import org.jetbrains.skia.FontSlant
 import org.jetbrains.skia.FontWidth
@@ -34,7 +33,7 @@ internal actual fun loadTypeface(font: Font): SkTypeface {
     }
     @Suppress("REDUNDANT_ELSE_IN_WHEN")
     return when (font) {
-        is LoadedFont -> FontMgr.default.makeFromData(Data.makeFromBytes(font.getData()))
+        is LoadedFont -> FontMgr.default.makeFromData(font.skiaData())
             ?: error("loadTypeface makeFromData failed")
         is SystemFont -> FontMgr.default.legacyMakeTypeface(font.identity, font.skFontStyle)
             ?: error("loadTypeface legacyMakeTypeface failed")
