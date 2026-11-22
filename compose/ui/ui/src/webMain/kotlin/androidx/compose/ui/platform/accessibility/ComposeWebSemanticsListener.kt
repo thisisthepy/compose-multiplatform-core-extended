@@ -290,6 +290,12 @@ internal class ComposeWebSemanticsListener(
             htmlNode.removeAttribute("aria-checked")
         }
 
+        if (config.getOrNull(SemanticsProperties.HasPopup) == true) {
+            htmlNode.setAttribute("aria-haspopup", "true")
+        } else {
+            htmlNode.removeAttribute("aria-haspopup")
+        }
+
         val density = sn.layoutNode.density
         sn.boundsInRoot.let { rect ->
             val newPosition = rootOffset + rect.topLeft.div(density.density)
