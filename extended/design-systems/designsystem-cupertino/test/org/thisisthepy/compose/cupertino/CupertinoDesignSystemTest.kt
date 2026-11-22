@@ -462,4 +462,23 @@ class CupertinoDesignSystemTest {
             }
         }
     }
+
+    @Test
+    fun syntax_color_tokens_are_opaque_and_distinct_between_light_and_dark() {
+        val syntaxRoles = ColorRole.entries.filter { it.name.startsWith("Syntax") }
+        assertTrue(syntaxRoles.isNotEmpty(), "expected syntax color roles")
+        for (role in syntaxRoles) {
+            val lightColor = light.color(role)
+            val darkColor = dark.color(role)
+            assertNotEquals(Color.Unspecified, lightColor, "light $role is unspecified")
+            assertNotEquals(Color.Unspecified, darkColor, "dark $role is unspecified")
+            assertEquals(1f, lightColor.alpha, "light $role must be opaque")
+            assertEquals(1f, darkColor.alpha, "dark $role must be opaque")
+            assertNotEquals(
+                lightColor,
+                darkColor,
+                "$role must differ between light and dark Xcode palettes",
+            )
+        }
+    }
 }
