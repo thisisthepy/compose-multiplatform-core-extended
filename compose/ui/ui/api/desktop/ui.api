@@ -4239,6 +4239,7 @@ public final class androidx/compose/ui/semantics/SemanticsProperties {
 	public final fun getError ()Landroidx/compose/ui/semantics/SemanticsPropertyKey;
 	public final fun getFillableData ()Landroidx/compose/ui/semantics/SemanticsPropertyKey;
 	public final fun getFocused ()Landroidx/compose/ui/semantics/SemanticsPropertyKey;
+	public final fun getHasPopup ()Landroidx/compose/ui/semantics/SemanticsPropertyKey;
 	public final fun getHeading ()Landroidx/compose/ui/semantics/SemanticsPropertyKey;
 	public final fun getHideFromAccessibility ()Landroidx/compose/ui/semantics/SemanticsPropertyKey;
 	public final fun getHorizontalScrollAxisRange ()Landroidx/compose/ui/semantics/SemanticsPropertyKey;
@@ -4301,6 +4302,7 @@ public final class androidx/compose/ui/semantics/SemanticsPropertiesKt {
 	public static final fun getEditableText (Landroidx/compose/ui/semantics/SemanticsPropertyReceiver;)Landroidx/compose/ui/text/AnnotatedString;
 	public static final fun getFillableData (Landroidx/compose/ui/semantics/SemanticsPropertyReceiver;)Landroidx/compose/ui/autofill/FillableData;
 	public static final fun getFocused (Landroidx/compose/ui/semantics/SemanticsPropertyReceiver;)Z
+	public static final fun getHasPopup (Landroidx/compose/ui/semantics/SemanticsPropertyReceiver;)Z
 	public static final fun getHorizontalScrollAxisRange (Landroidx/compose/ui/semantics/SemanticsPropertyReceiver;)Landroidx/compose/ui/semantics/ScrollAxisRange;
 	public static final fun getImeAction (Landroidx/compose/ui/semantics/SemanticsPropertyReceiver;)I
 	public static final fun getInputText (Landroidx/compose/ui/semantics/SemanticsPropertyReceiver;)Landroidx/compose/ui/text/AnnotatedString;
@@ -4379,6 +4381,7 @@ public final class androidx/compose/ui/semantics/SemanticsPropertiesKt {
 	public static final fun setEditableText (Landroidx/compose/ui/semantics/SemanticsPropertyReceiver;Landroidx/compose/ui/text/AnnotatedString;)V
 	public static final fun setFillableData (Landroidx/compose/ui/semantics/SemanticsPropertyReceiver;Landroidx/compose/ui/autofill/FillableData;)V
 	public static final fun setFocused (Landroidx/compose/ui/semantics/SemanticsPropertyReceiver;Z)V
+	public static final fun setHasPopup (Landroidx/compose/ui/semantics/SemanticsPropertyReceiver;Z)V
 	public static final fun setHorizontalScrollAxisRange (Landroidx/compose/ui/semantics/SemanticsPropertyReceiver;Landroidx/compose/ui/semantics/ScrollAxisRange;)V
 	public static final fun setImeAction-4L7nppU (Landroidx/compose/ui/semantics/SemanticsPropertyReceiver;I)V
 	public static final fun setInputText (Landroidx/compose/ui/semantics/SemanticsPropertyReceiver;Landroidx/compose/ui/text/AnnotatedString;)V
