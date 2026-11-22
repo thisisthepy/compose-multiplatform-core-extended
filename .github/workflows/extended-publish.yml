@@ -1,6 +1,6 @@
 # Publishes this fork from a release tag to Maven Central through the Sonatype Central Portal.
 #
-# Three modes, one set of jobs:
+# Two modes, one set of jobs:
 # - dry run (the CI workflow, or a manual run with no tag): builds the same, and checks both
 #   the dev bundle and the Central bundle, signed with a key made in the job and thrown away
 #   after. Nothing is uploaded; the Central bundle is kept as a workflow artifact.
@@ -25,9 +25,19 @@
 # skiko for it) and writes the roots, which list every target; Linux builds linuxX64 and
 # linuxArm64; a third job builds JavaScript and Wasm. extended/publish/check_targets.py then
 # holds the bundle to the catalogue in buildSrc (JetBrainsPublication.kt) and to
-# extended/COORDINATES.md, and fails the run when a coordinate or a target is missing.
+# extended/COORDINATES.md, and fails the run when a coordinate, or a target not left out (below),
+# is missing.
 #
-# Secrets a release reads (dev and dry runs read none; dev uploads with GITHUB_TOKEN):
+# What a release carries is less than what is built (Sonatype counts every file and byte a
+# namespace uploads each month, and a version on Central is never replaced): the targets in
+# CENTRAL_SKIP_TARGETS below are built, because the libraries' shared metadata names them, and
+# left out of the bundle (central_bundle.py stage --skip-target), so the roots offer only the
+# targets someone consumes; and each file gets the .md5 and .sha1 Central requires, not .sha256
+# and .sha512. A dispatch with all_targets set publishes every target. Only a release tag or a
+# dispatch starts this workflow (extended/publish/check_publish_triggers.py, run by the plan
+# job, fails it otherwise), and a dispatch without a tag uploads nothing.
+#
+# Secrets a release reads (dry runs read none):
 #   MAVEN_GPG_PRIVATE_KEY   the signing key, ASCII armoured (gpg --armor --export-secret-keys)
 #   MAVEN_GPG_PASSPHRASE    its passphrase
 #   CENTRAL_TOKEN_USERNAME  the Central Portal user token's username half
@@ -54,6 +64,10 @@ on:
         - USER_MANAGED
         - AUTOMATIC
         default: USER_MANAGED
+      all_targets:
+        description: Publish every target the build makes, CENTRAL_SKIP_TARGETS included.
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       tag:
@@ -67,6 +81,10 @@ on:
           Publish; AUTOMATIC publishes once validated.
         type: string
         default: USER_MANAGED
+      all_targets:
+        description: Publish every target the build makes, CENTRAL_SKIP_TARGETS included.
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.event_name == 'push' && format('publish-{0}', github.ref) || (github.workflow == 'CI' && format('called-extended-publish-{0}', github.run_id) || 'dev-ci') }}
@@ -84,6 +102,11 @@ env:
     -Dorg.gradle.internal.repository.initial.backoff=1000
     -Dorg.gradle.internal.http.connectionTimeout=120000
     -Dorg.gradle.internal.http.socketTimeout=120000
+  # Targets built and left out of the bundle (fork owner, 2026-11-21). They were 3,810 of the
+  # 17,844 files 1.11.1-ext.5 uploaded. Every python-multiplatform developer pulls this fork from
+  # Central, so a target is cut only when none of them can need it. all_targets publishes them.
+  CENTRAL_SKIP_TARGETS: >-
+    tvosArm64 tvosSimulatorArm64 watchosArm64 watchosArm32 watchosSimulatorArm64 js
   # Every coordinate the bundle must carry. The check also follows every dependency and
   # variant the bundle names, so this list is the roots, not the closure.
   REQUIRED: >-
@@ -122,6 +145,7 @@ jobs:
       ref: ${{ steps.plan.outputs.ref }}
       version: ${{ steps.plan.outputs.version }}
       suffix: ${{ steps.plan.outputs.suffix }}
+      skip: ${{ steps.plan.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -129,6 +153,7 @@ jobs:
           # check_targets_test.py reads the design systems' project.yaml and module.yaml files;
           # central-bundle.test.sh runs extended/skiko/repoint-desktop-skiko.py.
           sparse-checkout: |
+            .github/workflows
             extended/publish
             extended/skiko
             extended/COORDINATES.md
@@ -136,6 +161,12 @@ jobs:
             buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build
             gradle.properties
           sparse-checkout-cone-mode: false
+
+      - name: Test the trigger check
+        run: python3 -I extended/publish/tests/check_publish_triggers_test.py
+
+      - name: No branch push, pull request or schedule starts a publish
+        run: python3 -I extended/publish/check_publish_triggers.py .github/workflows
 
       - name: Test the bundle tool
         run: extended/publish/tests/central-bundle.test.sh
@@ -149,23 +180,27 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           INPUT_TAG: ${{ inputs.tag }}
+          ALL_TARGETS: ${{ inputs.all_targets && 'true' || 'false' }}
         run: |
           set -euo pipefail
           read_version() { sed -n 's/^jetbrains\.publication\.version\.COMPOSE=//p'; }
+          if [[ "$ALL_TARGETS" == true ]]; then
+            echo "every target is published"
+            echo "skip=" >> "$GITHUB_OUTPUT"
+          else
+            echo "left out: $CENTRAL_SKIP_TARGETS"
+            echo "skip=$CENTRAL_SKIP_TARGETS" >> "$GITHUB_OUTPUT"
+          fi
           tag=""
           if [[ "$EVENT" == push && "$GITHUB_REF" == refs/tags/* ]]; then
             tag="${GITHUB_REF#refs/tags/}"
+          elif [[ "$EVENT" == push ]]; then
+            echo "::error::a push to $GITHUB_REF started this workflow; only a release tag or a dispatch publishes"
+            exit 1
           elif [[ "$EVENT" == workflow_dispatch && -n "$INPUT_TAG" ]]; then
             tag="$INPUT_TAG"
           fi
           suffix="-dev.$(git rev-parse --short=10 "$GITHUB_SHA")"
-          if [[ "$EVENT" == push && "$GITHUB_REF" == refs/heads/extended ]]; then
-            version="$(read_version < gradle.properties)"
-            echo "dev build of $GITHUB_SHA: <version>$suffix"
-            { echo "central=false"; echo "dev=true"; echo "release=false"; echo "ref=$GITHUB_SHA"
-              echo "version=$version"; echo "suffix=$suffix"; } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           if [[ -z "$tag" ]]; then
             version="$(read_version < gradle.properties)"
             echo "dry run of $GITHUB_SHA at $version, and as <version>$suffix"
@@ -416,6 +451,7 @@ jobs:
       RELEASE: ${{ needs.plan.outputs.release }}
       VERSION: ${{ needs.plan.outputs.version }}
       SUFFIX: ${{ needs.plan.outputs.suffix }}
+      SKIP: ${{ needs.plan.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -467,8 +503,12 @@ jobs:
 
       - name: Stage the dev build
         if: env.DEV == 'true'
+        shell: bash
         run: |
-          python3 -I extended/publish/central_bundle.py stage \
+          set -euo pipefail
+          skip_args=()
+          for target in $SKIP; do skip_args+=(--skip-target "$target"); done
+          python3 -I extended/publish/central_bundle.py stage ${skip_args[@]+"${skip_args[@]}"} \
             --from "$RUNNER_TEMP/repos/repo-macos" \
             --from "$RUNNER_TEMP/repos/repo-linux" \
             --from "$RUNNER_TEMP/repos/repo-web" \
@@ -504,7 +544,10 @@ jobs:
         if: env.DEV == 'true'
         shell: bash
         run: |
-          python3 -I extended/publish/check_targets.py "$RUNNER_TEMP/dev" \
+          set -euo pipefail
+          skip_args=()
+          for target in $SKIP; do skip_args+=(--skip-target "$target"); done
+          python3 -I extended/publish/check_targets.py "$RUNNER_TEMP/dev" ${skip_args[@]+"${skip_args[@]}"} \
             --catalog buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build/JetBrainsPublication.kt \
             --platforms buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build/ComposePlatforms.kt \
             --coordinates extended/COORDINATES.md \
@@ -523,8 +566,12 @@ jobs:
 
       - name: Stage the Central bundle
         if: env.CENTRAL == 'true'
+        shell: bash
         run: |
-          python3 -I extended/publish/central_bundle.py stage \
+          set -euo pipefail
+          skip_args=()
+          for target in $SKIP; do skip_args+=(--skip-target "$target"); done
+          python3 -I extended/publish/central_bundle.py stage ${skip_args[@]+"${skip_args[@]}"} \
             --from "$RUNNER_TEMP/repos/repo-macos" \
             --from "$RUNNER_TEMP/repos/repo-linux" \
             --from "$RUNNER_TEMP/repos/repo-web" \
@@ -571,7 +618,10 @@ jobs:
         if: env.CENTRAL == 'true'
         shell: bash
         run: |
-          python3 -I extended/publish/check_targets.py "$RUNNER_TEMP/staging" \
+          set -euo pipefail
+          skip_args=()
+          for target in $SKIP; do skip_args+=(--skip-target "$target"); done
+          python3 -I extended/publish/check_targets.py "$RUNNER_TEMP/staging" ${skip_args[@]+"${skip_args[@]}"} \
             --catalog buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build/JetBrainsPublication.kt \
             --platforms buildSrc/public/src/main/kotlin/org/jetbrains/androidx/build/ComposePlatforms.kt \
             --coordinates extended/COORDINATES.md \
@@ -591,53 +641,6 @@ jobs:
           name: central-bundle
           path: ${{ runner.temp }}/central-bundle.zip
           retention-days: 14
-
-  github-packages:
-    name: Upload the dev build to GitHub Packages
-    needs: [ plan, bundle ]
-    if: needs.plan.outputs.dev == 'true' && needs.plan.outputs.central != 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.plan.outputs.ref }}
-          sparse-checkout: extended/publish
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: dev-repository
-          path: ${{ runner.temp }}/dev
-
-      - name: Upload
-        env:
-          MAVEN_USERNAME: ${{ github.actor }}
-          MAVEN_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          python3 -I extended/publish/central_bundle.py put "$RUNNER_TEMP/dev" \
-            "https://maven.pkg.github.com/${{ github.repository }}"
-
-      # The plugin's aliases name a Compose version, so each core dev build gets a plugin dev
-      # build that names it. Starting a workflow in another repository needs a token that can:
-      # PLUGIN_DISPATCH_TOKEN, a fine-grained token with Actions read and write on
-      # thisisthepy/compose-multiplatform-extended. Without it the plugin's next dev build
-      # picks this one up by itself, on its next merge.
-      - name: Build the plugin against this dev build
-        env:
-          GH_TOKEN: ${{ secrets.PLUGIN_DISPATCH_TOKEN }}
-          CORE_SHA: ${{ needs.plan.outputs.ref }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$GH_TOKEN" ]]; then
-            echo "::notice::PLUGIN_DISPATCH_TOKEN is not set; the plugin is not rebuilt against $CORE_SHA now"
-            exit 0
-          fi
-          gh workflow run extended-publish.yml -R thisisthepy/compose-multiplatform-extended --ref extended \
-            -f mode=dev -f core_commit="$CORE_SHA"
-          echo "started the plugin's dev build against $CORE_SHA"
 
   upload:
     name: Upload to the Central Portal

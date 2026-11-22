@@ -1,4 +1,5 @@
-// Checks the parts of the shared Win32 window that are arithmetic, that the objects the
+// Checks the parts of the shared Win32 window that are arithmetic (and the resize probe's
+// judges, c/test/win32_probe_judge.h), that the objects the
 // window is made of resolve every symbol the header declares, and that the records have
 // the sizes the Kotlin/Native reader (src/.../Win32Records.kt) assumes. Compiled and run by the
 // extended-window-windows-shared workflow with MSVC.
@@ -21,7 +22,9 @@
 #include "win32_scheme.h"
 #include "win32_edit_menu.h"
 #include "win32_dpi.h"
+#include "win32_native_views.h"
 #include "win32_window.h"
+#include "win32_probe_judge.h"
 #include "win32_uia.h"
 #include "win32_uia_client.h"
 
@@ -1298,6 +1301,294 @@ static void fr72_dialogs_answer_what_the_reader_chose(void) {
     dxc_native_window_release(a.window);
 }
 
+// native view checks begin
+// Where a native view slot's container and view go, what of it shows and what its holes cut
+// (win32_native_views.h, compose-rust FR-81): the rules of common's NativeViewRegion.
+static int nv_rect_is(struct dxc_nv_rect r, int32_t x, int32_t y, int32_t width, int32_t height) {
+    return r.x == x && r.y == y && r.width == width && r.height == height;
+}
+
+static void fr81_native_view_placement_arithmetic(void) {
+    struct dxc_nv_rect frame = dxc_nv_rect_of(100, 100, 200, 200);
+    struct dxc_nv_rect clip = dxc_nv_rect_of(0, 150, 1000, 1000);
+    // Cut by the clip above: the container is the lower part, the view keeps its whole frame
+    // and starts 50 pixels above the container, so its lower part is what shows.
+    struct dxc_nv_rect bounds = dxc_nv_bounds(frame, 1, clip);
+    CHECK(nv_rect_is(bounds, 100, 150, 200, 150));
+    CHECK(nv_rect_is(dxc_nv_view_in_container(frame, bounds), 0, -50, 200, 200));
+    // No clip: the frame, and the view fills the container.
+    CHECK(nv_rect_is(dxc_nv_bounds(frame, 0, clip), 100, 100, 200, 200));
+    CHECK(nv_rect_is(dxc_nv_view_in_container(frame, frame), 0, 0, 200, 200));
+    // A clip on the right and bottom leaves the view where it was in the container.
+    struct dxc_nv_rect right = dxc_nv_bounds(frame, 1, dxc_nv_rect_of(0, 0, 250, 260));
+    CHECK(nv_rect_is(right, 100, 100, 150, 160));
+    CHECK(nv_rect_is(dxc_nv_view_in_container(frame, right), 0, 0, 200, 200));
+    // Scrolled all the way out of its clip: nothing shows, and a hidden slot never shows.
+    struct dxc_nv_rect gone = dxc_nv_bounds(frame, 1, dxc_nv_rect_of(0, 400, 1000, 100));
+    CHECK(dxc_nv_rect_empty(gone));
+    CHECK(!dxc_nv_shows(1, gone));
+    CHECK(dxc_nv_shows(1, bounds));
+    CHECK(!dxc_nv_shows(0, bounds));
+    // A negative size is no size.
+    CHECK(nv_rect_is(dxc_nv_rect_of(5, 5, -3, 4), 5, 5, 0, 4));
+    CHECK(dxc_nv_rect_empty(dxc_nv_intersect(dxc_nv_rect_of(0, 0, 10, 10), dxc_nv_rect_of(20, 20, 5, 5))));
+    // A hole is cut in the container's own coordinates, and only where it meets it.
+    struct dxc_nv_rect local = {0, 0, 0, 0};
+    CHECK(dxc_nv_hole_in_container(dxc_nv_rect_of(250, 250, 100, 100), bounds, &local));
+    CHECK(nv_rect_is(local, 150, 100, 100, 100));
+    CHECK(!dxc_nv_hole_in_container(dxc_nv_rect_of(400, 400, 10, 10), bounds, &local));
+    CHECK(!dxc_nv_hole_in_container(dxc_nv_rect_of(150, 160, 0, 10), bounds, &local));
+    // Corners: at most half the shorter side, never negative.
+    CHECK(dxc_nv_hole_radius(dxc_nv_rect_of(0, 0, 100, 40), 30) == 20);
+    CHECK(dxc_nv_hole_radius(dxc_nv_rect_of(0, 0, 100, 100), -5) == 0);
+    CHECK(dxc_nv_hole_radius(dxc_nv_rect_of(0, 0, 10, 10), 3) == 3);
+    // A rounded hole's region box is a pixel wider and taller; a square one is the hole.
+    CHECK(nv_rect_is(dxc_nv_round_region_box(dxc_nv_rect_of(4, 6, 20, 10), 3), 4, 6, 21, 11));
+    CHECK(nv_rect_is(dxc_nv_round_region_box(dxc_nv_rect_of(4, 6, 20, 10), 0), 4, 6, 20, 10));
+}
+
+static int nv_focus_is(const struct dxc_nv_focus_event *event, int32_t in, int32_t id) {
+    return event->in == in && event->id == id;
+}
+
+// The focus reports of common's NativeViewsTest, on the window's own copy of the rules, and
+// the event numbers they go out as, which are common's WindowEvent kinds.
+static void fr81_native_view_focus_reports(void) {
+    CHECK(DXC_EVENT_NATIVE_VIEW_FOCUS_IN == 19 && DXC_EVENT_NATIVE_VIEW_FOCUS_OUT == 20);
+    CHECK(DXC_EVENT_POINTER_ENTER == 21 && DXC_EVENT_POINTER_EXIT == 22);
+    struct dxc_nv_focus focus = {1, 0, 0};
+    struct dxc_nv_focus_event events[2];
+    CHECK(dxc_nv_focus_moved(&focus, 1, 1, events) == 1 && nv_focus_is(&events[0], 1, 1));
+    CHECK(dxc_nv_focus_moved(&focus, 1, 1, events) == 0);
+    CHECK(dxc_nv_focus_moved(&focus, 1, 2, events) == 2 && nv_focus_is(&events[0], 0, 1) &&
+          nv_focus_is(&events[1], 1, 2));
+    CHECK(dxc_nv_focus_moved(&focus, 0, 0, events) == 1 && nv_focus_is(&events[0], 0, 2));
+    CHECK(!focus.has_focused);
+    CHECK(dxc_nv_focus_moved(&focus, 0, 0, events) == 0);
+
+    // Deactivated: out; again: nothing; activated: in. The scene's focus is never reported.
+    CHECK(dxc_nv_focus_moved(&focus, 1, 3, events) == 1);
+    CHECK(dxc_nv_focus_key(&focus, 0, events) == 1 && nv_focus_is(&events[0], 0, 3));
+    CHECK(dxc_nv_focus_key(&focus, 0, events) == 0);
+    CHECK(dxc_nv_focus_key(&focus, 1, events) == 1 && nv_focus_is(&events[0], 1, 3));
+    CHECK(dxc_nv_focus_moved(&focus, 0, 0, events) == 1);
+    CHECK(dxc_nv_focus_key(&focus, 0, events) == 0);
+    CHECK(dxc_nv_focus_key(&focus, 1, events) == 0);
+
+    // A move while not active is kept and reported on activation.
+    struct dxc_nv_focus inactive = {0, 0, 0};
+    CHECK(dxc_nv_focus_moved(&inactive, 1, 4, events) == 0);
+    CHECK(inactive.has_focused && inactive.focused == 4);
+    CHECK(dxc_nv_focus_key(&inactive, 1, events) == 1 && nv_focus_is(&events[0], 1, 4));
+    // Slot 0 is a slot like any other.
+    struct dxc_nv_focus zero = {1, 0, 0};
+    CHECK(dxc_nv_focus_moved(&zero, 1, 0, events) == 1 && nv_focus_is(&events[0], 1, 0));
+    CHECK(dxc_nv_focus_moved(&zero, 0, 0, events) == 1 && nv_focus_is(&events[0], 0, 0));
+}
+// native view checks end
+
+// The native view events in the selected window's queue, in order: kind and slot (or x).
+static int nv_events(int32_t *kinds, int32_t *ids, int capacity) {
+    struct dxc_event event;
+    int count = 0;
+    while (dxc_native_poll_event(&event)) {
+        if (event.kind < DXC_EVENT_NATIVE_VIEW_FOCUS_IN || event.kind > DXC_EVENT_POINTER_EXIT) continue;
+        if (count < capacity) {
+            kinds[count] = event.kind;
+            ids[count] = event.key_code;
+        }
+        count++;
+    }
+    return count;
+}
+
+static int nv_client_rect_is(HWND parent, HWND child, LONG left, LONG top, LONG right, LONG bottom) {
+    RECT rect;
+    if (!GetWindowRect(child, &rect)) return 0;
+    MapWindowPoints(HWND_DESKTOP, parent, (POINT *)&rect, 2);
+    if (rect.left == left && rect.top == top && rect.right == right && rect.bottom == bottom) return 1;
+    printf("note: rect %ld,%ld,%ld,%ld, expected %ld,%ld,%ld,%ld\n", (long)rect.left, (long)rect.top,
+           (long)rect.right, (long)rect.bottom, (long)left, (long)top, (long)right, (long)bottom);
+    return 0;
+}
+
+/** Whether [above] is above [below] among their parent's children. */
+static int nv_above(HWND above, HWND below) {
+    for (HWND at = GetWindow(above, GW_HWNDNEXT); at != NULL; at = GetWindow(at, GW_HWNDNEXT)) {
+        if (at == below) return 1;
+    }
+    return 0;
+}
+
+// FR-81 on a real window, on the route [comp] names: two plain views of the application's (a
+// STATIC and an EDIT) attached, placed, clipped, holed, ordered, focused and detached, and
+// alive after the window closed. Pixels are not read; what the windows were given is.
+static void fr81_native_views_in_a_real_window(int comp) {
+    const char *route = comp ? "dcomp" : "gdi";
+    if (!real_windows_ok) { printf("skip: fr81_native_views_in_a_real_window %s\n", route); return; }
+    _putenv(comp ? "DXC_DCOMP=1" : "DXC_DCOMP=0");
+    struct dxc_native_window w;
+    memset(&w, 0, sizeof w);
+    int opened = open_test_window(&w, comp ? "native views dcomp" : "native views gdi");
+    _putenv("DXC_DCOMP=");
+    if (!opened) {
+        printf("fail: fr81 the window could not be made on the %s route\n", route);
+        failures++;
+        return;
+    }
+    HWND hwnd = (HWND)w.window;
+    dxc_native_window_select(w.window);
+    pump_all();
+    int32_t kinds[16], ids[16];
+    nv_events(kinds, ids, 16);
+
+    CHECK(dxc_native_view_parent(w.window) == (int64_t)(intptr_t)hwnd);
+    HWND view = CreateWindowExW(0, L"STATIC", L"view", WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, hwnd, NULL, NULL, NULL);
+    HWND field = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0, 10, 10, hwnd, NULL, NULL, NULL);
+    CHECK(view != NULL && field != NULL);
+    if (view == NULL || field == NULL) return;
+
+    // What is refused: no handle, the window itself, a view already in a slot, an id in use.
+    CHECK(dxc_native_view_attach(w.window, 1, 0) == 0);
+    CHECK(dxc_native_view_attach(w.window, 1, (int64_t)(intptr_t)hwnd) == 0);
+    CHECK(dxc_native_view_attach(w.window, 1, (int64_t)(intptr_t)view) == 1);
+    CHECK(dxc_native_view_attach(w.window, 2, (int64_t)(intptr_t)view) == 0);
+    CHECK(dxc_native_view_attach(w.window, 1, (int64_t)(intptr_t)field) == 0);
+    HWND box = GetParent(view);
+    CHECK(box != NULL && box != hwnd && GetParent(box) == hwnd);
+    // Hidden until placed and shown.
+    CHECK(!IsWindowVisible(box));
+
+    dxc_native_view_place(w.window, 1, 10, 20, 100, 80, 0, 0, 0, 0, 0, NULL, 0);
+    dxc_native_view_set_visible(w.window, 1, 1);
+    pump_all();
+    CHECK(IsWindowVisible(box) && IsWindowVisible(view));
+    CHECK(nv_client_rect_is(hwnd, box, 10, 20, 110, 100));
+    CHECK(nv_client_rect_is(box, view, 0, 0, 100, 80));
+
+    // Clipped from above by 40 pixels: the container is the lower part, the view starts above it.
+    dxc_native_view_place(w.window, 1, 10, 20, 100, 80, 1, 0, 60, 300, 300, NULL, 0);
+    pump_all();
+    CHECK(nv_client_rect_is(hwnd, box, 10, 60, 110, 100));
+    CHECK(nv_client_rect_is(box, view, 0, -40, 100, 40));
+
+    // A hole: cut out of the container's region, in its own coordinates.
+    int32_t hole[5] = {30, 70, 20, 20, 0};
+    dxc_native_view_place(w.window, 1, 10, 20, 100, 80, 0, 0, 0, 0, 0, hole, 1);
+    pump_all();
+    HRGN shape = CreateRectRgn(0, 0, 0, 0);
+    CHECK(GetWindowRgn(box, shape) != ERROR);
+    CHECK(!PtInRegion(shape, 30, 60));
+    CHECK(PtInRegion(shape, 5, 5));
+    CHECK(PtInRegion(shape, 50, 70));
+    // No hole any more: no region.
+    dxc_native_view_place(w.window, 1, 10, 20, 100, 80, 0, 0, 0, 0, 0, NULL, 0);
+    pump_all();
+    CHECK(GetWindowRgn(box, shape) == ERROR);
+    DeleteObject(shape);
+
+    // Clipped away entirely, hidden; back, shown.
+    dxc_native_view_place(w.window, 1, 10, 20, 100, 80, 1, 0, 200, 300, 10, NULL, 0);
+    pump_all();
+    CHECK(!IsWindowVisible(box));
+    dxc_native_view_place(w.window, 1, 10, 20, 100, 80, 0, 0, 0, 0, 0, NULL, 0);
+    pump_all();
+    CHECK(IsWindowVisible(box));
+
+    // The second slot is above the first, and both are above the swapchain's child.
+    CHECK(dxc_native_view_attach(w.window, 2, (int64_t)(intptr_t)field) == 1);
+    HWND field_box = GetParent(field);
+    dxc_native_view_place(w.window, 2, 50, 50, 120, 30, 0, 0, 0, 0, 0, NULL, 0);
+    dxc_native_view_set_visible(w.window, 2, 1);
+    pump_all();
+    CHECK(nv_above(field_box, box));
+    // The composition route has no swapchain child; a machine without composition falls back
+    // to the GDI route, which has one.
+    HWND surface = FindWindowExW(hwnd, NULL, L"ComposeRustSurface", NULL);
+    if (comp && surface != NULL) printf("note: fr81 asked for dcomp, the window took the gdi route\n");
+    if (surface == NULL) {
+        CHECK(comp);
+        printf("note: fr81 dcomp container layered=%d\n",
+               (GetWindowLongPtrW(box, GWL_EXSTYLE) & WS_EX_LAYERED) != 0 ? 1 : 0);
+    } else {
+        CHECK(nv_above(box, surface));
+        CHECK((GetWindowLongPtrW(surface, GWL_STYLE) & WS_CLIPSIBLINGS) != 0);
+    }
+
+    // The pointer over a view: the window sets no cursor and the scene hears it leave, once;
+    // back over the scene, it hears it come in before the move.
+    nv_events(kinds, ids, 16);
+    CHECK(SendMessageW(hwnd, WM_SETCURSOR, (WPARAM)view, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE)) == FALSE);
+    SendMessageW(hwnd, WM_SETCURSOR, (WPARAM)view, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+    SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(200, 150));
+    SendMessageW(hwnd, WM_MOUSEMOVE, 0, MAKELPARAM(201, 150));
+    int count = nv_events(kinds, ids, 16);
+    CHECK(count == 2 && kinds[0] == DXC_EVENT_POINTER_EXIT && kinds[1] == DXC_EVENT_POINTER_ENTER);
+
+    // Focus, with the window active as the system would make it.
+    SendMessageW(hwnd, WM_ACTIVATE, WA_ACTIVE, 0);
+    nv_events(kinds, ids, 16);
+    if (GetFocus() != hwnd) {
+        printf("skip: fr81 focus on the %s route (the window has no keyboard here)\n", route);
+    } else {
+        int32_t id = -1;
+        dxc_native_view_focus(w.window, 2);
+        CHECK(GetFocus() == field);
+        CHECK(dxc_native_view_focused(w.window, &id) == 1 && id == 2);
+        count = nv_events(kinds, ids, 16);
+        CHECK(count == 1 && kinds[0] == DXC_EVENT_NATIVE_VIEW_FOCUS_IN && ids[0] == 2);
+        dxc_native_view_focus_scene(w.window);
+        CHECK(GetFocus() == hwnd);
+        count = nv_events(kinds, ids, 16);
+        CHECK(count == 1 && kinds[0] == DXC_EVENT_NATIVE_VIEW_FOCUS_OUT && ids[0] == 2);
+        // Deactivated and activated again: out, then in, and the field has the keyboard back.
+        dxc_native_view_focus(w.window, 2);
+        nv_events(kinds, ids, 16);
+        SendMessageW(hwnd, WM_ACTIVATE, WA_INACTIVE, 0);
+        count = nv_events(kinds, ids, 16);
+        CHECK(count == 1 && kinds[0] == DXC_EVENT_NATIVE_VIEW_FOCUS_OUT && ids[0] == 2);
+        SendMessageW(hwnd, WM_ACTIVATE, WA_ACTIVE, 0);
+        CHECK(GetFocus() == field);
+        count = nv_events(kinds, ids, 16);
+        CHECK(count == 1 && kinds[0] == DXC_EVENT_NATIVE_VIEW_FOCUS_IN && ids[0] == 2);
+        // A press in the scene takes it back.
+        SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(250, 200));
+        SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(250, 200));
+        CHECK(GetFocus() == hwnd);
+        count = nv_events(kinds, ids, 16);
+        CHECK(count == 1 && kinds[0] == DXC_EVENT_NATIVE_VIEW_FOCUS_OUT && ids[0] == 2);
+        // Hidden with the keyboard: it goes to the scene at once.
+        dxc_native_view_focus(w.window, 2);
+        nv_events(kinds, ids, 16);
+        dxc_native_view_set_visible(w.window, 2, 0);
+        CHECK(GetFocus() == hwnd);
+        count = nv_events(kinds, ids, 16);
+        CHECK(count == 1 && kinds[0] == DXC_EVENT_NATIVE_VIEW_FOCUS_OUT && ids[0] == 2);
+        CHECK(dxc_native_view_focused(w.window, &id) == 0);
+        dxc_native_view_set_visible(w.window, 2, 1);
+        pump_all();
+    }
+
+    // Detached: out of the window, hidden, alive, and the container gone.
+    dxc_native_view_detach(w.window, 1);
+    CHECK(IsWindow(view));
+    CHECK(!IsWindowVisible(view));
+    CHECK(GetParent(view) != box && !IsChild(hwnd, view));
+    CHECK(!IsWindow(box));
+    // A detached view can be attached again.
+    CHECK(dxc_native_view_attach(w.window, 1, (int64_t)(intptr_t)view) == 1);
+
+    // The window closes with both still attached: both are taken out, neither destroyed.
+    dxc_native_window_destroy(w.window);
+    pump_all();
+    CHECK(IsWindow(view) && IsWindow(field));
+    CHECK(!IsChild(hwnd, view) && !IsChild(hwnd, field));
+    CHECK(dxc_native_view_parent(w.window) == 0);
+    DestroyWindow(view);
+    DestroyWindow(field);
+    dxc_native_window_release(w.window);
+}
+
 // Changing an open window's resizable and color scheme (FR-53).
 static void open_window_scheme(void) {
     uint32_t base = 0x10CF0000u; // WS_OVERLAPPEDWINDOW | WS_VISIBLE
@@ -1391,6 +1682,235 @@ static void edit_menu_entries(void) {
     CHECK(dxc_edit_menu_system_command(DXC_EDIT_SELECT_ALL) == EM_SETSEL);
     CHECK(wcscmp(dxc_edit_menu_fallback_label(DXC_EDIT_SELECT_ALL), L"Select &All") == 0);
 }
+
+// probe judge checks begin: the resize probe's picture and judges (win32_probe_judge.h).
+// A desktop as the capture sees it: the green backdrop, a window's border of [thick] px
+// around [inner] in the border colour, and inside it a picture of [width] x [height] drawn
+// with its top left at (inner.left + dx, inner.top + dy), cut by the area inside the border
+// (where it does not reach, the backdrop shows). The border is drawn over the picture.
+#define PROBE_DESK_WIDTH 480
+#define PROBE_DESK_HEIGHT 360
+static uint32_t probe_desk[PROBE_DESK_WIDTH * PROBE_DESK_HEIGHT];
+static uint32_t probe_picture[PROBE_DESK_WIDTH * PROBE_DESK_HEIGHT];
+
+static struct probe_image probe_desk_draw(struct probe_box inner, int32_t thick, int32_t width, int32_t height,
+                                          int32_t dx, int32_t dy) {
+    for (int32_t i = 0; i < PROBE_DESK_WIDTH * PROBE_DESK_HEIGHT; i++) probe_desk[i] = 0xFF00C800u;
+    probe_fill_marked((uint8_t *)probe_picture, width * 4, width, height);
+    for (int32_t y = 0; y < height; y++) {
+        for (int32_t x = 0; x < width; x++) {
+            int32_t at_x = inner.left + dx + x, at_y = inner.top + dy + y;
+            if (at_x >= inner.left - thick && at_x < inner.right && at_y >= inner.top - thick && at_y < inner.bottom) {
+                probe_desk[at_y * PROBE_DESK_WIDTH + at_x] = probe_picture[y * width + x];
+            }
+        }
+    }
+    for (int32_t y = inner.top - thick; y < inner.bottom + thick; y++) {
+        for (int32_t x = inner.left - thick; x < inner.right + thick; x++) {
+            if (x < inner.left || x >= inner.right || y < inner.top || y >= inner.bottom) {
+                probe_desk[y * PROBE_DESK_WIDTH + x] = 0xFF0000FFu;
+            }
+        }
+    }
+    struct probe_image image = {(const uint8_t *)probe_desk, PROBE_DESK_WIDTH * 4, PROBE_DESK_WIDTH, PROBE_DESK_HEIGHT};
+    return image;
+}
+
+static int probe_box_is(struct probe_box box, int32_t left, int32_t top, int32_t right, int32_t bottom) {
+    return box.left == left && box.top == top && box.right == right && box.bottom == bottom;
+}
+
+static void probe_judge_arithmetic(void) {
+    // The markers: 8 px, 16 px in from each corner.
+    CHECK(probe_box_is(probe_mark_box(PROBE_MARK_TOP_LEFT, 300, 200), 16, 16, 24, 24));
+    CHECK(probe_box_is(probe_mark_box(PROBE_MARK_TOP_RIGHT, 300, 200), 276, 16, 284, 24));
+    CHECK(probe_box_is(probe_mark_box(PROBE_MARK_BOTTOM_LEFT, 300, 200), 16, 176, 24, 184));
+    CHECK(probe_box_is(probe_mark_box(PROBE_MARK_BOTTOM_RIGHT, 300, 200), 276, 176, 284, 184));
+    // Room for them and the code: 192 x 72 at least.
+    CHECK(probe_marks_fit(192, 72) && !probe_marks_fit(191, 72) && !probe_marks_fit(192, 71));
+
+    // The size code reads back what it spells, and nothing when a block is lost.
+    static const int32_t sizes[][2] = {{1, 1}, {640, 480}, {2880, 1800}, {65535, 65535}, {12345, 321}};
+    for (size_t i = 0; i < sizeof sizes / sizeof sizes[0]; i++) {
+        uint8_t bits[PROBE_CODE_BLOCKS];
+        int32_t w = 0, h = 0;
+        probe_code_bits(sizes[i][0], sizes[i][1], bits);
+        CHECK(probe_code_read(bits, &w, &h) && w == sizes[i][0] && h == sizes[i][1]);
+        bits[5] = 2;
+        CHECK(!probe_code_read(bits, &w, &h));
+    }
+    uint8_t bits[PROBE_CODE_BLOCKS];
+    int32_t w = 0, h = 0;
+    probe_code_bits(640, 480, bits);
+    bits[0] = 0;
+    CHECK(!probe_code_read(bits, &w, &h));
+    probe_code_bits(0, 480, bits);
+    CHECK(!probe_code_read(bits, &w, &h));
+
+    // A picture read straight from its buffer: its top-left marker and its size.
+    probe_fill_marked((uint8_t *)probe_picture, 300 * 4, 300, 200);
+    struct probe_image picture = {(const uint8_t *)probe_picture, 300 * 4, 300, 200};
+    struct probe_box all = {0, 0, 300, 200}, found;
+    CHECK(probe_find_mark(&picture, all, PROBE_MARK_TOP_LEFT, &found) && probe_box_is(found, 16, 16, 24, 24));
+    CHECK(probe_find_mark(&picture, all, PROBE_MARK_BOTTOM_RIGHT, &found) && probe_box_is(found, 276, 176, 284, 184));
+    CHECK(probe_read_size(&picture, probe_mark_box(PROBE_MARK_TOP_LEFT, 300, 200), &w, &h) && w == 300 && h == 200);
+    // The picture's own colours are none of the judges' others: no border, no backdrop.
+    int stray = 0;
+    for (int32_t i = 0; i < 300 * 200; i++) {
+        const uint8_t *pixel = (const uint8_t *)&probe_picture[i];
+        if (probe_is_border(pixel) || probe_is_backdrop(pixel)) stray++;
+    }
+    CHECK(stray == 0);
+
+    // The border found where it was drawn, 1 px and 2 px thick.
+    struct probe_calibration calibration;
+    struct probe_box inner = {60, 50, 360, 250};
+    struct probe_border border;
+    struct probe_image desk = probe_desk_draw(inner, 1, 300, 200, 0, 0);
+    CHECK(probe_find_border(&desk, 4, &border));
+    CHECK(border.left == 59 && border.top == 49 && border.right == 360 && border.bottom == 250);
+    CHECK(probe_box_is(border.inner, 60, 50, 360, 250));
+    desk = probe_desk_draw(inner, 2, 300, 200, 0, 0);
+    CHECK(probe_find_border(&desk, 4, &border) && probe_box_is(border.inner, 60, 50, 360, 250));
+    // No line along the top (the client area covers it): the side lines' ends stand for it.
+    desk = probe_desk_draw(inner, 1, 300, 200, 0, 0);
+    for (int32_t x = inner.left; x < inner.right; x++) probe_desk[(inner.top - 1) * PROBE_DESK_WIDTH + x] = PROBE_GREY;
+    CHECK(probe_find_border(&desk, 4, &border) && probe_box_is(border.inner, 60, 49, 360, 250));
+    CHECK(probe_calibrate(&desk, 300, 200, &calibration) && calibration.extra_height == -1);
+    CHECK(calibration.bottom_left_y == 16 && calibration.top_right_x == 16);
+    // No border, no rectangle.
+    for (int32_t i = 0; i < PROBE_DESK_WIDTH * PROBE_DESK_HEIGHT; i++) probe_desk[i] = 0xFF00C800u;
+    CHECK(!probe_find_border(&desk, 4, &border));
+
+    // At rest: the far markers 16 px inside the border, the picture the inner size.
+    desk = probe_desk_draw(inner, 1, 300, 200, 0, 0);
+    CHECK(probe_calibrate(&desk, 300, 200, &calibration));
+    CHECK(calibration.ok && calibration.top_right_x == 16 && calibration.bottom_right_x == 16);
+    CHECK(calibration.bottom_left_y == 16 && calibration.bottom_right_y == 16);
+    CHECK(calibration.extra_width == 0 && calibration.extra_height == 0);
+    // A client size the code does not spell is no calibration.
+    CHECK(!probe_calibrate(&desk, 301, 200, &calibration) && !calibration.ok);
+    // A border drawn over the picture's top row: the inner area is a row shorter.
+    struct probe_box covered = {60, 50, 360, 249};
+    desk = probe_desk_draw(covered, 1, 300, 200, 0, -1);
+    CHECK(probe_calibrate(&desk, 300, 200, &calibration) && calibration.extra_height == 1);
+    CHECK(calibration.extra_width == 0 && calibration.bottom_left_y == 16 && calibration.top_right_x == 16);
+
+    // Judged against the calibration at rest.
+    struct probe_box nowhere = {0, 0, 0, 0};
+    desk = probe_desk_draw(inner, 1, 300, 200, 0, 0);
+    CHECK(probe_calibrate(&desk, 300, 200, &calibration));
+    struct probe_anchor anchor;
+    struct probe_see see;
+    // A frame in its place: nothing.
+    CHECK(probe_find_border(&desk, 4, &border));
+    probe_judge_anchor(&desk, &border, &calibration, nowhere, &anchor);
+    probe_judge_see(&desk, &border, &calibration, nowhere, &see);
+    CHECK(!anchor.faulty && anchor.shift == 0 && anchor.missing == 0 && anchor.cut == 0);
+    CHECK(!see.faulty && see.total == 0 && see.picture_width == 300 && see.picture_height == 200);
+    // The pointer drawn over the top-right marker and over the size code: faulty unless the
+    // judges are told where it is, and then not judged there.
+    for (int32_t y = 50 + 10; y < 50 + 42; y++) {
+        for (int32_t x = 360 - 34; x < 360 - 2; x++) probe_desk[y * PROBE_DESK_WIDTH + x] = 0xFFFFFFFFu;
+    }
+    for (int32_t y = 50 + 30; y < 50 + 62; y++) {
+        for (int32_t x = 60 + 70; x < 60 + 102; x++) probe_desk[y * PROBE_DESK_WIDTH + x] = 0xFF000000u;
+    }
+    CHECK(probe_find_border(&desk, 4, &border));
+    probe_judge_anchor(&desk, &border, &calibration, nowhere, &anchor);
+    probe_judge_see(&desk, &border, &calibration, nowhere, &see);
+    CHECK(anchor.faulty && see.faulty && see.unreadable);
+    struct probe_box pointer = {360 - 34, 50 + 10, 360 - 2, 50 + 42};
+    probe_judge_anchor(&desk, &border, &calibration, pointer, &anchor);
+    CHECK(!anchor.faulty && anchor.covered == 1);
+    struct probe_box pointer_on_code = {60 + 70, 50 + 30, 60 + 102, 50 + 62};
+    probe_judge_see(&desk, &border, &calibration, pointer_on_code, &see);
+    CHECK(!see.faulty && see.covered);
+    // One pixel off: within the tolerance.
+    desk = probe_desk_draw(inner, 1, 300, 200, 1, 0);
+    CHECK(probe_find_border(&desk, 4, &border));
+    probe_judge_anchor(&desk, &border, &calibration, nowhere, &anchor);
+    CHECK(!anchor.faulty && anchor.shift == -1);
+
+    // The left edge dragged 20 px in, and the new (smaller) frame shown at the old origin:
+    // the right markers 20 px left of their place, the top-left marker cut, the desktop
+    // showing through 20 px at the right.
+    struct probe_box shrunk = {80, 50, 360, 250};
+    desk = probe_desk_draw(shrunk, 1, 280, 200, -20, 0);
+    CHECK(probe_find_border(&desk, 4, &border) && probe_box_is(border.inner, 80, 50, 360, 250));
+    probe_judge_anchor(&desk, &border, &calibration, nowhere, &anchor);
+    probe_judge_see(&desk, &border, &calibration, nowhere, &see);
+    CHECK(anchor.faulty && anchor.shift == 20 && anchor.missing == 0);
+    CHECK(see.faulty && see.px == 20 && see.edge == PROBE_EDGE_RIGHT && see.unreadable);
+
+    // The left edge dragged 20 px out, and the old frame shown at the new origin: shifted by
+    // 20, a strip at the right, and a frame of another size.
+    struct probe_box grown = {40, 50, 360, 250};
+    desk = probe_desk_draw(grown, 1, 300, 200, 0, 0);
+    CHECK(probe_find_border(&desk, 4, &border));
+    probe_judge_anchor(&desk, &border, &calibration, nowhere, &anchor);
+    probe_judge_see(&desk, &border, &calibration, nowhere, &see);
+    CHECK(anchor.faulty && anchor.shift == 20 && anchor.worst == PROBE_MARK_TOP_RIGHT);
+    CHECK(see.faulty && see.px == 20 && see.edge == PROBE_EDGE_RIGHT && !see.unreadable && see.other_size);
+    CHECK(see.picture_width == 300 && see.picture_height == 200);
+
+    // The bottom edge grown 20 px with the old frame: the strip at the bottom, the bottom
+    // markers 20 px above their place.
+    struct probe_box taller = {60, 50, 360, 270};
+    desk = probe_desk_draw(taller, 1, 300, 200, 0, 0);
+    CHECK(probe_find_border(&desk, 4, &border));
+    probe_judge_anchor(&desk, &border, &calibration, nowhere, &anchor);
+    probe_judge_see(&desk, &border, &calibration, nowhere, &see);
+    CHECK(anchor.faulty && anchor.shift == 20 && anchor.worst == PROBE_MARK_BOTTOM_LEFT);
+    CHECK(see.faulty && see.px == 20 && see.edge == PROBE_EDGE_BOTTOM && see.other_size);
+
+    // The top-left corner dragged in by 30 and 10 with the new frame at the old origin: the
+    // picture 30 px left and 10 px up of its place.
+    struct probe_box corner = {90, 60, 360, 250};
+    desk = probe_desk_draw(corner, 1, 270, 190, -30, -10);
+    CHECK(probe_find_border(&desk, 4, &border));
+    probe_judge_anchor(&desk, &border, &calibration, nowhere, &anchor);
+    CHECK(anchor.faulty && anchor.shift == 30);
+
+    // The right edge grown fast, the frame of the new size in place: nothing, however large.
+    struct probe_box wide = {60, 50, 420, 250};
+    desk = probe_desk_draw(wide, 1, 360, 200, 0, 0);
+    CHECK(probe_find_border(&desk, 4, &border));
+    probe_judge_anchor(&desk, &border, &calibration, nowhere, &anchor);
+    probe_judge_see(&desk, &border, &calibration, nowhere, &see);
+    CHECK(!anchor.faulty && !see.faulty && see.picture_width == 360);
+
+    // The drags' pointer paths: steps of 40 to 120 px, through each target in turn, back where
+    // they started, the same for the same seed.
+    struct probe_rng rng = {7}, again = {7};
+    static const int32_t targets[] = {200, -150, 200, 0};
+    int32_t path[256], path_again[256];
+    int count = probe_path(&rng, targets, 4, 40, 120, path, 256);
+    CHECK(count > 0 && count == probe_path(&again, targets, 4, 40, 120, path_again, 256));
+    CHECK(memcmp(path, path_again, (size_t)count * sizeof path[0]) == 0);
+    CHECK(path[count - 1] == 0);
+    int32_t at = 0, low = 0, high = 0;
+    int bad_step = 0, reached = 0;
+    for (int i = 0; i < count; i++) {
+        int32_t step = path[i] - at;
+        if (step < 0) step = -step;
+        int on_target = path[i] == targets[reached];
+        if (step > 120 || (step < 40 && !on_target)) bad_step++;
+        if (on_target && reached < 3) reached++;
+        if (path[i] < low) low = path[i];
+        if (path[i] > high) high = path[i];
+        at = path[i];
+    }
+    CHECK(bad_step == 0 && low == -150 && high == 200 && reached == 3);
+    int ends = 0;
+    for (int i = 0; i < 1000; i++) {
+        int32_t pause = probe_rng_between(&rng, 4, 8);
+        if (pause < 4 || pause > 8) ends = -1000;
+        if (pause == 4 || pause == 8) ends++;
+    }
+    CHECK(ends > 0);
+}
+// probe judge checks end
 
 // ---------------------------------------------------------------------------
 // UI Automation (NFR-8, NFR-13 criterion 7)
@@ -1639,6 +2159,7 @@ static void nfr8_uia_reader_requests_reach_the_scene(void) {
 int main(int argc, char **argv) {
     resize_decisions();
     resize_predraw_decisions();
+    probe_judge_arithmetic();
     function_keys_reach_the_scene();
     pointer_buttons();
     first_window_placement();
@@ -1656,6 +2177,8 @@ int main(int argc, char **argv) {
     fr53_follow_pointer_keeps_anchor_under_pointer();
     fr53_second_pump_in_the_same_turn_does_not_wait();
     fr82_dpi_size_arithmetic();
+    fr81_native_view_placement_arithmetic();
+    fr81_native_view_focus_reports();
     nfr8_uia_parent_ids_make_the_tree();
     nfr8_uia_each_control_offers_its_patterns();
     nfr8_uia_states_read_as_uia_states();
@@ -1674,6 +2197,8 @@ int main(int argc, char **argv) {
     fr53_close_request_reaches_only_its_window();
     fr53_destroying_one_window_does_not_quit();
     fr53_activate_reports_focus();
+    fr81_native_views_in_a_real_window(0);
+    fr81_native_views_in_a_real_window(1);
     nfr8_uia_reader_requests_reach_the_scene();
     fr72_filter_lines_become_dialog_patterns();
     fr72_a_dialog_that_cannot_start_answers_nothing();

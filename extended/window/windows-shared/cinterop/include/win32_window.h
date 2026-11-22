@@ -40,6 +40,12 @@ enum {
     DXC_EVENT_FILES_EXITED = 12,
     // The Text size setting moved; `x` is the new percent (100 means unchanged, 0 unset).
     DXC_EVENT_TEXT_SCALE_CHANGED = 18,
+    // A native view slot took or lost keyboard focus; the slot id is in `key_code`.
+    DXC_EVENT_NATIVE_VIEW_FOCUS_IN = 19,
+    DXC_EVENT_NATIVE_VIEW_FOCUS_OUT = 20,
+    // The pointer came back to the scene from a native view slot, or left it for one, at `x`, `y`.
+    DXC_EVENT_POINTER_ENTER = 21,
+    DXC_EVENT_POINTER_EXIT = 22,
     // A reader asked a control to do something through UI Automation: `key_code` is the
     // element's id and `code_point` the AccessibleAction. The new value of a SET_VALUE is kept
     // apart, since it can be longer than an event's text, and read with
@@ -282,6 +288,29 @@ int32_t dxc_native_take_moved(int32_t *x, int32_t *y, int32_t *width, int32_t *h
 int32_t dxc_native_pointer_on_screen(float *x, float *y, int32_t *primary_down);
 int32_t dxc_native_follow_start(float anchor_x, float anchor_y);
 int32_t dxc_native_take_follow_end(int32_t *cancelled);
+
+// Native views (common's NativeViews): HWNDs the application made, placed in a window above the
+// scene. Each call names its window. The view is made against dxc_native_view_parent (the
+// window's HWND, 0 once it is closed) and handed over with attach, as slot [id]: hidden, above
+// every slot attached before it, and 1 when taken (0 for 0, a window of another process, the
+// window or one of its own, a view already in a slot, or an id in use). place gives the slot's
+// frame, its ancestors' clip (has_clip) and its holes, five int32_t each: x, y, width, height and
+// corner radius, all in client pixels; it and set_visible reach the screen with the next frame.
+// focus gives a shown slot the keyboard and focus_scene gives it back to the scene. detach takes
+// the view out, hidden and kept: the application destroys it, also after the window closed,
+// which detaches every slot. Focus changes arrive as DXC_EVENT_NATIVE_VIEW_FOCUS_IN and _OUT,
+// the pointer's moves between the scene and a slot as DXC_EVENT_POINTER_EXIT and _ENTER.
+// focused answers 1 and the slot while one has the keyboard.
+int64_t dxc_native_view_parent(void *window);
+int32_t dxc_native_view_attach(void *window, int32_t id, int64_t handle);
+void dxc_native_view_place(void *window, int32_t id, int32_t x, int32_t y, int32_t width, int32_t height,
+                           int32_t has_clip, int32_t clip_x, int32_t clip_y, int32_t clip_width,
+                           int32_t clip_height, const int32_t *holes, int32_t hole_count);
+void dxc_native_view_set_visible(void *window, int32_t id, int32_t visible);
+void dxc_native_view_focus(void *window, int32_t id);
+void dxc_native_view_focus_scene(void *window);
+void dxc_native_view_detach(void *window, int32_t id);
+int32_t dxc_native_view_focused(void *window, int32_t *id);
 
 // File open and save dialogs, win32_file_dialog.c: the Common Item Dialog, owned by a window.
 // A dialog runs on a thread of its own, so the window goes on pumping and drawing while it is

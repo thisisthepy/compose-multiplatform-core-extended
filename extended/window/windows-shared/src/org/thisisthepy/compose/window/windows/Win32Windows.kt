@@ -7,6 +7,7 @@ import org.thisisthepy.compose.window.EditMenuState
 import org.thisisthepy.compose.window.FileDialogOutcome
 import org.thisisthepy.compose.window.FileDialogs
 import org.thisisthepy.compose.window.FramePresentRecord
+import org.thisisthepy.compose.window.NativeViews
 import org.thisisthepy.compose.window.ScreenPointer
 import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.TextScale
@@ -69,6 +70,9 @@ interface Win32WindowBackend {
     fun setPosition(x: Int, y: Int)
     fun setContentSize(width: Int, height: Int)
     fun bounds(): WindowBounds?
+
+    /** The platform views placed in the window, or null for a backend that cannot place one. */
+    val nativeViews: NativeViews? get() = null
 
     /** True when the window has the keyboard now; false when the foreground lock refused and the window flashed. */
     fun focus(): Boolean
@@ -354,6 +358,13 @@ class Win32WindowPlatform internal constructor(
     override val isKey: Boolean get() = window?.isActive == true
 
     override fun pointerOnScreen(): ScreenPointer? = window?.pointerOnScreen()
+
+    /**
+     * The HWNDs the caller placed in this window (WindowsNativeViews over the C window), null
+     * while it is not open. Focus moves in and out of them, and the pointer's moves between
+     * them and the scene, arrive among the window's events.
+     */
+    override val nativeViews: NativeViews? get() = window?.nativeViews
 
     override fun followPointer(anchorX: Float, anchorY: Float): Boolean =
         window?.followStart(anchorX, anchorY) == true
