@@ -194,6 +194,8 @@ struct dxc_window_options {
     int32_t backdrop;
     /** The application owns the caption strip (`Chrome::FullSize`); see dxc_caption_zone_is_system_caption. */
     int32_t app_caption;
+    /** The caption strip's height in dip, 0 for DXC_CAPTION_HEIGHT_DIP (FR-19.7). */
+    int32_t caption_dip;
 };
 
 typedef struct DxcRootProvider DxcRootProvider;
@@ -2024,6 +2026,7 @@ void dxc_native_window_configure(
     dxc_next_options.system_chrome = system_chrome;
     dxc_next_options.backdrop = backdrop;
     dxc_next_options.app_caption = 0;
+    dxc_next_options.caption_dip = 0;
 }
 
 // When the frame drawn now will be on the screen, in nanoseconds. The macOS window answers
@@ -2237,7 +2240,7 @@ static LRESULT dxc_caption_hit_test(HWND window, LPARAM lparam) {
     // Measured in the client area: a maximised window's top edge hangs off the monitor and
     // the client area is inset from it, which is where the renderer draws the buttons.
     switch (dxc_caption_zone_at(point.x, point.y, client.right, (int32_t)GetDpiForWindow(window),
-                                dxc_maximised_overhang(window), dxc_options.resizable,
+                                dxc_options.caption_dip, dxc_maximised_overhang(window), dxc_options.resizable,
                                 IsZoomed(window) ? 1 : 0)) {
     case DXC_CAPTION_ZONE_TOP:
         return HTTOP;
@@ -4931,6 +4934,17 @@ void dxc_native_window_configure_app_caption(int32_t enabled) {
 }
 
 /**
+ * How tall the caption strip of the windows opened after this is, in device independent
+ * pixels (FR-19.7): the height the scene draws its caption at, so the hit test answers for
+ * the same strip. A Normal title bar is taller than Simple's; the renderer says how much,
+ * because its design system decides. 0 or less is DXC_CAPTION_HEIGHT_DIP. Called after
+ * dxc_native_window_configure, which sets it back to 0 for each window.
+ */
+void dxc_native_window_configure_caption_height(int32_t dip) {
+    dxc_next_options.caption_dip = dip > 0 ? dip : 0;
+}
+
+/**
  * Gives the window the picture it named, from its pixels: eight bits each of red, green,
  * blue and alpha, with the colour already multiplied by the alpha, row after row.
  */
@@ -5524,7 +5538,8 @@ void dxc_native_debug_hit_test(void *window_pointer) {
     UINT dpi = GetDpiForWindow(window);
     int caption_middle = dxc_options.system_chrome
         ? outer.top + (origin.y - outer.top) / 2 + GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) / 2
-        : outer.top + dxc_scaled(window, DXC_CAPTION_HEIGHT_DIP) / 2;
+        : outer.top + dxc_scaled(window, dxc_options.caption_dip > 0 ? dxc_options.caption_dip
+                                                                     : DXC_CAPTION_HEIGHT_DIP) / 2;
     // The system's buttons are SM_CXSIZE wide; the ones the content draws are the
     // Windows 11 caption metrics this file lays the custom caption out with.
     int button = dxc_options.system_chrome ? GetSystemMetricsForDpi(SM_CXSIZE, dpi)
