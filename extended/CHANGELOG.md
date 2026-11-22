@@ -7,6 +7,15 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
+- **Feature.** Entry menus as the operating system's own on macOS (compose-rust FR-33.2): common
+  `PopupMenuEntry` (item with label, shortcut text, enabled, checked and an optional picture;
+  separator; submenu) and the line form both macOS paths read (`encodePopupMenu`). The Kotlin/Native
+  window builds and pops up an `NSMenu` under the anchor with `MacosPopupMenu.show` (answers the
+  chosen path; `close` takes it down); the GraalVM window does the same from the lines
+  (`dxc_native_popup_menu`, `showPopupMenu`). A shortcut is text at a right-aligned tab stop, never a
+  key equivalent; enabled state is the entry's (`autoenablesItems` off). Both paths describe their
+  `NSMenu` the same way (`describePopupMenu`), and their tests compare it.
+
 - **Fix.** The Windows window (`windows-shared`) opens on the GDI route by default again;
   `DXC_DCOMP=1` asks for the DirectComposition route. On a real GPU, with a real application
   dragged by hand, the DirectComposition route left a see-through strip inside the border on
