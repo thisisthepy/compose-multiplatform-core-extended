@@ -833,6 +833,16 @@ void dxc_native_set_cursor(int32_t shape) {
     SetCursor(LoadCursorW(NULL, dxc_cursor));
 }
 
+/**
+ * Sets the pointer's shape over the window to the system cursor [idc] (an `IDC_*` number, the
+ * table in common's CursorShape: FR-47.1's 36 keywords), or hides it for 0. Kept until the next
+ * call; WM_SETCURSOR puts it back whenever the pointer is over the client area.
+ */
+void dxc_native_set_cursor_id(int32_t idc) {
+    dxc_cursor = idc > 0 ? MAKEINTRESOURCEW(idc) : NULL;
+    SetCursor(dxc_cursor != NULL ? LoadCursorW(NULL, dxc_cursor) : NULL);
+}
+
 static void dxc_push_event(struct dxc_event event) {
     if (dxc_event_count < DXC_EVENT_CAPACITY) {
         int slot = (dxc_event_head + dxc_event_count) % DXC_EVENT_CAPACITY;
@@ -4092,7 +4102,8 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
             return FALSE;
         }
         if (LOWORD(lparam) == HTCLIENT) {
-            SetCursor(LoadCursorW(NULL, dxc_cursor));
+            // A null cursor is the hidden pointer (CursorShape.None).
+            SetCursor(dxc_cursor != NULL ? LoadCursorW(NULL, dxc_cursor) : NULL);
             return 1;
         }
         break;

@@ -73,6 +73,7 @@ import platform.posix.getpid
 import platform.posix.poll
 import platform.posix.pollfd
 import kotlinx.cinterop.toKString
+import org.thisisthepy.compose.window.CursorShape
 import x11.*
 
 /**
@@ -221,6 +222,10 @@ class X11Window : WindowPlatform {
     private var lastSpot: Pair<Int, Int>? = null
     private var cursorShape = -1
     private val cursors = LongArray(CURSOR_SHAPES)
+
+    /** The font cursors made for [setCursorShape], by glyph, and the blank one that hides the pointer. */
+    private val keywordCursors = HashMap<Int, ULong>()
+    private var keywordShape: CursorShape? = null
 
     private val sync = ResizeSync(
         present = { surface?.present() },
@@ -901,7 +906,38 @@ class X11Window : WindowPlatform {
         }
         XDefineCursor(display, window, cursors[wanted].toULong())
         cursorShape = wanted
+        keywordShape = null
         XFlush(display)
+    }
+
+    /**
+     * Sets the pointer's shape by its CSS keyword (FR-47.1): the X cursor font's closest glyph
+     * ([CursorShape.x11Font]), or a blank cursor for [CursorShape.None]. Each glyph is made once
+     * and kept until the window closes; asking for the shape the pointer already has sends
+     * nothing to the server.
+     */
+    fun setCursorShape(shape: CursorShape) {
+        val display = display ?: return
+        if (isClosed || shape == keywordShape) return
+        val glyph = shape.x11Font
+        val cursor = keywordCursors.getOrPut(glyph) {
+            if (glyph < 0) blankCursor(display) else XCreateFontCursor(display, glyph.convert())
+        }
+        XDefineCursor(display, window, cursor)
+        keywordShape = shape
+        cursorShape = -1
+        XFlush(display)
+    }
+
+    /** A cursor of one transparent pixel, which is how X hides the pointer over a window. */
+    private fun blankCursor(display: CPointer<Display>): ULong = memScoped {
+        val bits = allocArray<ByteVar>(1)
+        bits[0] = 0
+        val pixmap = XCreateBitmapFromData(display, window, bits, 1u, 1u)
+        val black = alloc<XColor>()
+        val cursor = XCreatePixmapCursor(display, pixmap, pixmap, black.ptr, black.ptr, 0u, 0u)
+        XFreePixmap(display, pixmap)
+        cursor
     }
 
     /** Where the window's top left corner is on the screen. */
@@ -1172,6 +1208,8 @@ class X11Window : WindowPlatform {
         glXMakeCurrent(display, 0uL, null)
         context?.let { glXDestroyContext(display, it) }
         for (cursor in cursors) if (cursor != 0L) XFreeCursor(display, cursor.toULong())
+        for (cursor in keywordCursors.values) XFreeCursor(display, cursor)
+        keywordCursors.clear()
         XDestroyWindow(display, window)
         XFreeColormap(display, colormap)
         XFlush(display)
