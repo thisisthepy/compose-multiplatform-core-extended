@@ -5,6 +5,15 @@
 
 ## 출시 전
 
+### 배포
+
+- Maven Central 릴리스에서 tvOS, watchOS, Kotlin/JS 를 뺍니다(`CENTRAL_SKIP_TARGETS`. `all_targets` 를 켜고
+  수동 실행하면 냅니다). 체크섬은 Central 이 요구하는 `.md5`, `.sha1` 만 붙입니다. 1.11.1-ext.5 번들로는
+  17,844 개 대신 9,356 개 파일입니다. Wasm, iOS, macOS, Linux, Windows, 데스크톱 JVM, Android 는 그대로입니다.
+- 업로드하는 워크플로는 브랜치 푸시, 풀 리퀘스트, 일정으로 시작되지 않습니다. 그렇게 될 수 있으면
+  `extended/publish/check_publish_triggers.py` 가 배포 계획 단계를 실패시킵니다. 2026-11-14 이후 아무것도
+  시작하지 않던 GitHub Packages 개발 빌드는 워크플로에서 없앴습니다.
+
 ### 바뀐 것
 
 - **macOS Kotlin/Native 창에서 크기는 그대로 두고 움직이는 네이티브 뷰를 더 싸게 옮깁니다.** 스크롤처럼 자리만 바뀌면

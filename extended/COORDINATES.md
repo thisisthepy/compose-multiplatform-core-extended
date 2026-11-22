@@ -71,6 +71,12 @@ linuxX64 and linuxArm64 for the modules it always has. `extended/publish/check_t
 reads the catalogue and this table and fails the publish workflow when the bundle lacks a root,
 a target's component, the root's variant for it, or a row of this table.
 
+A release on Maven Central leaves out the targets no consumer uses: tvOS, watchOS and js
+(`CENTRAL_SKIP_TARGETS` in `.github/workflows/extended-publish.yml`; a dispatch with
+`all_targets` publishes them too). They are built, and the roots on Central list only the
+targets the release carries. The check skips the same targets. See "Releases on Maven Central"
+in README.md.
+
 | Line | JetBrains, Compose Multiplatform 1.11.1 | This fork |
 |---|---|---|
 | `COMPOSE` | `org.jetbrains.compose.annotation-internal:annotation:1.11.1` | `org.thisisthepy.compose.annotation-internal:annotation:1.11.1-ext.5` |
