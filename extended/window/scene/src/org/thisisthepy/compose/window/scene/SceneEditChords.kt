@@ -24,7 +24,27 @@ internal fun editChord(id: Int, commandKey: Boolean): List<KeyEvent>? {
         EditMenuId.SELECT_ALL -> Key.A
         else -> return null
     }
-    return listOf(KeyEventType.KeyDown, KeyEventType.KeyUp).map { type ->
+    return shortcutChord(key, commandKey = commandKey, shift = false)
+}
+
+/**
+ * The key presses that stand for an editing command selector from the platform (such as
+ * AppKit's `cut:`, `copy:`, `paste:`, `selectAll:`, `undo:` and `redo:`), with the shortcut
+ * modifier held. Null for an unrecognized command.
+ */
+internal fun editCommandChord(command: String, commandKey: Boolean): List<KeyEvent>? =
+    when (command.trim().removeSuffix(":")) {
+        "cut" -> editChord(EditMenuId.CUT, commandKey)
+        "copy" -> editChord(EditMenuId.COPY, commandKey)
+        "paste" -> editChord(EditMenuId.PASTE, commandKey)
+        "selectAll" -> editChord(EditMenuId.SELECT_ALL, commandKey)
+        "undo" -> shortcutChord(Key.Z, commandKey = commandKey, shift = false)
+        "redo" -> shortcutChord(Key.Z, commandKey = commandKey, shift = true)
+        else -> null
+    }
+
+private fun shortcutChord(key: Key, commandKey: Boolean, shift: Boolean): List<KeyEvent> =
+    listOf(KeyEventType.KeyDown, KeyEventType.KeyUp).map { type ->
         KeyEvent(
             key = key,
             type = type,
@@ -32,10 +52,9 @@ internal fun editChord(id: Int, commandKey: Boolean): List<KeyEvent>? {
             isAltPressed = false,
             isCtrlPressed = !commandKey,
             isMetaPressed = commandKey,
-            isShiftPressed = false,
+            isShiftPressed = shift,
         )
     }
-}
 
 /** True for the platform layers that use Command as the shortcut modifier. */
 internal fun usesCommandKey(platformName: String): Boolean =

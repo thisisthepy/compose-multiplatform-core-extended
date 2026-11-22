@@ -9,7 +9,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.asComposeCanvas
+import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.platform.LocalCursorBlinkEnabled
+import androidx.compose.ui.platform.TextToolbar
 import androidx.compose.ui.scene.CanvasLayersComposeScene
 import androidx.compose.ui.scene.ComposeScene
 import androidx.compose.ui.unit.Density
@@ -40,6 +42,37 @@ interface PlatformCompositionLocals {
     @Composable
     fun Provide(content: @Composable () -> Unit)
 }
+
+/**
+ * Implemented by a [WindowPlatform] that applies the scene's requested [PointerIcon] to the
+ * native window cursor.
+ */
+interface PlatformPointerIcon {
+    fun setPointerIcon(pointerIcon: PointerIcon)
+}
+
+/**
+ * Implemented by a [WindowPlatform] that provides its own [TextToolbar] implementation.
+ */
+interface PlatformTextToolbar {
+    val textToolbar: TextToolbar
+}
+
+/** A file drag-and-drop event delivered to a hosted window. */
+sealed interface FileDropEvent {
+    /** Files are being dragged over the window at ([x], [y]) in window pixels. */
+    data class Entered(val x: Float, val y: Float, val paths: List<String>) : FileDropEvent
+
+    /** Files were dropped onto the window at ([x], [y]) in window pixels. */
+    data class Dropped(val x: Float, val y: Float, val paths: List<String>) : FileDropEvent
+
+    /** The file drag left the window without dropping. */
+    data object Exited : FileDropEvent
+}
+
+/** Splits NUL-separated file paths carried by a file drag or drop [WindowEvent]. */
+internal fun parseDroppedPaths(joined: String): List<String> =
+    if (joined.isEmpty()) emptyList() else joined.split('\u0000').filter { it.isNotEmpty() }
 
 /** The system appearance the window reported, for content that follows it. */
 val LocalSystemTheme = staticCompositionLocalOf { SystemTheme.Light }
@@ -110,6 +143,16 @@ class ComposeWindowHost(
     var closed: Boolean = false
         private set
 
+    /** Called when files are dragged over, dropped onto, or leave the window. */
+    var onFileDrop: ((FileDropEvent) -> Unit)? = null
+
+    /** Called whenever the scene updates the active pointer icon. */
+    var onPointerIconChanged: ((PointerIcon) -> Unit)? = null
+
+    /** The most recent pointer icon requested by the scene. */
+    var currentPointerIcon: PointerIcon = PointerIcon.Default
+        private set
+
     private val requests = FrameRequestCoalescer()
     private val log = WindowEventLog()
     private val textInput = SceneTextInput()
@@ -130,6 +173,7 @@ class ComposeWindowHost(
     private var frames: WindowFrames? = null
     private var theme by mutableStateOf(SystemTheme.Light)
     private var caption by mutableStateOf(WindowCaption.None)
+    private var windowFocused by mutableStateOf(true)
     private var density = 1f
     private val semantics = SceneSemantics()
     private val back = SceneBackInput()
@@ -176,6 +220,11 @@ class ComposeWindowHost(
             this@ComposeWindowHost.theme = theme
         }
 
+        override fun onFocusChanged(focused: Boolean) {
+            windowFocused = focused
+            requestFrame()
+        }
+
         override fun onCloseRequested(): Boolean {
             closed = true
             return true
@@ -209,11 +258,26 @@ class ComposeWindowHost(
         // Before the scene: its constructor starts Compose's global snapshot observer on the
         // main dispatcher, which Compose asks for once.
         useAsComposeMainDispatcher(sceneMainWork)
+        val textToolbar = (platform as? PlatformTextToolbar)?.textToolbar
+            ?: SceneTextToolbar(systemMenus, ::requestFrame)
         val created = CanvasLayersComposeScene(
             density = Density(measured.scale, textScale),
             size = size,
             coroutineContext = work,
-            platformContext = ScenePlatformContext({ size }, textInput, semantics, platform.doubleClickMillis, back),
+            platformContext = ScenePlatformContext(
+                size = { size },
+                textInput = textInput,
+                semanticsOwnerListener = semantics,
+                doubleClickMillis = platform.doubleClickMillis,
+                back = back,
+                focused = { windowFocused },
+                textToolbar = textToolbar,
+                onPointerIconChanged = { icon ->
+                    currentPointerIcon = icon
+                    (platform as? PlatformPointerIcon)?.setPointerIcon(icon)
+                    onPointerIconChanged?.invoke(icon)
+                },
+            ),
         )
         val cursorBlink = !isIdleSoakEnabled()
         created.setContent {
@@ -222,18 +286,24 @@ class ComposeWindowHost(
                 LocalSystemTheme provides theme,
                 LocalWindowCaption provides caption,
             ) {
-                val body: @Composable () -> Unit = {
-                    val frame: @Composable () -> Unit = {
-                        fieldMenu.Provide {
-                            WindowFrame(platform, caption, theme, config.resizable, padContentForCaption) { content() }
+                ProvideSceneClipboard(platform) {
+                    val body: @Composable () -> Unit = {
+                        val frame: @Composable () -> Unit = {
+                            fieldMenu.Provide {
+                                WindowFrame(platform, caption, theme, config.resizable, padContentForCaption) { content() }
+                            }
+                        }
+                        // A platform whose menus are the system's puts up Compose's menu itself, so
+                        // a right click shows one menu and not the system's beside a drawn one.
+                        if (platform.systemContextMenu) {
+                            ProvideSystemContextMenu(systemMenus, frame)
+                        } else {
+                            ProvideThemeContextMenu(theme, frame)
                         }
                     }
-                    // A platform whose menus are the system's puts up Compose's menu itself, so
-                    // a right click shows one menu and not the system's beside a drawn one.
-                    if (platform.systemContextMenu) ProvideSystemContextMenu(systemMenus, frame) else frame()
+                    val locals = platform as? PlatformCompositionLocals
+                    if (locals != null) locals.Provide(body) else body()
                 }
-                val locals = platform as? PlatformCompositionLocals
-                if (locals != null) locals.Provide(body) else body()
             }
         }
         scene = created
@@ -343,6 +413,29 @@ class ComposeWindowHost(
                 ime.discard()
                 platform.endComposition()
                 if (settleBetween) settle() else runPendingWork()
+            }
+            if (event.kind == WindowEvent.EDIT_COMMAND) {
+                val chord = editCommandChord(event.text, usesCommandKey(platform.name))
+                if (chord != null) {
+                    for (press in chord) current.sendKeyEvent(press)
+                    runPendingWork()
+                    if (current.hasInvalidations()) unsettled = Edit.KEY
+                }
+                continue
+            }
+            when (event.kind) {
+                WindowEvent.FILES_ENTERED -> {
+                    onFileDrop?.invoke(FileDropEvent.Entered(event.x, event.y, parseDroppedPaths(event.text)))
+                    continue
+                }
+                WindowEvent.FILES_DROPPED -> {
+                    onFileDrop?.invoke(FileDropEvent.Dropped(event.x, event.y, parseDroppedPaths(event.text)))
+                    continue
+                }
+                WindowEvent.FILES_EXITED -> {
+                    onFileDrop?.invoke(FileDropEvent.Exited)
+                    continue
+                }
             }
             current.receive(event, pointer, timeMillis = eventClock.timeOf(event.timeMillis), unused = ::keyLeftAlone)
             when (event.kind) {
@@ -542,7 +635,7 @@ class ComposeWindowHost(
 internal enum class Edit { NONE, KEY, TEXT, POINTER }
 
 internal fun editOf(kind: Int): Edit = when (kind) {
-    WindowEvent.KEY_DOWN -> Edit.KEY
+    WindowEvent.KEY_DOWN, WindowEvent.EDIT_COMMAND -> Edit.KEY
     WindowEvent.TEXT_COMMIT, WindowEvent.TEXT_COMPOSE -> Edit.TEXT
     WindowEvent.POINTER_DOWN, WindowEvent.POINTER_UP -> Edit.POINTER
     else -> Edit.NONE

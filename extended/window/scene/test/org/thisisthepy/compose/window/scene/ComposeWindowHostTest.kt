@@ -53,6 +53,10 @@ internal class FakePlatform : WindowPlatform {
     var scale = 1f
     var listening = false
     var captionNow = WindowCaption.None
+    var themeNow = SystemTheme.Light
+    var clipboardText: String? = null
+    val focusChanges = ArrayList<Boolean>()
+    val themeChanges = ArrayList<SystemTheme>()
     var doubleClick = 500L
     override val doubleClickMillis: Long get() = doubleClick
     val pushed = ArrayList<List<AccessibleElement>>()
@@ -78,6 +82,13 @@ internal class FakePlatform : WindowPlatform {
         for (event in now) listener?.onEvent(event)
         for (id in ArrayList(chosen)) listener?.onContextMenuChosen(id)
         chosen.clear()
+        for (focused in ArrayList(focusChanges)) listener?.onFocusChanged(focused)
+        focusChanges.clear()
+        for (changedTheme in ArrayList(themeChanges)) {
+            themeNow = changedTheme
+            listener?.onThemeChanged(changedTheme)
+        }
+        themeChanges.clear()
         if (askClose) listener?.onCloseRequested()
         for ((id, action, argument) in ArrayList(readerAsks)) {
             readerAnswers += listener?.onAccessibilityAction(id, action, argument) == true
@@ -107,12 +118,14 @@ internal class FakePlatform : WindowPlatform {
     override fun present(drawnWidth: Int, drawnHeight: Int) =
         FramePresentRecord(drawnWidth, drawnHeight, width, height)
 
-    override fun systemTheme() = SystemTheme.Light
+    override fun systemTheme() = themeNow
     override fun setTitle(title: String) {}
     override fun setMinimumSize(width: Int, height: Int) {}
     override fun setVisibility(visibility: WindowVisibility) {}
-    override fun readClipboardText(): String? = null
-    override fun writeClipboardText(text: String) {}
+    override fun readClipboardText(): String? = clipboardText
+    override fun writeClipboardText(text: String) {
+        clipboardText = text
+    }
     override fun setImeSpot(x: Int, y: Int) {}
     /** How many times the scene asked the input method to let go of its composition. */
     var endedCompositions = 0

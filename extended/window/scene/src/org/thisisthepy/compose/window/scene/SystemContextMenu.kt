@@ -2,6 +2,7 @@ package org.thisisthepy.compose.window.scene
 
 import androidx.compose.runtime.Composable
 import org.thisisthepy.compose.window.ContextMenuItem
+import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.WindowPlatform
 
 // The context menu of a platform whose menus are the system's own
@@ -50,6 +51,12 @@ internal class SystemMenus {
         return true
     }
 
+    /** Drops any pending or shown menu without invoking a choice. */
+    fun clear() {
+        waiting = null
+        shown = null
+    }
+
     companion object {
         const val NONE_CHOSEN = -1
     }
@@ -68,3 +75,10 @@ internal fun systemMenuItems(entries: List<Pair<String, Boolean>>): List<Context
  */
 @Composable
 internal expect fun ProvideSystemContextMenu(menus: SystemMenus, content: @Composable () -> Unit)
+
+/**
+ * Gives Compose's drawn context menu the dark or light default colors matching [theme] on
+ * platforms where Compose draws the menu itself.
+ */
+@Composable
+internal expect fun ProvideThemeContextMenu(theme: SystemTheme, content: @Composable () -> Unit)
