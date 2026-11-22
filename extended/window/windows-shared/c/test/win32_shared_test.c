@@ -269,16 +269,34 @@ static void caption_zones(void) {
         int32_t width = 1200;
         int32_t mid = height / 2;
         CHECK(button == 46 * dpi / 96 && height == 32 * dpi / 96);
-        CHECK(dxc_caption_zone_at(width - button / 2, mid, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_CLOSE);
-        CHECK(dxc_caption_zone_at(width - button * 3 / 2, mid, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_MAXIMISE);
-        CHECK(dxc_caption_zone_at(width - button * 5 / 2, mid, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_MINIMISE);
-        CHECK(dxc_caption_zone_at(width - button * 3 - 1, mid, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_CAPTION);
-        CHECK(dxc_caption_zone_at(width / 2, mid, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_CAPTION);
-        CHECK(dxc_caption_zone_at(width - button * 3 / 2, height, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_CLIENT);
-        CHECK(dxc_caption_zone_at(width / 2, 2, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_TOP);
+        CHECK(dxc_caption_zone_at(width - button / 2, mid, width, dpi, 0, 8, 1, 0) == DXC_CAPTION_ZONE_CLOSE);
+        CHECK(dxc_caption_zone_at(width - button * 3 / 2, mid, width, dpi, 0, 8, 1, 0) == DXC_CAPTION_ZONE_MAXIMISE);
+        CHECK(dxc_caption_zone_at(width - button * 5 / 2, mid, width, dpi, 0, 8, 1, 0) == DXC_CAPTION_ZONE_MINIMISE);
+        CHECK(dxc_caption_zone_at(width - button * 3 - 1, mid, width, dpi, 0, 8, 1, 0) == DXC_CAPTION_ZONE_CAPTION);
+        CHECK(dxc_caption_zone_at(width / 2, mid, width, dpi, 0, 8, 1, 0) == DXC_CAPTION_ZONE_CAPTION);
+        CHECK(dxc_caption_zone_at(width - button * 3 / 2, height, width, dpi, 0, 8, 1, 0) == DXC_CAPTION_ZONE_CLIENT);
+        CHECK(dxc_caption_zone_at(width / 2, 2, width, dpi, 0, 8, 1, 0) == DXC_CAPTION_ZONE_TOP);
         // Maximised or fixed size: no top band, the buttons reach the top edge.
-        CHECK(dxc_caption_zone_at(width - button * 3 / 2, 2, width, dpi, 8, 1, 1) == DXC_CAPTION_ZONE_MAXIMISE);
-        CHECK(dxc_caption_zone_at(width / 2, 2, width, dpi, 8, 0, 0) == DXC_CAPTION_ZONE_CAPTION);
+        CHECK(dxc_caption_zone_at(width - button * 3 / 2, 2, width, dpi, 0, 8, 1, 1) == DXC_CAPTION_ZONE_MAXIMISE);
+        CHECK(dxc_caption_zone_at(width / 2, 2, width, dpi, 0, 8, 0, 0) == DXC_CAPTION_ZONE_CAPTION);
+    }
+}
+
+// FR-19.7: the caption strip is as tall as the window was configured (a Normal title bar is
+// taller than Simple's 32). A point below 32 but inside the taller strip is still caption, and
+// over the buttons still a button; 0 is the 32 point default.
+static void fr19_7_caption_height_is_the_configured_one(void) {
+    const int32_t dpis[] = {96, 144, 192};
+    for (int i = 0; i < 3; i++) {
+        int32_t dpi = dpis[i];
+        int32_t width = 1200;
+        int32_t button = dxc_caption_scale(46, dpi);
+        int32_t low = dxc_caption_scale(40, dpi);
+        CHECK(dxc_caption_zone_at(width / 2, low, width, dpi, 44, 8, 1, 0) == DXC_CAPTION_ZONE_CAPTION);
+        CHECK(dxc_caption_zone_at(width - button * 3 / 2, low, width, dpi, 44, 8, 1, 0) == DXC_CAPTION_ZONE_MAXIMISE);
+        CHECK(dxc_caption_zone_at(width / 2, low, width, dpi, 0, 8, 1, 0) == DXC_CAPTION_ZONE_CLIENT);
+        CHECK(dxc_caption_zone_at(width / 2, low, width, dpi, 32, 8, 1, 0) == DXC_CAPTION_ZONE_CLIENT);
+        CHECK(dxc_caption_zone_at(width / 2, dxc_caption_scale(44, dpi), width, dpi, 44, 8, 1, 0) == DXC_CAPTION_ZONE_CLIENT);
     }
 }
 
@@ -1913,6 +1931,7 @@ int main(int argc, char **argv) {
     utf8_conversion();
     caption_zones();
     fr19_9_app_caption_decisions();
+    fr19_7_caption_height_is_the_configured_one();
     caption_pointer_crossings();
     frame_time();
     x11_names();

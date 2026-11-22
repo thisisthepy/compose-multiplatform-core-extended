@@ -7,6 +7,14 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
+- **Feature.** The Windows window's caption strip is as tall as its title bar mode asks (FR-19.7): a
+  `TitleBarStyle.Normal` window's strip is taller (`Win32Chrome.NORMAL_CAPTION_HEIGHT`, 44 points)
+  than a `Simple` one's (the platform's 32), and the system's hit test answers for the same strip.
+  `dxc_native_window_configure_caption_height` (`Win32NativeWindow.captionHeight`) tells the next
+  window its height, so a renderer whose design system says another one is answered for it too;
+  `Win32NativeWindow.open(config)` configures it from `Win32Chrome`. The buttons stay three of 46
+  points at the trailing end. `Chrome::System` is unchanged.
+
 - **Fix.** The Windows window (`windows-shared`) opens on the GDI route by default again;
   `DXC_DCOMP=1` asks for the DirectComposition route. On a real GPU, with a real application
   dragged by hand, the DirectComposition route left a see-through strip inside the border on
