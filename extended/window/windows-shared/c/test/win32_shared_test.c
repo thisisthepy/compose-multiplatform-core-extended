@@ -21,6 +21,7 @@
 #include "win32_placement.h"
 #include "win32_scheme.h"
 #include "win32_edit_menu.h"
+#include "win32_popup_menu.h"
 #include "win32_dpi.h"
 #include "win32_native_views.h"
 #include "win32_window.h"
@@ -1647,6 +1648,54 @@ static int entry_is(struct dxc_edit_entry entry, int32_t id, int32_t enabled, in
     return entry.id == id && entry.enabled == enabled && entry.separator_before == separator;
 }
 
+// FR-33.2 (compose-rust): an entry menu built from common's lines holds the entries in order and
+// state, as common's describePopupMenu writes them (the text the macOS paths' tests read too); an
+// item's command id names its path; a shortcut is text after a tab, never an accelerator; an
+// ampersand is shown, not read as a mnemonic.
+static void fr33_2_popup_menu_holds_the_entries(void) {
+    const char *lines =
+        "I\t0\t1\t0\t0\tOpen\tCtrl+O\n"
+        "I\t0\t0\t0\t-1\tSave & close\tCtrl+Shift+S\n"
+        "S\t0\t0\t0\t-1\t\t\n"
+        "I\t0\t1\t1\t-1\tWrap lines\t\n"
+        "M\t0\t1\t0\t-1\tRecent\t\n"
+        "I\t1\t1\t0\t-1\ta.txt\t\n"
+        "S\t1\t0\t0\t-1\t\t\n"
+        "I\t1\t1\t0\t1\tb.txt\t\n"
+        "M\t0\t0\t0\t-1\tEmpty\t\n";
+    uint8_t icons[2 * 2 * 4 * 2];
+    memset(icons, 0xFF, sizeof icons);
+    int32_t sizes[] = {2, 2, 2, 2};
+    struct dxc_popup_menu *menu = dxc_popup_menu_build(lines, icons, sizes, 2);
+    CHECK(menu != NULL);
+    if (menu == NULL) return;
+    char described[4096];
+    described[0] = 0;
+    dxc_popup_menu_describe(menu->root, 0, described, sizeof described);
+    const char *expected =
+        "item \"Open\" shortcut=\"Ctrl+O\" enabled=true checked=false icon=true\n"
+        "item \"Save & close\" shortcut=\"Ctrl+Shift+S\" enabled=false checked=false icon=false\n"
+        "separator\n"
+        "item \"Wrap lines\" shortcut=\"\" enabled=true checked=true icon=false\n"
+        "submenu \"Recent\" enabled=true icon=false\n"
+        "  item \"a.txt\" shortcut=\"\" enabled=true checked=false icon=false\n"
+        "  separator\n"
+        "  item \"b.txt\" shortcut=\"\" enabled=true checked=false icon=true\n"
+        "submenu \"Empty\" enabled=false icon=false\n";
+    if (strcmp(described, expected) != 0) printf("the menu is:\n%s", described);
+    CHECK(strcmp(described, expected) == 0);
+    // Five items, numbered 1 to 5 in order, each with its path.
+    CHECK(menu->count == 5);
+    CHECK(strcmp(menu->paths[1], "0") == 0 && strcmp(menu->paths[2], "1") == 0 && strcmp(menu->paths[3], "3") == 0);
+    CHECK(strcmp(menu->paths[4], "4/0") == 0 && strcmp(menu->paths[5], "4/2") == 0);
+    // The text Windows draws: the ampersand doubled, the shortcut after a tab.
+    WCHAR text[64];
+    CHECK(GetMenuStringW(menu->root, 1, text, 64, MF_BYPOSITION) > 0);
+    CHECK(wcscmp(text, L"Save && close\tCtrl+Shift+S") == 0);
+    CHECK(menu->bitmap_count == 2);
+    dxc_popup_menu_free(menu);
+}
+
 static void edit_menu_entries(void) {
     struct dxc_edit_entry e[DXC_EDIT_ENTRY_COUNT];
     // Off: no menu at all, whatever else is said.
@@ -1963,6 +2012,7 @@ int main(int argc, char **argv) {
     fr72_an_open_dialog_does_not_hold_the_loop_and_answers_once();
     fr72_dialogs_answer_what_the_reader_chose();
     edit_menu_entries();
+    fr33_2_popup_menu_holds_the_entries();
     // Never true. It only makes the linker resolve the window and the toasts, so a symbol
     // the header declares and the objects lack fails the link.
     if (argc > 1000) {
