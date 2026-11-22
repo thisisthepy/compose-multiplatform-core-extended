@@ -7,13 +7,14 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
-- **Fix.** On the Windows window's GDI route (the default), a restore from maximised could show
+- **Fix.** On the Windows window's GDI route (the default), a restore from maximised can show
   the top left of the maximised picture at the restored size for one composition (2 of 96 size
   changes at 200 % on windows-2025, DarkPyonix/compose-rust#926). The swapchain's child, hidden
-  for the size change, was shown in place and then presented to, and DWM composes a child shown
-  again with the last picture it took from it until the new present lands. The child now comes
-  back parked outside the client area, is presented to there, and is moved into place once DWM
-  has taken the present (`DXC_SURFACE_RETURN=staged` keeps the earlier way). A step of an edge
+  for the size change, is shown in place and then presented to, and DWM composes a child shown
+  again with the last picture it took from it until the new present lands. `DXC_SURFACE_RETURN=parked`
+  brings the child back parked outside the client area, presents to it there, and moves it into
+  place once DWM has taken the present; it stays opt-in until a run shows that present taken by
+  frame statistics, and the log says "assumed taken" when no statistics answered. A step of an edge
   drag now also waits for one composition before the window takes its size on every Windows
   build, not only on Windows 10: one shrinking step in 24 drags still showed the wider picture
   cut by the narrower window on windows-2025. A drag step then paces at one composition, as the

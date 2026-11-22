@@ -271,18 +271,19 @@ jobs:
 
       # For comparison, not a gate: other ways of bringing the child hidden ahead of the size
       # change back with the frame drawn ahead (DXC_SURFACE_RETURN in win32_window.c), staged
-      # being the default before compose-rust#926 (parked is now). The GDI route's child again,
-      # so the GDI route only.
+      # being the default. parked (compose-rust#926) is here until a run shows its present taken
+      # by frame statistics ("present taken", not "assumed taken") and fewer faulty frames than
+      # staged; its log lines are listed below. The GDI route's child again, so the GDI route only.
       - name: Resize probe, maximise, restore and snap, other returns of the child (comparison)
         shell: bash
         run: |
           for route in gdi; do
             flag=0
-            for way in staged wmsize showfirst; do
+            for way in parked wmsize showfirst; do
               DXC_DCOMP=$flag DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-return-$way.log || true
               DXC_DCOMP=$flag DXC_SURFACE_RETURN=$way PROBE_VERBOSE=1 PROBE_DRAW_MS=30 ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-$route-states-return-$way-30ms.log || true
             done
-            for way in staged wmsize showfirst; do
+            for way in parked wmsize showfirst; do
               changes=0; faulty=0
               for log in out/probe-$route-states-return-$way.log out/probe-$route-states-return-$way-30ms.log; do
                 changes=$((changes + $(grep -c 'resize-mode: frames gpu -> cpu' "$log" || true)))
@@ -290,6 +291,7 @@ jobs:
               done
               echo "states return $way ($route, comparison): $changes size changes, $faulty faulty frames"
             done
+            grep -ho 'present [a-z ,]*taken[a-z ,]*' out/probe-$route-states-return-parked*.log | sort | uniq -c | sed 's/^/states return parked present: /' || true
           done
 
       # The gate is the composition route's, which brings the size and the picture to the screen
