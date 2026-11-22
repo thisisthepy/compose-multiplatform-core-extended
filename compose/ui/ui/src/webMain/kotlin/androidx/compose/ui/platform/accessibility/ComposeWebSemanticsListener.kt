@@ -26,6 +26,8 @@ import androidx.compose.ui.semantics.SemanticsConfiguration
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsOwner
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.util.fastForEach
 import androidx.compose.ui.util.fastJoinToString
 import kotlin.js.js
@@ -271,6 +273,23 @@ internal class ComposeWebSemanticsListener(
 
         setA11YAriaRole(element = htmlNode, config.getRoleId())
 
+        if (config.contains(SemanticsProperties.ToggleableState)) {
+            val checked = when (config[SemanticsProperties.ToggleableState]) {
+                ToggleableState.On -> "true"
+                ToggleableState.Off -> "false"
+                ToggleableState.Indeterminate -> "mixed"
+            }
+            htmlNode.setAttribute("aria-checked", checked)
+        } else if (
+            config.contains(SemanticsProperties.Selected) &&
+            config.getOrNull(SemanticsProperties.Role) == Role.RadioButton
+        ) {
+            val checked = if (config[SemanticsProperties.Selected]) "true" else "false"
+            htmlNode.setAttribute("aria-checked", checked)
+        } else {
+            htmlNode.removeAttribute("aria-checked")
+        }
+
         val density = sn.layoutNode.density
         sn.boundsInRoot.let { rect ->
             val newPosition = rootOffset + rect.topLeft.div(density.density)
@@ -340,8 +359,7 @@ internal fun SemanticsConfiguration.getRoleId(): Int {
         roleId = this[SemanticsProperties.Role].toIntId()
     }
 
-    if (this.contains(SemanticsActions.OnClick)) {
-        // TODO: Not everything with OnClick is a button!!!
+    if (roleId == AriaRoleId.Unknown && this.contains(SemanticsActions.OnClick)) {
         roleId = Role.Button.toIntId()
     }
 
