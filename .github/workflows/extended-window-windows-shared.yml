@@ -27,10 +27,10 @@ jobs:
       matrix:
         os: [windows-2022, windows-2025]
     runs-on: ${{ matrix.os }}
-    # The probe steps run on both routes, the DirectComposition one and the GDI one. 50: the
-    # judged drags (drag-left, drag-top, drag-topleft, drag-fast) add 24 probe runs and the
-    # lag probe script 8.
-    timeout-minutes: 50
+    # The probe steps run on both routes, the DirectComposition one and the GDI one. 80: the
+    # judged drags (four modes three runs, seven modes two runs, on two routes) add 52 probe
+    # runs, the 200 % run on windows-2025 22 more, and the lag probe script 8.
+    timeout-minutes: 80
     defaults:
       run:
         shell: cmd
@@ -239,12 +239,11 @@ jobs:
               status=1
             fi
           done
-          # The composition route draws every step ahead with none faulty, whatever the wait
-          # (runs 44656676042 to 44666182474: 0 on both runners), so any is a regression.
-          for way in ahead nowait wait; do
-            read -r composed faulty <<<"$(count dcomp $way)"
-            test "$faulty" = 0 || { echo "dcomp $way: $faulty faulty frames in the drags, expected none" >&2; status=1; }
-          done
+          # No gate on the composition route's count here: this step's strip judge finds the
+          # window's edge by where the backdrop stops, so it counts a larger picture cut by a
+          # smaller rectangle but reads a smaller picture with see-through beside it as a smaller
+          # window (Fable's drag review, 2026-11-22). The border judges below see both, on the
+          # right and bottom edges too (drag-right, drag-bottom, drag-bottomright).
           exit $status
 
       # For comparison, not a gate: the swapchain's child left visible until WM_SIZE, as before
@@ -339,13 +338,20 @@ jobs:
       # margin as a smaller window): the picture sliding when the left or top edge moves the
       # window's origin, and the desktop showing through inside the border on a fast grow. The
       # judged modes drag the left edge, the top edge and the top-left corner in and out, and grow
-      # the window fast by four edges and corners, at a real hand's pace; the window's border is
+      # the window fast by four edges and corners, at a real hand's pace; since Fable's drag
+      # review (2026-11-22) they also drag the right edge, the bottom edge and every corner in
+      # and out over many steps, the bottom-right corner growing one side while it shrinks the
+      # other, and the right edge and the bottom-right corner slowly; the window's border is
       # drawn in pure blue (DWMWA_BORDER_COLOR, build 22000 and later, so windows-2025 only) and
       # every composed frame is judged against it: the far markers in their place (anchor), no
       # backdrop inside the border and the picture the size inside it (see-through).
       #
       # Gates: every run finishes with a verdict; on windows-2025 the judges are available; on
-      # the GDI route, the default, they judged frames and found at most 2 % faulty. The
+      # the GDI route, the default, they judged frames in every mode, found at most 2 % faulty
+      # over all modes, and in every mode the dragged sides followed at least 80 % of the
+      # pointer's travel ("probe: follow"), so a route cannot pass by not following (run
+      # 44985517612: GDI followed all of it in every drag, DirectComposition 41 of 248 px on
+      # the right drag and 75 to 215 of 312 on the top-left one; 80 leaves room for WARP). The
       # DirectComposition route is printed, not gated: it is expected to be red until its fix
       # lands, and that fix's PR turns it into a gate. Not asserted here either way.
       #
@@ -356,11 +362,13 @@ jobs:
         if: always() && steps.build_probe.outcome == 'success'
         shell: bash
         run: |
-          modes="drag-left drag-top drag-topleft drag-fast"
+          modes="drag-left drag-top drag-topleft drag-fast drag-right drag-bottom drag-bottomright drag-topright drag-bottomleft drag-mixed drag-slow"
           for route in gdi dcomp; do
             flag=$([ "$route" = gdi ] && echo 0 || echo 1)
             for mode in $modes; do
-              for run in 1 2 3; do
+              runs="1 2 3"
+              case $mode in drag-left|drag-top|drag-topleft|drag-fast) ;; *) runs="1 2" ;; esac
+              for run in $runs; do
                 DXC_DCOMP=$flag DXC_REPORT_LATENCY=1 PROBE_SAVE="out\\frames-judge-$route-$mode-$run" ./out/win32_resize_probe.exe $mode > out/judge-$route-$mode-$run.log 2>&1 || true
               done
             done
@@ -404,6 +412,29 @@ jobs:
                 printf '%-13s %-6s %9s %7s %13s %18s %10s %10s %12s\n' "$mode" "$route" "$composed" "$judged" "$anchor" "$see" "$other" "$unreadable" "$worst (see-through $widest)"
                 echo "judged $mode $route: composed=$composed judged=$judged anchor_faulty=$anchor see_through_faulty=$see other_size=$other unreadable=$unreadable worst_shift_px=$worst widest_see_through_px=$widest"
               fi
+              # How far the dragged sides followed the pointer, over the mode's runs (printed for
+              # both routes; gated on GDI below). Each run's own line follows.
+              side=0 pointer=0
+              for log in out/judge-$route-$mode-?.log; do
+                line=$(grep -h "probe: follow $mode sides" "$log" | head -1 || true)
+                side=$((side + $(field '.* sides ([0-9]+) px of pointer.*' "$line" | grep . || echo 0)))
+                pointer=$((pointer + $(field '.* of pointer ([0-9]+) px.*' "$line" | grep . || echo 0)))
+              done
+              followed=$([ "$pointer" -gt 0 ] && echo $((side * 100 / pointer)) || echo 0)
+              echo "follow $mode $route: sides $side px of pointer $pointer px = $followed %"
+              grep -h "probe: follow $mode sides" out/judge-$route-$mode-?.log | sed "s/^/  $route /" || true
+              grep -h 'compose-rust: drag pace' out/judge-$route-$mode-?.log |
+                sed -nE 's/.*= ([0-9.]+) steps\/s.*/\1/p' |
+                awk -v name="$mode $route" '{s += $1; n++} END {if (n) printf "  drag pace %s: %.1f steps/s mean over %d drags\n", name, s / n, n}' || true
+              if [ "$route" = gdi ]; then
+                if [ "$pointer" -eq 0 ]; then
+                  echo "gdi $mode: no follow line (the probe did not drag)" >&2
+                  status=1
+                elif [ "$followed" -lt 80 ]; then
+                  echo "gdi $mode: the window followed $followed % of the pointer's travel, under 80 %" >&2
+                  status=1
+                fi
+              fi
               if [ "$route" = gdi ]; then
                 if [ "$available" = no ]; then
                   if [ "${{ matrix.os }}" = windows-2025 ]; then
@@ -430,7 +461,7 @@ jobs:
             echo "judged gdi (the gate): $gdi_faulty faulty of $gdi_judged judged frames, limit 2 %"
             test "$((gdi_faulty * 50))" -le "$gdi_judged" || { echo "gdi: $gdi_faulty faulty of $gdi_judged judged frames in the judged drags, above 2 %" >&2; status=1; }
           fi
-          echo "The GDI route above is gated (2 % of its judged frames, where the judges are available). The DirectComposition route is printed, not gated: it is expected to be red until the fix lands (the fix PR turns it into a gate)."
+          echo "The GDI route above is gated (2 % of its judged frames over all modes, where the judges are available, and 80 % of the pointer's travel followed in every mode). The DirectComposition route is printed, not gated: it is expected to be red until the fix lands (the fix PR turns it into a gate)."
           for route in gdi dcomp; do
             echo "first judged faults, $route (run 1 of each mode):"
             for mode in $modes; do
@@ -482,6 +513,46 @@ jobs:
           if-no-files-found: error
           path: extended/window/windows-shared/out/lag-probe-windows-x64/
 
+      # The judged drags again at 200 %, on windows-2025 only (the border judges need build
+      # 22000), one run a mode on each route, printed, not gated: the first numbers at 2x on
+      # this fork (Fable's drag review, 2026-11-22). set-display-scale.c is compose-rust's
+      # (.github/scripts), which its resize probe uses the same way: the runner's 1024x768
+      # offers only 100 %, so it picks the largest mode that offers 200 %. Last of the probe
+      # steps, as the display stays at 200 % for the rest of the job.
+      - name: Resize probe, judged drags at 200 % (comparison)
+        if: always() && matrix.os == 'windows-2025' && steps.build_probe.outcome == 'success'
+        shell: bash
+        run: |
+          (cd out && MSYS_NO_PATHCONV=1 cl /nologo /O2 /W3 ..\\c\\test\\set-display-scale.c) || { echo "set-display-scale did not build" >&2; exit 1; }
+          set +e
+          ./out/set-display-scale.exe 200 --fit > out/set-display-scale.log 2>&1
+          scaled=$?
+          set -e
+          cat out/set-display-scale.log
+          if [ "$scaled" != 0 ] || ! grep -q "effective dpi 192" out/set-display-scale.log; then
+            echo "the display did not go to 200 %; no judged drags at 2x" >&2
+            exit 1
+          fi
+          modes="drag-left drag-top drag-topleft drag-fast drag-right drag-bottom drag-bottomright drag-topright drag-bottomleft drag-mixed drag-slow"
+          for route in gdi dcomp; do
+            flag=$([ "$route" = gdi ] && echo 0 || echo 1)
+            for mode in $modes; do
+              DXC_DCOMP=$flag DXC_REPORT_LATENCY=1 PROBE_SAVE="out\\frames-judge2x-$route-$mode" ./out/win32_resize_probe.exe $mode > out/judge2x-$route-$mode.log 2>&1 || true
+            done
+          done
+          echo "judged drags at 200 %, one run each: mode, route, judged frames, faulty anchor, faulty see-through, followed"
+          for mode in $modes; do
+            for route in gdi dcomp; do
+              log=out/judge2x-$route-$mode.log
+              grep -q 'probe: verdict' "$log" || { echo "judged2x $mode $route: no verdict, the probe did not finish"; continue; }
+              grep -h 'probe: dpi\|probe: mode' "$log" | head -1 | sed "s/^/  /" || true
+              anchor=$(grep -h "probe: anchor $mode judged" "$log" | sed -nE 's/.* judged ([0-9]+) faulty ([0-9]+) max shift ([0-9]+) px.*/judged=\1 anchor_faulty=\2 worst_shift_px=\3/p')
+              see=$(grep -h "probe: see-through $mode judged" "$log" | sed -nE 's/.* faulty ([0-9]+) max ([0-9]+) px.*/see_through_faulty=\1 widest_px=\2/p')
+              follow=$(grep -h "probe: follow $mode sides" "$log" | sed -nE 's/.*= ([0-9]+) %; lag (.*)/followed=\1% lag \2/p')
+              echo "judged2x $mode $route: ${anchor:-not judged} ${see} ${follow}"
+            done
+          done
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -490,6 +561,8 @@ jobs:
           path: |
             extended/window/windows-shared/out/probe-*.log
             extended/window/windows-shared/out/judge-*.log
+            extended/window/windows-shared/out/judge2x-*.log
+            extended/window/windows-shared/out/set-display-scale.log
             extended/window/windows-shared/out/frames-*/
             extended/window/windows-shared/out/lag-probe/
 
