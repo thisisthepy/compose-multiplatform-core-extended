@@ -393,6 +393,80 @@ static void check_right_click_menus(NSWindow *window, void *view_pointer) {
     while (dxc_native_poll_event(&event)) {}
 }
 
+static void *vresize_test_view;
+static int vresize_draw_calls;
+static float vresize_min_bar_height;
+static float vresize_max_bar_height;
+
+static void vresize_test_draw_callback(void *context) {
+    (void)context;
+    float out[6];
+    dxc_native_window_title_bar(vresize_test_view, out);
+    float bar_height = out[0] - out[1];
+    if (vresize_draw_calls == 0) {
+        vresize_min_bar_height = bar_height;
+        vresize_max_bar_height = bar_height;
+    } else {
+        if (bar_height < vresize_min_bar_height) vresize_min_bar_height = bar_height;
+        if (bar_height > vresize_max_bar_height) vresize_max_bar_height = bar_height;
+    }
+    vresize_draw_calls++;
+}
+
+// Layer resize sync properties match the Kotlin/Native window so programmatic resizes, snaps,
+// and zooms synchronize with Core Animation transactions and clip to view bounds.
+static void check_layer_resize_sync(void *view_pointer) {
+    NSView *view = (__bridge NSView *)view_pointer;
+    CAMetalLayer *layer = (CAMetalLayer *)view.layer;
+    CHECK(layer.presentsWithTransaction == YES,
+          "layer.presentsWithTransaction should be YES outside live resize");
+    CHECK(layer.masksToBounds == YES, "layer.masksToBounds should be YES");
+    CHECK(view.layerContentsRedrawPolicy == NSViewLayerContentsRedrawDuringViewResize,
+          "view.layerContentsRedrawPolicy should be DuringViewResize, got %ld",
+          (long)view.layerContentsRedrawPolicy);
+}
+
+// A one-step vertical resize on a full-size-content window must not report a title bar height
+// inflated by the height delta during the synchronous setFrameSize draw callback.
+static void check_one_step_vertical_resize_title_bar(NSWindow *window, void *view_pointer) {
+    float before[6];
+    dxc_native_window_title_bar(view_pointer, before);
+    float initial_bar_height = before[0] - before[1];
+    CHECK(initial_bar_height > 0, "initial title bar height should be positive, got %.2f",
+          initial_bar_height);
+
+    vresize_test_view = view_pointer;
+    vresize_draw_calls = 0;
+    vresize_min_bar_height = 0;
+    vresize_max_bar_height = 0;
+    dxc_native_set_draw_callback(vresize_test_draw_callback, NULL);
+
+    NSRect start = window.frame;
+    NSRect target = NSMakeRect(start.origin.x, start.origin.y > 160 ? start.origin.y - 120 : 40,
+                               start.size.width, start.size.height + 240);
+    [window setFrame:target display:YES];
+
+    dxc_native_set_draw_callback(NULL, NULL);
+    vresize_test_view = NULL;
+
+    CHECK(window.frame.size.height > start.size.height + 100,
+          "window should have grown vertically: %.1f -> %.1f",
+          start.size.height, window.frame.size.height);
+    CHECK(vresize_draw_calls > 0, "draw callback should run during setFrameSize");
+    CHECK(fabsf(vresize_max_bar_height - initial_bar_height) < 1.0f &&
+              fabsf(vresize_min_bar_height - initial_bar_height) < 1.0f,
+          "title bar height jumped during setFrameSize: initial=%.2f, min=%.2f, max=%.2f",
+          initial_bar_height, vresize_min_bar_height, vresize_max_bar_height);
+
+    spin(0.1);
+    float after[6];
+    dxc_native_window_title_bar(view_pointer, after);
+    float settled_bar_height = after[0] - after[1];
+    CHECK(fabsf(settled_bar_height - initial_bar_height) < 1.0f,
+          "settled title bar height should match initial: initial=%.2f, settled=%.2f",
+          initial_bar_height, settled_bar_height);
+}
+
 int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];
@@ -432,6 +506,8 @@ int main(void) {
         check_function_keys(windows[0], opened[0].view);
         check_editing_shortcuts(windows[0], opened[0].view);
         check_right_click_menus(windows[0], opened[0].view);
+        check_layer_resize_sync(opened[0].view);
+        check_one_step_vertical_resize_title_bar(windows[0], opened[0].view);
         for (int index = 0; index < 3; index++) [windows[index] orderOut:nil];
     }
     if (failures > 0) {
