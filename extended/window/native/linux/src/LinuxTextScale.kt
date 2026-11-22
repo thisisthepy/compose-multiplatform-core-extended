@@ -5,6 +5,8 @@ import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.toKString
 import org.thisisthepy.compose.window.DoubleClick
+import org.thisisthepy.compose.window.LinuxTheme
+import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.TextScale
 import platform.posix.fgets
 import platform.posix.fopen
@@ -68,4 +70,54 @@ internal object LinuxDoubleClick {
         LinuxTextScale.run("gsettings get org.gnome.desktop.peripherals.mouse double-click 2>/dev/null"),
         LinuxTextScale.kdeConfig("kdeglobals"),
     )
+}
+
+/**
+ * Reads the desktop's dark or light preference: `GTK_THEME` first, then the XDG desktop
+ * portal `color-scheme`, then GNOME `gsettings` / KDE `kdeglobals` ordered by
+ * `XDG_CURRENT_DESKTOP`, defaulting to [SystemTheme.Light].
+ */
+internal object LinuxSystemTheme {
+    private const val PORTAL_COMMAND =
+        "dbus-send --session --reply-timeout=200 --print-reply=literal " +
+            "--dest=org.freedesktop.portal.Desktop /org/freedesktop/portal/desktop " +
+            "org.freedesktop.portal.Settings.Read string:org.freedesktop.appearance string:color-scheme 2>/dev/null"
+
+    fun read(): SystemTheme {
+        val gtkTheme = getenv("GTK_THEME")?.toKString()
+        LinuxTheme.fromGtkTheme(gtkTheme)?.let { return it }
+
+        val portalOutput = if (!getenv("DBUS_SESSION_BUS_ADDRESS")?.toKString().isNullOrEmpty()) {
+            LinuxTextScale.run(PORTAL_COMMAND)
+        } else {
+            null
+        }
+        LinuxTheme.fromPortalColorScheme(portalOutput)?.let { return it }
+
+        val currentDesktop = getenv("XDG_CURRENT_DESKTOP")?.toKString()
+        val onKde = LinuxTheme.isKdeDesktop(currentDesktop)
+        var kdeGlobals: String? = null
+        if (onKde) {
+            kdeGlobals = LinuxTextScale.kdeConfig("kdeglobals")
+            LinuxTheme.fromKdeGlobals(kdeGlobals)?.let { return it }
+        }
+
+        val gnomeColorScheme = LinuxTextScale.run("gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null")
+        LinuxTheme.fromGnomeColorScheme(gnomeColorScheme)?.let { return it }
+
+        val gnomeGtkTheme = LinuxTextScale.run("gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null")
+        LinuxTheme.fromGnomeGtkTheme(gnomeGtkTheme)?.let { return it }
+
+        if (!onKde) {
+            kdeGlobals = LinuxTextScale.kdeConfig("kdeglobals")
+        }
+        return LinuxTheme.resolve(
+            gtkTheme = gtkTheme,
+            portalOutput = portalOutput,
+            gnomeColorScheme = gnomeColorScheme,
+            gnomeGtkTheme = gnomeGtkTheme,
+            kdeGlobals = kdeGlobals,
+            currentDesktop = currentDesktop,
+        )
+    }
 }
