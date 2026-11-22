@@ -234,11 +234,16 @@ To build it yourself:
 
 `.github/workflows/extended-window-windows-shared.yml` compiles the C with MSVC, links
 `c/test/win32_shared_test.c` against it (record sizes, the resize and UTF-16 helpers, a file
-dialog started, cancelled and answered on a real window, and that every declared symbol resolves), checks that the header and the C export the same functions,
+dialog started, cancelled and answered on a real window, a UI Automation reader acting on a
+real window, and that every declared symbol resolves), checks that the header and the C export the same functions,
 and builds and tests the Kotlin/Native klib. On windows-2022 and windows-2025 it runs the
 resize probe on both routes. The DirectComposition route fails the job above 2 % faulty frames
 in 247 maximise, restore and snap changes, and on any faulty frame in a drag drawn ahead. The
 GDI route is printed beside it for comparison.
+
+The reader is `c/test/win32_uia_client.cpp`, in C++ because the SDK's `UIAutomationClient.h`
+defines its ids as file-scope constants: a second C file including it would define each one
+again beside `win32_window.c` and fail to link.
 
 Source: compose-rust PR #174 (`feat/win32-resize-kn`) at 2d6ad3e3, where the C is
 `renderer/desktop/c/` and the Kotlin/Native window is `renderer/windows/src/Win32Window.kt`.

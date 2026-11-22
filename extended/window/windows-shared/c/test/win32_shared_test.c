@@ -2,14 +2,12 @@
 // window is made of resolve every symbol the header declares, and that the records have
 // the sizes the Kotlin/Native reader (src/.../Win32Records.kt) assumes. Compiled and run by the
 // extended-window-windows-shared workflow with MSVC.
-#define COBJMACROS
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <windows.h>
 #include <wchar.h>
-#include <uiautomation.h>
 
 #include "win32_buttons.h"
 #include "win32_resize.h"
@@ -25,6 +23,7 @@
 #include "win32_dpi.h"
 #include "win32_window.h"
 #include "win32_uia.h"
+#include "win32_uia_client.h"
 
 // The records the Kotlin side reads and writes by offset. A field added on one side only is
 // a reader that silently reads the wrong bytes, so the sizes are fixed here.
@@ -1476,8 +1475,10 @@ static void nfr8_uia_states_read_as_uia_states(void) {
     CHECK(dxc_uia_expand_state(DXC_STATE_EXPANDABLE) == DXC_UIA_COLLAPSED);
     CHECK(dxc_uia_expand_state(DXC_STATE_EXPANDABLE | DXC_STATE_EXPANDED) == DXC_UIA_EXPANDED);
     // The SDK's own numbers, which the rules repeat so they compile without it.
-    CHECK(DXC_UIA_TOGGLE_ON == ToggleState_On && DXC_UIA_TOGGLE_INDETERMINATE == ToggleState_Indeterminate);
-    CHECK(DXC_UIA_EXPANDED == ExpandCollapseState_Expanded && DXC_UIA_LEAF == ExpandCollapseState_LeafNode);
+    int sdk[4];
+    dxc_test_uia_sdk_numbers(sdk);
+    CHECK(DXC_UIA_TOGGLE_ON == sdk[0] && DXC_UIA_TOGGLE_INDETERMINATE == sdk[1]);
+    CHECK(DXC_UIA_EXPANDED == sdk[2] && DXC_UIA_LEAF == sdk[3]);
 }
 
 // Expand and Collapse use the control's own action, then a press that would change the state.
@@ -1522,244 +1523,6 @@ static void nfr8_uia_focus_and_hit_test(void) {
     CHECK(dxc_uia_focused(els, 3) == -1);
 }
 
-// What the client thread found, for the window's thread to check.
-struct uia_probe {
-    HWND window;
-    volatile LONG done;
-    HRESULT invoke;
-    HRESULT disabled_invoke;
-    HRESULT toggle;
-    HRESULT set_value;
-    HRESULT set_range;
-    HRESULT set_focus;
-    int found_button;
-    int button_enabled;
-    int disabled_enabled;
-    int toggle_state;
-    int field_read_only;
-    int has_invoke_on_text;
-    double range_value;
-    double range_max;
-    int nested_parent_ok;
-    int root_children;
-    int focused_ok;
-    int help_ok;
-};
-
-static IUIAutomationElement *uia_find(IUIAutomation *automation, IUIAutomationElement *root,
-                                      PROPERTYID property, VARIANT value) {
-    IUIAutomationCondition *condition = NULL;
-    IUIAutomationElement *found = NULL;
-    if (SUCCEEDED(IUIAutomation_CreatePropertyCondition(automation, property, value, &condition))) {
-        IUIAutomationElement_FindFirst(root, TreeScope_Descendants, condition, &found);
-        IUIAutomationCondition_Release(condition);
-    }
-    return found;
-}
-
-static IUIAutomationElement *uia_find_id(IUIAutomation *automation, IUIAutomationElement *root, const wchar_t *id) {
-    VARIANT value;
-    VariantInit(&value);
-    value.vt = VT_BSTR;
-    value.bstrVal = SysAllocString(id);
-    IUIAutomationElement *found = uia_find(automation, root, UIA_AutomationIdPropertyId, value);
-    VariantClear(&value);
-    return found;
-}
-
-static int uia_is_enabled(IUIAutomationElement *element) {
-    BOOL enabled = FALSE;
-    IUIAutomationElement_get_CurrentIsEnabled(element, &enabled);
-    return enabled != FALSE;
-}
-
-// A reader in the same process, on its own thread: the window's thread keeps pumping, which
-// is where UI Automation brings every call to the providers.
-static DWORD WINAPI uia_client(void *argument) {
-    struct uia_probe *probe = (struct uia_probe *)argument;
-    CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    IUIAutomation *automation = NULL;
-    IUIAutomationElement *root = NULL;
-    if (FAILED(CoCreateInstance(&CLSID_CUIAutomation, NULL, CLSCTX_INPROC_SERVER, &IID_IUIAutomation,
-                                (void **)&automation)) ||
-        FAILED(IUIAutomation_ElementFromHandle(automation, probe->window, &root)) || root == NULL) {
-        goto done;
-    }
-
-    // The button, found the way the completion criterion says: by control type and name.
-    {
-        VARIANT type;
-        VARIANT name;
-        VariantInit(&type);
-        VariantInit(&name);
-        type.vt = VT_I4;
-        type.lVal = UIA_ButtonControlTypeId;
-        name.vt = VT_BSTR;
-        name.bstrVal = SysAllocString(L"Save");
-        IUIAutomationCondition *by_type = NULL, *by_name = NULL, *both = NULL;
-        IUIAutomation_CreatePropertyCondition(automation, UIA_ControlTypePropertyId, type, &by_type);
-        IUIAutomation_CreatePropertyCondition(automation, UIA_NamePropertyId, name, &by_name);
-        IUIAutomation_CreateAndCondition(automation, by_type, by_name, &both);
-        IUIAutomationElement *button = NULL;
-        if (both != NULL) IUIAutomationElement_FindFirst(root, TreeScope_Descendants, both, &button);
-        if (button != NULL) {
-            probe->found_button = 1;
-            probe->button_enabled = uia_is_enabled(button);
-            IUIAutomationInvokePattern *invoke = NULL;
-            IUIAutomationElement_GetCurrentPatternAs(button, UIA_InvokePatternId, &IID_IUIAutomationInvokePattern,
-                                                     (void **)&invoke);
-            if (invoke != NULL) {
-                probe->invoke = IUIAutomationInvokePattern_Invoke(invoke);
-                IUIAutomationInvokePattern_Release(invoke);
-            }
-            BSTR help = NULL;
-            IUIAutomationElement_get_CurrentHelpText(button, &help);
-            probe->help_ok = help != NULL && wcscmp(help, L"Saves the file") == 0;
-            SysFreeString(help);
-            IUIAutomationElement_Release(button);
-        }
-        if (both) IUIAutomationCondition_Release(both);
-        if (by_type) IUIAutomationCondition_Release(by_type);
-        if (by_name) IUIAutomationCondition_Release(by_name);
-        VariantClear(&name);
-    }
-
-    // A disabled button says so and refuses.
-    IUIAutomationElement *disabled = uia_find_id(automation, root, L"12");
-    if (disabled != NULL) {
-        probe->disabled_enabled = uia_is_enabled(disabled);
-        IUIAutomationInvokePattern *invoke = NULL;
-        IUIAutomationElement_GetCurrentPatternAs(disabled, UIA_InvokePatternId, &IID_IUIAutomationInvokePattern,
-                                                 (void **)&invoke);
-        if (invoke != NULL) {
-            probe->disabled_invoke = IUIAutomationInvokePattern_Invoke(invoke);
-            IUIAutomationInvokePattern_Release(invoke);
-        }
-        IUIAutomationElement_Release(disabled);
-    }
-
-    // The checkbox reads its state and is toggled.
-    IUIAutomationElement *check = uia_find_id(automation, root, L"8");
-    if (check != NULL) {
-        IUIAutomationTogglePattern *toggle = NULL;
-        IUIAutomationElement_GetCurrentPatternAs(check, UIA_TogglePatternId, &IID_IUIAutomationTogglePattern,
-                                                 (void **)&toggle);
-        if (toggle != NULL) {
-            enum ToggleState state = ToggleState_Off;
-            IUIAutomationTogglePattern_get_CurrentToggleState(toggle, &state);
-            probe->toggle_state = (int)state;
-            probe->toggle = IUIAutomationTogglePattern_Toggle(toggle);
-            IUIAutomationTogglePattern_Release(toggle);
-        }
-        IUIAutomationElement_Release(check);
-    }
-
-    // The field takes a new value and focus.
-    IUIAutomationElement *field = uia_find_id(automation, root, L"9");
-    if (field != NULL) {
-        IUIAutomationValuePattern *value = NULL;
-        IUIAutomationElement_GetCurrentPatternAs(field, UIA_ValuePatternId, &IID_IUIAutomationValuePattern,
-                                                 (void **)&value);
-        if (value != NULL) {
-            BOOL read_only = TRUE;
-            IUIAutomationValuePattern_get_CurrentIsReadOnly(value, &read_only);
-            probe->field_read_only = read_only != FALSE;
-            BSTR text = SysAllocString(L"\xd55c\xae00 and more than ninety-six bytes of text, so the value cannot travel in an event's own text field");
-            probe->set_value = IUIAutomationValuePattern_SetValue(value, text);
-            SysFreeString(text);
-            IUIAutomationValuePattern_Release(value);
-        }
-        probe->set_focus = IUIAutomationElement_SetFocus(field);
-        IUIAutomationElement_Release(field);
-    }
-
-    // The slider reads its range and takes a value.
-    IUIAutomationElement *slider = uia_find_id(automation, root, L"15");
-    if (slider != NULL) {
-        IUIAutomationRangeValuePattern *range = NULL;
-        IUIAutomationElement_GetCurrentPatternAs(slider, UIA_RangeValuePatternId,
-                                                 &IID_IUIAutomationRangeValuePattern, (void **)&range);
-        if (range != NULL) {
-            IUIAutomationRangeValuePattern_get_CurrentValue(range, &probe->range_value);
-            IUIAutomationRangeValuePattern_get_CurrentMaximum(range, &probe->range_max);
-            probe->set_range = IUIAutomationRangeValuePattern_SetValue(range, 0.75);
-            IUIAutomationRangeValuePattern_Release(range);
-        }
-        IUIAutomationElement_Release(slider);
-    }
-
-    // Text offers no Invoke.
-    IUIAutomationElement *text = uia_find_id(automation, root, L"11");
-    if (text != NULL) {
-        IUnknown *pattern = NULL;
-        IUIAutomationElement_GetCurrentPattern(text, UIA_InvokePatternId, &pattern);
-        probe->has_invoke_on_text = pattern != NULL;
-        if (pattern != NULL) IUnknown_Release(pattern);
-
-        // It is inside the group, not directly in the window.
-        IUIAutomationTreeWalker *walker = NULL;
-        IUIAutomation_get_RawViewWalker(automation, &walker);
-        if (walker != NULL) {
-            IUIAutomationElement *parent = NULL;
-            IUIAutomationTreeWalker_GetParentElement(walker, text, &parent);
-            if (parent != NULL) {
-                BSTR id = NULL;
-                IUIAutomationElement_get_CurrentAutomationId(parent, &id);
-                probe->nested_parent_ok = id != NULL && wcscmp(id, L"10") == 0;
-                SysFreeString(id);
-                IUIAutomationElement_Release(parent);
-            }
-            IUIAutomationTreeWalker_Release(walker);
-        }
-        IUIAutomationElement_Release(text);
-    }
-
-    // The window's own children are the elements directly in it.
-    {
-        IUIAutomationCondition *all = NULL;
-        IUIAutomation_CreateTrueCondition(automation, &all);
-        IUIAutomationElementArray *children = NULL;
-        if (all != NULL) IUIAutomationElement_FindAll(root, TreeScope_Children, all, &children);
-        if (children != NULL) {
-            // By the scene's ids, since the window may also hold a child window of its own.
-            int length = 0;
-            IUIAutomationElementArray_get_Length(children, &length);
-            for (int i = 0; i < length; i++) {
-                IUIAutomationElement *child = NULL;
-                IUIAutomationElementArray_GetElement(children, i, &child);
-                if (child == NULL) continue;
-                BSTR id = NULL;
-                IUIAutomationElement_get_CurrentAutomationId(child, &id);
-                if (id != NULL && id[0] != 0) {
-                    int value = _wtoi(id);
-                    if (value == 11 || value == 13) probe->root_children = -100;
-                    else probe->root_children++;
-                }
-                SysFreeString(id);
-                IUIAutomationElement_Release(child);
-            }
-            IUIAutomationElementArray_Release(children);
-        }
-        if (all) IUIAutomationCondition_Release(all);
-    }
-
-    // The element the scene says has focus is the one a reader is told has it.
-    IUIAutomationElement *focused = uia_find_id(automation, root, L"13");
-    if (focused != NULL) {
-        BOOL has = FALSE;
-        IUIAutomationElement_get_CurrentHasKeyboardFocus(focused, &has);
-        probe->focused_ok = has != FALSE;
-        IUIAutomationElement_Release(focused);
-    }
-
-done:
-    if (root != NULL) IUIAutomationElement_Release(root);
-    if (automation != NULL) IUIAutomation_Release(automation);
-    CoUninitialize();
-    InterlockedExchange(&probe->done, 1);
-    return 0;
-}
-
 // A reader finds the button by its type and name and invokes it, toggles the checkbox, writes
 // into the field and the slider, and moves focus; each request reaches the window's queue as an
 // accessibility action naming the element and the action, and a new value is read beside it.
@@ -1802,8 +1565,8 @@ static void nfr8_uia_reader_requests_reach_the_scene(void) {
     struct uia_probe probe;
     memset(&probe, 0, sizeof probe);
     probe.window = (HWND)window.window;
-    probe.invoke = probe.disabled_invoke = probe.toggle = probe.set_value = probe.set_range = probe.set_focus = E_FAIL;
-    HANDLE thread = CreateThread(NULL, 0, uia_client, &probe, 0, NULL);
+    probe.invoke = probe.toggle = probe.set_value = probe.set_range = probe.set_focus = E_FAIL;
+    HANDLE thread = CreateThread(NULL, 0, dxc_test_uia_client, &probe, 0, NULL);
     CHECK(thread != NULL);
     ULONGLONG deadline = GetTickCount64() + 20000;
     while (thread != NULL && InterlockedCompareExchange(&probe.done, 0, 0) == 0 && GetTickCount64() < deadline) {
@@ -1821,8 +1584,8 @@ static void nfr8_uia_reader_requests_reach_the_scene(void) {
     CHECK(probe.help_ok);
     CHECK(probe.invoke == S_OK);
     CHECK(!probe.disabled_enabled);
-    CHECK(probe.disabled_invoke == UIA_E_ELEMENTNOTENABLED);
-    CHECK(probe.toggle_state == ToggleState_On);
+    CHECK(probe.disabled_refused);
+    CHECK(probe.toggle_was_on);
     CHECK(probe.toggle == S_OK);
     CHECK(!probe.field_read_only);
     CHECK(probe.set_value == S_OK);
