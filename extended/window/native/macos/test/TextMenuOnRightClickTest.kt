@@ -37,6 +37,7 @@ import platform.AppKit.NSEventTypeRightMouseDown
 import platform.AppKit.NSEventTypeRightMouseUp
 import platform.AppKit.NSMenu
 import platform.AppKit.NSMenuDidBeginTrackingNotification
+import platform.AppKit.NSMenuItem
 import platform.AppKit.NSScreen
 import platform.AppKit.NSWindow
 import platform.CoreGraphics.CGPointMake
@@ -75,6 +76,7 @@ class TextMenuOnRightClickTest {
     private var value by mutableStateOf(TextFieldValue("hello world", TextRange(0, 5)))
     private var windowPlatform: MacosWindowPlatform? = null
     private var menus = 0
+    private var phase = "init"
     private val menuDescriptions = mutableListOf<String>()
     private var observer: Any? = null
 
@@ -117,7 +119,8 @@ class TextMenuOnRightClickTest {
             // menu and the application menu bar. Count only top-level popup menus.
             if (menu?.supermenu != null || menu === application.mainMenu) return@addObserverForName
             menus++
-            menuDescriptions += "title='${menu?.title}' items=${menu?.numberOfItems}"
+            val items = menu?.itemArray?.mapNotNull { (it as? NSMenuItem)?.title } ?: emptyList()
+            menuDescriptions += "phase=$phase title='${menu?.title}' items=$items"
             if (capture != null && menus == 1) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 700_000_000L), dispatch_get_main_queue()) {
                     captureWindow(window, capture)
@@ -127,6 +130,7 @@ class TextMenuOnRightClickTest {
                 dispatch_async(dispatch_get_main_queue()) { menu?.cancelTrackingWithoutAnimation() }
             }
         }
+        phase = "open"
         turns(300) { window.keyWindow }
         if (capture != null) pointAtMiddle(window)
         return window
@@ -173,9 +177,13 @@ class TextMenuOnRightClickTest {
             pressure = 1f,
         )!!
         val target = windowPlatform!!.window!!.view
+        phase = "rightMouseDown"
         target.rightMouseDown(mouse(NSEventTypeRightMouseDown))
+        phase = "turnsAfterDown"
         turns(30)
+        phase = "rightMouseUp"
         target.rightMouseUp(mouse(NSEventTypeRightMouseUp))
+        phase = "turnsAfterUp"
         turns(30)
     }
 
