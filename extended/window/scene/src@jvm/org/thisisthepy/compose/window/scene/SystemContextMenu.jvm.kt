@@ -3,11 +3,28 @@ package org.thisisthepy.compose.window.scene
 import androidx.compose.foundation.ContextMenuItem
 import androidx.compose.foundation.ContextMenuRepresentation
 import androidx.compose.foundation.ContextMenuState
+import androidx.compose.foundation.DarkDefaultContextMenuRepresentation
+import androidx.compose.foundation.LightDefaultContextMenuRepresentation
 import androidx.compose.foundation.LocalContextMenuRepresentation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import org.thisisthepy.compose.window.SystemTheme
+
+/**
+ * Gives Compose's drawn context menu on the JVM the dark or light default representation
+ * matching [theme] when the platform does not show a native system menu.
+ */
+@Composable
+internal actual fun ProvideThemeContextMenu(theme: SystemTheme, content: @Composable () -> Unit) {
+    val representation = if (theme == SystemTheme.Dark) {
+        DarkDefaultContextMenuRepresentation
+    } else {
+        LightDefaultContextMenuRepresentation
+    }
+    CompositionLocalProvider(LocalContextMenuRepresentation provides representation, content = content)
+}
 
 /**
  * Compose's context menus on the JVM are drawn through `LocalContextMenuRepresentation`: a

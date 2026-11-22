@@ -1,6 +1,7 @@
 package org.thisisthepy.compose.window.scene
 
 import androidx.compose.runtime.Composable
+import org.thisisthepy.compose.window.SystemTheme
 
 /**
  * Nothing to give on Kotlin/Native. Compose on macOS answers a field's secondary press with
@@ -10,3 +11,6 @@ import androidx.compose.runtime.Composable
  */
 @Composable
 internal actual fun ProvideSystemContextMenu(menus: SystemMenus, content: @Composable () -> Unit) = content()
+
+@Composable
+internal actual fun ProvideThemeContextMenu(theme: SystemTheme, content: @Composable () -> Unit) = content()

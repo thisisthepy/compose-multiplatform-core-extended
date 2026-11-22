@@ -54,7 +54,10 @@ class ScenePointerButtonsTest {
                         awaitPointerEventScope {
                             while (true) {
                                 val event = awaitPointerEvent(PointerEventPass.Initial)
-                                if (event.type == PointerEventType.Press || event.type == PointerEventType.Release) {
+                                if (event.type == PointerEventType.Press ||
+                                    event.type == PointerEventType.Release ||
+                                    event.type == PointerEventType.Move
+                                ) {
                                     heard += Heard(event.type, event.button, event.buttons)
                                 }
                             }
@@ -122,6 +125,23 @@ class ScenePointerButtonsTest {
             assertEquals(held(1, 2), heard[1].buttons.flags(), "the secondary press with the primary still down")
             assertEquals(held(1), heard[2].buttons.flags(), "the secondary release leaves the primary down")
             assertEquals(held(), heard[3].buttons.flags())
+        }
+    }
+
+    @Test
+    fun pointer_move_carries_the_exact_held_button_mask() {
+        withScene { send, heard ->
+            send(WindowEvent.POINTER_MOVE, 0)
+            send(WindowEvent.POINTER_MOVE, WindowEvent.SECONDARY_HELD)
+            send(WindowEvent.POINTER_MOVE, WindowEvent.PRIMARY_HELD or WindowEvent.MIDDLE_HELD)
+            assertEquals(3, heard.size)
+            assertEquals(held(), heard[0].buttons.flags(), "no buttons held on move")
+            assertEquals(held(WindowEvent.SECONDARY_HELD), heard[1].buttons.flags(), "secondary held on move")
+            assertEquals(
+                held(WindowEvent.PRIMARY_HELD, WindowEvent.MIDDLE_HELD),
+                heard[2].buttons.flags(),
+                "primary and tertiary held on move",
+            )
         }
     }
 }
