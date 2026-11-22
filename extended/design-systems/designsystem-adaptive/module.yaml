@@ -1,0 +1,47 @@
+# Adaptive design system (Layer 2).
+#
+# Installs the platform's default Layer 1 design system (or a caller-chosen one) via
+# AdaptiveTheme and exposes neutral components that delegate to the active Layer 1 library.
+
+product:
+  type: kmp/lib
+  platforms: [ jvm, android, iosArm64, iosSimulatorArm64, macosArm64, linuxX64, wasmJs ]
+
+dependencies:
+  - //designsystem: exported
+  - //designsystem-liquid-glass
+  - //designsystem-material3
+  - //designsystem-cupertino
+  - //designsystem-fluent
+  - //designsystem-gnome
+  - //designsystem-breeze
+  - //designsystem-deepin
+  - $libs.compose.fork.runtime
+  - $libs.compose.fork.foundation
+  - $libs.compose.fork.ui
+  - $libs.compose.fork.material3
+
+test-dependencies:
+  - $kotlin.test
+
+apply:
+  - ../publish.module-template.yaml
+
+settings:
+  publishing:
+    artifactId: designsystem-adaptive
+    pom:
+      name: "Design systems: Adaptive"
+      description: "Layer 2 adaptive theme and neutral components delegating to Layer 1 design systems."
+
+settings@native:
+  kotlin:
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.designsystem:designsystem-adaptive
+
+test-settings@native:
+  kotlin:
+    freeCompilerArgs:
+      - -module-name
+      - org.thisisthepy.compose.designsystem:designsystem-adaptive-test
