@@ -50,6 +50,21 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   61 µs through `setFrameOrigin:` (medians of 400 frames). Where each view ends is unchanged.
   (DarkPyonix/compose-rust#855)
 
+- **Feature.** The Windows window (`windows-shared`) places native views: `nativeViews` on
+  `Win32NativeWindow` and `Win32WindowPlatform` (`WindowsNativeViews`, over the new C calls
+  `dxc_native_view_*`). An HWND the application made against the window is put in a child
+  window of the window's own above the frame and above every view attached before it, cut to
+  its clip, with rounded holes cut out of it by a window region, given its place with the next
+  frame after it is presented, and taken out (hidden, never destroyed) when it is detached or
+  the window closes. Focus moving into, out of and between views, and the window's activation,
+  arrive as `NATIVE_VIEW_FOCUS_IN` and `_OUT`; the pointer leaving the scene for a view and
+  coming back as `POINTER_EXIT` and `_ENTER`; over a view the cursor is the view's. On the GDI
+  route the swapchain's child window clips its siblings once a view is attached, and the copies
+  into the window during a resize leave the views out. On the DirectComposition route the
+  visual is now made below the window's child windows (`CreateTargetForHwnd` with topmost
+  false), which changes nothing for a window without one, and a view's container is a layered
+  child window. (DarkPyonix/compose-rust#932)
+
 - **Fix.** The Windows window (`windows-shared`, so the Kotlin/Native and the GraalVM windows
   both) did not keep its size in points when its DPI changed. It applied the rectangle
   `WM_DPICHANGED` suggests, which Windows scales from the old outer rectangle without knowing

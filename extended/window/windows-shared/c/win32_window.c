@@ -77,6 +77,7 @@
 #include "win32_edit_menu.h"
 #include "win32_dpi.h"
 #include "win32_dcomp.h"
+#include "win32_native_views.h"
 
 // What happened in the window, waiting to be read.
 //
@@ -99,6 +100,12 @@ enum {
     DXC_EVENT_FILES_DROPPED = 11,
     DXC_EVENT_FILES_EXITED = 12,
     DXC_EVENT_TEXT_SCALE_CHANGED = 18,
+    // A native view slot took or lost keyboard focus (the slot id in key_code), and the
+    // pointer went from the scene into a slot or came back (win32_native_views.h).
+    DXC_EVENT_NATIVE_VIEW_FOCUS_IN = 19,
+    DXC_EVENT_NATIVE_VIEW_FOCUS_OUT = 20,
+    DXC_EVENT_POINTER_ENTER = 21,
+    DXC_EVENT_POINTER_EXIT = 22,
 };
 
 // Room for what an input method is composing, which is a syllable or a word and never a
@@ -196,6 +203,51 @@ typedef struct DxcWin DxcWin;
 struct dxc_drop_target {
     IDropTarget iface;
     DxcWin *win;
+};
+
+// The native view slots of one window (common's NativeViews; dxc_native_view_* below; the
+// arithmetic in win32_native_views.h). A slot is the caller's window (the view) inside a
+// container this window makes, a child of the top-level window above the scene. What the
+// caller asks for is written down and given to the two windows with the next frame, after it
+// is presented, so a view moves on the screen with the frame its place was laid out in.
+#define DXC_NV_MAX_SLOTS 64
+
+struct dxc_nv_slot {
+    int used;
+    int32_t id;
+    HWND view;
+    HWND container;
+    // The view's WS_CHILD and WS_POPUP bits before it was attached, given back when it leaves.
+    DWORD view_style;
+    // What the caller asked for.
+    struct dxc_nv_rect frame;
+    struct dxc_nv_rect bounds;
+    int visible;
+    // The holes cut out of the container, in its own coordinates, waiting to be set; NULL
+    // with region_changed set is no region. wants_region is whether one is set or waiting.
+    HRGN region;
+    int region_changed;
+    int wants_region;
+    int pending;
+    // What the two windows were last given.
+    int shown;
+    int placed;
+    struct dxc_nv_rect placed_bounds;
+    struct dxc_nv_rect placed_view;
+};
+
+struct dxc_nv_slots {
+    struct dxc_nv_slot slots[DXC_NV_MAX_SLOTS];
+    int32_t count;
+    int pending;
+    struct dxc_nv_focus focus;
+    // The window inside a slot that had the focus last, given it back when the top-level
+    // window is activated again (Windows gives an activated window the focus itself).
+    HWND focus_window;
+    // The pointer is over a slot, and the scene was told it left.
+    int pointer_in_view;
+    // The swapchain's child window clips its siblings, so the slots stay above it.
+    int styles_set;
 };
 
 struct DxcWin {
@@ -367,6 +419,9 @@ struct DxcWin {
     uint32_t layout_dpi;
     int in_dpi_change;
     int dpi_restore_pending;
+
+    // The platform views placed in this window (dxc_native_view_*).
+    struct dxc_nv_slots native_views;
 };
 
 #define dxc_events (dxc_w->events)
@@ -491,6 +546,16 @@ static int64_t dxc_micros_now(void);
 static void dxc_select_handle(void *handle);
 static void dxc_select_swapchain(void *swapchain);
 static void dxc_select_queue(void *queue);
+// The native view slots, at the end of this file.
+static void dxc_nv_apply(DxcWin *win);
+static void dxc_nv_exclude(DxcWin *win, HDC dc);
+static void dxc_nv_turn(void);
+static void dxc_nv_detach_all(DxcWin *win);
+static void dxc_nv_activated(DxcWin *win, HWND window, int active);
+static void dxc_nv_scene_pressed(DxcWin *win, HWND window);
+static int dxc_nv_set_cursor(DxcWin *win, HWND window, HWND over);
+static void dxc_nv_pointer_back(DxcWin *win, LPARAM where);
+static void dxc_nv_mouse_left(DxcWin *win, HWND window);
 
 // No lock. On macOS the events arrive on AppKit's thread and are read on the renderer's,
 // so that queue is guarded; here the window belongs to the thread that draws and the
@@ -2650,8 +2715,14 @@ static void dxc_raster_copy(void) {
     // composition swapchain's back buffer and is presented and committed instead.
     if (dxc_on_comp) {
         dxc_comp_raster_copy();
+        // The native views move with the commit of the frame they were laid out in.
+        dxc_nv_apply(dxc_w);
         return;
     }
+    // The native views are moved first and the copy is cut around where they now are: the
+    // child windows draw into the same GDI surface as this window, and a copy over them would
+    // paint the scene over a view until it painted again. Nothing without native views.
+    dxc_nv_apply(dxc_w);
     LARGE_INTEGER copy_started;
     QueryPerformanceCounter(&copy_started);
     // Into the top-level window, through GDI, before the message that asked for it returns.
@@ -2660,6 +2731,7 @@ static void dxc_raster_copy(void) {
     dxc_last_blit = 0;
     HDC window_dc = GetDC(dxc_window);
     if (window_dc != NULL) {
+        dxc_nv_exclude(dxc_w, window_dc);
         dxc_last_blit = BitBlt(window_dc, 0, 0, dxc_raster_width, dxc_raster_height, dxc_dib_dc, 0, 0, SRCCOPY) != 0;
         GdiFlush();
         ReleaseDC(dxc_window, window_dc);
@@ -3823,6 +3895,8 @@ static int dxc_copy_shown_to_window(int32_t width, int32_t height) {
     int copied = 0;
     HDC window_dc = GetDC(dxc_window);
     if (window_dc != NULL) {
+        // Not over the native views, which are in this GDI surface too (dxc_raster_copy).
+        dxc_nv_exclude(dxc_w, window_dc);
         copied = BitBlt(window_dc, 0, 0, width, height, dxc_dib_dc, 0, 0, SRCCOPY) != 0;
         GdiFlush();
         ReleaseDC(dxc_window, window_dc);
@@ -4001,6 +4075,8 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         }
         break;
     case WM_MOUSELEAVE:
+        // A pointer that left the client area for a native view slot has left the scene.
+        dxc_nv_mouse_left(dxc_w, window);
         // Only a window that draws its own caption asks for this message (WM_MOUSEMOVE
         // below): its minimise and close buttons are at the window's edge, where the
         // pointer leaves without another move, and would stay lit.
@@ -4060,10 +4136,23 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
                 TrackMouseEvent(&track);
             }
             dxc_caption_client_move(&dxc_w->caption_pointer);
+        } else if (dxc_w->native_views.count > 0 && GetCapture() != window) {
+            // With native views in the window, the leave onto one of them is asked for here
+            // too (dxc_nv_mouse_left).
+            TRACKMOUSEEVENT track = {sizeof track, TME_LEAVE, window, 0};
+            TrackMouseEvent(&track);
         }
+        // Back from a native view slot: the scene hears the pointer come in, then the move.
+        if (dxc_w->native_views.pointer_in_view) dxc_nv_pointer_back(dxc_w, lparam);
         dxc_push_pointer(DXC_EVENT_POINTER_MOVE, lparam, 0);
         return 0;
     case WM_SETCURSOR:
+        // Over a native view slot the cursor is the view's to set: asked here first by the
+        // view's default handler, the window answers that it set none. The pointer has left
+        // the scene, which is told so once.
+        if ((HWND)wparam != window && dxc_nv_set_cursor(dxc_w, window, (HWND)wparam)) {
+            return FALSE;
+        }
         if (LOWORD(lparam) == HTCLIENT) {
             SetCursor(LoadCursorW(NULL, dxc_cursor));
             return 1;
@@ -4073,6 +4162,8 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
     case WM_RBUTTONDOWN:
     case WM_MBUTTONDOWN:
     case WM_XBUTTONDOWN:
+        // A press in the scene takes the keyboard back from a native view that had it.
+        dxc_nv_scene_pressed(dxc_w, window);
         // Held so that a drag leaving the window still reports where it went, and so the
         // release that ends it is heard at all.
         SetCapture(window);
@@ -4383,6 +4474,13 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         // default handler still runs (it gives the window the focus).
         dxc_w->active = LOWORD(wparam) != WA_INACTIVE;
         dxc_w->activation_pending = 1;
+        // With native views in the window, the slot that had the keyboard gets it back once
+        // the default handler has given it to the window, and the change is reported.
+        if (dxc_w->native_views.count > 0) {
+            LRESULT answer = DefWindowProcW(window, message, wparam, lparam);
+            dxc_nv_activated(dxc_w, window, dxc_w->active);
+            return answer;
+        }
         break;
     case WM_WINDOWPOSCHANGING:
         // The composition route's hold of a shrinking drag step (DXC_DCOMP_SHRINK_WAIT=hold);
@@ -4507,6 +4605,10 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         DestroyWindow(window);
         return 0;
     case WM_DESTROY:
+        // The native views are the caller's: taken out before the window's children are
+        // destroyed with it, which happens after this message (every child still exists
+        // while it is handled).
+        dxc_nv_detach_all(dxc_w);
         RevokeDragDrop(window);
         if (dxc_root_provider != NULL && dxc_root_provider->window == window) {
             dxc_release_children(dxc_root_provider);
@@ -4638,6 +4740,9 @@ void dxc_native_pump(double seconds) {
     }
     dxc_pump_messages();
     dxc_follow_turn();
+    // Where the keyboard went in this turn, and what the native views were asked for with no
+    // frame drawn since.
+    dxc_nv_turn();
     dxc_last_pump_end_micros = dxc_micros_now();
 }
 
@@ -6685,6 +6790,8 @@ void dxc_native_frame_end(void *queue_pointer) {
         if (written && dxc_comp_show("a GPU frame")) {
             dxc_presented_width = dxc_sizing.fitted_width;
             dxc_presented_height = dxc_sizing.fitted_height;
+            // The native views move with this commit, before the wait for a composition.
+            dxc_nv_apply(dxc_w);
             if (!dxc_resizing) dxc_dwm_flush();
         }
         dxc_step_present_ms = dxc_elapsed_ms(present_started) - dxc_step_copy_ms;
@@ -6726,6 +6833,9 @@ void dxc_native_frame_end(void *queue_pointer) {
     // follows this frame's barrier list, before the allocator is reset again. A refit
     // still waits, in dxc_native_frame_begin, before letting go of anything.
     dxc_step_present_ms = dxc_elapsed_ms(present_started) - dxc_step_copy_ms;
+    // The native views move once the frame they were laid out in is presented, so the window
+    // manager hands DWM their new place for the composition that shows that frame.
+    dxc_nv_apply(dxc_w);
 }
 
 /** Says where the caret is, in pixels from the window's top left. */
@@ -7142,4 +7252,574 @@ static void dxc_follow_turn(void) {
             dxc_follow_step(win);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Native views: platform windows the application made, placed above the scene
+// ---------------------------------------------------------------------------
+//
+// common's NativeViews on Windows (compose-rust FR-81). The application makes its view (an
+// HWND, such as a web view's host window) against the top-level window, which is what
+// dxc_native_view_parent answers, and hands it over with dxc_native_view_attach. The window
+// only places, clips, orders and focuses it: it never destroys it, and when the view leaves
+// (detached, or the window closes) it is hidden and moved under the message-only window, where
+// it waits for the application to destroy it.
+//
+// A slot is the view inside a container this window makes (win32_native_views.h says why),
+// a child of the top-level window with WS_CLIPSIBLINGS, put above every slot attached before
+// it and above the swapchain's child window. The holes are a window region on the container,
+// which cuts the picture and sends a click in a hole to the scene below.
+//
+// On the GDI route the swapchain is on a child window that covers the client area. The
+// containers are its siblings above it, and it is given WS_CLIPSIBLINGS with the first slot,
+// so it is cut around them; while a size changes it is hidden and the frame is copied into the
+// top-level window's GDI surface, cut around the slots too (dxc_nv_exclude). The slots are
+// never hidden with it.
+//
+// On the DirectComposition route the window has no GDI surface (WS_EX_NOREDIRECTIONBITMAP)
+// and its frames are a visual on a target made below the window's child windows
+// (win32_dcomp.cpp), so DWM composes the slots above the frame. A child window that draws with
+// GDI needs a surface of its own there, so the container is a layered child window (Windows 8
+// and later, which an application declares in its manifest), and the view draws into the
+// container's surface. Where a layered child cannot be made the container is an ordinary one,
+// and a view that draws through GDI shows nothing on this route; that is said on standard
+// error.
+//
+// Placement follows the frame. What the caller asks for during a frame's layout is written
+// down and given to the windows after the frame is presented (dxc_native_frame_end), copied
+// into the window (dxc_raster_copy, during a size change) or committed (the composition
+// route), so a view and the frame it was laid out in reach DWM for the same composition as
+// far as the window can arrange it. What is asked for with no frame after it is given at the
+// end of the next pump.
+//
+// Focus is the system's: a click in a view gives it the keyboard, and the window reads where
+// the keyboard is at the end of each pump (GetFocus) and reports a move into, out of or between
+// slots as DXC_EVENT_NATIVE_VIEW_FOCUS_IN and _OUT, the slot id in key_code. A press in the
+// scene takes the keyboard back. Deactivated, the window says the slot lost it; activated
+// again, it gives the slot the keyboard back and says so.
+
+static const wchar_t *DXC_NV_CONTAINER_CLASS = L"ComposeRustNativeViewSlot";
+static int dxc_nv_class_registered;
+
+/** A slot's container: it draws nothing, the view inside covers it. */
+static LRESULT CALLBACK dxc_nv_container_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    switch (message) {
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT paint;
+        BeginPaint(window, &paint);
+        EndPaint(window, &paint);
+        return 0;
+    }
+    default:
+        return DefWindowProcW(window, message, wparam, lparam);
+    }
+}
+
+static int dxc_nv_register_class(void) {
+    if (dxc_nv_class_registered) return 1;
+    WNDCLASSEXW description;
+    memset(&description, 0, sizeof description);
+    description.cbSize = sizeof description;
+    description.lpfnWndProc = dxc_nv_container_proc;
+    description.hInstance = GetModuleHandleW(NULL);
+    // No cursor of its own, so the view's is the one set over it.
+    description.hCursor = NULL;
+    description.hbrBackground = NULL;
+    description.lpszClassName = DXC_NV_CONTAINER_CLASS;
+    if (RegisterClassExW(&description) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+        return 0;
+    }
+    dxc_nv_class_registered = 1;
+    return 1;
+}
+
+/** The open window a call names, or NULL. */
+static DxcWin *dxc_nv_window(void *window) {
+    DxcWin *win = (DxcWin *)dxc_table_find(&dxc_table, window);
+    if (win == NULL || win->destroyed || win->window == NULL) return NULL;
+    return win;
+}
+
+static struct dxc_nv_slot *dxc_nv_find(DxcWin *win, int32_t id) {
+    for (int index = 0; index < DXC_NV_MAX_SLOTS; index++) {
+        struct dxc_nv_slot *slot = &win->native_views.slots[index];
+        if (slot->used && slot->id == id) return slot;
+    }
+    return NULL;
+}
+
+/** The slot [hwnd] is in (its container, its view or a window inside the view), or NULL. */
+static struct dxc_nv_slot *dxc_nv_holding(DxcWin *win, HWND hwnd) {
+    if (win->native_views.count == 0) return NULL;
+    int depth = 0;
+    for (HWND at = hwnd; at != NULL && at != win->window && depth < 64; at = GetAncestor(at, GA_PARENT), depth++) {
+        for (int index = 0; index < DXC_NV_MAX_SLOTS; index++) {
+            struct dxc_nv_slot *slot = &win->native_views.slots[index];
+            if (slot->used && slot->container == at) return slot;
+        }
+    }
+    return NULL;
+}
+
+/** Whether [hwnd] is a view or a container of a slot of any window of the process. */
+static int dxc_nv_taken(HWND hwnd) {
+    for (int32_t w = 0; w < DXC_MAX_WINDOWS; w++) {
+        DxcWin *win = (DxcWin *)dxc_table.states[w];
+        if (win == NULL) continue;
+        for (int index = 0; index < DXC_NV_MAX_SLOTS; index++) {
+            struct dxc_nv_slot *slot = &win->native_views.slots[index];
+            if (slot->used && (slot->view == hwnd || slot->container == hwnd)) return 1;
+        }
+    }
+    return 0;
+}
+
+/** Writes an event into [win]'s queue, whichever window is selected. */
+static void dxc_nv_push(DxcWin *win, struct dxc_event record) {
+    DxcWin *outer = dxc_w;
+    dxc_w = win;
+    dxc_push_event(record);
+    dxc_w = outer;
+}
+
+static void dxc_nv_report(DxcWin *win, const struct dxc_nv_focus_event *events, int count) {
+    for (int index = 0; index < count; index++) {
+        struct dxc_event record;
+        memset(&record, 0, sizeof record);
+        record.kind = events[index].in ? DXC_EVENT_NATIVE_VIEW_FOCUS_IN : DXC_EVENT_NATIVE_VIEW_FOCUS_OUT;
+        record.key_code = events[index].id;
+        dxc_nv_push(win, record);
+    }
+}
+
+static void dxc_nv_push_pointer(DxcWin *win, int32_t kind, float x, float y) {
+    struct dxc_event record;
+    memset(&record, 0, sizeof record);
+    record.kind = kind;
+    record.x = x;
+    record.y = y;
+    record.buttons = dxc_pointer_buttons(dxc_pressed_buttons(), 0);
+    record.modifiers = dxc_held_modifiers();
+    record.time_millis = dxc_message_time();
+    dxc_nv_push(win, record);
+}
+
+/** The focus moved to slot [slot] or, for NULL, out of every slot; reported if that changed. */
+static void dxc_nv_focus_to(DxcWin *win, struct dxc_nv_slot *slot) {
+    struct dxc_nv_focus_event events[2];
+    int count = dxc_nv_focus_moved(&win->native_views.focus, slot != NULL, slot != NULL ? slot->id : 0, events);
+    dxc_nv_report(win, events, count);
+}
+
+/**
+ * Reads where the keyboard is and reports a change. Only while the window is active: an
+ * inactive window has no focus to read, and the slot that had it is remembered.
+ */
+static void dxc_nv_sample_focus(DxcWin *win) {
+    struct dxc_nv_slots *views = &win->native_views;
+    if (views->count == 0 && !views->focus.has_focused) return;
+    if (!win->active || win->window == NULL) return;
+    HWND focus = GetFocus();
+    struct dxc_nv_slot *slot = focus != NULL ? dxc_nv_holding(win, focus) : NULL;
+    if (slot != NULL) views->focus_window = focus;
+    dxc_nv_focus_to(win, slot);
+}
+
+/** Gives the keyboard back to the scene, if a slot has it, and reports it. */
+static void dxc_nv_focus_scene(DxcWin *win) {
+    struct dxc_nv_slots *views = &win->native_views;
+    if (win->active && win->window != NULL) {
+        HWND focus = GetFocus();
+        if (focus != NULL && dxc_nv_holding(win, focus) != NULL) SetFocus(win->window);
+        dxc_nv_sample_focus(win);
+    } else {
+        views->focus_window = NULL;
+        dxc_nv_focus_to(win, NULL);
+    }
+}
+
+/** Builds the region of [slot]'s container: its bounds with every hole inside them cut out. */
+static HRGN dxc_nv_region(struct dxc_nv_rect bounds, const int32_t *holes, int32_t hole_count) {
+    if (holes == NULL || hole_count <= 0 || dxc_nv_rect_empty(bounds)) return NULL;
+    HRGN region = NULL;
+    for (int32_t index = 0; index < hole_count; index++) {
+        const int32_t *hole = holes + (size_t)index * 5;
+        struct dxc_nv_rect rect = dxc_nv_rect_of(hole[0], hole[1], hole[2], hole[3]);
+        struct dxc_nv_rect local;
+        if (!dxc_nv_hole_in_container(rect, bounds, &local)) continue;
+        if (region == NULL) {
+            region = CreateRectRgn(0, 0, bounds.width, bounds.height);
+            if (region == NULL) return NULL;
+        }
+        int32_t radius = dxc_nv_hole_radius(local, hole[4]);
+        struct dxc_nv_rect box = dxc_nv_round_region_box(local, radius);
+        HRGN cut = radius > 0
+            ? CreateRoundRectRgn(box.x, box.y, box.x + box.width, box.y + box.height, radius * 2, radius * 2)
+            : CreateRectRgn(box.x, box.y, box.x + box.width, box.y + box.height);
+        if (cut != NULL) {
+            CombineRgn(region, region, cut, RGN_DIFF);
+            DeleteObject(cut);
+        }
+    }
+    return region;
+}
+
+/** Gives the windows of every slot what was asked for since the last time. */
+static void dxc_nv_apply(DxcWin *win) {
+    struct dxc_nv_slots *views = &win->native_views;
+    if (!views->pending) return;
+    views->pending = 0;
+    for (int index = 0; index < DXC_NV_MAX_SLOTS; index++) {
+        struct dxc_nv_slot *slot = &views->slots[index];
+        if (!slot->used || !slot->pending) continue;
+        slot->pending = 0;
+        if (slot->region_changed) {
+            // The system owns the region from here, and deletes the one it replaces.
+            SetWindowRgn(slot->container, slot->region, slot->shown ? TRUE : FALSE);
+            slot->region = NULL;
+            slot->region_changed = 0;
+        }
+        if (!dxc_nv_shows(slot->visible, slot->bounds)) {
+            if (slot->shown) {
+                ShowWindow(slot->container, SW_HIDE);
+                slot->shown = 0;
+            }
+            continue;
+        }
+        struct dxc_nv_rect view = dxc_nv_view_in_container(slot->frame, slot->bounds);
+        if (!slot->placed || !dxc_nv_rect_equal(view, slot->placed_view)) {
+            SetWindowPos(slot->view, NULL, view.x, view.y, view.width, view.height,
+                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        }
+        UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+        int moved = !slot->placed || !dxc_nv_rect_equal(slot->bounds, slot->placed_bounds);
+        if (!moved) flags |= SWP_NOMOVE | SWP_NOSIZE;
+        if (!slot->shown) flags |= SWP_SHOWWINDOW;
+        if (moved || !slot->shown) {
+            struct dxc_nv_rect b = slot->bounds;
+            SetWindowPos(slot->container, NULL, b.x, b.y, b.width, b.height, flags);
+        }
+        slot->placed = 1;
+        slot->placed_view = view;
+        slot->placed_bounds = slot->bounds;
+        slot->shown = 1;
+    }
+}
+
+/**
+ * Cuts the shown slots out of [dc], a DC of the top-level window: a copy of the scene into the
+ * window's GDI surface leaves the views, which draw into the same surface, as they are. Their
+ * holes stay in the copy, which is what shows there.
+ */
+static void dxc_nv_exclude(DxcWin *win, HDC dc) {
+    struct dxc_nv_slots *views = &win->native_views;
+    if (views->count == 0) return;
+    // Everything a copy can reach, less each shown slot's shape (its rectangle, less its holes).
+    HRGN keep = NULL;
+    for (int index = 0; index < DXC_NV_MAX_SLOTS; index++) {
+        struct dxc_nv_slot *slot = &views->slots[index];
+        if (!slot->used || !slot->shown) continue;
+        struct dxc_nv_rect b = slot->placed_bounds;
+        HRGN shape = CreateRectRgn(0, 0, 0, 0);
+        if (shape == NULL) continue;
+        if (GetWindowRgn(slot->container, shape) != ERROR) {
+            OffsetRgn(shape, b.x, b.y);
+        } else {
+            SetRectRgn(shape, b.x, b.y, b.x + b.width, b.y + b.height);
+        }
+        if (keep == NULL) keep = CreateRectRgn(0, 0, 32767, 32767);
+        if (keep != NULL) CombineRgn(keep, keep, shape, RGN_DIFF);
+        DeleteObject(shape);
+    }
+    if (keep != NULL) {
+        SelectClipRgn(dc, keep);
+        DeleteObject(keep);
+    }
+}
+
+/** Whether the keyboard is in [slot] now, whatever was last reported. */
+static int dxc_nv_has_keyboard(DxcWin *win, struct dxc_nv_slot *slot) {
+    if (win->native_views.focus.has_focused && win->native_views.focus.focused == slot->id) return 1;
+    HWND focus = GetFocus();
+    return focus != NULL && dxc_nv_holding(win, focus) == slot;
+}
+
+/**
+ * Takes [slot]'s view out of the window, without destroying it, and frees the slot. [closing]
+ * while the window is being destroyed: nothing is given the keyboard and nothing is reported.
+ */
+static void dxc_nv_take_out(DxcWin *win, struct dxc_nv_slot *slot, int closing) {
+    struct dxc_nv_slots *views = &win->native_views;
+    if (closing) {
+        views->focus.has_focused = 0;
+        views->focus.focused = 0;
+    } else if (dxc_nv_has_keyboard(win, slot)) {
+        // The keyboard goes back to the scene first, and that is reported.
+        dxc_nv_focus_scene(win);
+    }
+    if (views->focus_window != NULL &&
+        (views->focus_window == slot->view || IsChild(slot->view, views->focus_window))) {
+        views->focus_window = NULL;
+    }
+    if (IsWindow(slot->view)) {
+        ShowWindow(slot->view, SW_HIDE);
+        SetParent(slot->view, HWND_MESSAGE);
+        DWORD style = (DWORD)GetWindowLongPtrW(slot->view, GWL_STYLE);
+        DWORD kept = (style & ~(DWORD)(WS_CHILD | WS_POPUP)) | slot->view_style;
+        if (kept != style) SetWindowLongPtrW(slot->view, GWL_STYLE, (LONG_PTR)kept);
+    }
+    if (slot->region != NULL) DeleteObject(slot->region);
+    if (slot->container != NULL && IsWindow(slot->container)) DestroyWindow(slot->container);
+    memset(slot, 0, sizeof *slot);
+    views->count--;
+    if (views->count == 0) views->pointer_in_view = 0;
+}
+
+static void dxc_nv_detach_all(DxcWin *win) {
+    struct dxc_nv_slots *views = &win->native_views;
+    for (int index = 0; index < DXC_NV_MAX_SLOTS && views->count > 0; index++) {
+        if (views->slots[index].used) dxc_nv_take_out(win, &views->slots[index], 1);
+    }
+    views->pending = 0;
+}
+
+/** Once a pump turn, for every window with native views. */
+static void dxc_nv_turn(void) {
+    for (int32_t index = 0; index < DXC_MAX_WINDOWS; index++) {
+        DxcWin *win = (DxcWin *)dxc_table.states[index];
+        if (win == NULL || win->destroyed || win->window == NULL) continue;
+        if (win->native_views.count == 0 && !win->native_views.focus.has_focused) continue;
+        dxc_nv_sample_focus(win);
+        dxc_nv_apply(win);
+    }
+}
+
+/** WM_ACTIVATE, after the default handler: say the slot lost or has the keyboard again. */
+static void dxc_nv_activated(DxcWin *win, HWND window, int active) {
+    struct dxc_nv_slots *views = &win->native_views;
+    struct dxc_nv_focus_event events[1];
+    if (!active) {
+        // The focus is still where it was while this message is handled.
+        HWND focus = GetFocus();
+        if (focus != NULL && dxc_nv_holding(win, focus) != NULL) views->focus_window = focus;
+        dxc_nv_report(win, events, dxc_nv_focus_key(&views->focus, 0, events));
+        return;
+    }
+    if (views->focus.has_focused) {
+        struct dxc_nv_slot *slot = dxc_nv_find(win, views->focus.focused);
+        HWND back = views->focus_window;
+        if (slot == NULL || !slot->visible || back == NULL || !IsWindow(back) || dxc_nv_holding(win, back) != slot) {
+            back = slot != NULL && slot->visible ? slot->view : NULL;
+        }
+        if (back != NULL && !IsIconic(window)) {
+            SetFocus(back);
+        } else {
+            views->focus_window = NULL;
+            dxc_nv_focus_to(win, NULL);
+        }
+    }
+    dxc_nv_report(win, events, dxc_nv_focus_key(&views->focus, 1, events));
+}
+
+/** A press in the scene: a slot that has the keyboard gives it back. */
+static void dxc_nv_scene_pressed(DxcWin *win, HWND window) {
+    (void)window;
+    if (win->native_views.count == 0) return;
+    dxc_nv_focus_scene(win);
+}
+
+/** WM_SETCURSOR for a window other than the top-level: 1 when it is in a slot. */
+static int dxc_nv_set_cursor(DxcWin *win, HWND window, HWND over) {
+    if (dxc_nv_holding(win, over) == NULL) return 0;
+    if (!win->native_views.pointer_in_view) {
+        win->native_views.pointer_in_view = 1;
+        POINT where;
+        if (GetCursorPos(&where) && ScreenToClient(window, &where)) {
+            dxc_nv_push_pointer(win, DXC_EVENT_POINTER_EXIT, (float)where.x, (float)where.y);
+        }
+    }
+    return 1;
+}
+
+/** The pointer is over the scene again after a slot: the scene hears it come in. */
+static void dxc_nv_pointer_back(DxcWin *win, LPARAM where) {
+    win->native_views.pointer_in_view = 0;
+    dxc_nv_push_pointer(win, DXC_EVENT_POINTER_ENTER, (float)GET_X_LPARAM(where), (float)GET_Y_LPARAM(where));
+}
+
+/**
+ * WM_MOUSELEAVE: the pointer left the client area, maybe for a slot, whose own window may not
+ * pass WM_SETCURSOR on to its parent. The scene is told it left only for a slot; a pointer
+ * that left the window is what it was before native views.
+ */
+static void dxc_nv_mouse_left(DxcWin *win, HWND window) {
+    if (win->native_views.count == 0 || win->native_views.pointer_in_view) return;
+    POINT where;
+    if (!GetCursorPos(&where)) return;
+    HWND under = WindowFromPoint(where);
+    if (under == NULL || under == window || dxc_nv_holding(win, under) == NULL) return;
+    dxc_nv_set_cursor(win, window, under);
+}
+
+/**
+ * The handle a view is made against: the top-level window, 0 once it is closed or for a
+ * handle that is not an open window.
+ */
+int64_t dxc_native_view_parent(void *window) {
+    DxcWin *win = dxc_nv_window(window);
+    return win != NULL ? (int64_t)(intptr_t)win->window : 0;
+}
+
+/**
+ * Puts the HWND [handle] into [window] as slot [id], hidden, above every slot attached before
+ * it. 1 when taken; 0 when it is not usable here: 0 or not a window, a window of another
+ * process, the window itself or one of its own, already in a slot of any window, or [id]
+ * already in use.
+ */
+int32_t dxc_native_view_attach(void *window, int32_t id, int64_t handle) {
+    DxcWin *win = dxc_nv_window(window);
+    if (win == NULL || handle == 0) return 0;
+    struct dxc_nv_slots *views = &win->native_views;
+    HWND view = (HWND)(intptr_t)handle;
+    if (views->count >= DXC_NV_MAX_SLOTS || dxc_nv_find(win, id) != NULL) return 0;
+    if (!IsWindow(view) || view == win->window || view == win->surface || IsChild(view, win->window) ||
+        dxc_table_find(&dxc_table, view) != NULL) {
+        return 0;
+    }
+    DWORD process = 0;
+    GetWindowThreadProcessId(view, &process);
+    if (process != GetCurrentProcessId() || dxc_nv_taken(view) || !dxc_nv_register_class()) return 0;
+    struct dxc_nv_slot *slot = NULL;
+    for (int index = 0; index < DXC_NV_MAX_SLOTS && slot == NULL; index++) {
+        if (!views->slots[index].used) slot = &views->slots[index];
+    }
+    if (slot == NULL) return 0;
+    if (!views->styles_set) {
+        // The swapchain's child is cut around its siblings above it, the slots, so DWM shows
+        // them over the frame (the GDI route; the composition route has no such child).
+        if (win->surface != NULL) {
+            LONG_PTR style = GetWindowLongPtrW(win->surface, GWL_STYLE);
+            SetWindowLongPtrW(win->surface, GWL_STYLE, style | WS_CLIPSIBLINGS);
+        }
+        views->styles_set = 1;
+    }
+    HWND container = NULL;
+    DWORD style = WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+    if (win->on_comp) {
+        container = CreateWindowExW(WS_EX_LAYERED, DXC_NV_CONTAINER_CLASS, L"", style, 0, 0, 0, 0,
+                                    win->window, NULL, GetModuleHandleW(NULL), NULL);
+        if (container != NULL) {
+            SetLayeredWindowAttributes(container, 0, 255, LWA_ALPHA);
+        } else {
+            fprintf(stderr, "compose-rust: native-view: no layered container (error %lu): a view that draws "
+                            "with GDI shows nothing on the composition route\n", (unsigned long)GetLastError());
+        }
+    }
+    if (container == NULL) {
+        container = CreateWindowExW(0, DXC_NV_CONTAINER_CLASS, L"", style, 0, 0, 0, 0,
+                                    win->window, NULL, GetModuleHandleW(NULL), NULL);
+    }
+    if (container == NULL) return 0;
+    DWORD before = (DWORD)GetWindowLongPtrW(view, GWL_STYLE);
+    DWORD as_child = (before & ~(DWORD)WS_POPUP) | (DWORD)WS_CHILD;
+    if (as_child != before) SetWindowLongPtrW(view, GWL_STYLE, (LONG_PTR)as_child);
+    if (SetParent(view, container) == NULL) {
+        if (as_child != before) SetWindowLongPtrW(view, GWL_STYLE, (LONG_PTR)before);
+        DestroyWindow(container);
+        return 0;
+    }
+    // Shown inside the container, which is hidden until the slot is placed and shown.
+    SetWindowPos(view, NULL, 0, 0, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
+    SetWindowPos(container, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    memset(slot, 0, sizeof *slot);
+    slot->used = 1;
+    slot->id = id;
+    slot->view = view;
+    slot->container = container;
+    slot->view_style = before & (DWORD)(WS_CHILD | WS_POPUP);
+    if (views->count == 0 && !views->focus.has_focused) views->focus.is_key = win->active != 0;
+    views->count++;
+    // The view may have had the keyboard already, as a child of the window.
+    dxc_nv_sample_focus(win);
+    return 1;
+}
+
+/**
+ * Where slot [id] is and what of it shows, in client pixels: its frame, the clip of its
+ * ancestors ([has_clip]), and [hole_count] holes, five numbers each (x, y, width, height and
+ * the corner radius), where the scene drawn above it shows instead. Given to the windows with
+ * the next frame.
+ */
+void dxc_native_view_place(void *window, int32_t id, int32_t x, int32_t y, int32_t width, int32_t height,
+                           int32_t has_clip, int32_t clip_x, int32_t clip_y, int32_t clip_width,
+                           int32_t clip_height, const int32_t *holes, int32_t hole_count) {
+    DxcWin *win = dxc_nv_window(window);
+    if (win == NULL) return;
+    struct dxc_nv_slot *slot = dxc_nv_find(win, id);
+    if (slot == NULL) return;
+    slot->frame = dxc_nv_rect_of(x, y, width, height);
+    slot->bounds = dxc_nv_bounds(slot->frame, has_clip != 0, dxc_nv_rect_of(clip_x, clip_y, clip_width, clip_height));
+    HRGN region = dxc_nv_region(slot->bounds, holes, hole_count);
+    if (region != NULL || slot->wants_region) {
+        if (slot->region != NULL) DeleteObject(slot->region);
+        slot->region = region;
+        slot->region_changed = 1;
+        slot->wants_region = region != NULL;
+    }
+    slot->pending = 1;
+    win->native_views.pending = 1;
+}
+
+/** Shows or hides slot [id] with the next frame. A hidden slot that had the keyboard gives it to the scene now. */
+void dxc_native_view_set_visible(void *window, int32_t id, int32_t visible) {
+    DxcWin *win = dxc_nv_window(window);
+    if (win == NULL) return;
+    struct dxc_nv_slot *slot = dxc_nv_find(win, id);
+    if (slot == NULL || slot->visible == (visible != 0)) return;
+    if (!visible && dxc_nv_has_keyboard(win, slot)) dxc_nv_focus_scene(win);
+    slot->visible = visible != 0;
+    slot->pending = 1;
+    win->native_views.pending = 1;
+}
+
+/**
+ * Gives slot [id] the keyboard, if it is shown. While the window is not active the slot is
+ * remembered and given the keyboard when it is.
+ */
+void dxc_native_view_focus(void *window, int32_t id) {
+    DxcWin *win = dxc_nv_window(window);
+    if (win == NULL) return;
+    struct dxc_nv_slot *slot = dxc_nv_find(win, id);
+    if (slot == NULL || !slot->visible) return;
+    if (win->active) {
+        SetFocus(slot->view);
+        dxc_nv_sample_focus(win);
+    } else {
+        win->native_views.focus_window = slot->view;
+        dxc_nv_focus_to(win, slot);
+    }
+}
+
+/** Gives the keyboard back to the scene. */
+void dxc_native_view_focus_scene(void *window) {
+    DxcWin *win = dxc_nv_window(window);
+    if (win != NULL) dxc_nv_focus_scene(win);
+}
+
+/** Takes slot [id] out of the window. The view is hidden and kept: the caller destroys it. */
+void dxc_native_view_detach(void *window, int32_t id) {
+    DxcWin *win = dxc_nv_window(window);
+    if (win == NULL) return;
+    struct dxc_nv_slot *slot = dxc_nv_find(win, id);
+    if (slot != NULL) dxc_nv_take_out(win, slot, 0);
+}
+
+/** 1 and the slot in [id] while a slot has the keyboard (or had it when the window was deactivated). */
+int32_t dxc_native_view_focused(void *window, int32_t *id) {
+    DxcWin *win = dxc_nv_window(window);
+    if (win == NULL || !win->native_views.focus.has_focused) return 0;
+    if (id != NULL) *id = win->native_views.focus.focused;
+    return 1;
 }

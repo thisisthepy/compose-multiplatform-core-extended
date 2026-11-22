@@ -239,6 +239,12 @@ class CupertinoDesignSystem private constructor(
             pressedBorder = null,
             ripple = false,
         )
+        // Calculator keys: grey without a trace of the accent. The fill is black or white
+        // at low opacity, the way the system's own fill colours are, so the key stays a
+        // step off whatever it sits on. The second tier is the same fill one step deeper.
+        ButtonVariant.Neutral -> neutralKey(NEUTRAL_ALPHA, NEUTRAL_PRESSED_ALPHA)
+        ButtonVariant.NeutralSecondary ->
+            neutralKey(NEUTRAL_SECONDARY_ALPHA, NEUTRAL_SECONDARY_PRESSED_ALPHA)
         ButtonVariant.Outlined -> ButtonStyle(
             container = Color.Transparent,
             content = palette.accent,
@@ -260,6 +266,23 @@ class CupertinoDesignSystem private constructor(
             shape = ShapeRole.Medium,
             pressedContainer = Color.Transparent,
             pressedContent = palette.accent.dimmed(),
+            pressedBorder = null,
+            ripple = false,
+        )
+    }
+
+    /** A key filled with black at [alpha] in light and white in dark, inked in the body colour. */
+    private fun neutralKey(alpha: Float, pressedAlpha: Float): ButtonStyle {
+        val ink = if (isDark) Color.White else Color.Black
+        val body = color(ColorRole.OnSurface)
+        return ButtonStyle(
+            container = ink.copy(alpha = alpha),
+            content = body,
+            border = null,
+            borderWidth = 0.dp,
+            shape = ShapeRole.Medium,
+            pressedContainer = ink.copy(alpha = pressedAlpha),
+            pressedContent = body.dimmed(),
             pressedBorder = null,
             ripple = false,
         )
@@ -365,6 +388,12 @@ class CupertinoDesignSystem private constructor(
 
         /** The faint tint a bordered button takes while held. */
         internal const val PRESS_WASH_ALPHA: Float = 0.12f
+
+        // The neutral key fills: a digit, and the function key one step deeper beside it.
+        internal const val NEUTRAL_ALPHA: Float = 0.10f
+        internal const val NEUTRAL_PRESSED_ALPHA: Float = 0.18f
+        internal const val NEUTRAL_SECONDARY_ALPHA: Float = 0.22f
+        internal const val NEUTRAL_SECONDARY_PRESSED_ALPHA: Float = 0.30f
     }
 }
 

@@ -64,7 +64,12 @@ enum class ShapeRole { None, ExtraSmall, Small, Medium, Large, Full }
 
 enum class SpaceRole { None, Xs, Sm, Md, Lg, Xl, Xxl }
 
-enum class ButtonVariant { Filled, Tonal, Outlined, Text, Operator }
+/**
+ * [Neutral] and [NeutralSecondary] are filled buttons that carry no accent in the fill, the
+ * ink, the line or any pressed state. The second is a step apart from the first, for a key
+ * beside it. Which of the two is lighter is the design system's answer.
+ */
+enum class ButtonVariant { Filled, Tonal, Outlined, Text, Operator, Neutral, NeutralSecondary }
 
 /**
  * Which design system an implementation is.

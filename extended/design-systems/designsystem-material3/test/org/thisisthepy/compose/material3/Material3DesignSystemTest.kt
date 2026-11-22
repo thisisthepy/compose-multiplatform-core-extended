@@ -199,6 +199,31 @@ class Material3DesignSystemTest {
             assertNotEquals(0f, system.motion.easing.transform(0.5f))
         }
     }
+
+    @Test
+    fun fr22_2_neutral_button_tiers_carry_no_accent() {
+        for (system in listOf(light, dark)) {
+            val accent = system.color(ColorRole.Primary)
+            for (variant in listOf(ButtonVariant.Neutral, ButtonVariant.NeutralSecondary)) {
+                val style = system.button(variant)
+                val paints = mapOf(
+                    "container" to style.container,
+                    "pressed container" to style.pressedContainer,
+                    "ink" to style.content,
+                    "pressed ink" to style.pressedContent,
+                    "line" to style.border,
+                    "pressed line" to style.pressedBorder,
+                )
+                for ((name, paint) in paints) {
+                    assertNotEquals(
+                        accent,
+                        paint,
+                        "the $variant button's $name is the accent in the ${if (system.isDark) "dark" else "light"} scheme",
+                    )
+                }
+            }
+        }
+    }
 }
 
 internal fun Color.relativeLightness(): Float = 0.2126f * red + 0.7152f * green + 0.0722f * blue

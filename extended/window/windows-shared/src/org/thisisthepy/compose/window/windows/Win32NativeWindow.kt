@@ -130,6 +130,12 @@ class Win32NativeWindow private constructor(
     /** Prints what Windows answers to a hit test where a reader would press, against what this caption should answer. */
     fun debugHitTest() = dxc_native_debug_hit_test(window)
 
+    /**
+     * The platform views placed in this window, such as a web view's host window the caller
+     * made against [window]. Every call names this window, so none needs it selected.
+     */
+    val nativeViews: WindowsNativeViews by lazy { WindowsNativeViews(Win32CNativeViewsBackend(window)) }
+
     companion object {
         /**
          * How the next window opens. Called before [open]. `backdrop` is the system material
