@@ -255,6 +255,9 @@ object SemanticsProperties {
     /** @see SemanticsPropertyReceiver.selected */
     val Selected = AccessibilityKey<Boolean>("Selected")
 
+    /** @see SemanticsPropertyReceiver.hasPopup */
+    val HasPopup = AccessibilityKey<Boolean>("HasPopup") { parentValue, _ -> parentValue }
+
     /** @see SemanticsPropertyReceiver.toggleableState */
     val ToggleableState = AccessibilityKey<ToggleableState>("ToggleableState")
 
@@ -1212,6 +1215,11 @@ var SemanticsPropertyReceiver.imeAction by SemanticsProperties.ImeAction
  * The presence of this property indicates that the element is selectable.
  */
 var SemanticsPropertyReceiver.selected by SemanticsProperties.Selected
+
+/**
+ * Whether activating this element opens a popup such as a menu or popover.
+ */
+var SemanticsPropertyReceiver.hasPopup by SemanticsProperties.HasPopup
 
 /**
  * This semantics marks node as a collection and provides the required information.
