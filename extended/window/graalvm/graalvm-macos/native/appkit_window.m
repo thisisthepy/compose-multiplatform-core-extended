@@ -1108,10 +1108,15 @@ void dxc_native_set_cursor(int32_t shape) {
 - (void)setFrameSize:(NSSize)size {
     BOOL wasInSetFrameSize = _inSetFrameSize;
     _inSetFrameSize = YES;
+    CAMetalLayer *layer = [self.layer isKindOfClass:[CAMetalLayer class]]
+        ? (CAMetalLayer *)self.layer : nil;
+    BOOL prevPresentsWithTransaction = layer != nil ? layer.presentsWithTransaction : NO;
+    if (layer != nil && !dxc_legacy_resize()) {
+        layer.presentsWithTransaction = YES;
+    }
     NSSize old_size = self.frame.size;
     [super setFrameSize:size];
     dxc_vprobe_set_frame(old_size, size);
-    CAMetalLayer *layer = (CAMetalLayer *)self.layer;
     CGFloat scale = self.window.backingScaleFactor > 0 ? self.window.backingScaleFactor : 1;
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
@@ -1143,15 +1148,24 @@ void dxc_native_set_cursor(int32_t shape) {
             dxc_resize_stats.callback_max_ticks = spent;
         }
     }
+    if (layer != nil && !self.inLiveResize) {
+        layer.presentsWithTransaction = prevPresentsWithTransaction;
+    }
     _inSetFrameSize = wasInSetFrameSize;
 }
 
 - (void)viewWillStartLiveResize {
     [super viewWillStartLiveResize];
+    if (!dxc_legacy_resize() && [self.layer isKindOfClass:[CAMetalLayer class]]) {
+        ((CAMetalLayer *)self.layer).presentsWithTransaction = YES;
+    }
 }
 
 - (void)viewDidEndLiveResize {
     [super viewDidEndLiveResize];
+    if (!dxc_legacy_resize() && [self.layer isKindOfClass:[CAMetalLayer class]]) {
+        ((CAMetalLayer *)self.layer).presentsWithTransaction = NO;
+    }
     dxc_native_resize_report();
 }
 
@@ -1352,11 +1366,10 @@ int32_t dxc_native_window_open(
         // Where the layer and its drawable disagree about size, anchored to the corner
         // and cropped rather than scaled: a stale frame then looks like an old picture
         // that has not caught up, not like a stretched one. Presenting with the Core
-        // Animation transaction stays on permanently so programmatic resizes, snaps and
-        // zooms synchronize with the window geometry just like live drags.
+        // Animation transaction is enabled only during live resize and setFrameSize: so
+        // steady-state rendering avoids main-thread present stalls.
         if (!dxc_legacy_resize()) {
             layer.contentsGravity = kCAGravityTopLeft;
-            layer.presentsWithTransaction = YES;
         }
         layer.masksToBounds = YES;
         // Drawn at the density of the screen the window is on rather than in points, so
@@ -1370,7 +1383,6 @@ int32_t dxc_native_window_open(
         if (@available(macOS 14.0, *)) {
             view.clipsToBounds = YES;
         }
-        layer.masksToBounds = YES;
 
         // The application itself, named before anything is asked of it. The toolkit used
         // to do this on its way past and nothing does now.

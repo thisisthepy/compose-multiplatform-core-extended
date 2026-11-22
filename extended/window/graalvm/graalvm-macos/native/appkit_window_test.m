@@ -397,9 +397,18 @@ static void *vresize_test_view;
 static int vresize_draw_calls;
 static float vresize_min_bar_height;
 static float vresize_max_bar_height;
+static int vresize_presents_with_transaction_yes;
+static int vresize_presents_with_transaction_no;
 
 static void vresize_test_draw_callback(void *context) {
     (void)context;
+    NSView *view = (__bridge NSView *)vresize_test_view;
+    CAMetalLayer *layer = (CAMetalLayer *)view.layer;
+    if (layer.presentsWithTransaction) {
+        vresize_presents_with_transaction_yes++;
+    } else {
+        vresize_presents_with_transaction_no++;
+    }
     float out[6];
     dxc_native_window_title_bar(vresize_test_view, out);
     float bar_height = out[0] - out[1];
@@ -413,22 +422,36 @@ static void vresize_test_draw_callback(void *context) {
     vresize_draw_calls++;
 }
 
-// Layer resize sync properties match the Kotlin/Native window so programmatic resizes, snaps,
-// and zooms synchronize with Core Animation transactions and clip to view bounds.
+// Layer resize sync properties at rest: presentsWithTransaction stays off outside resize to
+// avoid steady-state Core Animation main-thread present stalls, while masksToBounds and
+// layerContentsRedrawPolicy keep resize rendering clipped and synchronous.
 static void check_layer_resize_sync(void *view_pointer) {
     NSView *view = (__bridge NSView *)view_pointer;
     CAMetalLayer *layer = (CAMetalLayer *)view.layer;
-    CHECK(layer.presentsWithTransaction == YES,
-          "layer.presentsWithTransaction should be YES outside live resize");
+    CHECK(layer.presentsWithTransaction == NO,
+          "layer.presentsWithTransaction should be NO at rest outside resize");
     CHECK(layer.masksToBounds == YES, "layer.masksToBounds should be YES");
     CHECK(view.layerContentsRedrawPolicy == NSViewLayerContentsRedrawDuringViewResize,
           "view.layerContentsRedrawPolicy should be DuringViewResize, got %ld",
           (long)view.layerContentsRedrawPolicy);
+
+    [view viewWillStartLiveResize];
+    CHECK(layer.presentsWithTransaction == YES,
+          "layer.presentsWithTransaction should be YES during live resize");
+    [view viewDidEndLiveResize];
+    CHECK(layer.presentsWithTransaction == NO,
+          "layer.presentsWithTransaction should be NO after live resize ends");
 }
 
 // A one-step vertical resize on a full-size-content window must not report a title bar height
-// inflated by the height delta during the synchronous setFrameSize draw callback.
+// inflated by the height delta during the synchronous setFrameSize draw callback, and must
+// enable presentsWithTransaction only for the duration of setFrameSize.
 static void check_one_step_vertical_resize_title_bar(NSWindow *window, void *view_pointer) {
+    NSView *view = (__bridge NSView *)view_pointer;
+    CAMetalLayer *layer = (CAMetalLayer *)view.layer;
+    CHECK(layer.presentsWithTransaction == NO,
+          "layer.presentsWithTransaction should be NO before setFrameSize");
+
     float before[6];
     dxc_native_window_title_bar(view_pointer, before);
     float initial_bar_height = before[0] - before[1];
@@ -439,6 +462,8 @@ static void check_one_step_vertical_resize_title_bar(NSWindow *window, void *vie
     vresize_draw_calls = 0;
     vresize_min_bar_height = 0;
     vresize_max_bar_height = 0;
+    vresize_presents_with_transaction_yes = 0;
+    vresize_presents_with_transaction_no = 0;
     dxc_native_set_draw_callback(vresize_test_draw_callback, NULL);
 
     NSRect start = window.frame;
@@ -453,6 +478,12 @@ static void check_one_step_vertical_resize_title_bar(NSWindow *window, void *vie
           "window should have grown vertically: %.1f -> %.1f",
           start.size.height, window.frame.size.height);
     CHECK(vresize_draw_calls > 0, "draw callback should run during setFrameSize");
+    CHECK(vresize_presents_with_transaction_yes == vresize_draw_calls &&
+              vresize_presents_with_transaction_no == 0,
+          "layer.presentsWithTransaction should be YES during setFrameSize draw callback: yes=%d no=%d",
+          vresize_presents_with_transaction_yes, vresize_presents_with_transaction_no);
+    CHECK(layer.presentsWithTransaction == NO,
+          "layer.presentsWithTransaction should be NO again after setFrameSize completes");
     CHECK(fabsf(vresize_max_bar_height - initial_bar_height) < 1.0f &&
               fabsf(vresize_min_bar_height - initial_bar_height) < 1.0f,
           "title bar height jumped during setFrameSize: initial=%.2f, min=%.2f, max=%.2f",
