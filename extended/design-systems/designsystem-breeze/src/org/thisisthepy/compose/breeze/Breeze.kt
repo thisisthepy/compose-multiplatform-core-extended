@@ -5,6 +5,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -332,6 +333,36 @@ class BreezeDesignSystem private constructor(
                 pressedBorder = accent,
                 ripple = false,
             )
+            // The calculator's digit is the standard button, except that pressing it keeps
+            // its own line: the accent a pressed standard button outlines itself in is
+            // exactly what this tier does not carry.
+            ButtonVariant.Neutral -> ButtonStyle(
+                container = standard,
+                content = onStandard,
+                border = line,
+                borderWidth = 1.dp,
+                shape = ShapeRole.Medium,
+                pressedContainer = standardPressed,
+                pressedContent = onStandard,
+                pressedBorder = line,
+                ripple = false,
+            )
+            // The function key beside it: a fill one step deeper than the digit, inside
+            // the same line.
+            ButtonVariant.NeutralSecondary -> {
+                val deeper = lerp(color(ColorRole.SurfaceVariant), onStandard, NEUTRAL_STEP)
+                ButtonStyle(
+                    container = deeper,
+                    content = onStandard,
+                    border = line,
+                    borderWidth = 1.dp,
+                    shape = ShapeRole.Medium,
+                    pressedContainer = lerp(deeper, onStandard, NEUTRAL_PRESS_MIX),
+                    pressedContent = onStandard,
+                    pressedBorder = line,
+                    ripple = false,
+                )
+            }
             // Hovering or pressing an outlined Breeze button recolours its line to the
             // highlight rather than filling it in.
             ButtonVariant.Outlined -> ButtonStyle(
@@ -409,6 +440,12 @@ class BreezeDesignSystem private constructor(
     )
 
     companion object {
+        /** How far a calculator's function key sits from its digit, towards the ink. */
+        private const val NEUTRAL_STEP = 0.08f
+
+        /** How much ink a pressed function key takes on. */
+        private const val NEUTRAL_PRESS_MIX = 0.12f
+
         val Light: BreezeDesignSystem = BreezeDesignSystem(isDark = false)
         val Dark: BreezeDesignSystem = BreezeDesignSystem(isDark = true)
 

@@ -9,7 +9,8 @@ application for Windows without a JVM.
   dialogs. `c/win32_notifications.c`: toasts.
   `c/win32_resize.h`, `c/win32_ime_text.h`, `c/win32_buttons.h`, `c/win32_wheel.h` (the wheel's scroll
   direction), `c/win32_dpi.h` (the size a window keeps across a change of DPI) and
-  `c/win32_file_dialog_spec.h` (a dialog's type list) are header-only logic that compiles without
+  `c/win32_file_dialog_spec.h` (a dialog's type list) and `c/win32_native_views.h` (where a native
+  view slot goes and which focus changes it reports) are header-only logic that compiles without
   Windows.
   `c/win32_keys.h` decides which key messages stay the scene's (F10 and the menu key among
   them); it is header-only too and reads only the message and key names of `<windows.h>`.
@@ -43,10 +44,15 @@ defines.
 
 ## How frames reach the screen
 
-The window has two routes. It takes the DirectComposition route unless `DXC_DCOMP=0` is set or
-the machine cannot give it one, and says which on standard error
+The window has two routes. It takes the GDI route unless `DXC_DCOMP=1` asks for the
+DirectComposition one and the machine can give it, and says which on standard error
 (`compose-rust: dcomp: route dcomp` or `route gdi`, with the reason). Its memory lines end in
 `route=dcomp` or `route=gdi`.
+
+The GDI route is the default because of what a real GPU showed (2026-11-21, a real
+application dragged by hand): the DirectComposition route left a see-through strip inside the
+border on a fast drag that grows the window, and the picture slid on a drag of the left or top
+edge. The GDI route showed neither. See "Known faults" under the DirectComposition route.
 
 ### The DirectComposition route
 
@@ -83,9 +89,26 @@ by it. So the frames are committed in this order:
 The wait before each drag step that the GDI route takes on builds below 22000 (issue #245) is
 not taken here: the order already decides which frame meets which rectangle.
 
+#### Known faults
+
+The window's rectangle is not part of the commit. The rectangle reaches DWM from the window
+manager and the picture from DirectComposition, and the two can land in different
+compositions. Two things follow, both seen on a real GPU and neither seen by the probe, which
+drags the right edge slowly and takes a see-through margin for a smaller window:
+
+- A step that grows is committed after the window grew. A composition in between shows the
+  larger window with the smaller picture, and with no GDI surface the rest is see-through.
+- The surface sits at the window's top left. A drag of the left or top edge moves that
+  origin, so for a composition the picture is drawn for one origin and shown at the other:
+  what should stay still on the right moves by the step. A step that shrinks commits first
+  and waits, so there it happens on every step.
+
+The probe's judged drags (below) look for both.
+
 ### The GDI route
 
-`DXC_DCOMP=0`, a machine without a composition device, or a composition surface that cannot be
+The default. `DXC_DCOMP` unset or not `1`, a machine without a composition device, or a
+composition surface that cannot be
 put on the window (the window is then made again) gives the route the window had before: the
 GDI redirection surface, and the swapchain on a child window that covers the client area and
 passes every press to the window. During a size change the child is hidden, and each CPU frame
@@ -98,13 +121,13 @@ Read when a window opens. The defaults are what the probe runs below measured.
 
 | Variable | Values | What it does |
 |---|---|---|
-| `DXC_DCOMP` | `0` | The GDI route. |
+| `DXC_DCOMP` | `1` | The DirectComposition route. Anything else, or unset, is the GDI route. |
 | `DXC_DCOMP_SURFACES` | `1`, `2` (default), `3` | How many surfaces take turns. |
 | `DXC_DCOMP_UPLOAD` | `on12` | Write the surfaces with the D3D11On12 device. |
 | `DXC_DCOMP_COMMIT` | `order` (default), `ahead`, `wmsize` | The commit order above, every frame in `WM_NCCALCSIZE`, or every frame in `WM_SIZE`. |
 | `DXC_DCOMP_SHRINK_WAIT` | `commit` (default), `flush`, `none`, `hold` | What a frame shown before a smaller rectangle waits for: DWM taking the commit, that and one composition, nothing, or nothing with the window held at the last frame DWM took during a drag. |
 | `DXC_DCOMP_DRAG_RULE` | `1` | Take the GDI route's wait before each drag step. |
-| `DXC_REPORT_LATENCY` | any | Each resize step and each drag print where their time went. |
+| `DXC_REPORT_LATENCY` | any | Each resize step and each drag print where their time went. The drag step lines also carry the window's left and top (`left= top=`), the edge dragged (`edge=`) and, on the DirectComposition route, whether the step's frame was `committed first` (before the rectangle) or `committed in WM_SIZE`. |
 
 ### Measured
 
@@ -124,6 +147,40 @@ drag step's `BeginDraw` waits for DWM's next composition (about 20 ms on the run
 shrinking step's commit wait for DWM to take it (about 45 to 53 ms). A GDI step waits on
 nothing of DWM's. How this looks on a real GPU is still to be measured, with the lag probe
 below.
+
+## Native views
+
+`WindowsNativeViews` (common's `NativeViews`, compose-rust FR-81), over `dxc_native_view_*` in
+`c/win32_window.c`, with its arithmetic and focus rules in `c/win32_native_views.h`. The
+application makes an HWND against `dxc_native_view_parent` (the window) and hands it over; the
+window puts it in a container, a child window of its own with `WS_CLIPSIBLINGS`, above every
+slot attached before it. The container is the slot's frame cut to its clip; the view inside
+keeps the whole frame, so a view half scrolled out shows the half that is in. Holes are a window
+region on the container, which also sends a click in a hole to the scene. Positions are client
+pixels; a change of DPI needs nothing here, the caller lays out again and sends the new frames.
+
+What is asked for during a frame is given to the windows after that frame is presented
+(`dxc_native_frame_end`), copied (`dxc_raster_copy`, during a size change) or committed (the
+DirectComposition route), and otherwise at the end of the next pump.
+
+- GDI route: the swapchain's child window is given `WS_CLIPSIBLINGS` with the first slot, so it
+  is cut around the containers above it. While a size changes it is hidden and the frame is
+  copied into the window with GDI, cut around the slots (`dxc_nv_exclude`), which draw into
+  the same GDI surface. The slots are never hidden with it.
+- DirectComposition route: the visual's target is made below the window's child windows
+  (`CreateTargetForHwnd` with topmost false), so DWM composes the slots above the frame. The
+  window has no GDI surface, so a container is a layered child window (Windows 8 and later, as
+  the application's manifest declares) for a view that draws with GDI; where one cannot be
+  made the window says so on standard error.
+
+Focus is read from the system at the end of every pump (`GetFocus`) and reported as
+`NATIVE_VIEW_FOCUS_IN` and `_OUT`. A press in the scene gives the keyboard back to it;
+deactivated, the window reports the slot's loss, and activated again gives the slot the
+keyboard back and reports it. Over a slot the window sets no cursor and the scene hears
+`POINTER_EXIT`, then `POINTER_ENTER` when the pointer comes back. A view leaves hidden, under the
+message-only window, for the application to destroy; the window takes every view out this way
+when it closes. The shared test runs it on a real window on both routes
+(`fr81_native_views_in_a_real_window`).
 
 ## File dialogs
 
@@ -195,15 +252,49 @@ and each drag prints how many steps were drawn ahead. `DXC_METRICS` adds the mem
 (`memory-breakdown ...`), and `DXC_CAPTURE_CHECK` compares what DWM composed, read back
 through Desktop Duplication, with the frame drawn for each step.
 
+## The resize probe's judged drags
+
+`c/test/win32_resize_probe.c` has four modes for the faults above, which its right-edge drag
+cannot see:
+
+- `drag-left`, `drag-top`, `drag-topleft`: the left edge, the top edge and the top-left
+  corner dragged in and out, twice each.
+- `drag-fast`: the window grown fast by its right edge, its bottom edge, its bottom-right
+  corner and its top-left corner.
+
+The pointer moves 40 to 120 px every 4 to 8 ms (a real hand's pace on a real GPU), from a
+fixed seed, so runs are comparable. The picture has an 8 px marker 16 px in from each corner
+and a row of blocks spelling its width and height (`c/test/win32_probe_judge.h`, checked by
+`c/test/win32_shared_test.c`). The probe has DWM draw the window's border in pure blue
+(`DWMWA_BORDER_COLOR`), so each composed frame shows the window's true rectangle whatever the
+picture does, and judges every frame of the drag against it:
+
+- anchor: the right markers 16 px inside the border's right side and the bottom markers 16 px
+  inside its bottom, within 1 px (both distances measured at rest first). Otherwise the frame
+  is faulty, "shifted by N px".
+- see-through: no backdrop pixel on 14 rows and 14 columns across the area inside the border,
+  and the size the picture spells is the size inside the border. Otherwise "see-through N px
+  at the right" (or another edge), or "frame of another size".
+
+Every frame counts; there is no allowance for one frame. Each run prints
+`probe: anchor <mode> judged N faulty M max shift S px ...` and
+`probe: see-through <mode> judged N faulty M max P px at the <edge> ...`. The border colour
+needs Windows build 22000 or later: on Windows 10 and Server 2022 the two lines say
+`not available on this build` instead, and nothing is judged. The CI runners draw with WARP,
+where a drag step waits for a composition in `BeginDraw`, so a step there lasts a composition
+and the see-through fault shows less often than on a real GPU; the lag probe below runs the
+same modes on a real machine.
+
 ## Measuring on a real GPU
 
 `c/test/run-lag-probe.ps1` measures the drag lag and the faulty frames of both routes on the
-machine it runs on. CI runs it in its short form, so it keeps working.
+machine it runs on, and then runs the judged drags above on both routes. CI runs it in its
+short form, so it keeps working.
 
 Without a compiler, use the prebuilt probe: the workflow's windows-2022 job uploads the
 artifact `lag-probe-windows-x64`, with `win32_resize_probe.exe` (static CRT, so it needs only
 the DLLs Windows ships), the script and `run-lag-probe.cmd`. Unzip it, double-click
-`run-lag-probe.cmd`, leave the mouse and keyboard alone for about three minutes, and send back
+`run-lag-probe.cmd`, leave the mouse and keyboard alone for about six minutes, and send back
 the `lag-probe-summary.txt` it writes in the same folder.
 
 To build it yourself:
@@ -217,12 +308,16 @@ To build it yourself:
    powershell -ExecutionPolicy Bypass -File extended\window\windows-shared\c\test\run-lag-probe.ps1
    ```
 
-4. Leave the mouse and keyboard alone for about three minutes. The script builds the window
+4. Leave the mouse and keyboard alone for about six minutes. The script builds the window
    and the probe, then moves a window and the pointer on screen: three kinds of drag, three
-   times each, on each route.
+   times each, on each route, then the four judged drags, three times each, on each route.
 5. Send back `extended\window\windows-shared\out\lag-probe\lag-probe-summary.txt`. It has
    the GPU, the Windows build and one row a run: route, faulty frames, lag median, p95 and max,
-   the longest hold, and the window's memory at rest. The logs beside it have every line.
+   the longest hold, and the window's memory at rest. A second table has one row a judged
+   drag: route, mode, composed and judged frames, frames shifted and the largest shift, frames
+   see-through and the widest strip with its edge, frames of another size, and the median time
+   between pointer moves. The logs beside it have every line, the window's step lines
+   (`DXC_REPORT_LATENCY`) included.
 
 `-Runs 5` runs each drag five times; `-Fast` once.
 
@@ -234,7 +329,14 @@ dialog started, cancelled and answered on a real window, and that every declared
 and builds and tests the Kotlin/Native klib. On windows-2022 and windows-2025 it runs the
 resize probe on both routes. The DirectComposition route fails the job above 2 % faulty frames
 in 247 maximise, restore and snap changes, and on any faulty frame in a drag drawn ahead. The
-GDI route is printed beside it for comparison.
+GDI route is printed beside it for comparison. The judged drags run three times a mode on both
+routes: the GDI route, the default, fails the job above 2 % of its judged frames shifted,
+see-through or of another size, and on windows-2025 when the judges are not available or
+judged nothing. The DirectComposition route's judged drags are printed, not gated, until its
+fix lands. The first run with the judges (44920692034, windows-2025, WARP) counted 1 faulty
+frame of 163 on the GDI route (the window grown by its left edge and the copy not yet in it,
+109 px see-through) and 79 of 201 on the DirectComposition route (shifted by up to 382 px,
+see-through up to 666 px).
 
 Source: compose-rust PR #174 (`feat/win32-resize-kn`) at 2d6ad3e3, where the C is
 `renderer/desktop/c/` and the Kotlin/Native window is `renderer/windows/src/Win32Window.kt`.

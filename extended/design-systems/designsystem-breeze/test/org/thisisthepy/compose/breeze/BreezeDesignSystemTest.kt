@@ -100,5 +100,30 @@ class BreezeDesignSystemTest {
         assertEquals(descending.sortedDescending(), descending, "the type ladder is not monotonic")
     }
 
+    @Test
+    fun fr22_2_neutral_button_tiers_carry_no_accent() {
+        for (system in schemes) {
+            val accent = system.color(ColorRole.Primary)
+            for (variant in listOf(ButtonVariant.Neutral, ButtonVariant.NeutralSecondary)) {
+                val style = system.button(variant)
+                val paints = mapOf(
+                    "container" to style.container,
+                    "pressed container" to style.pressedContainer,
+                    "ink" to style.content,
+                    "pressed ink" to style.pressedContent,
+                    "line" to style.border,
+                    "pressed line" to style.pressedBorder,
+                )
+                for ((name, paint) in paints) {
+                    assertNotEquals(
+                        accent,
+                        paint,
+                        "the $variant button's $name is the accent in the ${if (system.isDark) "dark" else "light"} scheme",
+                    )
+                }
+            }
+        }
+    }
+
     private fun schemeName(system: DesignSystem): String = if (system.isDark) "dark" else "light"
 }

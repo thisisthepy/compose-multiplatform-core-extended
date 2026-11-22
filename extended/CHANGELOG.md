@@ -16,6 +16,14 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   (`axScreenRect`), whatever the parent view's flip. The GraalVM window converts through its
   own flipped view and was right. (DarkPyonix/compose-rust#937)
 
+- **Fix.** The Windows window (`windows-shared`) opens on the GDI route by default again;
+  `DXC_DCOMP=1` asks for the DirectComposition route. On a real GPU, with a real application
+  dragged by hand, the DirectComposition route left a see-through strip inside the border on
+  a fast drag that grows the window, and the picture slid on a drag of the left or top edge;
+  the GDI route showed neither. The probe saw neither (it drags the right edge, and takes a
+  see-through margin for a smaller window). Before this, the route was DirectComposition
+  unless `DXC_DCOMP=0`. (#223)
+
 - **Fix.** The Windows window (`windows-shared`) shows its frames through DirectComposition.
   On restore, maximise and snap it showed the new size with the old picture now and then: the
   rectangle and the picture reached DWM in separate steps (#223). The window now has no GDI
@@ -39,6 +47,21 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   61 µs through `setFrameOrigin:` (medians of 400 frames). Where each view ends is unchanged.
   (DarkPyonix/compose-rust#855)
 
+- **Feature.** The Windows window (`windows-shared`) places native views: `nativeViews` on
+  `Win32NativeWindow` and `Win32WindowPlatform` (`WindowsNativeViews`, over the new C calls
+  `dxc_native_view_*`). An HWND the application made against the window is put in a child
+  window of the window's own above the frame and above every view attached before it, cut to
+  its clip, with rounded holes cut out of it by a window region, given its place with the next
+  frame after it is presented, and taken out (hidden, never destroyed) when it is detached or
+  the window closes. Focus moving into, out of and between views, and the window's activation,
+  arrive as `NATIVE_VIEW_FOCUS_IN` and `_OUT`; the pointer leaving the scene for a view and
+  coming back as `POINTER_EXIT` and `_ENTER`; over a view the cursor is the view's. On the GDI
+  route the swapchain's child window clips its siblings once a view is attached, and the copies
+  into the window during a resize leave the views out. On the DirectComposition route the
+  visual is now made below the window's child windows (`CreateTargetForHwnd` with topmost
+  false), which changes nothing for a window without one, and a view's container is a layered
+  child window. (DarkPyonix/compose-rust#932)
+
 - **Fix.** The Windows window (`windows-shared`, so the Kotlin/Native and the GraalVM windows
   both) did not keep its size in points when its DPI changed. It applied the rectangle
   `WM_DPICHANGED` suggests, which Windows scales from the old outer rectangle without knowing
@@ -52,6 +75,16 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   differ. Changes back and forth come back to the same size with no drift. A maximised,
   minimised or snapped window keeps the place it fills and gets its size back when it is
   restored. (DarkPyonix/compose-rust FR-82)
+
+### Publishing
+
+- Releases on Maven Central leave out tvOS, watchOS and Kotlin/JS (`CENTRAL_SKIP_TARGETS`; a
+  dispatch with `all_targets` publishes them) and write only the `.md5` and `.sha1` checksums
+  Central requires. On 1.11.1-ext.5's bundle that is 9,356 files instead of 17,844. Wasm, iOS,
+  macOS, Linux, Windows, the desktop JVM and Android stay.
+- No branch push, pull request or schedule starts a workflow that uploads:
+  `extended/publish/check_publish_triggers.py` fails the publish plan otherwise. The dev builds on
+  GitHub Packages, which nothing had started since 2026-11-14, are gone from the workflow.
 
 ## 1.11.1-ext.5 (2026-11-16)
 

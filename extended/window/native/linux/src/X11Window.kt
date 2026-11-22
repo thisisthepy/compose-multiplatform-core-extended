@@ -47,6 +47,7 @@ import org.thisisthepy.compose.window.ScreenPointer
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowEventLog
+import org.thisisthepy.compose.window.NativeViews
 import org.thisisthepy.compose.window.WindowListener
 import org.thisisthepy.compose.window.WindowMeasurement
 import org.thisisthepy.compose.window.WindowPlatform
@@ -231,6 +232,14 @@ class X11Window : WindowPlatform {
 
     /** The X id of the window, for a test that has to address it as another client. */
     internal val windowId: ULong get() = window
+
+    private val nativeViewSlots = LinuxNativeViews(
+        displayProvider = { display },
+        parentWindowProvider = { window },
+        dispatchEvent = { event -> listener?.onEvent(event) },
+    )
+
+    override val nativeViews: NativeViews get() = nativeViewSlots
 
     /** Whether this window has the keyboard, as the server last said. */
     var isFocused: Boolean = true
@@ -1149,6 +1158,7 @@ class X11Window : WindowPlatform {
     }
 
     override fun close() {
+        nativeViewSlots.detachAll()
         accessibility.close()
         val clients = busClients.toList()
         busClients.clear()
