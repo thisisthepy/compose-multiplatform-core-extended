@@ -241,6 +241,8 @@ class MacosWindowPlatform(
     /** The reports a pump turn owes this window: its move, and the follow in progress. */
     private fun reportWindowChanges() {
         val current = window ?: return
+        // Every window, every turn: the check is a clock read, and a purge happens once.
+        current.purgeIfIdle()
         val sink = listener ?: return
         stepFollow()
         if (current.movedPending) {
