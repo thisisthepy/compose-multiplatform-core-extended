@@ -17,8 +17,18 @@
 //                               120 px a move, a fixed seed), two drags each
 //   win32_resize_probe drag-fast the window grown fast by its right edge, its bottom edge, its
 //                               bottom-right corner and its top-left corner, at the same pace
+//   win32_resize_probe drag-right, drag-bottom, drag-bottomright, drag-topright, drag-bottomleft
+//                               in and out over many steps (8 to 60 px a move), three drags each
+//   win32_resize_probe drag-mixed the bottom-right corner with the width growing while the
+//                               height shrinks, and the other way, three drags
+//   win32_resize_probe drag-slow  the right edge and the bottom-right corner, 1 to 3 px a move
 //
-// The four drag modes above move the window's origin or grow it fast, and are judged by two
+// Every judged mode prints how far the window followed the pointer ("probe: follow <mode>
+// sides X px of pointer Y px = Z %; lag moves=..."): the dragged sides' travel against the
+// pointer's, and each move's distance between where the pointer asked a side to be and where
+// it was before the next move. PROBE_DRAGS=<n> sets how many drags a mode makes.
+//
+// The drag modes above (all but drag) are judged by two
 // more judges besides the strips (c/test/win32_probe_judge.h). Their picture adds a marker
 // 16 px in from each corner and a row of blocks spelling the frame's size, and the probe asks
 // DWM to draw the window's border in pure blue (DWMWA_BORDER_COLOR, Windows build 22000 and
@@ -259,11 +269,18 @@ static DWORD WINAPI backdrop_thread(LPVOID unused) {
 // What the driver is doing, for the frames the capture judges.
 static volatile LONG probe_phase;
 static const char *probe_phase_names[] = {"rest", "maximise", "restore", "left-half", "back", "drag",
-                                          "setup", "drag-left", "drag-top", "drag-topleft", "drag-fast", "done"};
+                                          "setup", "drag-left", "drag-top", "drag-topleft", "drag-fast",
+                                          "drag-right", "drag-bottom", "drag-bottomright", "drag-topright",
+                                          "drag-bottomleft", "drag-mixed", "drag-slow", "done"};
 enum {
     PHASE_REST, PHASE_MAXIMISE, PHASE_RESTORE, PHASE_LEFT_HALF, PHASE_BACK, PHASE_DRAG,
     // The judged drag modes: setup places the window and calibrates, and is not judged.
     PHASE_SETUP, PHASE_DRAG_LEFT, PHASE_DRAG_TOP, PHASE_DRAG_TOPLEFT, PHASE_DRAG_FAST,
+    // Added after Fable's drag review (2026-11-22): the right and bottom edges going in and
+    // out, the two corners that move one side of each axis, a bottom-right drag that grows
+    // one side while it shrinks the other, and a slow drag of 1 to 3 px a step.
+    PHASE_DRAG_RIGHT, PHASE_DRAG_BOTTOM, PHASE_DRAG_BOTTOMRIGHT, PHASE_DRAG_TOPRIGHT, PHASE_DRAG_BOTTOMLEFT,
+    PHASE_DRAG_MIXED, PHASE_DRAG_SLOW,
     PHASE_DONE
 };
 static volatile LONG probe_capture_stop;
@@ -514,7 +531,7 @@ static void judge_frame_on(const struct probe_image *image, LONG area_left, LONG
 static void judge_capture(ID3D11DeviceContext *context, ID3D11Texture2D *area_copy, const D3D11_BOX *box,
                           IDXGIResource *resource, LONG judged_phase, int presented, int frame, double present_ms) {
     int calibrating = judge_calibrate == 1 && judged_phase == PHASE_SETUP;
-    int judging = presented && judged_phase >= PHASE_DRAG_LEFT && judged_phase <= PHASE_DRAG_FAST;
+    int judging = presented && judged_phase >= PHASE_DRAG_LEFT && judged_phase <= PHASE_DRAG_SLOW;
     if ((!calibrating && !judging) || resource == NULL) return;
     ID3D11Texture2D *texture = NULL;
     if (FAILED(IDXGIResource_QueryInterface(resource, &IID_ID3D11Texture2D, (void **)&texture)) || texture == NULL) {
@@ -849,6 +866,18 @@ static const char *probe_mode;
 static HANDLE edge_timer;
 static double edge_gaps[4096];
 static int edge_gap_count, edge_step_low, edge_step_high;
+// How far the window followed the pointer, over every drag of the mode: the pointer's travel
+// and the dragged sides' travel along each moving axis, and each move's lag, the distance
+// between where the pointer asked a dragged side to be and where that side was just before
+// the next move (or 100 ms after the last).
+static long follow_pointer_px, follow_side_px;
+// Where each drag ended: the largest distance, over the mode's drags, between the dragged sides
+// and where the pointer let go, once the window has settled. Waiting for a composition before
+// each step (fix/926) merges fast moves, so the sides cover less of the pointer's path; they
+// must still end where the pointer did.
+static int settle_worst = -1;
+static int follow_lags[8192];
+static int follow_lag_count;
 
 /** Waits [ms]: a high-resolution timer where there is one, then a spin for what is left. */
 static void edge_wait_ms(double ms) {
@@ -905,14 +934,41 @@ static void edge_calibrate(HWND window, const char *name) {
     }
 }
 
+/** The lag of a dragged side: where the pointer asked it to be against where it is. */
+/** How far the dragged sides of [at] are from where the pointer asked them to be ([asked] px along the drag). */
+static int side_lag(const RECT *at, const RECT *outer, int gx, int gy, int ysign, int32_t asked) {
+    int lag = 0;
+    if (gx != 0) {
+        LONG want = (gx < 0 ? outer->left : outer->right) + gx * asked;
+        LONG have = gx < 0 ? at->left : at->right;
+        lag = (int)(want > have ? want - have : have - want);
+    }
+    if (gy != 0) {
+        LONG want = (gy < 0 ? outer->top : outer->bottom) + gy * ysign * asked;
+        LONG have = gy < 0 ? at->top : at->bottom;
+        int y = (int)(want > have ? want - have : have - want);
+        if (y > lag) lag = y;
+    }
+    return lag;
+}
+
+static void follow_lag(const RECT *at, const RECT *outer, int gx, int gy, int ysign, int32_t asked) {
+    int lag = side_lag(at, outer, gx, gy, ysign, asked);
+    if (follow_lag_count < (int)(sizeof follow_lags / sizeof follow_lags[0])) follow_lags[follow_lag_count++] = lag;
+}
+
 /**
  * One drag of the edge or corner the pointer moves along (gx, gy): -1 left or up, 1 right or
  * down, 0 not on that axis, so that moving the pointer by (gx, gy) * n grows the window by n.
- * [out_and_in]: out, in past where it started, out, in, back; otherwise out and back twice
- * (a fast grow). The window is placed in the middle of the work area first, at about half
- * its size, so every move stays within the work area and above the window's minimum size.
+ * [ysign] -1 turns the vertical axis round (a bottom-right drag whose width grows while its
+ * height shrinks, and the other way), otherwise 1. [out_and_in]: out, in past where it
+ * started, out, in, back; otherwise out and back twice (a fast grow). Each move is
+ * [step_low] to [step_high] px. The window is placed in the middle of the work area first,
+ * at about half its size, so every move stays within the work area and above the window's
+ * minimum size.
  */
-static void edge_drag(HWND window, struct probe_rng *rng, int gx, int gy, int out_and_in, LONG drag_phase) {
+static void edge_drag(HWND window, struct probe_rng *rng, int gx, int gy, int ysign, int out_and_in,
+                      int32_t step_low, int32_t step_high, int32_t travel, LONG drag_phase) {
     phase(PHASE_SETUP);
     const char *name = edge_name(gx, gy);
     int dpi = (int)GetDpiForWindow(window);
@@ -931,17 +987,18 @@ static void edge_drag(HWND window, struct probe_rng *rng, int gx, int gy, int ou
     // the right and the bottom, and in the window's top resize band at the top.
     int x = gx < 0 ? (int)outer.left + 3 : gx > 0 ? (int)outer.right - 3 : (int)(outer.left + outer.right) / 2;
     int y = gy < 0 ? (int)outer.top + 3 : gy > 0 ? (int)outer.bottom - 3 : (int)(outer.top + outer.bottom) / 2;
-    int out = MulDiv(320, dpi, 96), in = out;
-    if (gx < 0 && (int)(outer.left - probe_work.left) - 8 < out) out = (int)(outer.left - probe_work.left) - 8;
-    if (gx > 0 && (int)(probe_work.right - outer.right) - 8 < out) out = (int)(probe_work.right - outer.right) - 8;
-    if (gy < 0 && (int)(outer.top - probe_work.top) - 8 < out) out = (int)(outer.top - probe_work.top) - 8;
-    if (gy > 0 && (int)(probe_work.bottom - outer.bottom) - 8 < out) out = (int)(probe_work.bottom - outer.bottom) - 8;
-    if (gx != 0 && (int)(outer.right - outer.left) - MulDiv(280, dpi, 96) < in) {
-        in = (int)(outer.right - outer.left) - MulDiv(280, dpi, 96);
-    }
-    if (gy != 0 && (int)(outer.bottom - outer.top) - MulDiv(220, dpi, 96) < in) {
-        in = (int)(outer.bottom - outer.top) - MulDiv(220, dpi, 96);
-    }
+    int out = MulDiv(travel, dpi, 96), in = out;
+    // Room to grow along each axis (to the work area's edge) and to shrink (to above the
+    // window's minimum size). Out grows an axis and in shrinks it, unless ysign turns the
+    // vertical axis round.
+    int grow_x = gx < 0 ? (int)(outer.left - probe_work.left) - 8 : (int)(probe_work.right - outer.right) - 8;
+    int grow_y = gy < 0 ? (int)(outer.top - probe_work.top) - 8 : (int)(probe_work.bottom - outer.bottom) - 8;
+    int shrink_x = (int)(outer.right - outer.left) - MulDiv(280, dpi, 96);
+    int shrink_y = (int)(outer.bottom - outer.top) - MulDiv(220, dpi, 96);
+    if (gx != 0 && grow_x < out) out = grow_x;
+    if (gx != 0 && shrink_x < in) in = shrink_x;
+    if (gy != 0 && (ysign > 0 ? grow_y : shrink_y) < out) out = ysign > 0 ? grow_y : shrink_y;
+    if (gy != 0 && (ysign > 0 ? shrink_y : grow_y) < in) in = ysign > 0 ? shrink_y : grow_y;
     if (out < 40 || (out_and_in && in < 40)) {
         fprintf(stderr, "probe: %s drag of the %s edge: no room (out %d px, in %d px), skipped\n",
                 probe_phase_names[drag_phase], name, out, in);
@@ -963,8 +1020,8 @@ static void edge_drag(HWND window, struct probe_rng *rng, int gx, int gy, int ou
         targets[3] = 0;
         target_count = 4;
     }
-    int32_t path[512];
-    int moves = probe_path(rng, targets, target_count, 40, 120, path, 512);
+    int32_t path[1024];
+    int moves = probe_path(rng, targets, target_count, step_low, step_high, path, 1024);
     // What the window answers at the press point: the edge the drag should take hold of.
     DWORD_PTR hit = 0;
     SendMessageTimeoutW(window, WM_NCHITTEST, 0, MAKELPARAM(x, y), SMTO_ABORTIFHUNG, 500, &hit);
@@ -972,10 +1029,11 @@ static void edge_drag(HWND window, struct probe_rng *rng, int gx, int gy, int ou
     send_mouse(0, x, y);
     Sleep(150);
     fprintf(stderr,
-            "probe: %s drag of the %s edge: pressed at %d,%d, hit test %d (%s %d), window %ld,%ld-%ld,%ld, out %d px, "
-            "in %d px, %d moves\n",
-            probe_phase_names[drag_phase], name, x, y, (int)hit, (int)hit == edge_hit(gx, gy) ? "as expected," : "EXPECTED",
-            edge_hit(gx, gy), outer.left, outer.top, outer.right, outer.bottom, out, out_and_in ? in : 0, moves);
+            "probe: %s drag of the %s edge%s: pressed at %d,%d, hit test %d (%s %d), window %ld,%ld-%ld,%ld, out %d px, "
+            "in %d px, %d moves of %d to %d px\n",
+            probe_phase_names[drag_phase], name, ysign < 0 ? " (height turned round)" : "", x, y, (int)hit,
+            (int)hit == edge_hit(gx, gy) ? "as expected," : "EXPECTED", edge_hit(gx, gy), outer.left, outer.top,
+            outer.right, outer.bottom, out, out_and_in ? in : 0, moves, (int)step_low, (int)step_high);
     phase(drag_phase);
     send_mouse(MOUSEEVENTF_LEFTDOWN, x, y);
     Sleep(100);
@@ -983,7 +1041,12 @@ static void edge_drag(HWND window, struct probe_rng *rng, int gx, int gy, int ou
     double last = probe_now_ms();
     for (int i = 0; i < moves; i++) {
         edge_wait_ms((double)probe_rng_between(rng, 4, 8));
-        send_mouse(0, x + gx * (int)path[i], y + gy * (int)path[i]);
+        if (i > 0) {
+            RECT before;
+            GetWindowRect(window, &before);
+            follow_lag(&before, &outer, gx, gy, ysign, path[i - 1]);
+        }
+        send_mouse(0, x + gx * (int)path[i], y + gy * ysign * (int)path[i]);
         double now = probe_now_ms();
         if (edge_gap_count < (int)(sizeof edge_gaps / sizeof edge_gaps[0])) edge_gaps[edge_gap_count++] = now - last;
         last = now;
@@ -1003,13 +1066,43 @@ static void edge_drag(HWND window, struct probe_rng *rng, int gx, int gy, int ou
         if (at.bottom > high.bottom) high.bottom = at.bottom;
     }
     Sleep(100);
+    if (moves > 0) {
+        RECT last_at;
+        GetWindowRect(window, &last_at);
+        follow_lag(&last_at, &outer, gx, gy, ysign, path[moves - 1]);
+    }
     send_mouse(MOUSEEVENTF_LEFTUP, x, y);
     // Settled frames of the drag's end are judged too: they must be clean.
     Sleep(400);
+    if (moves > 0) {
+        RECT settled;
+        GetWindowRect(window, &settled);
+        int off = side_lag(&settled, &outer, gx, gy, ysign, path[moves - 1]);
+        if (off > settle_worst) settle_worst = off;
+    }
+    // The pointer's travel along each moving axis (the path starts at 0), against the
+    // dragged sides' travel.
+    int32_t path_low = 0, path_high = 0;
+    for (int i = 0; i < moves; i++) {
+        if (path[i] < path_low) path_low = path[i];
+        if (path[i] > path_high) path_high = path[i];
+    }
+    long pointer = 0, sides = 0;
+    if (gx != 0) {
+        pointer += path_high - path_low;
+        sides += gx < 0 ? high.left - low.left : high.right - low.right;
+    }
+    if (gy != 0) {
+        pointer += path_high - path_low;
+        sides += gy < 0 ? high.top - low.top : high.bottom - low.bottom;
+    }
+    follow_pointer_px += pointer;
+    follow_side_px += sides;
     fprintf(stderr,
-            "probe: %s drag of the %s edge: the window's sides moved over left %ld px, top %ld, right %ld, bottom %ld\n",
+            "probe: %s drag of the %s edge: the window's sides moved over left %ld px, top %ld, right %ld, bottom %ld; "
+            "followed %ld of %ld px\n",
             probe_phase_names[drag_phase], name, high.left - low.left, high.top - low.top, high.right - low.right,
-            high.bottom - low.bottom);
+            high.bottom - low.bottom, sides, pointer);
     phase(PHASE_SETUP);
 }
 
@@ -1024,21 +1117,52 @@ static DWORD WINAPI edge_thread(LPVOID unused) {
     edge_timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     // A seed a mode, so a run drags as every other run of that mode does.
     struct probe_rng rng;
+    // PROBE_DRAGS: drags a mode makes (the four first modes: 2, the later ones: 3), so a
+    // longer run judges more frames.
+    int drags = getenv("PROBE_DRAGS") != NULL ? atoi(getenv("PROBE_DRAGS")) : 0;
+    int few = drags > 0 ? drags : 2, more = drags > 0 ? drags : 3;
     if (strcmp(probe_mode, "drag-left") == 0) {
         rng.state = 101;
-        for (int i = 0; i < 2; i++) edge_drag(window, &rng, -1, 0, 1, PHASE_DRAG_LEFT);
+        for (int i = 0; i < few; i++) edge_drag(window, &rng, -1, 0, 1, 1, 40, 120, 320, PHASE_DRAG_LEFT);
     } else if (strcmp(probe_mode, "drag-top") == 0) {
         rng.state = 202;
-        for (int i = 0; i < 2; i++) edge_drag(window, &rng, 0, -1, 1, PHASE_DRAG_TOP);
+        for (int i = 0; i < few; i++) edge_drag(window, &rng, 0, -1, 1, 1, 40, 120, 320, PHASE_DRAG_TOP);
     } else if (strcmp(probe_mode, "drag-topleft") == 0) {
         rng.state = 303;
-        for (int i = 0; i < 2; i++) edge_drag(window, &rng, -1, -1, 1, PHASE_DRAG_TOPLEFT);
-    } else {
+        for (int i = 0; i < few; i++) edge_drag(window, &rng, -1, -1, 1, 1, 40, 120, 320, PHASE_DRAG_TOPLEFT);
+    } else if (strcmp(probe_mode, "drag-fast") == 0) {
         rng.state = 404;
-        edge_drag(window, &rng, 1, 0, 0, PHASE_DRAG_FAST);
-        edge_drag(window, &rng, 0, 1, 0, PHASE_DRAG_FAST);
-        edge_drag(window, &rng, 1, 1, 0, PHASE_DRAG_FAST);
-        edge_drag(window, &rng, -1, -1, 0, PHASE_DRAG_FAST);
+        edge_drag(window, &rng, 1, 0, 1, 0, 40, 120, 320, PHASE_DRAG_FAST);
+        edge_drag(window, &rng, 0, 1, 1, 0, 40, 120, 320, PHASE_DRAG_FAST);
+        edge_drag(window, &rng, 1, 1, 1, 0, 40, 120, 320, PHASE_DRAG_FAST);
+        edge_drag(window, &rng, -1, -1, 1, 0, 40, 120, 320, PHASE_DRAG_FAST);
+    } else if (strcmp(probe_mode, "drag-right") == 0) {
+        rng.state = 505;
+        for (int i = 0; i < more; i++) edge_drag(window, &rng, 1, 0, 1, 1, 8, 60, 320, PHASE_DRAG_RIGHT);
+    } else if (strcmp(probe_mode, "drag-bottom") == 0) {
+        rng.state = 606;
+        for (int i = 0; i < more; i++) edge_drag(window, &rng, 0, 1, 1, 1, 8, 60, 320, PHASE_DRAG_BOTTOM);
+    } else if (strcmp(probe_mode, "drag-bottomright") == 0) {
+        rng.state = 707;
+        for (int i = 0; i < more; i++) edge_drag(window, &rng, 1, 1, 1, 1, 8, 60, 320, PHASE_DRAG_BOTTOMRIGHT);
+    } else if (strcmp(probe_mode, "drag-topright") == 0) {
+        rng.state = 808;
+        for (int i = 0; i < more; i++) edge_drag(window, &rng, 1, -1, 1, 1, 8, 60, 320, PHASE_DRAG_TOPRIGHT);
+    } else if (strcmp(probe_mode, "drag-bottomleft") == 0) {
+        rng.state = 909;
+        for (int i = 0; i < more; i++) edge_drag(window, &rng, -1, 1, 1, 1, 8, 60, 320, PHASE_DRAG_BOTTOMLEFT);
+    } else if (strcmp(probe_mode, "drag-mixed") == 0) {
+        rng.state = 1010;
+        for (int i = 0; i < more; i++) edge_drag(window, &rng, 1, 1, -1, 1, 8, 60, 320, PHASE_DRAG_MIXED);
+    } else {
+        // drag-slow: the right edge, then the bottom-right corner, 1 to 3 px a move over 96 px:
+        // about 380 moves a drag, so one pair unless PROBE_DRAGS asks for more (on WARP each
+        // move waits for a composition of 45 to 78 ms).
+        rng.state = 1111;
+        for (int i = 0; i < (drags > 0 ? drags : 1); i++) {
+            edge_drag(window, &rng, 1, 0, 1, 1, 1, 3, 96, PHASE_DRAG_SLOW);
+            edge_drag(window, &rng, 1, 1, 1, 1, 1, 3, 96, PHASE_DRAG_SLOW);
+        }
     }
     if (edge_gap_count > 0) {
         qsort(edge_gaps, (size_t)edge_gap_count, sizeof edge_gaps[0], compare_doubles);
@@ -1047,6 +1171,15 @@ static DWORD WINAPI edge_thread(LPVOID unused) {
                 probe_mode, edge_gap_count, edge_gaps[edge_gap_count / 2], edge_gaps[edge_gap_count * 95 / 100],
                 edge_gaps[edge_gap_count - 1], edge_step_low, edge_step_high,
                 edge_timer != NULL ? "high-resolution" : "spinning");
+    }
+    if (follow_pointer_px > 0) {
+        qsort(follow_lags, (size_t)follow_lag_count, sizeof follow_lags[0], compare_ints);
+        fprintf(stderr,
+                "probe: follow %s sides %ld px of pointer %ld px = %ld %%; settled worst %d px; lag moves=%d px median %d p95 %d max %d\n",
+                probe_mode, follow_side_px, follow_pointer_px, follow_side_px * 100 / follow_pointer_px, settle_worst,
+                follow_lag_count, follow_lag_count > 0 ? follow_lags[follow_lag_count / 2] : 0,
+                follow_lag_count > 0 ? follow_lags[follow_lag_count * 95 / 100] : 0,
+                follow_lag_count > 0 ? follow_lags[follow_lag_count - 1] : 0);
     }
     if (edge_timer != NULL) CloseHandle(edge_timer);
     phase(PHASE_DONE);
@@ -1134,8 +1267,10 @@ static int judge_report(const char *mode) {
 int main(int argc, char **argv) {
     const char *mode = argc > 1 ? argv[1] : "states";
     probe_mode = mode;
-    judge_mode = strcmp(mode, "drag-left") == 0 || strcmp(mode, "drag-top") == 0 ||
-                 strcmp(mode, "drag-topleft") == 0 || strcmp(mode, "drag-fast") == 0;
+    judge_mode = 0;
+    for (LONG named = PHASE_DRAG_LEFT; named <= PHASE_DRAG_SLOW; named++) {
+        if (strcmp(mode, probe_phase_names[named]) == 0) judge_mode = 1;
+    }
     probe_marked = judge_mode;
     QueryPerformanceFrequency(&probe_frequency);
     probe_draw_ms = getenv("PROBE_DRAW_MS") != NULL ? atoi(getenv("PROBE_DRAW_MS")) : 0;
