@@ -107,6 +107,8 @@ enum {
     DXC_EVENT_NATIVE_VIEW_FOCUS_OUT = 20,
     DXC_EVENT_POINTER_ENTER = 21,
     DXC_EVENT_POINTER_EXIT = 22,
+    // A reader asked a control to do something; see the header.
+    DXC_EVENT_ACCESSIBILITY_ACTION = 23,
 };
 
 // Room for what an input method is composing, which is a syllable or a word and never a
@@ -175,16 +177,48 @@ struct dxc_event {
 #define DXC_MAX_ELEMENTS 256
 #define DXC_DROPPED_BYTES (64 * 1024)
 
+#define DXC_VALUE_BYTES 256
+
+// One element as the scene describes it; the header says what each field is.
 struct dxc_element {
     int32_t role;
-    // In pixels from the top left of the client area, which is what the scene
-    // measures in on this platform.
+    // In window points from the top left of the client area.
     float x;
     float y;
     float width;
     float height;
     char label[DXC_TEXT_BYTES];
+    int32_t id;
+    int32_t parent_id;
+    int32_t states;
+    int32_t actions;
+    int32_t flags;
+    float range_min;
+    float range_max;
+    float range_value;
+    char value[DXC_VALUE_BYTES];
+    char hint[DXC_TEXT_BYTES];
 };
+
+// The Kotlin writers (Win32Records.kt by cinterop's layout, Win32GraalWindow.kt by offset)
+// put every field where these say.
+_Static_assert(offsetof(struct dxc_element, label) == 20, "dxc_element label offset");
+_Static_assert(offsetof(struct dxc_element, id) == 116, "dxc_element id offset");
+_Static_assert(offsetof(struct dxc_element, flags) == 132, "dxc_element flags offset");
+_Static_assert(offsetof(struct dxc_element, range_min) == 136, "dxc_element range offset");
+_Static_assert(offsetof(struct dxc_element, value) == 148, "dxc_element value offset");
+_Static_assert(offsetof(struct dxc_element, hint) == 404, "dxc_element hint offset");
+_Static_assert(sizeof(struct dxc_element) == 500, "dxc_element size");
+
+enum {
+    DXC_ELEMENT_HAS_VALUE = 1 << 0,
+    DXC_ELEMENT_HAS_RANGE = 1 << 1,
+    DXC_ELEMENT_HAS_HINT = 1 << 2,
+};
+
+// How many SET_VALUE requests may wait for the renderer at once. A reader sets a value and
+// waits for it, so a few is many; one beyond it is refused rather than losing another's text.
+#define DXC_A11Y_ARGUMENTS 16
 
 /** How a window was asked to be made. Each window keeps the copy it opened with. */
 struct dxc_window_options {
@@ -349,6 +383,10 @@ struct DxcWin {
     int a11y_dirty;
     int a11y_update_posted;
     DxcRootProvider *root_provider;
+    // The new values readers set, oldest first, one per SET_VALUE event not yet read.
+    char *a11y_arguments[DXC_A11Y_ARGUMENTS];
+    int32_t a11y_argument_head;
+    int32_t a11y_argument_count;
 
     int32_t presents_in_change;
     int last_blit;
@@ -886,7 +924,14 @@ enum {
     DXC_ROLE_FIELD = 3,
     DXC_ROLE_CHECKBOX = 4,
     DXC_ROLE_IMAGE = 5,
-    // ElementRole's numbers; 6 to 13 are not told apart here yet and read as groups.
+    DXC_ROLE_SWITCH = 6,
+    DXC_ROLE_RADIO_BUTTON = 7,
+    DXC_ROLE_TAB = 8,
+    DXC_ROLE_SLIDER = 9,
+    DXC_ROLE_PROGRESS = 10,
+    DXC_ROLE_HEADING = 11,
+    DXC_ROLE_COMBO_BOX = 12,
+    DXC_ROLE_LINK = 13,
     DXC_ROLE_TAB_GROUP = 14,
     DXC_ROLE_OUTLINE = 15,
     DXC_ROLE_OUTLINE_ROW = 16,
@@ -897,6 +942,8 @@ enum {
     DXC_ROLE_NAVIGATION = 21,
 };
 
+#include "win32_uia.h"
+
 static int dxc_uia_control_type(int32_t role) {
     switch (role) {
         case DXC_ROLE_BUTTON:   return UIA_ButtonControlTypeId;
@@ -904,6 +951,16 @@ static int dxc_uia_control_type(int32_t role) {
         case DXC_ROLE_FIELD:    return UIA_EditControlTypeId;
         case DXC_ROLE_CHECKBOX: return UIA_CheckBoxControlTypeId;
         case DXC_ROLE_IMAGE:    return UIA_ImageControlTypeId;
+        // A switch is a button that toggles, which is what Windows' own toggle switch reports.
+        case DXC_ROLE_SWITCH:       return UIA_ButtonControlTypeId;
+        case DXC_ROLE_RADIO_BUTTON: return UIA_RadioButtonControlTypeId;
+        case DXC_ROLE_TAB:          return UIA_TabItemControlTypeId;
+        case DXC_ROLE_SLIDER:       return UIA_SliderControlTypeId;
+        case DXC_ROLE_PROGRESS:     return UIA_ProgressBarControlTypeId;
+        // A heading is text; the heading level property says it is a heading.
+        case DXC_ROLE_HEADING:      return UIA_TextControlTypeId;
+        case DXC_ROLE_COMBO_BOX:    return UIA_ComboBoxControlTypeId;
+        case DXC_ROLE_LINK:         return UIA_HyperlinkControlTypeId;
         case DXC_ROLE_TAB_GROUP:   return UIA_TabControlTypeId;
         case DXC_ROLE_OUTLINE:     return UIA_TreeControlTypeId;
         case DXC_ROLE_OUTLINE_ROW: return UIA_TreeItemControlTypeId;
@@ -911,7 +968,7 @@ static int dxc_uia_control_type(int32_t role) {
         case DXC_ROLE_MENU_ITEM:   return UIA_MenuItemControlTypeId;
         case DXC_ROLE_LIST:        return UIA_ListControlTypeId;
         case DXC_ROLE_LIST_ITEM:   return UIA_ListItemControlTypeId;
-        // A navigation landmark is a group; UIA's landmark type property is not reported yet.
+        // A navigation landmark is a group, with the landmark type property saying which.
         default:                return UIA_GroupControlTypeId;
     }
 }
@@ -935,24 +992,45 @@ static int dxc_uia_control_type(int32_t role) {
 // struct of function pointers, pointed to by the object, with `this` as the
 // first argument to every one of them.
 //
-// Three interfaces are implemented:
-//   IRawElementProviderSimple      -- identity and properties
-//   IRawElementProviderFragment    -- navigation (parent, siblings, bounds)
+// The root implements:
+//   IRawElementProviderSimple       -- identity and properties
+//   IRawElementProviderFragment     -- navigation (children, bounds)
 //   IRawElementProviderFragmentRoot -- finding elements at a point or by focus
+// Each element implements the first two, and the control patterns that fit it
+// (win32_uia.h decides which):
+//   IInvokeProvider, IToggleProvider, IValueProvider, IRangeValueProvider,
+//   ISelectionItemProvider, IExpandCollapseProvider
+//
+// A reader's request (invoke, toggle, set a value, take focus) is not done
+// here. It is written to the window's event queue as DXC_EVENT_ACCESSIBILITY_ACTION
+// and done by the scene when the renderer next drains the queue, on the same
+// thread, the way a click is.
 
-// Forward declarations so the vtables can refer to the types.
 typedef struct DxcProvider DxcProvider;
 
+static float dxc_scale_of(HWND window);
+
 // ---------------------------------------------------------------------------
-// DxcProvider: one element in the flat list
+// DxcProvider: one element
 // ---------------------------------------------------------------------------
 
 struct DxcProvider {
     IRawElementProviderSimpleVtbl *simple_vtbl;
     IRawElementProviderFragmentVtbl *fragment_vtbl;
+    IInvokeProviderVtbl *invoke_vtbl;
+    IToggleProviderVtbl *toggle_vtbl;
+    IValueProviderVtbl *value_vtbl;
+    IRangeValueProviderVtbl *range_vtbl;
+    ISelectionItemProviderVtbl *selection_vtbl;
+    IExpandCollapseProviderVtbl *expand_vtbl;
     LONG ref_count;
-    int32_t index;   // position in the snapshot at the time this was built
-    struct dxc_element snapshot; // copied at construction time
+    // Its position in the root's children. An element the scene keeps (the same id) keeps
+    // its object across pushes and is given its new position and description.
+    int32_t index;
+    // Cleared once a push leaves it out. A reader may still hold it; it then answers that
+    // it is gone.
+    int alive;
+    struct dxc_element snapshot;
     DxcRootProvider *root;
 };
 
@@ -966,13 +1044,14 @@ struct DxcRootProvider {
     IRawElementProviderFragmentRootVtbl *fragment_root_vtbl;
     LONG ref_count;
     HWND window;
-    // The children, rebuilt every time the scene pushes.
+    // The elements, in the scene's order, rebuilt every time the scene pushes, and where
+    // each is in the tree.
     DxcProvider **children;
+    struct dxc_uia_links *links;
     int32_t child_count;
+    // The scene id of the element that had focus at the last push, or -1.
+    int32_t focused_id;
 };
-
-// The one root. One window means one root, and the root lives as long as the
-// window does.
 
 // Forward declarations of vtable functions.
 static HRESULT STDMETHODCALLTYPE dxc_provider_qi(IRawElementProviderSimple *self, REFIID riid, void **out);
@@ -993,7 +1072,6 @@ static HRESULT STDMETHODCALLTYPE dxc_frag_get_embedded_fragment_roots(IRawElemen
 static HRESULT STDMETHODCALLTYPE dxc_frag_set_focus(IRawElementProviderFragment *self);
 static HRESULT STDMETHODCALLTYPE dxc_frag_get_fragment_root(IRawElementProviderFragment *self, IRawElementProviderFragmentRoot **out);
 
-// Root-specific forward declarations.
 static HRESULT STDMETHODCALLTYPE dxc_root_qi(IRawElementProviderSimple *self, REFIID riid, void **out);
 static ULONG STDMETHODCALLTYPE dxc_root_addref(IRawElementProviderSimple *self);
 static ULONG STDMETHODCALLTYPE dxc_root_release(IRawElementProviderSimple *self);
@@ -1018,8 +1096,53 @@ static ULONG STDMETHODCALLTYPE dxc_root_fr_release(IRawElementProviderFragmentRo
 static HRESULT STDMETHODCALLTYPE dxc_root_fr_element_from_point(IRawElementProviderFragmentRoot *self, double x, double y, IRawElementProviderFragment **out);
 static HRESULT STDMETHODCALLTYPE dxc_root_fr_get_focus(IRawElementProviderFragmentRoot *self, IRawElementProviderFragment **out);
 
+static HRESULT STDMETHODCALLTYPE dxc_invoke_qi(IInvokeProvider *self, REFIID riid, void **out);
+static ULONG STDMETHODCALLTYPE dxc_invoke_addref(IInvokeProvider *self);
+static ULONG STDMETHODCALLTYPE dxc_invoke_release(IInvokeProvider *self);
+static HRESULT STDMETHODCALLTYPE dxc_invoke_invoke(IInvokeProvider *self);
+
+static HRESULT STDMETHODCALLTYPE dxc_toggle_qi(IToggleProvider *self, REFIID riid, void **out);
+static ULONG STDMETHODCALLTYPE dxc_toggle_addref(IToggleProvider *self);
+static ULONG STDMETHODCALLTYPE dxc_toggle_release(IToggleProvider *self);
+static HRESULT STDMETHODCALLTYPE dxc_toggle_toggle(IToggleProvider *self);
+static HRESULT STDMETHODCALLTYPE dxc_toggle_get_state(IToggleProvider *self, enum ToggleState *out);
+
+static HRESULT STDMETHODCALLTYPE dxc_value_qi(IValueProvider *self, REFIID riid, void **out);
+static ULONG STDMETHODCALLTYPE dxc_value_addref(IValueProvider *self);
+static ULONG STDMETHODCALLTYPE dxc_value_release(IValueProvider *self);
+static HRESULT STDMETHODCALLTYPE dxc_value_set(IValueProvider *self, LPCWSTR value);
+static HRESULT STDMETHODCALLTYPE dxc_value_get(IValueProvider *self, BSTR *out);
+static HRESULT STDMETHODCALLTYPE dxc_value_get_read_only(IValueProvider *self, BOOL *out);
+
+static HRESULT STDMETHODCALLTYPE dxc_range_qi(IRangeValueProvider *self, REFIID riid, void **out);
+static ULONG STDMETHODCALLTYPE dxc_range_addref(IRangeValueProvider *self);
+static ULONG STDMETHODCALLTYPE dxc_range_release(IRangeValueProvider *self);
+static HRESULT STDMETHODCALLTYPE dxc_range_set(IRangeValueProvider *self, double value);
+static HRESULT STDMETHODCALLTYPE dxc_range_get(IRangeValueProvider *self, double *out);
+static HRESULT STDMETHODCALLTYPE dxc_range_get_read_only(IRangeValueProvider *self, BOOL *out);
+static HRESULT STDMETHODCALLTYPE dxc_range_get_maximum(IRangeValueProvider *self, double *out);
+static HRESULT STDMETHODCALLTYPE dxc_range_get_minimum(IRangeValueProvider *self, double *out);
+static HRESULT STDMETHODCALLTYPE dxc_range_get_large_change(IRangeValueProvider *self, double *out);
+static HRESULT STDMETHODCALLTYPE dxc_range_get_small_change(IRangeValueProvider *self, double *out);
+
+static HRESULT STDMETHODCALLTYPE dxc_selection_qi(ISelectionItemProvider *self, REFIID riid, void **out);
+static ULONG STDMETHODCALLTYPE dxc_selection_addref(ISelectionItemProvider *self);
+static ULONG STDMETHODCALLTYPE dxc_selection_release(ISelectionItemProvider *self);
+static HRESULT STDMETHODCALLTYPE dxc_selection_select(ISelectionItemProvider *self);
+static HRESULT STDMETHODCALLTYPE dxc_selection_add(ISelectionItemProvider *self);
+static HRESULT STDMETHODCALLTYPE dxc_selection_remove(ISelectionItemProvider *self);
+static HRESULT STDMETHODCALLTYPE dxc_selection_get_selected(ISelectionItemProvider *self, BOOL *out);
+static HRESULT STDMETHODCALLTYPE dxc_selection_get_container(ISelectionItemProvider *self, IRawElementProviderSimple **out);
+
+static HRESULT STDMETHODCALLTYPE dxc_expand_qi(IExpandCollapseProvider *self, REFIID riid, void **out);
+static ULONG STDMETHODCALLTYPE dxc_expand_addref(IExpandCollapseProvider *self);
+static ULONG STDMETHODCALLTYPE dxc_expand_release(IExpandCollapseProvider *self);
+static HRESULT STDMETHODCALLTYPE dxc_expand_expand(IExpandCollapseProvider *self);
+static HRESULT STDMETHODCALLTYPE dxc_expand_collapse(IExpandCollapseProvider *self);
+static HRESULT STDMETHODCALLTYPE dxc_expand_get_state(IExpandCollapseProvider *self, enum ExpandCollapseState *out);
+
 // ---------------------------------------------------------------------------
-// Vtable instances
+// Vtables
 // ---------------------------------------------------------------------------
 
 static IRawElementProviderSimpleVtbl dxc_provider_simple_vtbl = {
@@ -1074,18 +1197,76 @@ static IRawElementProviderFragmentRootVtbl dxc_root_fragment_root_vtbl = {
     dxc_root_fr_get_focus,
 };
 
+static IInvokeProviderVtbl dxc_invoke_vtbl = {
+    dxc_invoke_qi,
+    dxc_invoke_addref,
+    dxc_invoke_release,
+    dxc_invoke_invoke,
+};
+
+static IToggleProviderVtbl dxc_toggle_vtbl = {
+    dxc_toggle_qi,
+    dxc_toggle_addref,
+    dxc_toggle_release,
+    dxc_toggle_toggle,
+    dxc_toggle_get_state,
+};
+
+static IValueProviderVtbl dxc_value_vtbl = {
+    dxc_value_qi,
+    dxc_value_addref,
+    dxc_value_release,
+    dxc_value_set,
+    dxc_value_get,
+    dxc_value_get_read_only,
+};
+
+static IRangeValueProviderVtbl dxc_range_vtbl = {
+    dxc_range_qi,
+    dxc_range_addref,
+    dxc_range_release,
+    dxc_range_set,
+    dxc_range_get,
+    dxc_range_get_read_only,
+    dxc_range_get_maximum,
+    dxc_range_get_minimum,
+    dxc_range_get_large_change,
+    dxc_range_get_small_change,
+};
+
+static ISelectionItemProviderVtbl dxc_selection_vtbl = {
+    dxc_selection_qi,
+    dxc_selection_addref,
+    dxc_selection_release,
+    dxc_selection_select,
+    dxc_selection_add,
+    dxc_selection_remove,
+    dxc_selection_get_selected,
+    dxc_selection_get_container,
+};
+
+static IExpandCollapseProviderVtbl dxc_expand_vtbl = {
+    dxc_expand_qi,
+    dxc_expand_addref,
+    dxc_expand_release,
+    dxc_expand_expand,
+    dxc_expand_collapse,
+    dxc_expand_get_state,
+};
+
 // ---------------------------------------------------------------------------
-// Helpers
+// From an interface pointer back to its object
 // ---------------------------------------------------------------------------
 
-// Recovers the DxcProvider from a pointer to one of its vtable-pointer fields.
-// The fragment vtable pointer sits right after the simple vtable pointer.
+#define DXC_PROVIDER_FROM(iface, field) \
+    ((DxcProvider *)((char *)(iface) - offsetof(DxcProvider, field)))
+
 static DxcProvider *dxc_provider_from_simple(IRawElementProviderSimple *iface) {
     return (DxcProvider *)iface;
 }
 
 static DxcProvider *dxc_provider_from_fragment(IRawElementProviderFragment *iface) {
-    return (DxcProvider *)((char *)iface - offsetof(DxcProvider, fragment_vtbl));
+    return DXC_PROVIDER_FROM(iface, fragment_vtbl);
 }
 
 static DxcRootProvider *dxc_root_from_simple(IRawElementProviderSimple *iface) {
@@ -1100,8 +1281,8 @@ static DxcRootProvider *dxc_root_from_fragment_root(IRawElementProviderFragmentR
     return (DxcRootProvider *)((char *)iface - offsetof(DxcRootProvider, fragment_root_vtbl));
 }
 
-// Converts a UTF-8 label to a BSTR for UIA property answers. The caller owns
-// the result and must free it with SysFreeString.
+// Converts UTF-8 to a BSTR for UIA property answers. The caller owns the result and must
+// free it with SysFreeString.
 static BSTR dxc_bstr_from_utf8(const char *utf8) {
     if (utf8 == NULL || utf8[0] == '\0') {
         return SysAllocString(L"");
@@ -1117,18 +1298,77 @@ static BSTR dxc_bstr_from_utf8(const char *utf8) {
     return result;
 }
 
-// Converts a client-area rectangle to screen coordinates. The elements carry
-// positions in client-area pixels, and UIA wants screen coordinates.
-static void dxc_client_rect_to_screen(HWND window, const struct dxc_element *el,
+// An element's rectangle on the screen. The scene describes it in window points from the
+// top left of the client area, and UIA wants screen pixels.
+static void dxc_element_rect_to_screen(HWND window, const struct dxc_element *el,
                                        struct UiaRect *out) {
+    float scale = dxc_scale_of(window);
     POINT top_left;
-    top_left.x = (LONG)el->x;
-    top_left.y = (LONG)el->y;
+    top_left.x = (LONG)(el->x * scale + 0.5f);
+    top_left.y = (LONG)(el->y * scale + 0.5f);
     ClientToScreen(window, &top_left);
     out->left = (double)top_left.x;
     out->top = (double)top_left.y;
-    out->width = (double)el->width;
-    out->height = (double)el->height;
+    out->width = (double)(el->width * scale);
+    out->height = (double)(el->height * scale);
+}
+
+/** True while [provider] is part of the tree its root shows. */
+static int dxc_provider_live(const DxcProvider *provider) {
+    const DxcRootProvider *root = provider->root;
+    return provider->alive && root != NULL && root->window != NULL && provider->index >= 0 &&
+           provider->index < root->child_count && root->children[provider->index] == provider;
+}
+
+/** The element at [index] as the fragment interface UIA navigates by, with a reference for the caller. */
+static IRawElementProviderFragment *dxc_child_fragment(DxcRootProvider *root, int32_t index) {
+    if (index < 0 || index >= root->child_count) return NULL;
+    DxcProvider *child = root->children[index];
+    InterlockedIncrement(&child->ref_count);
+    return (IRawElementProviderFragment *)&child->fragment_vtbl;
+}
+
+/**
+ * Writes a reader's request down for the scene: DXC_EVENT_ACCESSIBILITY_ACTION on the queue of
+ * the window the element is in, and for SET_VALUE the new value beside it. Answers what UIA
+ * expects of a pattern method: the element gone, disabled, or nameless (an element the scene
+ * gave no id cannot be asked to do anything), or done.
+ */
+static HRESULT dxc_provider_request(DxcProvider *provider, int32_t action, const char *argument) {
+    if (!dxc_provider_live(provider)) return UIA_E_ELEMENTNOTAVAILABLE;
+    if (provider->snapshot.id < 0) return UIA_E_INVALIDOPERATION;
+    if (!(provider->snapshot.states & DXC_STATE_ENABLED)) return UIA_E_ELEMENTNOTENABLED;
+    DxcWin *win = (DxcWin *)GetWindowLongPtrW(provider->root->window, GWLP_USERDATA);
+    if (win == NULL) return UIA_E_ELEMENTNOTAVAILABLE;
+    if (action == DXC_ACTION_SET_VALUE) {
+        if (win->a11y_argument_count >= DXC_A11Y_ARGUMENTS) return E_FAIL;
+        char *copy = _strdup(argument != NULL ? argument : "");
+        if (copy == NULL) return E_OUTOFMEMORY;
+        int32_t slot = (win->a11y_argument_head + win->a11y_argument_count) % DXC_A11Y_ARGUMENTS;
+        win->a11y_arguments[slot] = copy;
+        win->a11y_argument_count++;
+    }
+    struct dxc_event record;
+    memset(&record, 0, sizeof record);
+    record.kind = DXC_EVENT_ACCESSIBILITY_ACTION;
+    record.key_code = provider->snapshot.id;
+    record.code_point = action;
+    DxcWin *outer = dxc_w;
+    dxc_w = win;
+    dxc_push_event(record);
+    dxc_w = outer;
+    return S_OK;
+}
+
+/** Drops every new value still waiting for the renderer, for a window that is going away. */
+static void dxc_drop_accessibility_arguments(DxcWin *win) {
+    while (win->a11y_argument_count > 0) {
+        free(win->a11y_arguments[win->a11y_argument_head]);
+        win->a11y_arguments[win->a11y_argument_head] = NULL;
+        win->a11y_argument_head = (win->a11y_argument_head + 1) % DXC_A11Y_ARGUMENTS;
+        win->a11y_argument_count--;
+    }
+    win->a11y_argument_head = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1139,19 +1379,29 @@ static HRESULT STDMETHODCALLTYPE dxc_provider_qi(
     IRawElementProviderSimple *self, REFIID riid, void **out
 ) {
     DxcProvider *provider = dxc_provider_from_simple(self);
-    if (IsEqualIID(riid, &IID_IUnknown) ||
-        IsEqualIID(riid, &IID_IRawElementProviderSimple)) {
-        *out = &provider->simple_vtbl;
-        InterlockedIncrement(&provider->ref_count);
-        return S_OK;
+    int32_t patterns = dxc_uia_patterns(&provider->snapshot);
+    void *found = NULL;
+    if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IRawElementProviderSimple)) {
+        found = &provider->simple_vtbl;
+    } else if (IsEqualIID(riid, &IID_IRawElementProviderFragment)) {
+        found = &provider->fragment_vtbl;
+    } else if (IsEqualIID(riid, &IID_IInvokeProvider) && (patterns & DXC_UIA_INVOKE)) {
+        found = &provider->invoke_vtbl;
+    } else if (IsEqualIID(riid, &IID_IToggleProvider) && (patterns & DXC_UIA_TOGGLE)) {
+        found = &provider->toggle_vtbl;
+    } else if (IsEqualIID(riid, &IID_IValueProvider) && (patterns & DXC_UIA_VALUE)) {
+        found = &provider->value_vtbl;
+    } else if (IsEqualIID(riid, &IID_IRangeValueProvider) && (patterns & DXC_UIA_RANGE_VALUE)) {
+        found = &provider->range_vtbl;
+    } else if (IsEqualIID(riid, &IID_ISelectionItemProvider) && (patterns & DXC_UIA_SELECTION_ITEM)) {
+        found = &provider->selection_vtbl;
+    } else if (IsEqualIID(riid, &IID_IExpandCollapseProvider) && (patterns & DXC_UIA_EXPAND_COLLAPSE)) {
+        found = &provider->expand_vtbl;
     }
-    if (IsEqualIID(riid, &IID_IRawElementProviderFragment)) {
-        *out = &provider->fragment_vtbl;
-        InterlockedIncrement(&provider->ref_count);
-        return S_OK;
-    }
-    *out = NULL;
-    return E_NOINTERFACE;
+    *out = found;
+    if (found == NULL) return E_NOINTERFACE;
+    InterlockedIncrement(&provider->ref_count);
+    return S_OK;
 }
 
 static ULONG STDMETHODCALLTYPE dxc_provider_addref(IRawElementProviderSimple *self) {
@@ -1179,31 +1429,81 @@ static HRESULT STDMETHODCALLTYPE dxc_provider_get_provider_options(
 static HRESULT STDMETHODCALLTYPE dxc_provider_get_pattern_provider(
     IRawElementProviderSimple *self, PATTERNID id, IUnknown **out
 ) {
-    (void)self;
-    (void)id;
-    *out = NULL;
+    DxcProvider *provider = dxc_provider_from_simple(self);
+    int32_t patterns = dxc_uia_patterns(&provider->snapshot);
+    void *found = NULL;
+    // An if chain rather than a switch: the SDK declares the ids as const variables in C,
+    // which a case label cannot name.
+    if (id == UIA_InvokePatternId && (patterns & DXC_UIA_INVOKE)) {
+        found = &provider->invoke_vtbl;
+    } else if (id == UIA_TogglePatternId && (patterns & DXC_UIA_TOGGLE)) {
+        found = &provider->toggle_vtbl;
+    } else if (id == UIA_ValuePatternId && (patterns & DXC_UIA_VALUE)) {
+        found = &provider->value_vtbl;
+    } else if (id == UIA_RangeValuePatternId && (patterns & DXC_UIA_RANGE_VALUE)) {
+        found = &provider->range_vtbl;
+    } else if (id == UIA_SelectionItemPatternId && (patterns & DXC_UIA_SELECTION_ITEM)) {
+        found = &provider->selection_vtbl;
+    } else if (id == UIA_ExpandCollapsePatternId && (patterns & DXC_UIA_EXPAND_COLLAPSE)) {
+        found = &provider->expand_vtbl;
+    }
+    if (found != NULL) InterlockedIncrement(&provider->ref_count);
+    *out = (IUnknown *)found;
     return S_OK;
+}
+
+static void dxc_variant_bool(VARIANT *out, int value) {
+    out->vt = VT_BOOL;
+    out->boolVal = value ? VARIANT_TRUE : VARIANT_FALSE;
 }
 
 static HRESULT STDMETHODCALLTYPE dxc_provider_get_property_value(
     IRawElementProviderSimple *self, PROPERTYID id, VARIANT *out
 ) {
     DxcProvider *provider = dxc_provider_from_simple(self);
+    const struct dxc_element *el = &provider->snapshot;
     VariantInit(out);
-    // An if chain rather than a switch: the SDK declares the property ids as const
-    // variables in C, which a case label cannot name.
     if (id == UIA_ControlTypePropertyId) {
         out->vt = VT_I4;
-        out->lVal = dxc_uia_control_type(provider->snapshot.role);
+        out->lVal = dxc_uia_control_type(el->role);
     } else if (id == UIA_NamePropertyId) {
         out->vt = VT_BSTR;
-        out->bstrVal = dxc_bstr_from_utf8(provider->snapshot.label);
+        out->bstrVal = dxc_bstr_from_utf8(el->label);
+    } else if (id == UIA_AutomationIdPropertyId) {
+        // The scene's id, so a test or a tool can find the same control again.
+        if (el->id >= 0) {
+            wchar_t text[16];
+            swprintf(text, sizeof text / sizeof *text, L"%d", el->id);
+            out->vt = VT_BSTR;
+            out->bstrVal = SysAllocString(text);
+        }
     } else if (id == UIA_IsControlElementPropertyId || id == UIA_IsContentElementPropertyId) {
-        out->vt = VT_BOOL;
-        out->boolVal = VARIANT_TRUE;
+        dxc_variant_bool(out, 1);
+    } else if (id == UIA_IsEnabledPropertyId) {
+        dxc_variant_bool(out, (el->states & DXC_STATE_ENABLED) != 0);
     } else if (id == UIA_IsKeyboardFocusablePropertyId) {
-        out->vt = VT_BOOL;
-        out->boolVal = VARIANT_FALSE;
+        dxc_variant_bool(out, (el->states & DXC_STATE_FOCUSABLE) != 0);
+    } else if (id == UIA_HasKeyboardFocusPropertyId) {
+        dxc_variant_bool(out, (el->states & DXC_STATE_FOCUSED) != 0);
+    } else if (id == UIA_IsPasswordPropertyId) {
+        dxc_variant_bool(out, (el->states & DXC_STATE_PASSWORD) != 0);
+    } else if (id == UIA_IsOffscreenPropertyId) {
+        dxc_variant_bool(out, el->width <= 0.0f || el->height <= 0.0f);
+    } else if (id == UIA_HelpTextPropertyId) {
+        if (el->flags & DXC_ELEMENT_HAS_HINT) {
+            out->vt = VT_BSTR;
+            out->bstrVal = dxc_bstr_from_utf8(el->hint);
+        }
+    } else if (id == UIA_LandmarkTypePropertyId) {
+        if (el->role == DXC_ROLE_NAVIGATION) {
+            out->vt = VT_I4;
+            out->lVal = UIA_NavigationLandmarkTypeId;
+        }
+    } else if (id == UIA_HeadingLevelPropertyId) {
+        // The scene does not say which level a heading is, and a heading without a level is
+        // not one Narrator moves between, so every heading is the first level.
+        out->vt = VT_I4;
+        out->lVal = el->role == DXC_ROLE_HEADING ? HeadingLevel1 : HeadingLevel_None;
     } else if (id == UIA_ProviderDescriptionPropertyId) {
         out->vt = VT_BSTR;
         out->bstrVal = SysAllocString(L"compose-rust element");
@@ -1240,38 +1540,39 @@ static ULONG STDMETHODCALLTYPE dxc_frag_release(IRawElementProviderFragment *sel
     return dxc_provider_release((IRawElementProviderSimple *)&provider->simple_vtbl);
 }
 
+// The tree the scene described: each element's parent is the element whose id it named, or
+// the window, and its siblings are the elements with the same parent, in the scene's order.
 static HRESULT STDMETHODCALLTYPE dxc_frag_navigate(
     IRawElementProviderFragment *self, enum NavigateDirection dir,
     IRawElementProviderFragment **out
 ) {
     DxcProvider *provider = dxc_provider_from_fragment(self);
     *out = NULL;
-    if (provider->root == NULL) return S_OK;
+    if (!dxc_provider_live(provider)) return UIA_E_ELEMENTNOTAVAILABLE;
+    DxcRootProvider *root = provider->root;
+    const struct dxc_uia_links *links = &root->links[provider->index];
     switch (dir) {
     case NavigateDirection_Parent:
-        // The parent of every child is the root.
-        *out = (IRawElementProviderFragment *)&provider->root->fragment_vtbl;
-        InterlockedIncrement(&provider->root->ref_count);
+        if (links->parent >= 0) {
+            *out = dxc_child_fragment(root, links->parent);
+        } else {
+            *out = (IRawElementProviderFragment *)&root->fragment_vtbl;
+            InterlockedIncrement(&root->ref_count);
+        }
         return S_OK;
     case NavigateDirection_NextSibling:
-        if (provider->index >= 0 && provider->index < provider->root->child_count &&
-            provider->root->children[provider->index] == provider &&
-            provider->index + 1 < provider->root->child_count) {
-            DxcProvider *next = provider->root->children[provider->index + 1];
-            *out = (IRawElementProviderFragment *)&next->fragment_vtbl;
-            InterlockedIncrement(&next->ref_count);
-        }
+        *out = dxc_child_fragment(root, links->next);
         return S_OK;
     case NavigateDirection_PreviousSibling:
-        if (provider->index > 0 && provider->index < provider->root->child_count &&
-            provider->root->children[provider->index] == provider) {
-            DxcProvider *prev = provider->root->children[provider->index - 1];
-            *out = (IRawElementProviderFragment *)&prev->fragment_vtbl;
-            InterlockedIncrement(&prev->ref_count);
-        }
+        *out = dxc_child_fragment(root, links->previous);
+        return S_OK;
+    case NavigateDirection_FirstChild:
+        *out = dxc_child_fragment(root, links->first_child);
+        return S_OK;
+    case NavigateDirection_LastChild:
+        *out = dxc_child_fragment(root, links->last_child);
         return S_OK;
     default:
-        // Children are not expected: the tree is flat.
         return S_OK;
     }
 }
@@ -1280,11 +1581,10 @@ static HRESULT STDMETHODCALLTYPE dxc_frag_get_runtime_id(
     IRawElementProviderFragment *self, SAFEARRAY **out
 ) {
     DxcProvider *provider = dxc_provider_from_fragment(self);
-    // A runtime ID is two ints: UiaAppendRuntimeId followed by something
-    // unique within this provider. The index is unique within a snapshot.
+    // UiaAppendRuntimeId, then a number unique among this window's elements.
     int ids[2];
     ids[0] = UiaAppendRuntimeId;
-    ids[1] = provider->index + 1;  // one-based so zero is never used
+    ids[1] = dxc_uia_runtime_key(&provider->snapshot, provider->index);
     SAFEARRAYBOUND bound;
     bound.lLbound = 0;
     bound.cElements = 2;
@@ -1305,7 +1605,7 @@ static HRESULT STDMETHODCALLTYPE dxc_frag_get_bounding_rect(
 ) {
     DxcProvider *provider = dxc_provider_from_fragment(self);
     if (provider->root != NULL && provider->root->window != NULL) {
-        dxc_client_rect_to_screen(provider->root->window, &provider->snapshot, out);
+        dxc_element_rect_to_screen(provider->root->window, &provider->snapshot, out);
     } else {
         memset(out, 0, sizeof *out);
     }
@@ -1320,9 +1620,13 @@ static HRESULT STDMETHODCALLTYPE dxc_frag_get_embedded_fragment_roots(
     return S_OK;
 }
 
+// A reader moving focus to an element asks the scene to focus it. An element that cannot
+// take focus is left alone, which is what UIA asks of one.
 static HRESULT STDMETHODCALLTYPE dxc_frag_set_focus(IRawElementProviderFragment *self) {
-    (void)self;
-    return S_OK;
+    DxcProvider *provider = dxc_provider_from_fragment(self);
+    if (!dxc_provider_live(provider)) return UIA_E_ELEMENTNOTAVAILABLE;
+    if (!(provider->snapshot.actions & DXC_ACTION_FOCUS)) return S_OK;
+    return dxc_provider_request(provider, DXC_ACTION_FOCUS, NULL);
 }
 
 static HRESULT STDMETHODCALLTYPE dxc_frag_get_fragment_root(
@@ -1335,6 +1639,184 @@ static HRESULT STDMETHODCALLTYPE dxc_frag_get_fragment_root(
     } else {
         *out = NULL;
     }
+    return S_OK;
+}
+
+// ---------------------------------------------------------------------------
+// The control patterns
+// ---------------------------------------------------------------------------
+//
+// Each pattern interface is one more vtable pointer in the element's object, so its
+// IUnknown methods find the object and answer as the element does.
+
+#define DXC_PATTERN_IUNKNOWN(prefix, Iface, field)                                              \
+    static HRESULT STDMETHODCALLTYPE prefix##_qi(Iface *self, REFIID riid, void **out) {        \
+        DxcProvider *provider = DXC_PROVIDER_FROM(self, field);                                \
+        return dxc_provider_qi((IRawElementProviderSimple *)&provider->simple_vtbl, riid, out); \
+    }                                                                                           \
+    static ULONG STDMETHODCALLTYPE prefix##_addref(Iface *self) {                               \
+        return (ULONG)InterlockedIncrement(&DXC_PROVIDER_FROM(self, field)->ref_count);        \
+    }                                                                                           \
+    static ULONG STDMETHODCALLTYPE prefix##_release(Iface *self) {                              \
+        DxcProvider *provider = DXC_PROVIDER_FROM(self, field);                                \
+        return dxc_provider_release((IRawElementProviderSimple *)&provider->simple_vtbl);       \
+    }
+
+DXC_PATTERN_IUNKNOWN(dxc_invoke, IInvokeProvider, invoke_vtbl)
+DXC_PATTERN_IUNKNOWN(dxc_toggle, IToggleProvider, toggle_vtbl)
+DXC_PATTERN_IUNKNOWN(dxc_value, IValueProvider, value_vtbl)
+DXC_PATTERN_IUNKNOWN(dxc_range, IRangeValueProvider, range_vtbl)
+DXC_PATTERN_IUNKNOWN(dxc_selection, ISelectionItemProvider, selection_vtbl)
+DXC_PATTERN_IUNKNOWN(dxc_expand, IExpandCollapseProvider, expand_vtbl)
+
+// Invoke: what a click does.
+static HRESULT STDMETHODCALLTYPE dxc_invoke_invoke(IInvokeProvider *self) {
+    return dxc_provider_request(DXC_PROVIDER_FROM(self, invoke_vtbl), DXC_ACTION_PRESS, NULL);
+}
+
+// Toggle: a checkbox or switch is pressed to change its state, as a click would.
+static HRESULT STDMETHODCALLTYPE dxc_toggle_toggle(IToggleProvider *self) {
+    DxcProvider *provider = DXC_PROVIDER_FROM(self, toggle_vtbl);
+    if (!(provider->snapshot.actions & DXC_ACTION_PRESS)) return UIA_E_INVALIDOPERATION;
+    return dxc_provider_request(provider, DXC_ACTION_PRESS, NULL);
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_toggle_get_state(IToggleProvider *self, enum ToggleState *out) {
+    DxcProvider *provider = DXC_PROVIDER_FROM(self, toggle_vtbl);
+    *out = (enum ToggleState)dxc_uia_toggle_state(provider->snapshot.states);
+    return S_OK;
+}
+
+// Value: a field's text, which a reader may replace when the field takes it.
+static HRESULT STDMETHODCALLTYPE dxc_value_set(IValueProvider *self, LPCWSTR value) {
+    DxcProvider *provider = DXC_PROVIDER_FROM(self, value_vtbl);
+    if (!dxc_provider_live(provider)) return UIA_E_ELEMENTNOTAVAILABLE;
+    if (!(provider->snapshot.states & DXC_STATE_ENABLED)) return UIA_E_ELEMENTNOTENABLED;
+    if (!dxc_uia_value_settable(&provider->snapshot)) return UIA_E_INVALIDOPERATION;
+    if (value == NULL) value = L"";
+    int bytes = WideCharToMultiByte(CP_UTF8, 0, value, -1, NULL, 0, NULL, NULL);
+    if (bytes <= 0) return E_INVALIDARG;
+    char *utf8 = (char *)malloc((size_t)bytes);
+    if (utf8 == NULL) return E_OUTOFMEMORY;
+    WideCharToMultiByte(CP_UTF8, 0, value, -1, utf8, bytes, NULL, NULL);
+    HRESULT result = dxc_provider_request(provider, DXC_ACTION_SET_VALUE, utf8);
+    free(utf8);
+    return result;
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_value_get(IValueProvider *self, BSTR *out) {
+    DxcProvider *provider = DXC_PROVIDER_FROM(self, value_vtbl);
+    const struct dxc_element *el = &provider->snapshot;
+    *out = dxc_bstr_from_utf8((el->flags & DXC_ELEMENT_HAS_VALUE) ? el->value : "");
+    return *out != NULL ? S_OK : E_OUTOFMEMORY;
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_value_get_read_only(IValueProvider *self, BOOL *out) {
+    *out = !dxc_uia_value_settable(&DXC_PROVIDER_FROM(self, value_vtbl)->snapshot);
+    return S_OK;
+}
+
+// RangeValue: a slider or a progress indicator. A new value reaches the scene as text, the
+// way a reader's text reaches a field, and the scene reads the number from it.
+static HRESULT STDMETHODCALLTYPE dxc_range_set(IRangeValueProvider *self, double value) {
+    DxcProvider *provider = DXC_PROVIDER_FROM(self, range_vtbl);
+    const struct dxc_element *el = &provider->snapshot;
+    if (!dxc_provider_live(provider)) return UIA_E_ELEMENTNOTAVAILABLE;
+    if (!(el->states & DXC_STATE_ENABLED)) return UIA_E_ELEMENTNOTENABLED;
+    if (!dxc_uia_value_settable(el)) return UIA_E_INVALIDOPERATION;
+    if (value < (double)el->range_min || value > (double)el->range_max) return E_INVALIDARG;
+    char text[48];
+    _snprintf_s(text, sizeof text, _TRUNCATE, "%.9g", value);
+    return dxc_provider_request(provider, DXC_ACTION_SET_VALUE, text);
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_range_get(IRangeValueProvider *self, double *out) {
+    *out = (double)DXC_PROVIDER_FROM(self, range_vtbl)->snapshot.range_value;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_range_get_read_only(IRangeValueProvider *self, BOOL *out) {
+    *out = !dxc_uia_value_settable(&DXC_PROVIDER_FROM(self, range_vtbl)->snapshot);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_range_get_maximum(IRangeValueProvider *self, double *out) {
+    *out = (double)DXC_PROVIDER_FROM(self, range_vtbl)->snapshot.range_max;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_range_get_minimum(IRangeValueProvider *self, double *out) {
+    *out = (double)DXC_PROVIDER_FROM(self, range_vtbl)->snapshot.range_min;
+    return S_OK;
+}
+
+// The scene moves a slider a twentieth of its range for one step when it does not say how
+// many steps it has, so that is the small change; a large one is two of them.
+static HRESULT STDMETHODCALLTYPE dxc_range_get_small_change(IRangeValueProvider *self, double *out) {
+    const struct dxc_element *el = &DXC_PROVIDER_FROM(self, range_vtbl)->snapshot;
+    *out = ((double)el->range_max - (double)el->range_min) / 20.0;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_range_get_large_change(IRangeValueProvider *self, double *out) {
+    const struct dxc_element *el = &DXC_PROVIDER_FROM(self, range_vtbl)->snapshot;
+    *out = ((double)el->range_max - (double)el->range_min) / 10.0;
+    return S_OK;
+}
+
+// SelectionItem: a tab, a radio button, a list item or a row is chosen by pressing it. The
+// scene chooses one at a time, so adding to the choice or taking one out of it is not a
+// thing it does, except where it is already so.
+static HRESULT STDMETHODCALLTYPE dxc_selection_select(ISelectionItemProvider *self) {
+    DxcProvider *provider = DXC_PROVIDER_FROM(self, selection_vtbl);
+    if (!(provider->snapshot.actions & DXC_ACTION_PRESS)) return UIA_E_INVALIDOPERATION;
+    return dxc_provider_request(provider, DXC_ACTION_PRESS, NULL);
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_selection_add(ISelectionItemProvider *self) {
+    DxcProvider *provider = DXC_PROVIDER_FROM(self, selection_vtbl);
+    if (provider->snapshot.states & DXC_STATE_SELECTED) return S_OK;
+    return UIA_E_INVALIDOPERATION;
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_selection_remove(ISelectionItemProvider *self) {
+    DxcProvider *provider = DXC_PROVIDER_FROM(self, selection_vtbl);
+    if (!(provider->snapshot.states & DXC_STATE_SELECTED)) return S_OK;
+    return UIA_E_INVALIDOPERATION;
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_selection_get_selected(ISelectionItemProvider *self, BOOL *out) {
+    *out = (DXC_PROVIDER_FROM(self, selection_vtbl)->snapshot.states & DXC_STATE_SELECTED) != 0;
+    return S_OK;
+}
+
+// No element here offers the Selection pattern a container would, so there is none to name.
+static HRESULT STDMETHODCALLTYPE dxc_selection_get_container(
+    ISelectionItemProvider *self, IRawElementProviderSimple **out
+) {
+    (void)self;
+    *out = NULL;
+    return S_OK;
+}
+
+// ExpandCollapse: a tree row, a disclosure, a menu button.
+static HRESULT dxc_expand_to(DxcProvider *provider, int expand) {
+    int32_t action = dxc_uia_expand_action(&provider->snapshot, expand);
+    if (action != 0) return dxc_provider_request(provider, action, NULL);
+    int open = (provider->snapshot.states & DXC_STATE_EXPANDED) != 0;
+    return open == (expand != 0) ? S_OK : UIA_E_INVALIDOPERATION;
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_expand_expand(IExpandCollapseProvider *self) {
+    return dxc_expand_to(DXC_PROVIDER_FROM(self, expand_vtbl), 1);
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_expand_collapse(IExpandCollapseProvider *self) {
+    return dxc_expand_to(DXC_PROVIDER_FROM(self, expand_vtbl), 0);
+}
+
+static HRESULT STDMETHODCALLTYPE dxc_expand_get_state(IExpandCollapseProvider *self, enum ExpandCollapseState *out) {
+    *out = (enum ExpandCollapseState)dxc_uia_expand_state(DXC_PROVIDER_FROM(self, expand_vtbl)->snapshot.states);
     return S_OK;
 }
 
@@ -1456,6 +1938,8 @@ static ULONG STDMETHODCALLTYPE dxc_root_frag_release(IRawElementProviderFragment
     return dxc_root_release((IRawElementProviderSimple *)&root->simple_vtbl);
 }
 
+// The root's children are the elements directly in the window: those that name no parent,
+// or a parent the scene left out.
 static HRESULT STDMETHODCALLTYPE dxc_root_frag_navigate(
     IRawElementProviderFragment *self, enum NavigateDirection dir,
     IRawElementProviderFragment **out
@@ -1464,18 +1948,10 @@ static HRESULT STDMETHODCALLTYPE dxc_root_frag_navigate(
     *out = NULL;
     switch (dir) {
     case NavigateDirection_FirstChild:
-        if (root->child_count > 0) {
-            DxcProvider *first = root->children[0];
-            *out = (IRawElementProviderFragment *)&first->fragment_vtbl;
-            InterlockedIncrement(&first->ref_count);
-        }
+        *out = dxc_child_fragment(root, dxc_uia_first_root(root->links, root->child_count));
         return S_OK;
     case NavigateDirection_LastChild:
-        if (root->child_count > 0) {
-            DxcProvider *last = root->children[root->child_count - 1];
-            *out = (IRawElementProviderFragment *)&last->fragment_vtbl;
-            InterlockedIncrement(&last->ref_count);
-        }
+        *out = dxc_child_fragment(root, dxc_uia_last_root(root->links, root->child_count));
         return S_OK;
     default:
         // The root has no parent and no siblings in our tree.
@@ -1562,40 +2038,42 @@ static HRESULT STDMETHODCALLTYPE dxc_root_fr_element_from_point(
     DxcRootProvider *root = dxc_root_from_fragment_root(self);
     *out = NULL;
     if (root->window == NULL) return S_OK;
-    // Convert screen coordinates to client coordinates for hit testing.
+    // Screen pixels to window points, which is what the elements are described in.
     POINT screen_pt;
     screen_pt.x = (LONG)x;
     screen_pt.y = (LONG)y;
     ScreenToClient(root->window, &screen_pt);
-    float cx = (float)screen_pt.x;
-    float cy = (float)screen_pt.y;
-    // Walk the list from last to first: later elements are painted on top, so
-    // the topmost one under the point is the one a reader should meet.
+    float scale = dxc_scale_of(root->window);
+    float px = (float)screen_pt.x / scale;
+    float py = (float)screen_pt.y / scale;
     for (int32_t i = root->child_count - 1; i >= 0; i--) {
-        DxcProvider *child = root->children[i];
-        const struct dxc_element *el = &child->snapshot;
-        if (cx >= el->x && cx < el->x + el->width &&
-            cy >= el->y && cy < el->y + el->height) {
-            *out = (IRawElementProviderFragment *)&child->fragment_vtbl;
-            InterlockedIncrement(&child->ref_count);
+        const struct dxc_element *el = &root->children[i]->snapshot;
+        if (px >= el->x && px < el->x + el->width && py >= el->y && py < el->y + el->height) {
+            *out = dxc_child_fragment(root, i);
             return S_OK;
         }
     }
     return S_OK;
 }
 
+// The element the scene said has focus. Nothing, when focus is on no element the scene
+// described, which UIA reads as the window itself.
 static HRESULT STDMETHODCALLTYPE dxc_root_fr_get_focus(
     IRawElementProviderFragmentRoot *self, IRawElementProviderFragment **out
 ) {
-    (void)self;
-    // No element tracks focus yet. Returning NULL tells UIA that nothing inside
-    // our fragment has the focus, which is honest rather than misleading.
+    DxcRootProvider *root = dxc_root_from_fragment_root(self);
     *out = NULL;
+    for (int32_t i = root->child_count - 1; i >= 0; i--) {
+        if (root->children[i]->snapshot.states & DXC_STATE_FOCUSED) {
+            *out = dxc_child_fragment(root, i);
+            break;
+        }
+    }
     return S_OK;
 }
 
 // ---------------------------------------------------------------------------
-// Building and replacing the child list
+// Building and replacing the elements
 // ---------------------------------------------------------------------------
 
 static DxcProvider *dxc_create_provider(
@@ -1605,54 +2083,212 @@ static DxcProvider *dxc_create_provider(
     if (provider == NULL) return NULL;
     provider->simple_vtbl = &dxc_provider_simple_vtbl;
     provider->fragment_vtbl = &dxc_provider_fragment_vtbl;
+    provider->invoke_vtbl = &dxc_invoke_vtbl;
+    provider->toggle_vtbl = &dxc_toggle_vtbl;
+    provider->value_vtbl = &dxc_value_vtbl;
+    provider->range_vtbl = &dxc_range_vtbl;
+    provider->selection_vtbl = &dxc_selection_vtbl;
+    provider->expand_vtbl = &dxc_expand_vtbl;
     provider->ref_count = 1;
     provider->index = index;
+    provider->alive = 1;
     provider->snapshot = *element;
     provider->root = root;
     return provider;
 }
 
+// Lets go of an element the tree no longer has. A reader still holding it is told it is gone.
+static void dxc_retire_provider(DxcProvider *provider) {
+    provider->alive = 0;
+    dxc_provider_release((IRawElementProviderSimple *)&provider->simple_vtbl);
+}
+
 static void dxc_release_children(DxcRootProvider *root) {
     if (root->children != NULL) {
         for (int32_t i = 0; i < root->child_count; i++) {
-            if (root->children[i] != NULL) {
-                dxc_provider_release(
-                    (IRawElementProviderSimple *)&root->children[i]->simple_vtbl);
-            }
+            if (root->children[i] != NULL) dxc_retire_provider(root->children[i]);
         }
         free(root->children);
         root->children = NULL;
     }
+    free(root->links);
+    root->links = NULL;
     root->child_count = 0;
 }
 
+static void dxc_raise_int_change(DxcProvider *provider, PROPERTYID id, int32_t before, int32_t after) {
+    if (before == after) return;
+    VARIANT old_value;
+    VARIANT new_value;
+    VariantInit(&old_value);
+    VariantInit(&new_value);
+    old_value.vt = VT_I4;
+    old_value.lVal = before;
+    new_value.vt = VT_I4;
+    new_value.lVal = after;
+    UiaRaiseAutomationPropertyChangedEvent(
+        (IRawElementProviderSimple *)&provider->simple_vtbl, id, old_value, new_value);
+}
+
+static void dxc_raise_bool_change(DxcProvider *provider, PROPERTYID id, int before, int after) {
+    if ((before != 0) == (after != 0)) return;
+    VARIANT old_value;
+    VARIANT new_value;
+    VariantInit(&old_value);
+    VariantInit(&new_value);
+    dxc_variant_bool(&old_value, before);
+    dxc_variant_bool(&new_value, after);
+    UiaRaiseAutomationPropertyChangedEvent(
+        (IRawElementProviderSimple *)&provider->simple_vtbl, id, old_value, new_value);
+}
+
+static void dxc_raise_text_change(DxcProvider *provider, PROPERTYID id, const char *before, const char *after) {
+    if (strcmp(before, after) == 0) return;
+    VARIANT old_value;
+    VARIANT new_value;
+    VariantInit(&old_value);
+    VariantInit(&new_value);
+    old_value.vt = VT_BSTR;
+    old_value.bstrVal = dxc_bstr_from_utf8(before);
+    new_value.vt = VT_BSTR;
+    new_value.bstrVal = dxc_bstr_from_utf8(after);
+    UiaRaiseAutomationPropertyChangedEvent(
+        (IRawElementProviderSimple *)&provider->simple_vtbl, id, old_value, new_value);
+    VariantClear(&old_value);
+    VariantClear(&new_value);
+}
+
+/**
+ * Tells a reader what changed about an element the scene kept: its name, whether it is
+ * enabled, checked, chosen or open, and its value. A reader announces these as they happen
+ * rather than when it next asks.
+ */
+static void dxc_raise_changes(DxcProvider *provider, const struct dxc_element *before) {
+    const struct dxc_element *after = &provider->snapshot;
+    int32_t patterns = dxc_uia_patterns(after);
+    dxc_raise_text_change(provider, UIA_NamePropertyId, before->label, after->label);
+    dxc_raise_bool_change(provider, UIA_IsEnabledPropertyId,
+                          before->states & DXC_STATE_ENABLED, after->states & DXC_STATE_ENABLED);
+    if (patterns & DXC_UIA_TOGGLE) {
+        dxc_raise_int_change(provider, UIA_ToggleToggleStatePropertyId,
+                             dxc_uia_toggle_state(before->states), dxc_uia_toggle_state(after->states));
+    }
+    if (patterns & DXC_UIA_SELECTION_ITEM) {
+        dxc_raise_bool_change(provider, UIA_SelectionItemIsSelectedPropertyId,
+                              before->states & DXC_STATE_SELECTED, after->states & DXC_STATE_SELECTED);
+    }
+    if (patterns & DXC_UIA_EXPAND_COLLAPSE) {
+        dxc_raise_int_change(provider, UIA_ExpandCollapseExpandCollapseStatePropertyId,
+                             dxc_uia_expand_state(before->states), dxc_uia_expand_state(after->states));
+    }
+    if (patterns & DXC_UIA_VALUE) {
+        dxc_raise_text_change(provider, UIA_ValueValuePropertyId,
+                              (before->flags & DXC_ELEMENT_HAS_VALUE) ? before->value : "",
+                              (after->flags & DXC_ELEMENT_HAS_VALUE) ? after->value : "");
+    }
+    if ((patterns & DXC_UIA_RANGE_VALUE) && before->range_value != after->range_value) {
+        VARIANT old_value;
+        VARIANT new_value;
+        VariantInit(&old_value);
+        VariantInit(&new_value);
+        old_value.vt = VT_R8;
+        old_value.dblVal = (double)before->range_value;
+        new_value.vt = VT_R8;
+        new_value.dblVal = (double)after->range_value;
+        UiaRaiseAutomationPropertyChangedEvent(
+            (IRawElementProviderSimple *)&provider->simple_vtbl, UIA_RangeValueValuePropertyId,
+            old_value, new_value);
+    }
+}
+
+/**
+ * Replaces the elements with [count] new ones. An element whose id was there before keeps its
+ * object, so a reader holding it, or standing on it, still has it; when [raise] is set, what
+ * changed about it is announced, and so is focus moving to another element.
+ */
 static void dxc_rebuild_children(DxcRootProvider *root,
-                                  const struct dxc_element *elements,
-                                  int32_t count) {
+                                 const struct dxc_element *elements,
+                                 int32_t count, int raise) {
     if (count <= 0) {
         dxc_release_children(root);
+        root->focused_id = -1;
         return;
     }
     DxcProvider **children = (DxcProvider **)calloc((size_t)count, sizeof(DxcProvider *));
-    if (children == NULL) return;
+    struct dxc_uia_links *links = (struct dxc_uia_links *)calloc((size_t)count, sizeof(struct dxc_uia_links));
+    if (children == NULL || links == NULL) {
+        free(children);
+        free(links);
+        return;
+    }
+    // Which old element each new one is, by id; -1 for a new element. Matched before anything
+    // is moved, so running out of memory below leaves the old tree whole.
+    int32_t *kept_from = (int32_t *)malloc((size_t)count * sizeof(int32_t));
+    unsigned char *taken = (unsigned char *)calloc((size_t)root->child_count + 1, 1);
+    if (kept_from == NULL || taken == NULL) {
+        free(kept_from);
+        free(taken);
+        free(children);
+        free(links);
+        return;
+    }
     for (int32_t i = 0; i < count; i++) {
+        kept_from[i] = -1;
+        if (elements[i].id < 0) continue;
+        for (int32_t j = 0; j < root->child_count; j++) {
+            DxcProvider *old = root->children[j];
+            if (taken[j] || old == NULL || old->snapshot.id != elements[i].id) continue;
+            taken[j] = 1;
+            kept_from[i] = j;
+            break;
+        }
+    }
+    free(taken);
+    for (int32_t i = 0; i < count; i++) {
+        if (kept_from[i] >= 0) continue;
         children[i] = dxc_create_provider(&elements[i], i, root);
         if (children[i] == NULL) {
             for (int32_t j = 0; j < i; j++) {
-                dxc_provider_release((IRawElementProviderSimple *)&children[j]->simple_vtbl);
+                if (kept_from[j] < 0) dxc_retire_provider(children[j]);
             }
+            free(kept_from);
             free(children);
+            free(links);
             return;
         }
     }
+    int listening = raise && UiaClientsAreListening();
+    for (int32_t i = 0; i < count; i++) {
+        if (kept_from[i] < 0) continue;
+        DxcProvider *kept = root->children[kept_from[i]];
+        root->children[kept_from[i]] = NULL;
+        struct dxc_element before = kept->snapshot;
+        kept->snapshot = elements[i];
+        kept->index = i;
+        children[i] = kept;
+        if (listening) dxc_raise_changes(kept, &before);
+    }
+    free(kept_from);
     dxc_release_children(root);
+    dxc_uia_link(elements, count, links);
     root->children = children;
+    root->links = links;
     root->child_count = count;
+
+    int32_t focused = dxc_uia_focused(elements, count);
+    int32_t focused_id = focused >= 0 ? elements[focused].id : -1;
+    if (focused_id != root->focused_id) {
+        root->focused_id = focused_id;
+        if (listening && focused >= 0) {
+            UiaRaiseAutomationEvent((IRawElementProviderSimple *)&children[focused]->simple_vtbl,
+                                    UIA_AutomationFocusChangedEventId);
+        }
+    }
 }
 
-static void dxc_publish_accessibility(DxcRootProvider *root) {
+static void dxc_publish_accessibility(DxcRootProvider *root, int raise) {
     if (!dxc_a11y_dirty || root == NULL) return;
-    dxc_rebuild_children(root, dxc_a11y_elements, dxc_a11y_count);
+    dxc_rebuild_children(root, dxc_a11y_elements, dxc_a11y_count, raise);
     dxc_a11y_dirty = 0;
 }
 
@@ -1673,6 +2309,7 @@ static DxcRootProvider *dxc_ensure_root_provider(HWND window) {
     root->fragment_root_vtbl = &dxc_root_fragment_root_vtbl;
     root->ref_count = 1;
     root->window = window;
+    root->focused_id = -1;
     dxc_root_provider = root;
     return root;
 }
@@ -1711,6 +2348,25 @@ void dxc_native_set_accessibility(const struct dxc_element *elements,
         dxc_a11y_update_posted = PostMessageW(
             window, DXC_WM_ACCESSIBILITY_UPDATE, 0, 0) != 0;
     }
+}
+
+/**
+ * The new value of the oldest SET_VALUE request the selected window has not handed over, as
+ * UTF-8 into [out], and how many bytes it is; -1 when there is none. When it does not fit in
+ * [capacity] nothing is taken and the answer is the size it needs.
+ */
+int32_t dxc_native_take_accessibility_argument(char *out, int32_t capacity) {
+    DxcWin *win = dxc_w;
+    if (win->a11y_argument_count == 0) return -1;
+    char *argument = win->a11y_arguments[win->a11y_argument_head];
+    size_t length = strlen(argument);
+    if (capacity < 0 || length > (size_t)capacity || (length > 0 && out == NULL)) return (int32_t)length;
+    if (length > 0) memcpy(out, argument, length);
+    free(argument);
+    win->a11y_arguments[win->a11y_argument_head] = NULL;
+    win->a11y_argument_head = (win->a11y_argument_head + 1) % DXC_A11Y_ARGUMENTS;
+    win->a11y_argument_count--;
+    return (int32_t)length;
 }
 
 /** Which mouse buttons are down, in the bits win32_buttons.h names. */
@@ -4645,6 +5301,7 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
             dxc_release_children(dxc_root_provider);
             dxc_root_provider->window = NULL;
         }
+        dxc_drop_accessibility_arguments(dxc_w);
         dxc_a11y_count = 0;
         dxc_a11y_dirty = 0;
         dxc_a11y_update_posted = 0;
@@ -4671,7 +5328,7 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         {
             DxcRootProvider *root = dxc_ensure_root_provider(window);
             if (root == NULL) return 0;
-            dxc_publish_accessibility(root);
+            dxc_publish_accessibility(root, 1);
             UiaRaiseStructureChangedEvent(
                 (IRawElementProviderSimple *)&root->simple_vtbl,
                 StructureChangeType_ChildrenInvalidated, NULL, 0);
@@ -4683,7 +5340,9 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         if ((LONG)lparam == UiaRootObjectId) {
             DxcRootProvider *root = dxc_ensure_root_provider(window);
             if (root != NULL) {
-                dxc_publish_accessibility(root);
+                // A push whose update is already posted is left for it, so what changed is
+                // announced when it arrives rather than taken in silently here.
+                if (!dxc_a11y_update_posted) dxc_publish_accessibility(root, 0);
                 return UiaReturnRawElementProvider(
                     window, wparam, lparam,
                     (IRawElementProviderSimple *)&root->simple_vtbl);
@@ -6980,12 +7639,6 @@ void dxc_native_window_chrome(
 // through them here, and there is no value waiting.
 int32_t dxc_native_accessibility_active(void) {
     return 0;
-}
-
-int32_t dxc_native_take_accessibility_argument(char *out, int32_t capacity) {
-    (void)out;
-    (void)capacity;
-    return -1;
 }
 
 int32_t dxc_native_accessibility_snapshot(char *out, int32_t capacity) {
