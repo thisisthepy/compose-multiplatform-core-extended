@@ -90,52 +90,48 @@ by it. So the frames are committed in this order:
 
 #### A step of a drag
 
-A step of an edge drag reaches the screen by what it does to the window (`DXC_DCOMP_DRAG=sized`,
-the default):
+Every step of an edge drag reaches the screen the same way (`DXC_DCOMP_DRAG=sized`, the
+default), whichever edge moves and whether it grows or shrinks:
 
-- A step that moves the window's top left (the left or top edge, a corner with either) or only
-  grows:
-  1. In `WM_NCCALCSIZE` the frame for the new size is drawn into the bitmap.
-  2. DWM is waited for until it has taken the step before's commit
-     (`WaitForCommitCompletion`), so the surface about to be written is no longer on screen.
-  3. The frame is written into that surface.
-  4. One composition is waited for (`DwmFlush`), last, and the message returns: the window
-     takes its rectangle.
-  5. `WM_SIZE` commits, a millisecond later.
+1. In `WM_NCCALCSIZE` the frame for the new size is drawn into the bitmap.
+2. DWM is waited for until it has taken the step before's commit
+   (`WaitForCommitCompletion`), so the surface about to be written is no longer on screen.
+3. The frame is written into that surface.
+4. One composition is waited for (`DwmFlush`), last, and the message returns: the window
+   takes its rectangle.
+5. `WM_SIZE` commits, a millisecond later.
 
-  The composition is waited for after the write because a write can itself wait for one
-  (`BeginDraw` does on WARP); waited for before it, the rectangle and the commit fell at a
-  random point of an interval again (run 44977008783: 8 of 77 frames on the fast grows).
+The composition is waited for after the write because a write can itself wait for one
+(`BeginDraw` does on WARP), which would put the rectangle and the commit at a random point of
+an interval. Nothing is committed before the rectangle. The rectangle (USER32) and the commit
+are still two changes to DWM, so they usually land in the same composition, not always: this
+lowers a rate and does not remove the split. Only a commit that carries the rectangle with the
+frame (the private synchronized commit, the #175 spike) removes it; until then the route stays
+opt-in.
 
-  The rectangle and the commit start a composition interval together and land in the same
-  composition. Nothing is committed before the rectangle: the rectangle is not part of a commit
-  and the surface sits at the window's top left, so a frame committed first would be shown at
-  the old origin until the rectangle arrived.
-- A step that shrinks and leaves the top left where it is (the right or bottom edge going in):
-  the frame is committed in `WM_NCCALCSIZE` and waited for until DWM has taken it, before the
-  window takes the smaller rectangle. That frame fits inside both rectangles at the same origin,
-  so whichever composition shows it, nothing is cut; the rectangle first would cut the larger
-  picture for a composition.
+**The backing.** The tree's root holds a visual of one colour (an 8x8 surface scaled to 32768
+px) behind the frame's visual. Where a grown rectangle is composed before its frame, DWM shows
+that colour instead of the desktop behind the window. The colour is the frame's bottom-right
+pixel, filled again only when it changes. A split on a step that moves the top left still
+slides the picture: the backing hides see-through, not the slide. `DXC_DCOMP_BACKING=0` leaves
+it out.
+
+Until 2026-11-22 a step that shrank with the top left where it was was committed first and
+waited for (c2b384d9). That showed the smaller picture inside the larger window for a
+composition on every such step, a see-through strip the width of the step: 9 of the 11 faulty
+frames in run 44985517612 (11 of 226 judged, above the 2 % limit) followed such a step. The
+probe of the time judged the right edge only with a strip judge that reads a smaller picture
+with see-through beside it as a smaller window, so it could not see that fault. #278 judges
+the right and bottom edges and every corner against the window's border.
 
 `DXC_DCOMP_DRAG=order` gives the earlier order for every step, by size alone: on a drag of the
 left or top edge what should stay still on the right moved by the step on every step that
 shrank, and a step that grew showed the larger window see-through beyond the old picture when a
-composition fell between the rectangle and the commit. Both were seen on a real GPU
-(2026-11-21) and missed by the probe of the time, which dragged the right edge slowly and took a
-see-through margin for a smaller window.
+composition fell between the rectangle and the commit (run 44971407875: 86 of 198 judged
+frames faulty on the left, top, corner and fast drags).
 
-Judged against the window's border on windows-2025 (WARP), faulty frames of judged frames over
-the left, top, corner and fast drags:
-
-| Order | Run | Faulty |
-|---|---|---|
-| By size for every step (`order`) | 44971407875 | 86 of 198 |
-| Rectangle first for every step | 44971407875 | 0 of 209, but 62 to 113 a way on right-edge drags going in |
-| The GDI route | 44971407875 | 0 of 155 |
-
-The order described above is the second row with the right and bottom edges going in left to
-the first; its own numbers are in its CI run. The GDI route stays the default until a real GPU,
-by eye, says this order is as good.
+This order's own numbers, with and without the backing, are in its CI run. The GDI route stays
+the default.
 
 ### The GDI route
 
@@ -159,6 +155,8 @@ Read when a window opens. The defaults are what the probe runs below measured.
 | `DXC_DCOMP_COMMIT` | `order` (default), `ahead`, `wmsize` | The commit order above, every frame in `WM_NCCALCSIZE`, or every frame in `WM_SIZE`. |
 | `DXC_DCOMP_SHRINK_WAIT` | `commit` (default), `flush`, `none`, `hold` | What a frame shown before a smaller rectangle waits for: DWM taking the commit, that and one composition, nothing, or nothing with the window held at the last frame DWM took during a drag. |
 | `DXC_DCOMP_DRAG` | `sized` (default), `order` | A drag step's way to the screen: every step the same (wait, write, rectangle, commit), or the earlier order by size. |
+| `DXC_DCOMP_DRAG_NO_TAKEN_WAIT` | `1` | A drag step skips `WaitForCommitCompletion` before its write, for measuring one wait a step with `DXC_DCOMP_SURFACES=3`. |
+| `DXC_DCOMP_BACKING` | `0` | No backing behind the frame. |
 | `DXC_DCOMP_DRAG_RULE` | `1` | With `DXC_DCOMP_DRAG=order`: take the GDI route's wait before each drag step. |
 | `DXC_DRAG_FLUSH` | `0`, `1` | `0` leaves out the wait for a composition before a drag step (on the DirectComposition route's own order too); `1` takes it on every Windows build on the GDI route. |
 | `DXC_REPORT_LATENCY` | any | Each resize step and each drag print where their time went. The drag step lines also carry the window's left and top (`left= top=`), the edge dragged (`edge=`) and, on the DirectComposition route, whether the step's frame was `committed first` (before the rectangle) or `committed in WM_SIZE`. |
