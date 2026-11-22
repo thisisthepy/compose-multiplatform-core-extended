@@ -345,9 +345,8 @@ jobs:
       # backdrop inside the border and the picture the size inside it (see-through).
       #
       # Gates: every run finishes with a verdict; on windows-2025 the judges are available; on
-      # the GDI route, the default, they judged frames and found at most 2 % faulty. The
-      # DirectComposition route is printed, not gated: it is expected to be red until its fix
-      # lands, and that fix's PR turns it into a gate. Not asserted here either way.
+      # each route, in the order it takes by default, they judged frames and found at most 2 %
+      # faulty. The DirectComposition route's earlier orders are printed beside them.
       #
       # WARP (these runners) waits for a composition in BeginDraw, about 20 ms a step, so a step
       # here takes as long as a composition and the see-through fault is rarer than on a real
@@ -357,21 +356,24 @@ jobs:
         shell: bash
         run: |
           modes="drag-left drag-top drag-topleft drag-fast"
-          # Beside the two routes, the DirectComposition route with other orders of a drag step,
-          # by the switches it already has (printed, for choosing the fix):
-          #   dcomp-wmsize-flush  every step: written in WM_NCCALCSIZE, one composition waited
-          #                       for, the rectangle, then the commit in WM_SIZE (no step commits
-          #                       first and waits)
-          #   dcomp-wmsize        the same without the wait for a composition
-          #   dcomp-flush         today's order with the wait for a composition before each step
-          routes="gdi dcomp dcomp-wmsize-flush dcomp-wmsize dcomp-flush"
+          # Beside the two routes, the DirectComposition route's earlier ways of a drag step, by
+          # its switches (printed, the comparison the route's own order is measured against):
+          #   dcomp               the route's own order (DXC_DCOMP_DRAG=sized, the default): a
+          #                       composition waited for, the frame written, the rectangle, the
+          #                       commit in WM_SIZE, the same for every step
+          #   dcomp-noflush       that order without the wait for a composition
+          #   dcomp-order         the order before: a step that shrinks committed first and waited
+          #                       for, one that grows committed after, no wait before a step
+          #   dcomp-order-flush   the order before with every step committed in WM_SIZE after one
+          #                       composition, written before the wait (run 44946565463's best)
+          routes="gdi dcomp dcomp-noflush dcomp-order dcomp-order-flush"
           switches() { # <route>: the environment that gives it
             case "$1" in
               gdi) echo "DXC_DCOMP=0" ;;
               dcomp) echo "DXC_DCOMP=1" ;;
-              dcomp-wmsize-flush) echo "DXC_DCOMP=1 DXC_DCOMP_COMMIT=wmsize DXC_DCOMP_DRAG_RULE=1 DXC_DRAG_FLUSH=1" ;;
-              dcomp-wmsize) echo "DXC_DCOMP=1 DXC_DCOMP_COMMIT=wmsize" ;;
-              dcomp-flush) echo "DXC_DCOMP=1 DXC_DCOMP_DRAG_RULE=1 DXC_DRAG_FLUSH=1" ;;
+              dcomp-noflush) echo "DXC_DCOMP=1 DXC_DRAG_FLUSH=0" ;;
+              dcomp-order) echo "DXC_DCOMP=1 DXC_DCOMP_DRAG=order" ;;
+              dcomp-order-flush) echo "DXC_DCOMP=1 DXC_DCOMP_DRAG=order DXC_DCOMP_COMMIT=wmsize DXC_DCOMP_DRAG_RULE=1 DXC_DRAG_FLUSH=1" ;;
             esac
           }
           for route in $routes; do
@@ -390,7 +392,7 @@ jobs:
           }
           echo "judged drags, 3 runs each: mode, route, composed frames in the drag, judged, faulty anchor, faulty see-through (of them: frame of another size, size unreadable), worst shift px, widest see-through px"
           printf '%-13s %-18s %9s %7s %13s %18s %10s %10s %12s\n' mode route composed judged anchor see-through other-size unreadable worst-shift
-          gdi_judged=0 gdi_faulty=0
+          gdi_judged=0 gdi_faulty=0 dcomp_judged=0 dcomp_faulty=0
           rm -f out/judge-totals.txt
           for mode in $modes; do
             for route in $routes; do
@@ -424,6 +426,15 @@ jobs:
               if [ "$available" != no ]; then
                 echo "$route $judged $((anchor > see ? anchor : see))" >> out/judge-totals.txt
               fi
+              if [ "$route" = dcomp ] && [ "$available" != no ]; then
+                if [ "$judged" -eq 0 ]; then
+                  echo "dcomp $mode: the judges judged no frame (no border found, or no calibration at rest)" >&2
+                  status=1
+                else
+                  dcomp_judged=$((dcomp_judged + judged))
+                  dcomp_faulty=$((dcomp_faulty + (anchor > see ? anchor : see)))
+                fi
+              fi
               if [ "$route" = gdi ]; then
                 if [ "$available" = no ]; then
                   if [ "${{ matrix.os }}" = windows-2025 ]; then
@@ -450,7 +461,14 @@ jobs:
             echo "judged gdi (the gate): $gdi_faulty faulty of $gdi_judged judged frames, limit 2 %"
             test "$((gdi_faulty * 50))" -le "$gdi_judged" || { echo "gdi: $gdi_faulty faulty of $gdi_judged judged frames in the judged drags, above 2 %" >&2; status=1; }
           fi
-          echo "The GDI route above is gated (2 % of its judged frames, where the judges are available). The DirectComposition route is printed, not gated: it is expected to be red until the fix lands (the fix PR turns it into a gate)."
+          # The DirectComposition gate, the same limit: its own order of a drag step has to
+          # keep the picture in its place and the window filled as the GDI route does. In the
+          # order before, run 44946565463 counted 79 faulty of 200.
+          if [ "$dcomp_judged" -gt 0 ]; then
+            echo "judged dcomp (the gate): $dcomp_faulty faulty of $dcomp_judged judged frames, limit 2 %"
+            test "$((dcomp_faulty * 50))" -le "$dcomp_judged" || { echo "dcomp: $dcomp_faulty faulty of $dcomp_judged judged frames in the judged drags, above 2 %" >&2; status=1; }
+          fi
+          echo "Both routes above are gated (2 % of their judged frames, where the judges are available). The dcomp-* rows are the route's earlier orders, printed for comparison."
           echo "judged drags, every mode together: route, faulty frames of judged frames"
           for route in $routes; do
             awk -v r="$route" '$1 == r { j += $2; f += $3 } END { if (j > 0) printf "judged total %s: %d faulty of %d judged (%.1f %%)\n", r, f, j, 100 * f / j }' out/judge-totals.txt 2>/dev/null || true
@@ -458,7 +476,7 @@ jobs:
           for route in $routes; do
             grep -h 'dcomp: drag timing' out/judge-$route-drag-topleft-1.log | head -2 | sed "s/^/  $route drag-topleft /" || true
           done
-          for route in gdi dcomp dcomp-wmsize-flush; do
+          for route in gdi dcomp dcomp-order; do
             echo "first judged faults, $route (run 1 of each mode):"
             for mode in $modes; do
               grep -h 'probe: calibrated at rest\|probe: calibration:\|edge: pressed at\|sides moved over\|pace moves' out/judge-$route-$mode-1.log | head -6 | sed "s/^/  $mode /" || true

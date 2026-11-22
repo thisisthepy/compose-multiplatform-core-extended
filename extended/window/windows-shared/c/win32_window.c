@@ -2743,6 +2743,30 @@ static double dxc_comp_rule_sum, dxc_comp_rule_max;
 // windows-2025, which never takes it, was as clean. Kept for comparing the two.
 static int dxc_comp_drag_rule;
 
+// How a step of a drag reaches the screen on the composition route (DXC_DCOMP_DRAG).
+//
+// sized, the default: every step the same way, whichever edge moves and whether it grows or
+// shrinks. The frame is drawn into the bitmap in WM_NCCALCSIZE; one composition is waited for
+// (DwmFlush); the frame is written into the surface; the window takes its rectangle as the
+// message returns; and WM_SIZE commits, a millisecond later. So the rectangle and the commit
+// start a composition interval together and land in the same composition, the composition
+// waited for has taken the commit of the step before (the surface written is no longer on
+// screen), and a drag makes one step a composition.
+//
+// order: as before. A step that shrinks was committed first and waited for, then the
+// rectangle; one that grows had the rectangle first and the commit in WM_SIZE, with no wait
+// (DXC_DCOMP_COMMIT, DXC_DCOMP_DRAG_RULE). That order looks only at the size. A drag of the
+// left or top edge also moves the window's origin, and the surface sits at that origin: a
+// frame committed first is shown at the old origin until the rectangle arrives, so what
+// should stay still on the right moved by the step on every step that shrank, and a step that
+// grew showed the larger window see-through beyond the old picture whenever a composition
+// fell between the rectangle and the commit. Judged against the window's border (run
+// 44946565463, windows-2025): 79 faulty frames of 200 in that order, 5 of 219 with every step
+// committed in WM_SIZE after a wait, 1 of 166 on the GDI route. Kept for comparing the two.
+enum { DXC_COMP_DRAG_SIZED, DXC_COMP_DRAG_ORDER };
+static const char *const dxc_comp_drag_names[] = {"sized", "order"};
+static int dxc_comp_drag_mode;
+
 /** The edge a WM_SIZING names, for the step lines. */
 static const char *dxc_sizing_edge_name(WPARAM edge) {
     switch (edge) {
@@ -3614,7 +3638,10 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     // Whether the frame both rectangles hold was committed and waited for (it counts as a
     // step shown first), for DXC_REPORT_LATENCY's drag step line.
     int both_held = 0;
-    if (dxc_on_comp && dxc_comp_commit_mode == DXC_COMP_COMMIT_ORDER && shrinks && grows) {
+    // A step of a drag in the composition route's own order (dxc_comp_drag_mode): nothing is
+    // committed before the rectangle.
+    int drag_sized = dxc_on_comp && dragging && dxc_comp_drag_mode == DXC_COMP_DRAG_SIZED;
+    if (dxc_on_comp && !drag_sized && dxc_comp_commit_mode == DXC_COMP_COMMIT_ORDER && shrinks && grows) {
         int shown_first = dxc_comp_frame_first_steps;
         dxc_comp_show_both_hold(width, height, now_width, now_height);
         both_held = dxc_comp_frame_first_steps != shown_first;
@@ -3634,17 +3661,31 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
         double step_drawn_ms = dxc_elapsed_ms(started);
         // On the composition route the step goes into the surface before the wait and is
         // committed after it, here rather than in WM_SIZE (dxc_comp_stage_ahead).
-        int step_staged = dxc_on_comp && drawn && dxc_comp_stage_ahead(width, height);
+        int step_staged = 0;
+        int step_flushed = 0;
         LARGE_INTEGER rule_started;
         QueryPerformanceCounter(&rule_started);
-        int rule_wanted = hidden || dxc_drag_flush;
-        if (dxc_on_comp && !dxc_comp_drag_rule) rule_wanted = 0;
-        int step_flushed = drawn && rule_wanted ? dxc_dwm_flush() : 0;
-        if (dxc_on_comp) {
+        if (drag_sized) {
+            // The wait first, then the write: the composition waited for has taken the commit
+            // of the step before, so the surface written is off the screen, and the rectangle
+            // and WM_SIZE's commit follow at the start of a composition interval.
+            // DXC_DRAG_FLUSH=0 leaves the wait out, for comparing the two.
+            step_flushed = drawn && dxc_drag_flush_asked != 0 ? dxc_dwm_flush() : 0;
             dxc_comp_timed_steps++;
             dxc_comp_time(&dxc_comp_rule_sum, &dxc_comp_rule_max, dxc_elapsed_ms(rule_started));
+            step_staged = drawn && dxc_comp_stage_ahead(width, height);
+        } else {
+            step_staged = dxc_on_comp && drawn && dxc_comp_stage_ahead(width, height);
+            QueryPerformanceCounter(&rule_started);
+            int rule_wanted = hidden || dxc_drag_flush;
+            if (dxc_on_comp && !dxc_comp_drag_rule) rule_wanted = 0;
+            step_flushed = drawn && rule_wanted ? dxc_dwm_flush() : 0;
+            if (dxc_on_comp) {
+                dxc_comp_timed_steps++;
+                dxc_comp_time(&dxc_comp_rule_sum, &dxc_comp_rule_max, dxc_elapsed_ms(rule_started));
+            }
+            if (step_staged) dxc_comp_commit_ahead(shrinks && !grows);
         }
-        if (step_staged) dxc_comp_commit_ahead(shrinks && !grows);
         if (drawn) dxc_drag_predrawn_steps++;
         if (step_flushed) dxc_drag_flushed_steps++;
         if (dxc_report_latency) {
@@ -6208,6 +6249,14 @@ static int32_t dxc_open_window(
         }
         const char *drag_rule = getenv("DXC_DCOMP_DRAG_RULE");
         dxc_comp_drag_rule = drag_rule != NULL && strcmp(drag_rule, "1") == 0;
+        const char *drag_way = getenv("DXC_DCOMP_DRAG");
+        dxc_comp_drag_mode = drag_way != NULL && strcmp(drag_way, "order") == 0 ? DXC_COMP_DRAG_ORDER
+                                                                               : DXC_COMP_DRAG_SIZED;
+        fprintf(stderr, "compose-rust: dcomp: drag steps reach the screen %s (DXC_DCOMP_DRAG=%s)\n",
+                dxc_comp_drag_mode == DXC_COMP_DRAG_SIZED
+                    ? "each the same way: a composition waited for, the frame written, the rectangle, the commit"
+                    : "by size: a step that shrinks committed first and waited for, one that grows committed after",
+                dxc_comp_drag_names[dxc_comp_drag_mode]);
         const char *wait_for = getenv("DXC_DCOMP_SHRINK_WAIT");
         dxc_comp_wait_mode = DXC_COMP_WAIT_COMMIT;
         for (int named = 0; wait_for != NULL && named < 4; named++) {
