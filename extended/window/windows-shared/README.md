@@ -52,7 +52,8 @@ DirectComposition one and the machine can give it, and says which on standard er
 The GDI route is the default because of what a real GPU showed (2026-11-21, a real
 application dragged by hand): the DirectComposition route left a see-through strip inside the
 border on a fast drag that grows the window, and the picture slid on a drag of the left or top
-edge. The GDI route showed neither. See "Known faults" under the DirectComposition route.
+edge. The GDI route showed neither. The route's order of a drag step has changed since ("A
+step of a drag" below); it stays behind the switch until a real GPU shows it as good.
 
 ### The DirectComposition route
 
@@ -74,7 +75,7 @@ the commit that sizes it (issue #223).
 
 A size change (maximise, restore, snap, Win and an arrow, a change of DPI, a step of an edge
 drag) has its frame drawn on the CPU in `WM_NCCALCSIZE`, before the window takes the new
-rectangle. A commit reaches the screen with that rectangle or a composition after it, never
+rectangle. For a size given in one step (not a drag, see "A step of a drag"): A commit reaches the screen with that rectangle or a composition after it, never
 reliably with it. A frame smaller than its window then leaves a margin inside the window's
 border for one composition, which shows nothing wrong; a frame larger than its window is cut
 by it. So the frames are committed in this order:
@@ -86,24 +87,51 @@ by it. So the frames are committed in this order:
   is drawn, of the size both rectangles hold (the smaller width and the smaller height), and
   committed and waited for first; the new frame follows in `WM_SIZE`.
 
-The wait before each drag step that the GDI route takes on builds below 22000 (issue #245) is
-not taken here: the order already decides which frame meets which rectangle.
 
-#### Known faults
+#### A step of a drag
 
-The window's rectangle is not part of the commit. The rectangle reaches DWM from the window
-manager and the picture from DirectComposition, and the two can land in different
-compositions. Two things follow, both seen on a real GPU and neither seen by the probe, which
-drags the right edge slowly and takes a see-through margin for a smaller window:
+Every step of an edge drag reaches the screen the same way (`DXC_DCOMP_DRAG=sized`, the
+default), whichever edge moves and whether it grows or shrinks:
 
-- A step that grows is committed after the window grew. A composition in between shows the
-  larger window with the smaller picture, and with no GDI surface the rest is see-through.
-- The surface sits at the window's top left. A drag of the left or top edge moves that
-  origin, so for a composition the picture is drawn for one origin and shown at the other:
-  what should stay still on the right moves by the step. A step that shrinks commits first
-  and waits, so there it happens on every step.
+1. In `WM_NCCALCSIZE` the frame for the new size is drawn into the bitmap.
+2. DWM is waited for until it has taken the step before's commit
+   (`WaitForCommitCompletion`), so the surface about to be written is no longer on screen.
+3. The frame is written into that surface.
+4. One composition is waited for (`DwmFlush`), last, and the message returns: the window
+   takes its rectangle.
+5. `WM_SIZE` commits, a millisecond later.
 
-The probe's judged drags (below) look for both.
+The composition is waited for after the write because a write can itself wait for one
+(`BeginDraw` does on WARP), which would put the rectangle and the commit at a random point of
+an interval. Nothing is committed before the rectangle. The rectangle (USER32) and the commit
+are still two changes to DWM, so they usually land in the same composition, not always: this
+lowers a rate and does not remove the split. Only a commit that carries the rectangle with the
+frame (the private synchronized commit, the #175 spike) removes it; until then the route stays
+opt-in.
+
+**The backing.** The tree's root holds a visual of one colour (an 8x8 surface scaled to 32768
+px) behind the frame's visual. Where a grown rectangle is composed before its frame, DWM shows
+that colour instead of the desktop behind the window. The colour is the frame's bottom-right
+pixel, filled again only when it changes. A split on a step that moves the top left still
+slides the picture: the backing hides see-through, not the slide. `DXC_DCOMP_BACKING=0` leaves
+it out.
+
+Until 2026-11-22 a step that shrank with the top left where it was was committed first and
+waited for (c2b384d9). That showed the smaller picture inside the larger window for a
+composition on every such step, a see-through strip the width of the step: 9 of the 11 faulty
+frames in run 44985517612 (11 of 226 judged, above the 2 % limit) followed such a step. The
+probe of the time judged the right edge only with a strip judge that reads a smaller picture
+with see-through beside it as a smaller window, so it could not see that fault. #278 judges
+the right and bottom edges and every corner against the window's border.
+
+`DXC_DCOMP_DRAG=order` gives the earlier order for every step, by size alone: on a drag of the
+left or top edge what should stay still on the right moved by the step on every step that
+shrank, and a step that grew showed the larger window see-through beyond the old picture when a
+composition fell between the rectangle and the commit (run 44971407875: 86 of 198 judged
+frames faulty on the left, top, corner and fast drags).
+
+This order's own numbers, with and without the backing, are in its CI run. The GDI route stays
+the default.
 
 ### The GDI route
 
@@ -126,7 +154,11 @@ Read when a window opens. The defaults are what the probe runs below measured.
 | `DXC_DCOMP_UPLOAD` | `on12` | Write the surfaces with the D3D11On12 device. |
 | `DXC_DCOMP_COMMIT` | `order` (default), `ahead`, `wmsize` | The commit order above, every frame in `WM_NCCALCSIZE`, or every frame in `WM_SIZE`. |
 | `DXC_DCOMP_SHRINK_WAIT` | `commit` (default), `flush`, `none`, `hold` | What a frame shown before a smaller rectangle waits for: DWM taking the commit, that and one composition, nothing, or nothing with the window held at the last frame DWM took during a drag. |
-| `DXC_DCOMP_DRAG_RULE` | `1` | Take the GDI route's wait before each drag step. |
+| `DXC_DCOMP_DRAG` | `sized` (default), `order` | A drag step's way to the screen: every step the same (wait, write, rectangle, commit), or the earlier order by size. |
+| `DXC_DCOMP_DRAG_NO_TAKEN_WAIT` | `1` | A drag step skips `WaitForCommitCompletion` before its write, for measuring one wait a step with `DXC_DCOMP_SURFACES=3`. |
+| `DXC_DCOMP_BACKING` | `0` | No backing behind the frame. |
+| `DXC_DCOMP_DRAG_RULE` | `1` | With `DXC_DCOMP_DRAG=order`: take the GDI route's wait before each drag step. |
+| `DXC_DRAG_FLUSH` | `0`, `1` | `0` leaves out the wait for a composition before a drag step (on the DirectComposition route's own order too); `1` takes it on every Windows build on the GDI route. |
 | `DXC_REPORT_LATENCY` | any | Each resize step and each drag print where their time went. The drag step lines also carry the window's left and top (`left= top=`), the edge dragged (`edge=`) and, on the DirectComposition route, whether the step's frame was `committed first` (before the rectangle) or `committed in WM_SIZE`. |
 
 ### Measured
@@ -332,8 +364,8 @@ in 247 maximise, restore and snap changes, and on any faulty frame in a drag dra
 GDI route is printed beside it for comparison. The judged drags run three times a mode on both
 routes: the GDI route, the default, fails the job above 2 % of its judged frames shifted,
 see-through or of another size, and on windows-2025 when the judges are not available or
-judged nothing. The DirectComposition route's judged drags are printed, not gated, until its
-fix lands. The first run with the judges (44920692034, windows-2025, WARP) counted 1 faulty
+judged nothing. The DirectComposition route's judged drags are gated the same way, in its own
+order of a drag step; its earlier orders are printed beside it. The first run with the judges (44920692034, windows-2025, WARP) counted 1 faulty
 frame of 163 on the GDI route (the window grown by its left edge and the copy not yet in it,
 109 px see-through) and 79 of 201 on the DirectComposition route (shifted by up to 382 px,
 see-through up to 666 px).

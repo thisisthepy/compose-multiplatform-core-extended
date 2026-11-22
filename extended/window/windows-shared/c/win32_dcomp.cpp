@@ -18,11 +18,24 @@
 #include <dcomp.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 struct dxc_dcomp {
     IDCompositionDesktopDevice *device;
     IDCompositionTarget *target;
     IDCompositionVisual2 *visual;
+    // The backing (DXC_DCOMP_BACKING, on unless 0): the target's root holds a visual filled
+    // with one colour, scaled far past any window, behind the frame's visual, so wherever the
+    // window's rectangle reaches past the frame on screen (a grown rectangle composed before
+    // the commit with its larger frame) DWM shows that colour instead of the desktop behind the
+    // window. Nothing here is resized during a drag: the surface is 8x8 and the visual's scale
+    // never changes. root and backing are NULL when it is off or could not be made.
+    IDCompositionVisual2 *root;
+    IDCompositionVisual2 *backing;
+    IDCompositionSurface *backing_surface;
+    // The colour it holds, BGRA as the frame's bitmap, and the colour last asked for.
+    uint32_t backing_bgra;
+    uint32_t backing_asked;
     IDCompositionSurfaceFactory *factory;
     // A ring of surfaces, each frame written into one the visual does not show, and the visual
     // given it in the commit that shows the frame. BeginDraw on the surface the last commit
@@ -78,6 +91,10 @@ template <typename T> void release(T *&object) {
 }
 
 void release_tree(dxc_dcomp *comp) {
+    release(comp->backing);
+    release(comp->backing_surface);
+    release(comp->root);
+    comp->backing_bgra = 0;
     release(comp->visual);
     release(comp->target);
     for (int index = 0; index < DXC_DCOMP_MAX_SURFACES; index++) {
@@ -121,6 +138,91 @@ HRESULT apply_clip(dxc_dcomp *comp) {
     return clipped;
 }
 
+// Fills the backing's 8x8 surface with [bgra]. Zero on success.
+HRESULT fill_backing(dxc_dcomp *comp, uint32_t bgra) {
+    if (comp->backing_surface == nullptr || comp->render_device == nullptr) {
+        return E_POINTER;
+    }
+    ID3D11Device *device = nullptr;
+    HRESULT found = comp->render_device->QueryInterface(__uuidof(ID3D11Device), reinterpret_cast<void **>(&device));
+    if (FAILED(found) || device == nullptr) {
+        return FAILED(found) ? found : E_POINTER;
+    }
+    ID3D11DeviceContext *context = nullptr;
+    device->GetImmediateContext(&context);
+    device->Release();
+    if (context == nullptr) {
+        return E_POINTER;
+    }
+    ID3D11Texture2D *texture = nullptr;
+    POINT offset = {0, 0};
+    HRESULT began = comp->backing_surface->BeginDraw(nullptr, __uuidof(ID3D11Texture2D),
+                                                     reinterpret_cast<void **>(&texture), &offset);
+    if (SUCCEEDED(began) && texture != nullptr) {
+        uint32_t pixels[8 * 8];
+        for (int index = 0; index < 8 * 8; index++) {
+            pixels[index] = bgra | 0xFF000000u;
+        }
+        D3D11_BOX box = {static_cast<UINT>(offset.x), static_cast<UINT>(offset.y), 0, static_cast<UINT>(offset.x + 8),
+                         static_cast<UINT>(offset.y + 8), 1};
+        context->UpdateSubresource(texture, 0, &box, pixels, 8 * 4, 0);
+        context->Flush();
+        texture->Release();
+        began = comp->backing_surface->EndDraw();
+    }
+    context->Release();
+    if (SUCCEEDED(began)) {
+        comp->backing_bgra = bgra | 0xFF000000u;
+    }
+    return began;
+}
+
+// The backing under the frame's visual (see dxc_dcomp::root): a root visual holding the backing,
+// scaled 8x8 to 32768 px square from the client area's top left, and the frame's visual in front
+// of it. On any failure the backing is left out and the frame's visual is the root, as before.
+// The answers are logged once a tree.
+HRESULT build_backing(dxc_dcomp *comp) {
+    const char *asked = getenv("DXC_DCOMP_BACKING");
+    if (asked != nullptr && strcmp(asked, "0") == 0) {
+        fprintf(stderr, "compose-rust: dcomp: no backing under the frame (DXC_DCOMP_BACKING=0)\n");
+        return S_FALSE;
+    }
+    HRESULT root = comp->device->CreateVisual(&comp->root);
+    HRESULT backing = SUCCEEDED(root) ? comp->device->CreateVisual(&comp->backing) : E_ABORT;
+    HRESULT surface = SUCCEEDED(backing) ? comp->factory->CreateSurface(8, 8, DXGI_FORMAT_B8G8R8A8_UNORM,
+                                                                        DXGI_ALPHA_MODE_IGNORE, &comp->backing_surface)
+                                         : E_ABORT;
+    HRESULT filled = SUCCEEDED(surface) ? fill_backing(comp, comp->backing_asked) : E_ABORT;
+    HRESULT content = SUCCEEDED(filled) ? comp->backing->SetContent(comp->backing_surface) : E_ABORT;
+    D2D_MATRIX_3X2_F scale = {};
+    scale._11 = 4096.0f;
+    scale._22 = 4096.0f;
+    HRESULT scaled = SUCCEEDED(content) ? comp->backing->SetTransform(scale) : E_ABORT;
+    if (SUCCEEDED(scaled)) {
+        // One colour scaled: no blending between texels or at the edge.
+        comp->backing->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+        comp->backing->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);
+    }
+    HRESULT under = SUCCEEDED(scaled) ? comp->root->AddVisual(comp->backing, FALSE, nullptr) : E_ABORT;
+    // In front of the backing (insertAbove TRUE, relative to the backing).
+    HRESULT over = SUCCEEDED(under) ? comp->root->AddVisual(comp->visual, TRUE, comp->backing) : E_ABORT;
+    fprintf(stderr,
+            "compose-rust: dcomp: backing under the frame 0x%08x: CreateVisual 0x%08lx 0x%08lx CreateSurface 0x%08lx "
+            "fill 0x%08lx SetContent 0x%08lx SetTransform 0x%08lx AddVisual 0x%08lx 0x%08lx\n",
+            static_cast<unsigned>(comp->backing_bgra), static_cast<unsigned long>(root),
+            static_cast<unsigned long>(backing), static_cast<unsigned long>(surface),
+            static_cast<unsigned long>(filled), static_cast<unsigned long>(content),
+            static_cast<unsigned long>(scaled), static_cast<unsigned long>(under), static_cast<unsigned long>(over));
+    if (FAILED(over)) {
+        if (comp->root != nullptr && SUCCEEDED(under)) comp->root->RemoveAllVisuals();
+        release(comp->backing);
+        release(comp->backing_surface);
+        release(comp->root);
+        return over;
+    }
+    return S_OK;
+}
+
 // The surface factory, the surface, the target, the visual, its content and its clip, on the
 // device there is. No commit. Every step's answer is said, once for each tree made (once a
 // window, again only if a failed commit makes it again).
@@ -150,7 +252,9 @@ bool build_tree(dxc_dcomp *comp) {
     HRESULT visual = SUCCEEDED(target) ? comp->device->CreateVisual(&comp->visual) : E_ABORT;
     HRESULT content = SUCCEEDED(visual) ? comp->visual->SetContent(comp->surfaces[0]) : E_ABORT;
     HRESULT clipped = SUCCEEDED(content) ? apply_clip(comp) : E_ABORT;
-    HRESULT root = SUCCEEDED(clipped) ? comp->target->SetRoot(comp->visual) : E_ABORT;
+    if (SUCCEEDED(clipped)) build_backing(comp);
+    HRESULT root = SUCCEEDED(clipped) ? comp->target->SetRoot(comp->root != nullptr ? comp->root : comp->visual)
+                                      : E_ABORT;
     fprintf(stderr,
             "compose-rust: dcomp: tree for window %p: CreateSurfaceFactory 0x%08lx CreateVirtualSurface 0x%08lx "
             "(%d of %dx%d) CreateTargetForHwnd 0x%08lx CreateVisual 0x%08lx SetContent 0x%08lx SetClip 0x%08lx "
@@ -196,6 +300,8 @@ extern "C" int dxc_dcomp_attach(dxc_dcomp *comp, HWND window, IUnknown *d3d11_de
     comp->room_width = width;
     comp->room_height = height;
     comp->count = surfaces < 1 ? 1 : surfaces > DXC_DCOMP_MAX_SURFACES ? DXC_DCOMP_MAX_SURFACES : surfaces;
+    // Dark grey until the first frame says what colour its edge is (dxc_dcomp_set_backing).
+    if (comp->backing_asked == 0) comp->backing_asked = 0xFF202020u;
     if (!build_tree(comp)) {
         return 2;
     }
@@ -305,6 +411,26 @@ extern "C" int dxc_dcomp_commit(dxc_dcomp *comp) {
     }
     fprintf(stderr, "compose-rust: dcomp: the device was made again\n");
     return 1;
+}
+
+extern "C" int dxc_dcomp_set_backing(dxc_dcomp *comp, uint32_t bgra) {
+    if (comp == nullptr) {
+        return 1;
+    }
+    comp->backing_asked = bgra | 0xFF000000u;
+    if (comp->backing_surface == nullptr) {
+        return 1;
+    }
+    if (comp->backing_bgra == comp->backing_asked) {
+        return 0;
+    }
+    HRESULT filled = fill_backing(comp, comp->backing_asked);
+    if (FAILED(filled)) {
+        fprintf(stderr, "compose-rust: dcomp: filling the backing failed with 0x%08lx\n",
+                static_cast<unsigned long>(filled));
+        return 2;
+    }
+    return 0;
 }
 
 extern "C" void dxc_dcomp_wait(dxc_dcomp *comp) {
