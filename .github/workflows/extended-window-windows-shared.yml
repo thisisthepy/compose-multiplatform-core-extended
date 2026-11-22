@@ -102,7 +102,10 @@ jobs:
 
       - name: Link and run the check against the library
         run: |
-          cl /nologo /std:c11 /Ic /Icinterop\include /Foout\ c\test\win32_shared_test.c /Feout\win32_shared_test.exe /link out\dxc_win32_window.lib d3d12.lib dxgi.lib dxguid.lib dcomp.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib || exit /b 1
+          rem The UI Automation reader is C++: the SDK's client header defines its ids at file
+          rem scope, which C would define a second time beside win32_window.c.
+          cl /nologo /c /O2 /std:c++17 /W3 /EHsc /Ic /Foout\win32_uia_client.obj c\test\win32_uia_client.cpp || exit /b 1
+          cl /nologo /std:c11 /Ic /Icinterop\include /Foout\ c\test\win32_shared_test.c out\win32_uia_client.obj /Feout\win32_shared_test.exe /link out\dxc_win32_window.lib d3d12.lib dxgi.lib dxguid.lib dcomp.lib user32.lib gdi32.lib uiautomationcore.lib oleaut32.lib imm32.lib runtimeobject.lib ole32.lib shell32.lib advapi32.lib uuid.lib || exit /b 1
           out\win32_shared_test.exe
 
       # FR-33.2 (compose-rust) criterion 9: the entry menu is a Win32 popup menu. A window puts
