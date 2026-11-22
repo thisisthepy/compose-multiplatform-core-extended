@@ -187,6 +187,14 @@ void dxc_native_clipboard_write(const char *text);
 int32_t dxc_native_take_paste(char *out, int32_t capacity);
 int32_t dxc_native_dropped_paths(char *out, int32_t capacity);
 int32_t dxc_native_context_menu(void *window_pointer, const char *items);
+// An entry menu as Windows' own (FR-33.2): common's encodePopupMenu lines, pictures as
+// premultiplied RGBA one after the other with width/height pairs, the anchor in client pixels.
+// Writes the chosen path ("2/0") to out and answers its length, 0 for nothing chosen, -1 on failure.
+int32_t dxc_native_popup_menu(void *window_pointer, const char *lines, const uint8_t *icons,
+                              const int32_t *icon_sizes, int32_t icon_count, float x, float y, float width,
+                              float height, int32_t rtl, char *out, int32_t capacity);
+// Takes an open entry menu down from the application's side.
+void dxc_native_popup_menu_close(void);
 // The window's own text edit menu: on (flags with bit 1) while a text field has focus, off (0)
 // otherwise. A right click, the Menu key or Shift and F10 then put the system's popup up, and
 // the entry chosen arrives as Control and X, C, V or A. The bits are in win32_edit_menu.h.
