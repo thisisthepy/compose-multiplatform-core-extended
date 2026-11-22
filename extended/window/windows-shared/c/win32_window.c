@@ -2746,12 +2746,12 @@ static int dxc_comp_drag_rule;
 // How a step of a drag reaches the screen on the composition route (DXC_DCOMP_DRAG).
 //
 // sized, the default: a step that moves the window's origin (the left or top edge) or only
-// grows. The frame is drawn into the bitmap in WM_NCCALCSIZE; one composition is waited for
-// (DwmFlush); the frame is written into the surface; the window takes its rectangle as the
-// message returns; and WM_SIZE commits, a millisecond later. So the rectangle and the commit
-// start a composition interval together and land in the same composition, the composition
-// waited for has taken the commit of the step before (the surface written is no longer on
-// screen), and a drag makes one step a composition. A step that shrinks without moving the
+// grows. The frame is drawn into the bitmap in WM_NCCALCSIZE; DWM is waited for until it has
+// taken the step before's commit (the surface written is then no longer on screen); the frame is
+// written into the surface; one composition is waited for (DwmFlush), last; the window takes its
+// rectangle as the message returns; and WM_SIZE commits, a millisecond later. So the rectangle
+// and the commit start a composition interval together and land in the same composition, and a
+// drag makes one step a composition. A step that shrinks without moving the
 // origin keeps the order by size below: its frame fits inside the old and the new rectangle at
 // the same origin, so committed first it is right whichever composition shows it, while the
 // rectangle first would cut the larger picture for a composition.
