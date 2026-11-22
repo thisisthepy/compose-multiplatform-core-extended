@@ -95,11 +95,16 @@ the default):
 - A step that moves the window's top left (the left or top edge, a corner with either) or only
   grows:
   1. In `WM_NCCALCSIZE` the frame for the new size is drawn into the bitmap.
-  2. One composition is waited for (`DwmFlush`). It has taken the commit of the step before,
-     so the surface about to be written is no longer on screen.
-  3. The frame is written into that surface, and the message returns: the window takes its
-     rectangle.
-  4. `WM_SIZE` commits, a millisecond later.
+  2. DWM is waited for until it has taken the step before's commit
+     (`WaitForCommitCompletion`), so the surface about to be written is no longer on screen.
+  3. The frame is written into that surface.
+  4. One composition is waited for (`DwmFlush`), last, and the message returns: the window
+     takes its rectangle.
+  5. `WM_SIZE` commits, a millisecond later.
+
+  The composition is waited for after the write because a write can itself wait for one
+  (`BeginDraw` does on WARP); waited for before it, the rectangle and the commit fell at a
+  random point of an interval again (run 44977008783: 8 of 77 frames on the fast grows).
 
   The rectangle and the commit start a composition interval together and land in the same
   composition. Nothing is committed before the rectangle: the rectangle is not part of a commit

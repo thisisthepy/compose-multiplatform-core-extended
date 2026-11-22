@@ -3681,14 +3681,20 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
         LARGE_INTEGER rule_started;
         QueryPerformanceCounter(&rule_started);
         if (drag_sized) {
-            // The wait first, then the write: the composition waited for has taken the commit
-            // of the step before, so the surface written is off the screen, and the rectangle
-            // and WM_SIZE's commit follow at the start of a composition interval.
-            // DXC_DRAG_FLUSH=0 leaves the wait out, for comparing the two.
-            step_flushed = drawn && dxc_drag_flush_asked != 0 ? dxc_dwm_flush() : 0;
+            // DWM has taken the step before's commit (WaitForCommitCompletion, short by now), so
+            // the surface about to be written is off the screen; the frame is written; then one
+            // composition is waited for, LAST, so the rectangle and WM_SIZE's commit follow it
+            // within a millisecond. The write goes before that wait because writing can itself
+            // wait for a composition (BeginDraw does on WARP, about 10 ms a step): a write after
+            // the wait put the pair back at a random point of an interval, and run 44977008783
+            // counted 8 frames of 77 on the fast grows with the window grown and the earlier
+            // picture in it. DXC_DRAG_FLUSH=0 leaves the composition out, for comparing the two.
+            if (drawn) dxc_dcomp_wait(dxc_comp);
+            step_staged = drawn && dxc_comp_stage_ahead(width, height);
+            QueryPerformanceCounter(&rule_started);
+            step_flushed = step_staged && dxc_drag_flush_asked != 0 ? dxc_dwm_flush() : 0;
             dxc_comp_timed_steps++;
             dxc_comp_time(&dxc_comp_rule_sum, &dxc_comp_rule_max, dxc_elapsed_ms(rule_started));
-            step_staged = drawn && dxc_comp_stage_ahead(width, height);
         } else {
             step_staged = dxc_on_comp && drawn && dxc_comp_stage_ahead(width, height);
             QueryPerformanceCounter(&rule_started);
