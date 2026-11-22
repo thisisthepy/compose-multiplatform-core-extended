@@ -10,6 +10,14 @@ with 30 ms frames, and one with 5 ms frames drawn ahead of each size. Each run p
 summary file keeps, the faulty frames DWM composed, how far the edge lagged the pointer and
 the window's memory at rest.
 
+Then, on both routes, the judged drags (issue 223): the left edge, the top edge and the
+top-left corner dragged in and out, and the window grown fast by its right edge, its bottom
+edge, its bottom-right corner and its top-left corner, at a real hand's pace. The window's
+border is drawn in pure blue (Windows 11 and later), and every composed frame is judged
+against it: whether the picture slid (anchor, "shifted by N px") and whether the desktop
+showed through inside the border or the picture was drawn for another size (see-through).
+The summary file has a second table for them. On Windows 10 they say "not available".
+
 Run it from "x64 Native Tools Command Prompt for VS 2022" (cl has to be on PATH):
 
     powershell -ExecutionPolicy Bypass -File extended\window\windows-shared\c\test\run-lag-probe.ps1
@@ -21,7 +29,7 @@ run-lag-probe.cmd, and the logs and lag-probe-summary.txt land in this script's 
 It moves a window and the pointer on screen: leave the mouse and keyboard alone until it ends.
 
 .PARAMETER Runs
-How many times each drag runs on each route. 3 unless given.
+How many times each drag, judged drags included, runs on each route. 3 unless given.
 
 .PARAMETER Fast
 One run of each drag: what CI runs, so the script keeps working.
@@ -130,8 +138,50 @@ foreach ($route in $routes) {
         }
     }
 }
-$env:DXC_DCOMP = $null
 $env:PROBE_DRAW_MS = $null
+
+# The judged drags: the same routes, and the window's per-step lines (DXC_REPORT_LATENCY) carry
+# its left and top, the edge dragged and, on DirectComposition, whether the step's frame was
+# committed before or after the rectangle.
+$judged = @('drag-left', 'drag-top', 'drag-topleft', 'drag-fast')
+$judgedRows = @()
+foreach ($route in $routes) {
+    foreach ($mode in $judged) {
+        for ($run = 1; $run -le $Runs; $run++) {
+            $env:DXC_DCOMP = $route.Flag
+            $env:DXC_REPORT_LATENCY = '1'
+            $log = Join-Path $out ("probe-{0}-{1}-{2}.log" -f $route.Name, $mode, $run)
+            Write-Host ("lag probe: {0} {1} run {2} of {3}" -f $route.Name, $mode, $run, $Runs)
+            cmd /c "`"$probe`" $mode > `"$log`" 2>&1"
+            $lines = Get-Content $log
+            $name = [regex]::Escape($mode)
+            $verdict = Find $lines 'probe: verdict ([A-Z]+(?: [A-Z]+)?) \('
+            $phase = Find $lines "probe: phase $name composed (\d+) frames, (\d+) faulty"
+            $missing = Find $lines "probe: anchor $name not available"
+            $anchor = Find $lines "probe: anchor $name judged (\d+) faulty (\d+) max shift (\d+) px"
+            $see = Find $lines "probe: see-through $name judged (\d+) faulty (\d+) max (\d+) px at the (\w+) \(see-through (\d+), frame of another size (\d+), size code unreadable (\d+)\)"
+            $pace = Find $lines "probe: $name pace moves=\d+ gap_ms median ([0-9.]+)"
+            if (-not $verdict) { $unfinished++ }
+            $judgedRows += [pscustomobject]@{
+                Route = $route.Name
+                Mode = $mode
+                Run = $run
+                Composed = if ($phase) { $phase.Groups[1].Value } else { '-' }
+                Judged = if ($missing) { 'n/a' } elseif ($anchor) { $anchor.Groups[1].Value } else { '-' }
+                AnchorFaulty = if ($anchor) { $anchor.Groups[2].Value } else { '-' }
+                WorstShiftPx = if ($anchor) { $anchor.Groups[3].Value } else { '-' }
+                SeeThroughFaulty = if ($see) { $see.Groups[2].Value } else { '-' }
+                SeeThroughPx = if ($see) { "$($see.Groups[3].Value) $($see.Groups[4].Value)" } else { '-' }
+                OtherSize = if ($see) { $see.Groups[6].Value } else { '-' }
+                Unreadable = if ($see) { $see.Groups[7].Value } else { '-' }
+                GapMedianMs = if ($pace) { $pace.Groups[1].Value } else { '-' }
+                Verdict = if ($verdict) { $verdict.Groups[1].Value } else { 'unfinished' }
+            }
+        }
+    }
+}
+$env:DXC_DCOMP = $null
+$env:DXC_REPORT_LATENCY = $null
 
 $gpus = (Get-CimInstance Win32_VideoController | ForEach-Object {
     "$($_.Name) ($($_.CurrentHorizontalResolution)x$($_.CurrentVerticalResolution) at $($_.CurrentRefreshRate) Hz)"
@@ -145,8 +195,17 @@ $header = @(
     ''
 )
 $table = $rows | Format-Table -AutoSize | Out-String -Width 200
+$judgedTable = @(
+    '',
+    'Judged drags (issue 223): left, top and top-left drags in and out, and fast grows, judged against the',
+    "window's border. AnchorFaulty: frames where the picture slid (WorstShiftPx the largest slide).",
+    'SeeThroughFaulty: frames with the desktop showing through inside the border (SeeThroughPx the widest',
+    'strip and its edge) or a picture drawn for another size (OtherSize) or not readable (Unreadable).',
+    'n/a: this Windows cannot colour the border (Windows 10).',
+    ($judgedRows | Format-Table -AutoSize | Out-String -Width 220)
+)
 $summary = Join-Path $out 'lag-probe-summary.txt'
-($header + $table) | Set-Content -Path $summary -Encoding utf8
+($header + $table + $judgedTable) | Set-Content -Path $summary -Encoding utf8
 Get-Content $summary
 Write-Host "Summary written to $summary"
 if ($unfinished -gt 0) {

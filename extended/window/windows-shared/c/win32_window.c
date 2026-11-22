@@ -2721,6 +2721,8 @@ static int dxc_comp_wait_mode;
 static int32_t dxc_comp_confirmed_width, dxc_comp_confirmed_height;
 static int32_t dxc_comp_held_width, dxc_comp_held_height;
 static WPARAM dxc_comp_sizing_edge;
+// The edge being dragged (WM_SIZING), on either route, for DXC_REPORT_LATENCY's step lines.
+static WPARAM dxc_drag_sizing_edge;
 static int dxc_comp_hold_active;
 #define DXC_TIMER_COMP_HOLD 0x4443
 // For the current drag: steps whose frame was shown before the window took the size, and where
@@ -2740,6 +2742,21 @@ static double dxc_comp_rule_sum, dxc_comp_rule_max;
 // shown with which rectangle. Run 44659612997 measured it at 24 ms a step on windows-2022, and
 // windows-2025, which never takes it, was as clean. Kept for comparing the two.
 static int dxc_comp_drag_rule;
+
+/** The edge a WM_SIZING names, for the step lines. */
+static const char *dxc_sizing_edge_name(WPARAM edge) {
+    switch (edge) {
+    case WMSZ_LEFT: return "left";
+    case WMSZ_RIGHT: return "right";
+    case WMSZ_TOP: return "top";
+    case WMSZ_TOPLEFT: return "top-left";
+    case WMSZ_TOPRIGHT: return "top-right";
+    case WMSZ_BOTTOM: return "bottom";
+    case WMSZ_BOTTOMLEFT: return "bottom-left";
+    case WMSZ_BOTTOMRIGHT: return "bottom-right";
+    default: return "none";
+    }
+}
 
 static void dxc_comp_time(double *sum, double *max, double ms) {
     *sum += ms;
@@ -3375,13 +3392,17 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
                 (int)width, (int)height, DXC_RESIZE_STEP_CAP_MS, total_ms);
     }
     if (dxc_report_latency) {
+        // In WM_SIZE: the window's rectangle is the step's now (GetWindowRect).
+        RECT outer = {0, 0, 0, 0};
+        if (dxc_window != NULL) GetWindowRect(dxc_window, &outer);
         fprintf(stderr,
                 "compose-rust: resize step %dx%d %s, %s, took %.2f ms: gpu idle %.2f, refit %.2f, "
-                "draw %.2f, copy %.2f, present %.2f, DwmFlush %.2f\n",
+                "draw %.2f, copy %.2f, present %.2f, DwmFlush %.2f left=%ld top=%ld edge=%s\n",
                 (int)width, (int)height, presented ? "presented" : "not presented",
                 flushed ? "flushed" : "not flushed", total_ms, dxc_step_gpu_idle_ms,
                 dxc_step_refit_ms, dxc_step_draw_ms, dxc_step_copy_ms, dxc_step_present_ms,
-                total_ms - drawn_ms);
+                total_ms - drawn_ms, outer.left, outer.top,
+                dxc_sizing.dragging ? dxc_sizing_edge_name(dxc_drag_sizing_edge) : "none");
     }
 }
 
@@ -3590,8 +3611,13 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     int32_t now_height = (int32_t)(now.bottom - now.top);
     int shrinks = width < now_width || height < now_height;
     int grows = width > now_width || height > now_height;
+    // Whether the frame both rectangles hold was committed and waited for (it counts as a
+    // step shown first), for DXC_REPORT_LATENCY's drag step line.
+    int both_held = 0;
     if (dxc_on_comp && dxc_comp_commit_mode == DXC_COMP_COMMIT_ORDER && shrinks && grows) {
+        int shown_first = dxc_comp_frame_first_steps;
         dxc_comp_show_both_hold(width, height, now_width, now_height);
+        both_held = dxc_comp_frame_first_steps != shown_first;
     }
     dxc_predrawn_set(&dxc_predrawn, 0, 0);
     dxc_resize_target_width = width;
@@ -3622,12 +3648,25 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
         if (drawn) dxc_drag_predrawn_steps++;
         if (step_flushed) dxc_drag_flushed_steps++;
         if (dxc_report_latency) {
+            // Where the window is as the step begins (GetWindowRect: the rectangle before the
+            // step), where its client area goes, the edge dragged, and on the composition route
+            // whether the step's frame went to DWM before the rectangle (committed first, in
+            // WM_NCCALCSIZE) or after it (committed in WM_SIZE), and whether the frame both
+            // rectangles hold was committed first.
+            RECT before;
+            GetWindowRect(window, &before);
+            const char *commit = !dxc_on_comp ? "copied in WM_SIZE (gdi)"
+                                 : !step_staged ? "not staged"
+                                 : dxc_comp_staged_committed ? "committed first"
+                                                             : "committed in WM_SIZE";
             fprintf(stderr,
                     "compose-rust: resize-mode: drag step %dx%d drawn before the window took it (%s, draw %.2f ms, "
-                    "%s %.2f ms, at %.1f ms)\n",
+                    "%s %.2f ms, at %.1f ms) left=%ld top=%ld to client left=%ld top=%ld edge=%s, %s%s\n",
                     (int)width, (int)height, drawn ? "waiting for WM_SIZE" : "not drawn", step_drawn_ms,
                     step_flushed ? "DwmFlush" : "no DwmFlush", dxc_elapsed_ms(started) - step_drawn_ms,
-                    dxc_now_ms());
+                    dxc_now_ms(), before.left, before.top, client->left, client->top,
+                    dxc_sizing_edge_name(dxc_drag_sizing_edge), commit,
+                    both_held ? ", the frame both rectangles hold committed first" : "");
         }
         return;
     }
@@ -4293,6 +4332,7 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         }
         break;
     case WM_SIZING:
+        dxc_drag_sizing_edge = wparam;
         if (dxc_on_comp) dxc_comp_sizing_edge = wparam;
         break;
     case WM_TIMER:
