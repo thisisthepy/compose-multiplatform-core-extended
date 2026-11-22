@@ -23,3 +23,5 @@ modules:
   - designsystem-gnome
   - designsystem-breeze
   - designsystem-deepin
+  # Layer 2: neutral adaptive theme and components delegating to Layer 1.
+  - designsystem-adaptive
