@@ -42,8 +42,13 @@ abstract class JetBrainsVerifyDependencyVersionsTask : DefaultTask() {
         description = "Task for verifying the library dependency-stability-suffix rule"
     }
 
+    /** The version whose stability the rule reads: the line's upstream one ([stabilityVersionOf]). */
     @get:Input
     abstract val version: Property<String>
+
+    /** The version the project publishes as, which the failure names. */
+    @get:Input
+    abstract val publishedVersion: Property<String>
 
     @get:Input
     val androidXDependencySet: SetProperty<AndroidXDependency> = project.objects.setProperty()
@@ -57,44 +62,61 @@ abstract class JetBrainsVerifyDependencyVersionsTask : DefaultTask() {
      */
     @TaskAction
     fun verifyDependencyVersions() {
-        androidXDependencySet.get().forEach { dependency -> verifyDependencyVersion(dependency) }
-    }
-
-    private fun verifyDependencyVersion(dependency: AndroidXDependency) {
-        val projectVersion = version.get()
-        val dependencyVersion = dependency.version
-        val projectReleasePhase = releasePhase(projectVersion)
-        if (projectReleasePhase < 0) {
-            throw GradleException("Project has unexpected release phase $projectVersion")
-        }
-        val dependencyReleasePhase = releasePhase(dependencyVersion)
-        if (dependencyReleasePhase < 0) {
-            throw GradleException(
-                "Dependency ${dependency.group}:${dependency.name}" +
-                    ":${dependency.version} has unexpected release phase $dependencyVersion"
-            )
-        }
-        if (dependencyReleasePhase < projectReleasePhase) {
-            throw GradleException(
-                "Project with version ${version.get()} may " +
-                    "not take a dependency on less-stable artifact ${dependency.group}:" +
-                    "${dependency.name}:${dependency.version} for configuration " +
-                    "${dependency.configurationName}. Dependency versions must be at least as " +
-                    "stable as the project version."
-            )
+        androidXDependencySet.get().forEach { dependency ->
+            dependencyStabilityError(version.get(), publishedVersion.get(), dependency)?.let {
+                throw GradleException(it)
+            }
         }
     }
+}
 
-    private fun releasePhase(versionString: String): Int {
-        val version = Version(versionString)
-        return when {
-            version.isStable() -> 4
-            version.isRC() -> 3
-            version.isBeta() -> 2
-            version.isAlpha() -> 1
-            version.isSnapshot() -> 0
-            else -> -1
-        }
+/**
+ * The version whose stability the rule reads for a project versioned [projectVersion]. Every line
+ * publishes on the fork's one version (`1.11.1-ext.5`), which reads as stable, while the sources
+ * of the Lifecycle line, say, are `2.11.0-beta01` and redirect to that androidx beta on Android
+ * and the JVM. [Version] keeps the upstream version and prints the published one, so this is the
+ * upstream version with the fork's release, as upstream reads it.
+ */
+internal fun stabilityVersionOf(projectVersion: Any): String =
+    (projectVersion as? Version)?.copy(publishedAs = null)?.toString() ?: projectVersion.toString()
+
+/**
+ * Why a project at [stabilityVersion] (published as [publishedVersion]) may not take
+ * [dependency], or null when it may: a dependency must be at least as stable as the project.
+ */
+internal fun dependencyStabilityError(
+    stabilityVersion: String,
+    publishedVersion: String,
+    dependency: AndroidXDependency,
+): String? {
+    val projectReleasePhase = releasePhase(stabilityVersion)
+    if (projectReleasePhase < 0) {
+        return "Project has unexpected release phase $stabilityVersion"
+    }
+    val dependencyReleasePhase = releasePhase(dependency.version)
+    if (dependencyReleasePhase < 0) {
+        return "Dependency ${dependency.group}:${dependency.name}" +
+            ":${dependency.version} has unexpected release phase ${dependency.version}"
+    }
+    if (dependencyReleasePhase < projectReleasePhase) {
+        return "Project with version $publishedVersion may " +
+            "not take a dependency on less-stable artifact ${dependency.group}:" +
+            "${dependency.name}:${dependency.version} for configuration " +
+            "${dependency.configurationName}. Dependency versions must be at least as " +
+            "stable as the project version ($stabilityVersion upstream)."
+    }
+    return null
+}
+
+private fun releasePhase(versionString: String): Int {
+    val version = Version(versionString)
+    return when {
+        version.isStable() -> 4
+        version.isRC() -> 3
+        version.isBeta() -> 2
+        version.isAlpha() -> 1
+        version.isSnapshot() -> 0
+        else -> -1
     }
 }
 
@@ -106,7 +128,8 @@ internal fun Project.configureDependencyVerification() {
         "jbVerifyDependencyVersions",
         JetBrainsVerifyDependencyVersionsTask::class.java
     ) { task ->
-        task.version.set(project.provider { project.version.toString() })
+        task.version.set(project.provider { stabilityVersionOf(project.version) })
+        task.publishedVersion.set(project.provider { project.version.toString() })
         task.androidXDependencySet.set(
             project.provider {
                 multiplatformExtension!!
