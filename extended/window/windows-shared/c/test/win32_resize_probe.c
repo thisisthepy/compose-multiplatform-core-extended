@@ -68,9 +68,6 @@
 #include "win32_window.h"
 #include "win32_probe_judge.h"
 
-// The toasts ask the renderer for a frame; there is no renderer here.
-void compose_rust_renderer_request_frame(void) {}
-
 static struct dxc_native_window probe_window;
 static int probe_draw_ms;
 static LARGE_INTEGER probe_frequency;

@@ -7,6 +7,11 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
+- **Change.** The Windows window's toasts no longer call `compose_rust_renderer_request_frame`,
+  a renderer's symbol every application had to define (EXT-WIN-13). An application gives
+  `dxc_notify_set_wake` the function to call when an answer arrives, from any thread; nothing is
+  called until it does. compose-rust registers its frame request there when it moves to this
+  release.
 - **Feature.** The pointer's shape can be any of the 36 CSS `cursor` keywords (`CursorShape`, in
   common, numbered as compose-rust's `Cursor` property; FR-47.1). Each has the closest shape on
   every desktop window: `win32Idc` (Windows `IDC_*`), `x11Font` (the X cursor font) and `appKit`
