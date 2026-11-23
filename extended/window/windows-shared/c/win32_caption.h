@@ -18,6 +18,9 @@
 // The metrics are Win32Chrome's in common (Kotlin), which is what the scene lays the buttons
 // out with; scripts/check-windows-caption-metrics.sh fails when the two stop agreeing.
 
+// The strip of a Simple title bar, and of a window that was told no height (FR-19.7). A
+// Normal title bar is taller; how tall is the renderer's to say
+// (dxc_native_window_configure_caption_height), because the design system decides it.
 #define DXC_CAPTION_HEIGHT_DIP 32
 #define DXC_CAPTION_BUTTON_WIDTH_DIP 46
 #define DXC_CAPTION_BUTTON_COUNT 3
@@ -43,16 +46,18 @@ static inline int32_t dxc_caption_scale(int32_t dip, int32_t dpi) {
  * Which part of the caption the point is over.
  *
  * `x` and `y` are measured from the window's top left corner, `width` is the window's
- * width, all in physical pixels. `band` is the top resize band, which only a resizable
+ * width, all in physical pixels. `caption_dip` is the strip's height in device independent
+ * pixels, 0 for DXC_CAPTION_HEIGHT_DIP. `band` is the top resize band, which only a resizable
  * window that is not maximised has.
  */
 static inline enum dxc_caption_zone dxc_caption_zone_at(
-    int32_t x, int32_t y, int32_t width, int32_t dpi, int32_t band, int32_t resizable, int32_t zoomed
+    int32_t x, int32_t y, int32_t width, int32_t dpi, int32_t caption_dip, int32_t band, int32_t resizable,
+    int32_t zoomed
 ) {
     if (resizable && !zoomed && y < band) {
         return DXC_CAPTION_ZONE_TOP;
     }
-    if (y < 0 || y >= dxc_caption_scale(DXC_CAPTION_HEIGHT_DIP, dpi)) {
+    if (y < 0 || y >= dxc_caption_scale(caption_dip > 0 ? caption_dip : DXC_CAPTION_HEIGHT_DIP, dpi)) {
         return DXC_CAPTION_ZONE_CLIENT;
     }
     int32_t button = dxc_caption_scale(DXC_CAPTION_BUTTON_WIDTH_DIP, dpi);

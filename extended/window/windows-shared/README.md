@@ -16,6 +16,10 @@ application for Windows without a JVM.
   them); it is header-only too and reads only the message and key names of `<windows.h>`.
   `c/win32_edit_menu.h` holds what the text edit menu offers and which keys ask for it; it
   compiles without Windows.
+  `c/win32_uia.h` decides what UI Automation is told about an element: which control patterns
+  it offers (Invoke, Toggle, Value, RangeValue, SelectionItem, ExpandCollapse), how the
+  elements' parent ids make a tree, what Expand and Collapse become, and the runtime id that
+  keeps a control the same element across pushes. It compiles without Windows.
 - `cinterop/include/win32_window.h`: the whole surface, functions and records. It includes
   no Windows header, so cinterop and any C compiler read it.
 - `cinterop/win32_window.def` and `src/`: the Kotlin/Native (`mingwX64`) layer.
@@ -357,7 +361,8 @@ To build it yourself:
 
 `.github/workflows/extended-window-windows-shared.yml` compiles the C with MSVC, links
 `c/test/win32_shared_test.c` against it (record sizes, the resize and UTF-16 helpers, a file
-dialog started, cancelled and answered on a real window, and that every declared symbol resolves), checks that the header and the C export the same functions,
+dialog started, cancelled and answered on a real window, a UI Automation reader acting on a
+real window, and that every declared symbol resolves), checks that the header and the C export the same functions,
 and builds and tests the Kotlin/Native klib. On windows-2022 and windows-2025 it runs the
 resize probe on both routes. The DirectComposition route fails the job above 2 % faulty frames
 in 247 maximise, restore and snap changes, and on any faulty frame in a drag drawn ahead. The
@@ -370,5 +375,20 @@ frame of 163 on the GDI route (the window grown by its left edge and the copy no
 109 px see-through) and 79 of 201 on the DirectComposition route (shifted by up to 382 px,
 see-through up to 666 px).
 
+The reader is `c/test/win32_uia_client.cpp`, in C++ because the SDK's `UIAutomationClient.h`
+defines its ids as file-scope constants: a second C file including it would define each one
+again beside `win32_window.c` and fail to link.
+
 Source: compose-rust PR #174 (`feat/win32-resize-kn`) at 2d6ad3e3, where the C is
 `renderer/desktop/c/` and the Kotlin/Native window is `renderer/windows/src/Win32Window.kt`.
+
+## What a reader can ask
+
+UI Automation reads the tree from the last `dxc_native_set_accessibility` push: each element
+carries its id and its parent's, its states and actions, its value, range and hint, in window
+points. A reader's request (Invoke, Toggle, SetValue, Select, Expand, Collapse, SetFocus) is not
+done in the window. It is written to the window's event queue as
+`DXC_EVENT_ACCESSIBILITY_ACTION`, naming the element's id and the action, and the scene does it
+when the renderer drains the queue, on the same thread as a click. A new value is kept beside
+the event, because it can be longer than an event's text, and read with
+`dxc_native_take_accessibility_argument`, one per SET_VALUE event, oldest first.

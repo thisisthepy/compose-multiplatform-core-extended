@@ -18,8 +18,20 @@ package org.thisisthepy.compose.window
  * buttons.
  */
 object Win32Chrome {
-    /** The caption strip's height, in points. `DXC_CAPTION_HEIGHT_DIP` in win32_caption.h. */
+    /**
+     * The caption strip's height of a [TitleBarStyle.Simple] window, in points: the platform's
+     * own 32. `DXC_CAPTION_HEIGHT_DIP` in win32_caption.h, which is also the hit test's height
+     * where a window was told none.
+     */
     const val CAPTION_HEIGHT = 32f
+
+    /**
+     * The caption strip's height of a [TitleBarStyle.Normal] window, in points: taller, as
+     * FR-19.7 asks of Windows, the tall caption compose-rust's design systems draw. A renderer
+     * whose design system says another height configures the window with its own
+     * (`dxc_native_window_configure_caption_height`).
+     */
+    const val NORMAL_CAPTION_HEIGHT = 44f
 
     /** One button's width, in points. `DXC_CAPTION_BUTTON_WIDTH_DIP` in win32_caption.h. */
     const val CAPTION_BUTTON_WIDTH = 46f
@@ -34,17 +46,28 @@ object Win32Chrome {
     fun systemCaption(config: WindowConfig): Boolean = config.chrome != WindowChrome.Modern
 
     /**
+     * The strip's height for [config], in points, as the window's hit test is configured with
+     * it before the window opens (`dxc_native_window_configure_caption_height`): the scene
+     * draws its caption at the same height the system is answered for.
+     */
+    fun captionHeightDip(config: WindowConfig): Int = when (config.titleBar) {
+        TitleBarStyle.Normal -> NORMAL_CAPTION_HEIGHT.toInt()
+        TitleBarStyle.Simple -> CAPTION_HEIGHT.toInt()
+    }
+
+    /**
      * The strip the scene draws its buttons in, or [WindowCaption.None] where the caption is
      * the system's. [maximized] is whether the window is maximised now
      * (`dxc_native_window_is_zoomed`), which turns the maximise button into restore.
      *
      * A maximised window, which is also what full screen is on this platform, keeps the strip
-     * and its buttons. [TitleBarStyle] changes nothing here: the hit test knows one height.
+     * and its buttons. [TitleBarStyle] sets the strip's height (FR-19.7, [captionHeightDip]);
+     * the buttons stay three of [CAPTION_BUTTON_WIDTH] at the trailing end in both.
      */
     fun caption(config: WindowConfig, maximized: Boolean = false): WindowCaption {
         if (systemCaption(config)) return WindowCaption.None
         return WindowCaption(
-            height = CAPTION_HEIGHT,
+            height = captionHeightDip(config).toFloat(),
             buttonsWidth = CAPTION_BUTTON_WIDTH * CAPTION_BUTTONS,
             buttonsAtStart = false,
             buttonsDrawnByScene = true,
