@@ -137,6 +137,8 @@ void dxc_native_window_action(int32_t action);
 int32_t dxc_native_window_is_zoomed(void);
 void dxc_native_window_begin_drag(int32_t edge);
 void dxc_native_window_configure_app_caption(int32_t enabled);
+// The caption strip's height in dip for the next window, 0 for 32 (FR-19.7).
+void dxc_native_window_configure_caption_height(int32_t dip);
 void dxc_native_set_icon(const uint8_t *rgba, int32_t width, int32_t height);
 void dxc_native_install_menu(const char *application_name);
 
