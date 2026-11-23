@@ -7,6 +7,13 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
+- **Feature.** The pointer's shape can be any of the 36 CSS `cursor` keywords (`CursorShape`, in
+  common, numbered as compose-rust's `Cursor` property; FR-47.1). Each has the closest shape on
+  every desktop window: `win32Idc` (Windows `IDC_*`), `x11Font` (the X cursor font) and `appKit`
+  (`NSCursor`), with `None` hiding the pointer; Windows has no magnifier, so the zoom keywords
+  are the crosshair, and grab and grabbing are the hand. The Windows window sets them with
+  `dxc_native_set_cursor_id` (`Win32Loop.setCursorShape`) and the X11 window with
+  `X11Window.setCursorShape`. The six-shape `setCursor` calls are unchanged.
 - **Feature.** The Windows window's caption strip is as tall as its title bar mode asks (FR-19.7): a
   `TitleBarStyle.Normal` window's strip is taller (`Win32Chrome.NORMAL_CAPTION_HEIGHT`, 44 points)
   than a `Simple` one's (the platform's 32), and the system's hit test answers for the same strip.
