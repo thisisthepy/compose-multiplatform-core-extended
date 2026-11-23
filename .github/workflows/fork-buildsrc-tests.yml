@@ -1,0 +1,43 @@
+# The fork's buildSrc tests: publishing coordinates (JetBrainsPublicationTest), version
+# stability (VersionTest) and the other tests under buildSrc-tests/src/test/java/org/jetbrains.
+# `:buildSrc-tests` is not part of the fork's build (settings.gradle includes the COMPOSE
+# subset only), so extended/compose/buildsrc-tests compiles them against the buildSrc jars the
+# fork's build leaves in out/buildSrc and runs them.
+name: Fork buildSrc tests
+
+on:
+  workflow_call: {}
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  JAVA_TOOL_OPTIONS: >-
+    -Dorg.gradle.internal.repository.max.retries=6
+    -Dorg.gradle.internal.repository.initial.backoff=1000
+    -Dorg.gradle.internal.http.connectionTimeout=120000
+    -Dorg.gradle.internal.http.socketTimeout=120000
+
+jobs:
+  tests:
+    name: buildSrc tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Setup Prerequisites
+        uses: ./.github/actions/setup-prerequisites
+
+      - name: Build buildSrc and run its tests
+        run: GRADLE_WORKERS=4 extended/compose/tests/buildsrc-tests.sh --no-daemon --stacktrace
+
+      - name: Test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fork-buildsrc-test-reports
+          path: extended/compose/buildsrc-tests/build/reports/tests/
+          if-no-files-found: ignore
