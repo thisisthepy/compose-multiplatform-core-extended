@@ -54,19 +54,18 @@ data class Version(
         minor = Integer.parseInt(checkedMatcher(upstreamPart(versionString)).group(2)),
         patch = Integer.parseInt(checkedMatcher(upstreamPart(versionString)).group(3)),
         preRelease = checkedMatcher(upstreamPart(versionString)).group(4)?.ifEmpty { null },
+        // The number after the pre-release's kind: 7 for alpha07. Matched by prefix: the
+        // pre-release is the whole word ("alpha07"), so comparing it with the kind never matched
+        // and the iteration was always null.
         preReleaseIteration =
-            when (
-                val preRelease =
-                    checkedMatcher(upstreamPart(versionString))
-                        .group(4)
-                        ?.lowercase(Locale.getDefault())
-            ) {
-                ALPHA -> preRelease.substring(ALPHA.length).toIntOrNull()
-                BETA -> preRelease.substring(BETA.length).toIntOrNull()
-                DEV -> preRelease.substring(DEV.length).toIntOrNull()
-                RC -> preRelease.substring(RC.length).toIntOrNull()
-                else -> null
-            },
+            checkedMatcher(upstreamPart(versionString))
+                .group(4)
+                ?.lowercase(Locale.getDefault())
+                ?.let { preRelease ->
+                    listOf(ALPHA, BETA, DEV, RC)
+                        .firstOrNull { preRelease.startsWith(it) }
+                        ?.let { preRelease.substring(it.length).toIntOrNull() }
+                },
         buildMetadata = checkedMatcher(upstreamPart(versionString)).group(5)?.ifEmpty { null },
         forkRelease = forkReleaseOf(versionString),
     )
