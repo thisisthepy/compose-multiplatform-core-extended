@@ -72,7 +72,7 @@ abstract class JetBrainsVerifyDependencyVersionsTask : DefaultTask() {
 
 /**
  * The version whose stability the rule reads for a project versioned [projectVersion]. Every line
- * publishes on the fork's one version (`1.11.1-ext.5`), which reads as stable, while the sources
+ * publishes on the fork's one version (`1.11.1-ext.6`), which reads as stable, while the sources
  * of the Lifecycle line, say, are `2.11.0-beta01` and redirect to that androidx beta on Android
  * and the JVM. [Version] keeps the upstream version and prints the published one, so this is the
  * upstream version with the fork's release, as upstream reads it.
