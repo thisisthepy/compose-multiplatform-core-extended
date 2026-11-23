@@ -603,25 +603,30 @@ static int dxc_hide_early_off;
 // DXC_DRAG_PREDRAW=0: a step of a drag is drawn in WM_SIZE, after the window has taken its
 // size, as before it was drawn ahead in WM_NCCALCSIZE (issue 245). For comparing the two.
 static int dxc_drag_predraw_off;
-// DXC_DRAG_FLUSH: 1 waits for one composition before every step of a drag takes its size, 0
-// never does; unset, it follows the Windows build (dxc_resize_drag_flush_wanted).
+// DXC_DRAG_FLUSH: 0 never waits for a composition before a step of a drag takes its size;
+// unset or anything else, every step waits, on every build (dxc_resize_drag_flush_wanted).
 static int dxc_drag_flush_asked = -1;
 static int dxc_drag_flush;
 // Steps of the current drag drawn ahead, and how many of them waited for a composition.
 static int dxc_drag_predrawn_steps;
 static int dxc_drag_flushed_steps;
+// When the current drag began (WM_ENTERSIZEMOVE), on the performance counter in ms.
+static double dxc_drag_started_ms;
 // DXC_SURFACE_RETURN: how the child hidden ahead of the size change comes back with the frame
-// drawn ahead. staged (the default): the swapchain is refitted and the frame copied into its
-// buffer in WM_NCCALCSIZE, and WM_SIZE fits the child, shows it and presents; wmsize: WM_SIZE
-// fits it, presents the frame and shows it; nccalc: fitted and presented in WM_NCCALCSIZE,
-// shown in WM_SIZE; showfirst: WM_SIZE fits and shows it, then refits and presents; posted:
-// the GPU return after WM_SIZE draws a new frame first.
+// drawn ahead. staged (the default): WM_SIZE fits the child, shows it in place and presents;
+// parked (opt-in until a run shows the present taken by frame statistics, compose-rust#926):
+// the swapchain is refitted and the frame copied into its buffer in WM_NCCALCSIZE, and WM_SIZE
+// shows the child outside the window's client area, presents, waits until DWM took the present
+// and only then moves the child into place (dxc_show_parked_surface);
+// wmsize: WM_SIZE fits it, presents the frame and shows it; nccalc: fitted and presented in
+// WM_NCCALCSIZE, shown in WM_SIZE; showfirst: WM_SIZE fits and shows it, then refits and
+// presents; posted: the GPU return after WM_SIZE draws a new frame first.
 enum {
-    DXC_SURFACE_RETURN_STAGED, DXC_SURFACE_RETURN_WM_SIZE, DXC_SURFACE_RETURN_NCCALC, DXC_SURFACE_RETURN_SHOW_FIRST,
-    DXC_SURFACE_RETURN_POSTED, DXC_SURFACE_RETURN_COUNT
+    DXC_SURFACE_RETURN_PARKED, DXC_SURFACE_RETURN_STAGED, DXC_SURFACE_RETURN_WM_SIZE, DXC_SURFACE_RETURN_NCCALC,
+    DXC_SURFACE_RETURN_SHOW_FIRST, DXC_SURFACE_RETURN_POSTED, DXC_SURFACE_RETURN_COUNT
 };
-static const char *const dxc_surface_return_names[] = {"staged", "wmsize", "nccalc", "showfirst", "posted"};
-static int dxc_surface_return;
+static const char *const dxc_surface_return_names[] = {"parked", "staged", "wmsize", "nccalc", "showfirst", "posted"};
+static int dxc_surface_return = DXC_SURFACE_RETURN_STAGED;
 // When each step of a size change outside a drag ran, on the performance counter in ms: the
 // frame drawn ahead was ready (WM_NCCALCSIZE about to return), WM_WINDOWPOSCHANGED and WM_SIZE
 // arrived, the frame was copied into the window, the child was fitted, and it was shown. A
@@ -3333,7 +3338,7 @@ static int dxc_ready_surface(int32_t width, int32_t height) {
     if (dxc_surface == NULL || IsWindowVisible(dxc_surface)) {
         return 0;
     }
-    if (dxc_surface_return == DXC_SURFACE_RETURN_STAGED) {
+    if (dxc_surface_return == DXC_SURFACE_RETURN_PARKED || dxc_surface_return == DXC_SURFACE_RETURN_STAGED) {
         // Only refitted and filled: a present to a hidden child is not composed when it is
         // shown, so the present waits for WM_SIZE, after the show.
         if (!dxc_stage_bitmap(width, height)) {
@@ -3347,6 +3352,67 @@ static int dxc_ready_surface(int32_t width, int32_t height) {
     }
     dxc_surface_ready_width = width;
     dxc_surface_ready_height = height;
+    return 1;
+}
+
+// Compositions a parked child waits for its present to be taken, at most, before it is moved
+// in anyway. Each is one DwmFlush, about a refresh.
+#define DXC_PARKED_WAITS 4
+
+/**
+ * Shows the child readied for this size outside the window's client area, presents the frame
+ * staged in its buffer, waits until DWM has taken that present, and only then moves the child
+ * into place. One when it was shown.
+ *
+ * DWM composes a child that is shown again with the last picture it took from it, and a
+ * present made while the child was hidden does not count (compose-rust#684). Shown in place
+ * and then presented (staged), the child was composed once with the picture it had before it
+ * was hidden whenever the present missed the next composition: after maximised -> restored at
+ * 200 % on windows-2025, the top left of the maximised picture at the restored size
+ * (compose-rust#926, about 2 % of restores). Parked, the child is visible, so its present
+ * reaches DWM, but clipped away by the parent, so nothing of it is composed; when it is moved
+ * in, the picture DWM holds for it is already the new one. Meanwhile the window's GDI surface,
+ * which WM_SIZE has just copied the same frame into, is what shows.
+ */
+static int dxc_show_parked_surface(int32_t width, int32_t height) {
+    UINT keep = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW;
+    // Right of and below the client area: a child is clipped by its parent's client area.
+    SetWindowPos(dxc_surface, NULL, width, height, width, height, keep);
+    dxc_state_marks[DXC_STATE_FITTED] = dxc_now_ms();
+    ShowWindow(dxc_surface, SW_SHOWNA);
+    if (!dxc_present_staged()) {
+        SetWindowPos(dxc_surface, NULL, 0, 0, 0, 0, keep | SWP_NOSIZE);
+        return 0;
+    }
+    UINT presented = 0;
+    IDXGISwapChain1_GetLastPresentCount(dxc_swapchain, &presented);
+    int waits = 0;
+    int taken = 0;
+    int assumed = 0;
+    while (waits < DXC_PARKED_WAITS && !taken) {
+        if (!dxc_dwm_flush()) break;
+        waits++;
+        DXGI_FRAME_STATISTICS statistics;
+        if (SUCCEEDED(IDXGISwapChain1_GetFrameStatistics(dxc_swapchain, &statistics))) {
+            taken = statistics.PresentCount >= presented;
+        } else if (waits >= 2) {
+            // No statistics (none yet, or disjoint): two compositions are what a present
+            // takes at most when nothing else holds the GPU. Logged as assumed, not taken, so a
+            // log tells this guess apart from a present the statistics confirm.
+            taken = 1;
+            assumed = 1;
+        }
+    }
+    SetWindowPos(dxc_surface, NULL, 0, 0, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE);
+    dxc_state_marks[DXC_STATE_SHOWN] = dxc_now_ms();
+    double ready_at = dxc_state_marks[DXC_STATE_READY];
+    fprintf(stderr,
+            "compose-rust: resize-mode: steps after the frame was ready at %.1f ms: WM_WINDOWPOSCHANGED +%.2f, "
+            "WM_SIZE +%.2f, copied +%.2f, child parked +%.2f, moved in +%.2f ms after %d composition%s (present %s)\n",
+            ready_at, dxc_state_marks[DXC_STATE_CHANGED] - ready_at, dxc_state_marks[DXC_STATE_SIZE] - ready_at,
+            dxc_state_marks[DXC_STATE_COPIED] - ready_at, dxc_state_marks[DXC_STATE_FITTED] - ready_at,
+            dxc_state_marks[DXC_STATE_SHOWN] - ready_at, waits, waits == 1 ? "" : "s",
+            assumed ? "assumed taken, no frame statistics" : taken ? "taken" : "not seen taken");
     return 1;
 }
 
@@ -3368,7 +3434,9 @@ static int dxc_show_ready_surface(int32_t width, int32_t height) {
         return 0;
     }
     UINT fit = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE;
-    if (dxc_surface_return == DXC_SURFACE_RETURN_NCCALC) {
+    if (dxc_surface_return == DXC_SURFACE_RETURN_PARKED && ready) {
+        if (!dxc_show_parked_surface(width, height)) return 0;
+    } else if (dxc_surface_return == DXC_SURFACE_RETURN_NCCALC) {
         if (!ready) return 0;
         ShowWindow(dxc_surface, SW_SHOWNA);
     } else if (dxc_surface_return == DXC_SURFACE_RETURN_STAGED && ready) {
@@ -3746,7 +3814,8 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
         return;
     }
     int ready = drawn && hidden &&
-                (dxc_surface_return == DXC_SURFACE_RETURN_NCCALC || dxc_surface_return == DXC_SURFACE_RETURN_STAGED) &&
+                (dxc_surface_return == DXC_SURFACE_RETURN_NCCALC || dxc_surface_return == DXC_SURFACE_RETURN_STAGED ||
+                 dxc_surface_return == DXC_SURFACE_RETURN_PARKED) &&
                 dxc_ready_surface(width, height);
     // The composition route has no child to hide (hidden is 0 there): the frame goes into the
     // surface now, and is committed here or in WM_SIZE by whether the size shrinks
@@ -4176,6 +4245,7 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         dxc_resize_begin_drag(&dxc_sizing);
         dxc_drag_predrawn_steps = 0;
         dxc_drag_flushed_steps = 0;
+        dxc_drag_started_ms = dxc_now_ms();
         dxc_comp_frame_first_steps = 0;
         dxc_comp_timed_steps = 0;
         if (dxc_on_comp) {
@@ -4208,6 +4278,14 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         dxc_mode("size-move", "on", "off", "WM_EXITSIZEMOVE");
         fprintf(stderr, "compose-rust: resize-proof drag steps drawn ahead=%d waited for a composition=%d\n",
                 dxc_drag_predrawn_steps, dxc_drag_flushed_steps);
+        {
+            // How fast the window followed: the steps it took a size in, over the drag's length.
+            // Waiting for a composition before each step slows this to at most one per refresh.
+            double drag_ms = dxc_now_ms() - dxc_drag_started_ms;
+            fprintf(stderr, "compose-rust: drag pace steps=%d over %.1f ms = %.1f steps/s (waited=%d)\n",
+                    dxc_drag_predrawn_steps, drag_ms, drag_ms > 0.0 ? dxc_drag_predrawn_steps * 1000.0 / drag_ms : 0.0,
+                    dxc_drag_flushed_steps);
+        }
         if (dxc_on_comp) {
             fprintf(stderr, "compose-rust: dcomp: drag steps shown before the window shrank=%d (DXC_DCOMP_COMMIT=%s)\n",
                     dxc_comp_frame_first_steps, dxc_comp_commit_names[dxc_comp_commit_mode]);

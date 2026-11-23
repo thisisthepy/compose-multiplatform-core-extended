@@ -117,11 +117,12 @@ static void resize_predraw_decisions(void) {
     CHECK(dxc_resize_drag_predraw_wanted(&resize, 1, 0, 0, 616, 472, 624, 472) == 0);
     dxc_resize_end_drag(&resize);
     // The wait for a composition per step follows the compositor's generation unless asked.
+    // Every build waits unless asked not to (compose-rust#926).
     CHECK(dxc_resize_drag_flush_wanted(-1, 20348) == 1);
     CHECK(dxc_resize_drag_flush_wanted(-1, 19045) == 1);
-    CHECK(dxc_resize_drag_flush_wanted(-1, 22000) == 0);
-    CHECK(dxc_resize_drag_flush_wanted(-1, 26100) == 0);
-    CHECK(dxc_resize_drag_flush_wanted(-1, 0) == 0);
+    CHECK(dxc_resize_drag_flush_wanted(-1, 22000) == 1);
+    CHECK(dxc_resize_drag_flush_wanted(-1, 26100) == 1);
+    CHECK(dxc_resize_drag_flush_wanted(-1, 0) == 1);
     CHECK(dxc_resize_drag_flush_wanted(0, 20348) == 0);
     CHECK(dxc_resize_drag_flush_wanted(1, 26100) == 1);
 
