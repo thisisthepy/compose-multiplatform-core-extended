@@ -36,7 +36,14 @@
 #include <string.h>
 #include <wchar.h>
 
-void compose_rust_renderer_request_frame(void);
+/* What the application asked to be called when an answer arrives (dxc_notify_set_wake), so it
+ * draws the frame that delivers it. Null until it asks. Read and written atomically: answers
+ * arrive on the toasts' own threads. */
+static void *volatile dxc_notify_wake;
+
+void dxc_notify_set_wake(void (*wake)(void)) {
+    InterlockedExchangePointer((PVOID volatile *)&dxc_notify_wake, (PVOID)wake);
+}
 
 enum {
     DXC_NOTIFY_NONE = 0,
@@ -245,7 +252,9 @@ static void dxc_notify_push(int32_t kind, int32_t value, char *key) {
     }
     dxc_notify_tail = event;
     ReleaseSRWLockExclusive(&dxc_notify_lock);
-    compose_rust_renderer_request_frame();
+    void (*wake)(void) =
+        (void (*)(void))InterlockedCompareExchangePointer((PVOID volatile *)&dxc_notify_wake, NULL, NULL);
+    if (wake != NULL) wake();
 }
 
 /* ---------------------------------------------------------------------------------------

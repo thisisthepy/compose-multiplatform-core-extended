@@ -355,8 +355,11 @@ int32_t dxc_native_file_dialog_next(int64_t *request, int32_t *status, int32_t *
 // the answer and returns the bytes written. -1 when there is no such answer or no room.
 int32_t dxc_native_file_dialog_take(int64_t request, char *out, int32_t capacity);
 
-// The toasts, win32_notifications.c. The application defines
-// compose_rust_renderer_request_frame(void), which the toasts call when an answer arrives.
+// The toasts, win32_notifications.c. An answer (a press on a toast, a permission) waits in a
+// queue for dxc_notify_next_event, and the toasts call the function given to
+// dxc_notify_set_wake, from any thread, so the application draws the frame that takes it.
+// Nothing is called until one is given; null stops the calls.
+void dxc_notify_set_wake(void (*wake)(void));
 int32_t dxc_notify_start(void);
 void dxc_notify_request_permission(void);
 void dxc_notify_refresh_permission(void);
