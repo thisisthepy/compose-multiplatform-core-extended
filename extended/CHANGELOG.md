@@ -15,6 +15,33 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   (`dxc_native_popup_menu`, `showPopupMenu`). A shortcut is text at a right-aligned tab stop, never a
   key equivalent; enabled state is the entry's (`autoenablesItems` off). Both paths describe their
   `NSMenu` the same way (`describePopupMenu`), and their tests compare it.
+- **Feature.** The pointer's shape can be any of the 36 CSS `cursor` keywords (`CursorShape`, in
+  common, numbered as compose-rust's `Cursor` property; FR-47.1). Each has the closest shape on
+  every desktop window: `win32Idc` (Windows `IDC_*`), `x11Font` (the X cursor font) and `appKit`
+  (`NSCursor`), with `None` hiding the pointer; Windows has no magnifier, so the zoom keywords
+  are the crosshair, and grab and grabbing are the hand. The Windows window sets them with
+  `dxc_native_set_cursor_id` (`Win32Loop.setCursorShape`) and the X11 window with
+  `X11Window.setCursorShape`. The six-shape `setCursor` calls are unchanged.
+- **Feature.** The Windows window's caption strip is as tall as its title bar mode asks (FR-19.7): a
+  `TitleBarStyle.Normal` window's strip is taller (`Win32Chrome.NORMAL_CAPTION_HEIGHT`, 44 points)
+  than a `Simple` one's (the platform's 32), and the system's hit test answers for the same strip.
+  `dxc_native_window_configure_caption_height` (`Win32NativeWindow.captionHeight`) tells the next
+  window its height, so a renderer whose design system says another one is answered for it too;
+  `Win32NativeWindow.open(config)` configures it from `Win32Chrome`. The buttons stay three of 46
+  points at the trailing end. `Chrome::System` is unchanged.
+- **Fix.** On the Windows window's GDI route (the default), a restore from maximised can show
+  the top left of the maximised picture at the restored size for one composition (2 of 96 size
+  changes at 200 % on windows-2025, DarkPyonix/compose-rust#926). The swapchain's child, hidden
+  for the size change, is shown in place and then presented to, and DWM composes a child shown
+  again with the last picture it took from it until the new present lands. `DXC_SURFACE_RETURN=parked`
+  brings the child back parked outside the client area, presents to it there, and moves it into
+  place once DWM has taken the present; it stays opt-in until a run shows that present taken by
+  frame statistics, and the log says "assumed taken" when no statistics answered. A step of an edge
+  drag now also waits for one composition before the window takes its size on every Windows
+  build, not only on Windows 10: one shrinking step in 24 drags still showed the wider picture
+  cut by the narrower window on windows-2025. A drag step then paces at one composition, as the
+  GPU path does; the `drag pace` log line gives the steps per second (`DXC_DRAG_FLUSH=0` keeps
+  the earlier pace).
 
 - **Fix.** The Windows window (`windows-shared`) opens on the GDI route by default again;
   `DXC_DCOMP=1` asks for the DirectComposition route. On a real GPU, with a real application

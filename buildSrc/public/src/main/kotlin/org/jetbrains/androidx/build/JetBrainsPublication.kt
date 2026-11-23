@@ -187,6 +187,32 @@ object JetBrainsPublication {
         else -> error("Unknown group replacement for projectPath=$projectPath")
     }
 
+    /**
+     * The upstream JetBrains group under which JetBrains publishes [projectPath].
+     * Used for capability conflict resolution when external JetBrains artifacts pull in
+     * transitive dependencies on `org.jetbrains.compose.*` or `org.jetbrains.androidx.*`
+     * that correspond to local projects in this fork.
+     */
+    fun jetBrainsUpstreamGroupFor(projectPath: String): String = when {
+        projectPath == ":annotation:annotation" -> JETBRAINS_ANNOTATION_GROUP
+        projectPath == ":collection:collection" -> JETBRAINS_COLLECTION_GROUP
+        projectPath.startsWith(":compose:") ->
+            JETBRAINS_COMPOSE_GROUP_PREFIX + projectPath
+                .removePrefix(":compose:")
+                .substringBeforeLast(":")
+                .replace(":", ".")
+        projectPath.startsWith(":") ->
+            JETBRAINS_FORK_GROUP_PREFIX + projectPath
+                .removePrefix(":")
+                .substringBeforeLast(":")
+                .replace(":", ".")
+        else -> error("Unknown upstream group replacement for projectPath=$projectPath")
+    }
+
+    fun isJetBrainsUpstreamGroup(group: String): Boolean =
+        group.startsWith(JETBRAINS_FORK_GROUP_PREFIX) ||
+            group.startsWith(JETBRAINS_COMPOSE_GROUP_PREFIX)
+
     fun projectPathForCoordinates(group: String, name: String): String? = when {
         isAndroidXGroup(group) ->
             ":${group.removePrefix(ANDROIDX_GROUP_PREFIX).replace(".", ":")}:$name"

@@ -14,9 +14,11 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.value
+import org.thisisthepy.compose.window.AccessibleAction
 import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.TextScale
 import org.thisisthepy.compose.window.Win32Chrome
+import org.thisisthepy.compose.window.CursorShape
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowMeasurement
@@ -35,13 +37,16 @@ import org.thisisthepy.compose.window.windows.c.dxc_native_raster_end
 import org.thisisthepy.compose.window.windows.c.dxc_native_report_metrics
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_accessibility
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_cursor
+import org.thisisthepy.compose.window.windows.c.dxc_native_set_cursor_id
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_draw_callback
 import org.thisisthepy.compose.window.windows.c.dxc_native_set_raster_resize
+import org.thisisthepy.compose.window.windows.c.dxc_native_take_accessibility_argument
 import org.thisisthepy.compose.window.windows.c.dxc_native_text_scale_percent
 import org.thisisthepy.compose.window.windows.c.dxc_native_window
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_action
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_begin_drag
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_configure_app_caption
+import org.thisisthepy.compose.window.windows.c.dxc_native_window_configure_caption_height
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_is_zoomed
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_closed
 import org.thisisthepy.compose.window.windows.c.dxc_native_window_configure
@@ -164,6 +169,13 @@ class Win32NativeWindow private constructor(
         fun appCaption(enabled: Boolean) = dxc_native_window_configure_app_caption(if (enabled) 1 else 0)
 
         /**
+         * How tall the next window's caption strip is, in points (FR-19.7): the height the
+         * scene draws its caption at, so the system's hit test answers for the same strip.
+         * 0 is the platform's 32. Called after [configure], which sets it back to 0.
+         */
+        fun captionHeight(points: Int) = dxc_native_window_configure_caption_height(points)
+
+        /**
          * Hands the press the scene holds to the system's move loop ([edge] 0), or its resize
          * loop from an edge (1 left, 2 right, 3 top, 4 bottom, 5 to 8 the corners from top
          * left), so the window moves or resizes, snaps and crosses monitors as any window does.
@@ -187,6 +199,7 @@ class Win32NativeWindow private constructor(
                 minHeight = config.minHeight,
                 systemChrome = Win32Chrome.systemCaption(config),
             )
+            captionHeight(Win32Chrome.captionHeightDip(config))
             val x = config.x
             val y = config.y
             if (x != null && y != null) {
@@ -257,7 +270,14 @@ object Win32Loop {
                 // drop is read from its own buffer. The window reports it like the macOS and
                 // Linux windows do: the paths in `text`, NUL between them.
                 events.add(
-                    if (event.kind == WindowEvent.FILES_DROPPED) event.copy(text = readDroppedPaths()) else event,
+                    when {
+                        event.kind == WindowEvent.FILES_DROPPED -> event.copy(text = readDroppedPaths())
+                        // A reader's new value is kept beside the event, since it can be longer
+                        // than the event's text, and is read here in the same order.
+                        event.kind == WindowEvent.ACCESSIBILITY_ACTION &&
+                            event.codePoint == AccessibleAction.SET_VALUE -> event.copy(text = takeAccessibilityArgument())
+                        else -> event
+                    },
                 )
             }
         }
@@ -276,8 +296,36 @@ object Win32Loop {
 
     private const val DROPPED_PATHS_BYTES = 64 * 1024
 
+    /**
+     * The new value of the oldest SET_VALUE request a reader made that has not been read, or
+     * empty when there is none. Asked once with room for most values and again with the room
+     * the window says a longer one needs.
+     */
+    fun takeAccessibilityArgument(): String = memScoped {
+        val first = allocArray<ByteVar>(ARGUMENT_BYTES)
+        val length = dxc_native_take_accessibility_argument(first, ARGUMENT_BYTES)
+        when {
+            length < 0 -> ""
+            length <= ARGUMENT_BYTES -> if (length == 0) "" else first.readBytes(length).decodeToString()
+            else -> {
+                // Nothing was taken; the window said how much room the value needs.
+                val room = allocArray<ByteVar>(length)
+                val taken = dxc_native_take_accessibility_argument(room, length)
+                if (taken <= 0 || taken > length) "" else room.readBytes(taken).decodeToString()
+            }
+        }
+    }
+
+    private const val ARGUMENT_BYTES = 1024
+
     /** The pointer's shape: [Win32Cursor.ARROW], [Win32Cursor.HAND], [Win32Cursor.TEXT] or [Win32Cursor.CROSSHAIR]. */
     fun setCursor(shape: Int) = dxc_native_set_cursor(shape)
+
+    /**
+     * The pointer's shape by its CSS keyword (FR-47.1): the closest system cursor
+     * ([CursorShape.win32Idc]), or hidden for [CursorShape.None].
+     */
+    fun setCursorShape(shape: CursorShape) = dxc_native_set_cursor_id(shape.win32Idc)
 
     /** What a caption button asks of the window: 0 minimises, 1 maximises or restores, 2 closes. */
     fun action(which: Int) = dxc_native_window_action(which)

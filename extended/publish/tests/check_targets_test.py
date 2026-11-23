@@ -156,7 +156,7 @@ class CheckTargets(unittest.TestCase):
 
     def test_design_systems_are_read(self):
         modules = {artifact: platforms for _, _, artifact, platforms in ct.read_amper_project(DESIGN_SYSTEMS)}
-        self.assertEqual(8, len(modules), modules)
+        self.assertEqual(9, len(modules), modules)
         for artifact, platforms in modules.items():
             self.assertTrue(artifact == "designsystem" or artifact.startswith("designsystem-"), artifact)
             for wanted in ("jvm", "android", "iosArm64", "iosSimulatorArm64", "macosArm64", "linuxX64"):
