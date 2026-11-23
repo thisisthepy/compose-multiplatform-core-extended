@@ -33,7 +33,11 @@ jobs:
 
       - name: Compose Publish Darwin + Native Linux
         run: |
-          ./gradlew publishComposeJb -Pcompose.platforms=macos,ios,tvos,watchos,linux,mingw \
+          # Upstream skiko publishes no mingwX64 artifact unless extended/skiko built one locally,
+          # and Gradle resolves metadata for every enabled platform. Disable WINDOWS here; mingwX64
+          # publishing is verified by extended-publish-local.yml and extended-publish.yml.
+          ./gradlew publishComposeJb -Pcompose.platforms=macos,ios,tvos,watchos,linux \
+            -Pandroidx.enabled.kmp.target.platforms=-WINDOWS \
             --no-daemon --stacktrace
 
   compose-web-publish:
@@ -49,6 +53,7 @@ jobs:
       - name: Compose Publish Web
         run: |
           ./gradlew publishComposeJb -Pcompose.platforms=web \
+            -Pandroidx.enabled.kmp.target.platforms=-WINDOWS \
             --no-daemon --stacktrace
 
   compose-jvm-publish:
@@ -64,4 +69,5 @@ jobs:
       - name: Compose Publish JVM
         run: |
           ./gradlew publishComposeJb -Pcompose.platforms=jvm,android \
+            -Pandroidx.enabled.kmp.target.platforms=-WINDOWS \
             --no-daemon --stacktrace
