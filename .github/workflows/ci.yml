@@ -73,6 +73,11 @@ jobs:
     if: contains(needs.plan.outputs.suites, ',design_systems,')
     uses: ./.github/workflows/design-systems.yml
     secrets: inherit
+  fork_buildsrc_tests:
+    needs: plan
+    if: contains(needs.plan.outputs.suites, ',fork_buildsrc_tests,')
+    uses: ./.github/workflows/fork-buildsrc-tests.yml
+    secrets: inherit
   extended_coordinates:
     needs: plan
     if: contains(needs.plan.outputs.suites, ',extended_coordinates,')
