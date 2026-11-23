@@ -3,7 +3,7 @@
 `compose/` 아래의 upstream 변경 기록은 upstream 의 것입니다. 이 문서는 이 포크가 더한 모듈의 변경을 적습니다.
 영어판은 [CHANGELOG.md](CHANGELOG.md) 입니다.
 
-## 출시 전
+## 1.11.1-ext.6 (2026-11-23)
 
 ### 배포
 
