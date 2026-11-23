@@ -48,11 +48,32 @@ _Static_assert(sizeof(struct dxc_native_window) == 5 * sizeof(void *), "five poi
 
 static int failures;
 
-// The toasts ask the renderer for a frame; the renderer is not part of this check.
-void compose_rust_renderer_request_frame(void) {}
-
 #define CHECK(condition) \
     do { if (!(condition)) { printf("fail: %s (line %d)\n", #condition, __LINE__); failures++; } } while (0)
+
+// EXT-WIN-13: nothing under extended/window names a renderer. The toasts wake whatever the
+// application registered with dxc_notify_set_wake when an answer arrives, and no one before.
+static int ext_win_13_wakes;
+static void ext_win_13_wake(void) { ext_win_13_wakes++; }
+
+static void ext_win_13_toasts_wake_the_registered_callback(void) {
+    char key[8];
+    int32_t value = 0;
+    // Nothing registered: the answer is queued and nothing is called.
+    dxc_notify_request_permission();
+    CHECK(ext_win_13_wakes == 0);
+    CHECK(dxc_notify_next_event(key, sizeof key, &value) == 2);  // DXC_NOTIFY_PERMISSION
+    dxc_notify_set_wake(ext_win_13_wake);
+    dxc_notify_request_permission();
+    CHECK(ext_win_13_wakes == 1);
+    CHECK(dxc_notify_next_event(key, sizeof key, &value) == 2);
+    CHECK(value == 4);  // not started: DXC_PERMISSION_UNSUPPORTED
+    dxc_notify_set_wake(NULL);
+    dxc_notify_request_permission();
+    CHECK(ext_win_13_wakes == 1);
+    CHECK(dxc_notify_next_event(key, sizeof key, &value) == 2);
+    CHECK(dxc_notify_next_event(key, sizeof key, &value) == 0);
+}
 
 // The first window's outside against the work area of its monitor (#185).
 static int placement_is(struct dxc_placement_rect r, int32_t l, int32_t t, int32_t rt, int32_t b) {
@@ -2191,6 +2212,7 @@ static void nfr8_uia_reader_requests_reach_the_scene(void) {
 }
 
 int main(int argc, char **argv) {
+    ext_win_13_toasts_wake_the_registered_callback();
     resize_decisions();
     resize_predraw_decisions();
     probe_judge_arithmetic();
