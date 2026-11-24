@@ -47,7 +47,16 @@
 // PROBE_DRAW_MS=<n> makes every frame take n ms longer, for a renderer that is slow to draw.
 // PROBE_RASTER=0 draws resize frames on the GPU (the window's DXGI path) instead of the CPU.
 // PROBE_SAVE=<dir> writes the first faulty frames there as BMP files.
+// PROBE_SAVE_PHASE=<phase> (with PROBE_SAVE) also writes every composed frame of that phase,
+// faulty or not, as phase-NNN-<phase>.bmp, the first PROBE_SAVE_LIMIT (default 16) of them.
 // PROBE_VERBOSE=1 prints every composed frame judged, not only the faulty ones.
+// Bounds (states mode, report-only; it does not change the verdict or the exit status): the
+// picture's left and right on the row and its top and bottom on the column, for every composed
+// frame. A size change has two right answers, the state before it (the last frame of the phase
+// before) and the state after it (the last frame of its own phase, settled 700 ms later). A
+// frame that is neither, within 1 px on every side, is "probe: BOUNDS": a picture drawn at the
+// wrong origin or at the old size inside the new rectangle with the rest transparent, which the
+// strips cannot see because the picture still ends in its own strips.
 // DXC_DCOMP=1 (read by the window) opens it on DirectComposition instead of the GDI route;
 // the window says which route it took ("compose-rust: dcomp: route"), and the memory lines
 // the probe asks for at rest and at the end carry it too ("route=").
@@ -289,6 +298,14 @@ static int capture_faulty_by_phase[PHASE_DONE + 1];
 static int capture_frames_by_phase[PHASE_DONE + 1];
 static const char *capture_save_dir;
 static int capture_verbose;
+static int capture_save_phase = -1, capture_save_limit = 16, capture_phase_saved;
+// Every composed frame's picture bounds, for the bounds judge after the run.
+struct capture_bound {
+    int frame, phase, left, top, right, bottom;
+};
+#define CAPTURE_BOUNDS_MAX 8192
+static struct capture_bound capture_bounds[CAPTURE_BOUNDS_MAX];
+static int capture_bounds_count;
 
 static int is_backdrop(const uint8_t *bgra) {
     int b = bgra[0], g = bgra[1], r = bgra[2];
@@ -718,6 +735,31 @@ static DWORD WINAPI capture_thread(LPVOID unused) {
         capture_frames++;
         capture_frames_by_phase[phase]++;
         int faulty = right >= 0 && bottom >= 0 && (!right_strip || !bottom_strip);
+        // The picture's left on the row and its top on the column, for the bounds judge.
+        int left = -1, top = -1;
+        for (int x = 0; x < (int)screen_width; x++) {
+            if (!is_backdrop(row + (size_t)x * 4)) { left = x; break; }
+        }
+        for (int y = 0; y <= bottom_from; y++) {
+            if (!is_backdrop(column + (size_t)y * 4)) { top = y; break; }
+        }
+        if (capture_bounds_count < CAPTURE_BOUNDS_MAX) {
+            struct capture_bound bound = {capture_frames, (int)phase, left, top, right, bottom};
+            capture_bounds[capture_bounds_count++] = bound;
+        }
+        if (phase == capture_save_phase && capture_save_dir != NULL && capture_phase_saved < capture_save_limit) {
+            ID3D11DeviceContext_CopyResource(context, (ID3D11Resource *)full_copy, (ID3D11Resource *)frame);
+            D3D11_MAPPED_SUBRESOURCE whole;
+            if (SUCCEEDED(ID3D11DeviceContext_Map(context, (ID3D11Resource *)full_copy, 0, D3D11_MAP_READ, 0, &whole))) {
+                char kept[MAX_PATH];
+                snprintf(kept, sizeof kept, "%s\\phase-%03d-%s.bmp", capture_save_dir, capture_phase_saved,
+                         probe_phase_names[phase]);
+                save_bmp(kept, (const uint8_t *)whole.pData, whole.RowPitch, screen_width, screen_height);
+                ID3D11DeviceContext_Unmap(context, (ID3D11Resource *)full_copy, 0);
+                fprintf(stderr, "probe: saved frame %d as %s\n", capture_frames, kept);
+                capture_phase_saved++;
+            }
+        }
         if (faulty) {
             capture_faulty++;
             capture_faulty_by_phase[phase]++;
@@ -740,10 +782,12 @@ static DWORD WINAPI capture_thread(LPVOID unused) {
                     right_strip ? "with its strip" : "WITHOUT its strip", bottom,
                     bottom_strip ? "with its strip" : "WITHOUT its strip", saved);
         } else if (capture_verbose) {
-            fprintf(stderr, "probe: frame %d presented at %.1f ms phase %s: right x=%d, bottom y=%d, both strips\n",
+            fprintf(stderr,
+                    "probe: frame %d presented at %.1f ms phase %s: right x=%d, bottom y=%d, both strips, "
+                    "left x=%d, top y=%d\n",
                     capture_frames,
                     (double)info.LastPresentTime.QuadPart * 1000.0 / (double)probe_frequency.QuadPart,
-                    probe_phase_names[phase], right, bottom);
+                    probe_phase_names[phase], right, bottom, left, top);
         }
         if (area_copy != NULL) {
             judge_capture(context, area_copy, &area_box, resource, phase, 1, capture_frames,
@@ -1261,6 +1305,52 @@ static int judge_report(const char *mode) {
     return judged;
 }
 
+static int bound_is(const struct capture_bound *a, const struct capture_bound *b) {
+    return abs(a->left - b->left) <= 1 && abs(a->top - b->top) <= 1 && abs(a->right - b->right) <= 1 &&
+           abs(a->bottom - b->bottom) <= 1;
+}
+
+/**
+ * The bounds judge (see the top of the file): each phase's frames against the state before its
+ * change and the state after it. Prints the frames that are neither and a summary line; the
+ * count it returns does not enter the verdict.
+ */
+static int bounds_report(void) {
+    int odd = 0, judged = 0;
+    int odd_by_phase[PHASE_DONE + 1] = {0};
+    int start = 0;
+    const struct capture_bound *before = NULL;
+    while (start < capture_bounds_count) {
+        int end = start;
+        while (end + 1 < capture_bounds_count && capture_bounds[end + 1].phase == capture_bounds[start].phase) end++;
+        const struct capture_bound *after = &capture_bounds[end];
+        if (before != NULL && capture_bounds[start].phase != PHASE_DONE) {
+            for (int i = start; i <= end; i++) {
+                const struct capture_bound *b = &capture_bounds[i];
+                judged++;
+                if (bound_is(b, before) || bound_is(b, after)) continue;
+                odd++;
+                odd_by_phase[b->phase]++;
+                fprintf(stderr,
+                        "probe: BOUNDS frame %d phase %s: picture x %d-%d y %d-%d, before x %d-%d y %d-%d, "
+                        "after x %d-%d y %d-%d\n",
+                        b->frame, probe_phase_names[b->phase], b->left, b->right, b->top, b->bottom, before->left,
+                        before->right, before->top, before->bottom, after->left, after->right, after->top,
+                        after->bottom);
+            }
+        }
+        before = after;
+        start = end + 1;
+    }
+    fprintf(stderr, "probe: bounds judge: %d of %d frames are neither the state before nor after their change;",
+            odd, judged);
+    for (int i = 0; i <= PHASE_DONE; i++) {
+        if (odd_by_phase[i] > 0) fprintf(stderr, " %s=%d", probe_phase_names[i], odd_by_phase[i]);
+    }
+    fprintf(stderr, "%s\n", capture_bounds_count >= CAPTURE_BOUNDS_MAX ? " (frame store full)" : "");
+    return odd;
+}
+
 int main(int argc, char **argv) {
     const char *mode = argc > 1 ? argv[1] : "states";
     probe_mode = mode;
@@ -1272,6 +1362,11 @@ int main(int argc, char **argv) {
     QueryPerformanceFrequency(&probe_frequency);
     probe_draw_ms = getenv("PROBE_DRAW_MS") != NULL ? atoi(getenv("PROBE_DRAW_MS")) : 0;
     capture_save_dir = getenv("PROBE_SAVE");
+    const char *save_phase = getenv("PROBE_SAVE_PHASE");
+    for (int named = 0; save_phase != NULL && named <= PHASE_DONE; named++) {
+        if (strcmp(save_phase, probe_phase_names[named]) == 0) capture_save_phase = named;
+    }
+    if (getenv("PROBE_SAVE_LIMIT") != NULL) capture_save_limit = atoi(getenv("PROBE_SAVE_LIMIT"));
     capture_verbose = getenv("PROBE_VERBOSE") != NULL && strcmp(getenv("PROBE_VERBOSE"), "0") != 0;
     if (capture_save_dir != NULL) CreateDirectoryA(capture_save_dir, NULL);
     int raster = getenv("PROBE_RASTER") == NULL || strcmp(getenv("PROBE_RASTER"), "0") != 0;
@@ -1352,6 +1447,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "probe: drag lag moves=%d px_median=%d px_p95=%d px_max=%d longest_hold_ms=%d\n", drag_moves,
                 drag_lags[drag_moves / 2], drag_lags[drag_moves * 95 / 100], drag_lag_max, drag_hold_max_ms);
     }
+    if (strcmp(mode, "states") == 0) bounds_report();
     int clean = !capture_failed && capture_frames > 0 && capture_faulty == 0;
     if (judge_mode) {
         // The judged modes' verdict is their judges': none faulty in a run that judged frames.
