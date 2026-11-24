@@ -61,9 +61,6 @@ struct dxc_dcomp {
     // The size the visual is clipped to, as last given to it.
     int32_t clip_width;
     int32_t clip_height;
-    // Whether the visual carries a transform that stretches the shown frame into a larger or
-    // smaller view (dxc_dcomp_stretch_shown); the next frame drawn takes it off.
-    bool stretched;
 };
 
 namespace {
@@ -349,18 +346,6 @@ extern "C" int dxc_dcomp_begin_draw(dxc_dcomp *comp, int32_t width, int32_t heig
                     static_cast<unsigned long>(clipped));
         }
     }
-    if (comp->stretched) {
-        // The frame drawn now is the view's own size: shown at 1:1 again from its commit.
-        D2D_MATRIX_3X2_F identity = {};
-        identity._11 = 1.0f;
-        identity._22 = 1.0f;
-        HRESULT reset = comp->visual->SetTransform(identity);
-        if (FAILED(reset)) {
-            fprintf(stderr, "compose-rust: dcomp: SetTransform back to 1:1 failed with 0x%08lx\n",
-                    static_cast<unsigned long>(reset));
-        }
-        comp->stretched = false;
-    }
     RECT whole = {0, 0, width, height};
     POINT offset = {0, 0};
     HRESULT began = surface->BeginDraw(&whole, __uuidof(ID3D11Texture2D), texture, &offset);
@@ -397,33 +382,6 @@ extern "C" int dxc_dcomp_end_draw(dxc_dcomp *comp, void *texture) {
             return 3;
         }
     }
-    return 0;
-}
-
-extern "C" int dxc_dcomp_stretch_shown(dxc_dcomp *comp, int32_t view_width, int32_t view_height) {
-    if (comp == nullptr || comp->visual == nullptr || comp->clip_width <= 0 || comp->clip_height <= 0 ||
-        view_width <= 0 || view_height <= 0) {
-        return 1;
-    }
-    // As DSA's shown_frame_placement: the frame keeps its proportions, fits the view and sits in
-    // its middle. The clip stays the frame's own, in the visual's coordinates, so it scales too.
-    float scale_x = static_cast<float>(view_width) / static_cast<float>(comp->clip_width);
-    float scale_y = static_cast<float>(view_height) / static_cast<float>(comp->clip_height);
-    float scale = scale_x < scale_y ? scale_x : scale_y;
-    D2D_MATRIX_3X2_F placed = {};
-    placed._11 = scale;
-    placed._22 = scale;
-    placed._31 = (static_cast<float>(view_width) - scale * static_cast<float>(comp->clip_width)) / 2.0f;
-    placed._32 = (static_cast<float>(view_height) - scale * static_cast<float>(comp->clip_height)) / 2.0f;
-    HRESULT set = comp->visual->SetTransform(placed);
-    if (FAILED(set)) {
-        fprintf(stderr, "compose-rust: dcomp: SetTransform stretching %dx%d into %dx%d failed with 0x%08lx\n",
-                (int)comp->clip_width, (int)comp->clip_height, (int)view_width, (int)view_height,
-                static_cast<unsigned long>(set));
-        return 2;
-    }
-    comp->visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
-    comp->stretched = true;
     return 0;
 }
 
