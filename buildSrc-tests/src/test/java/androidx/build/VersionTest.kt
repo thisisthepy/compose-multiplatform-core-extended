@@ -81,6 +81,16 @@ class VersionTest {
     }
 
     @Test
+    fun preReleaseIterationIsTheNumberAfterTheKind() {
+        assertEquals(7, Version("1.11.0-alpha07").preReleaseIteration)
+        assertEquals(1, Version("2.11.0-beta01").preReleaseIteration)
+        assertEquals(2, Version("1.0.0-rc02").preReleaseIteration)
+        assertEquals(3, Version("1.0.0-dev03").preReleaseIteration)
+        assertEquals(null, Version("1.11.1").preReleaseIteration)
+        assertEquals(null, Version("1.0.0-SNAPSHOT").preReleaseIteration)
+    }
+
+    @Test
     fun forkDevelopmentBuildRoundTrips() {
         val version = Version("1.11.1-ext.1-dev")
         assertEquals("ext.1-dev", version.forkRelease)
@@ -94,7 +104,7 @@ class VersionTest {
     fun forkReleasesOrderByTheirNumber() {
         assert(Version("1.11.1") < Version("1.11.1-ext.1-dev"))
         assert(Version("1.11.1-ext.1-dev") < Version("1.11.1-ext.1"))
-        assert(Version("1.11.1-ext.1") < Version("1.11.1-ext.5"))
+        assert(Version("1.11.1-ext.1") < Version("1.11.1-ext.6"))
         assert(Version("1.11.1-ext.9") < Version("1.11.1-ext.10"))
         assert(Version("1.11.1-ext.10") < Version("1.11.2-ext.1"))
     }

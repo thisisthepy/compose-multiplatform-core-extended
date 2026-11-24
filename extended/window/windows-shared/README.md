@@ -42,9 +42,9 @@ compiled with `cl /c /std:c++17 /GR- /EHs-c-` and its object goes beside the oth
 
 The application links `user32`, `gdi32`, `ole32`, `oleaut32`, `imm32`, `uiautomationcore`,
 `d3d12`, `dxgi`, `dxguid`, `shell32`, `advapi32` and `runtimeobject`. `dwmapi`, `d3d11` and
-`dcomp` are loaded at run time, so linking `dcomp.lib` is not needed. The toasts call
-`compose_rust_renderer_request_frame(void)` when an answer arrives, which the application
-defines.
+`dcomp` are loaded at run time, so linking `dcomp.lib` is not needed. The toasts call the
+function the application gives `dxc_notify_set_wake` when an answer arrives; the window names
+no renderer symbol.
 
 ## How frames reach the screen
 

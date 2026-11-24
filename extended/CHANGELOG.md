@@ -5,6 +5,24 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ## Unreleased
 
+### Packaging templates (`extended/packaging`)
+
+- **Change.** The templates now hold what compose-rust's packagers ship, because those packagers
+  fill them (compose-rust FR-22.6 criterion 11) and may only add to what a template renders.
+  `metadata-map.md` says the rule.
+  - `flatpak-manifest.json.in` is the part every Flathub manifest has: no `dir` sources, which
+    Flathub refuses. The payload (archives by URL and SHA-256, a patchelf module, the window's
+    socket, the icons) is the packager's addition. The runtime default is 25.08.
+  - `application.manifest.in` carries `asInvoker` beside the DPI awareness and no
+    identity or description: it is the one manifest every Windows executable built on
+    compose-rust carries, so it has no placeholder.
+  - `AppxManifest.xml.in` takes `{{identity_name}}` (the Store's reserved name),
+    `{{arch}}`, `{{language}}` and `{{background_color}}` (default `transparent`).
+  - `app.metainfo.xml.in` takes `{{summary}}`, `{{developer_id}}` and
+    `{{metadata_license}}`; `app.desktop.in`'s `Comment=` is `{{summary}}`.
+
+## 1.11.1-ext.6 (2026-11-23)
+
 ### Window modules (`org.thisisthepy.compose.window`)
 
 - **Feature.** Entry menus as the operating system's own on macOS (compose-rust FR-33.2): common
@@ -15,6 +33,11 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   (`dxc_native_popup_menu`, `showPopupMenu`). A shortcut is text at a right-aligned tab stop, never a
   key equivalent; enabled state is the entry's (`autoenablesItems` off). Both paths describe their
   `NSMenu` the same way (`describePopupMenu`), and their tests compare it.
+- **Change.** The Windows window's toasts no longer call `compose_rust_renderer_request_frame`,
+  a renderer's symbol every application had to define (EXT-WIN-13). An application gives
+  `dxc_notify_set_wake` the function to call when an answer arrives, from any thread; nothing is
+  called until it does. compose-rust registers its frame request there when it moves to this
+  release.
 - **Feature.** The pointer's shape can be any of the 36 CSS `cursor` keywords (`CursorShape`, in
   common, numbered as compose-rust's `Cursor` property; FR-47.1). Each has the closest shape on
   every desktop window: `win32Idc` (Windows `IDC_*`), `x11Font` (the X cursor font) and `appKit`
