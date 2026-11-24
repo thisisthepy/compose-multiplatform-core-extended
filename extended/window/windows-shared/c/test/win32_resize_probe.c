@@ -47,6 +47,8 @@
 // PROBE_DRAW_MS=<n> makes every frame take n ms longer, for a renderer that is slow to draw.
 // PROBE_RASTER=0 draws resize frames on the GPU (the window's DXGI path) instead of the CPU.
 // PROBE_SAVE=<dir> writes the first faulty frames there as BMP files.
+// PROBE_SAVE_PHASE=<phase> (with PROBE_SAVE) also writes every composed frame of that phase,
+// faulty or not, as phase-NNN-<phase>.bmp, the first PROBE_SAVE_LIMIT (default 16) of them.
 // PROBE_VERBOSE=1 prints every composed frame judged, not only the faulty ones.
 // DXC_DCOMP=1 (read by the window) opens it on DirectComposition instead of the GDI route;
 // the window says which route it took ("compose-rust: dcomp: route"), and the memory lines
@@ -289,6 +291,7 @@ static int capture_faulty_by_phase[PHASE_DONE + 1];
 static int capture_frames_by_phase[PHASE_DONE + 1];
 static const char *capture_save_dir;
 static int capture_verbose;
+static int capture_save_phase = -1, capture_save_limit = 16, capture_phase_saved;
 
 static int is_backdrop(const uint8_t *bgra) {
     int b = bgra[0], g = bgra[1], r = bgra[2];
@@ -718,6 +721,26 @@ static DWORD WINAPI capture_thread(LPVOID unused) {
         capture_frames++;
         capture_frames_by_phase[phase]++;
         int faulty = right >= 0 && bottom >= 0 && (!right_strip || !bottom_strip);
+        // Backdrop green left of the visible right edge on the row: a window that is drawn
+        // across its whole rectangle has none; a picture smaller than its rectangle, with the
+        // rest transparent, shows the backdrop there.
+        int green_inside = 0;
+        for (int x = 0; x < right; x++) {
+            if (is_backdrop(row + (size_t)x * 4)) green_inside++;
+        }
+        if (phase == capture_save_phase && capture_save_dir != NULL && capture_phase_saved < capture_save_limit) {
+            ID3D11DeviceContext_CopyResource(context, (ID3D11Resource *)full_copy, (ID3D11Resource *)frame);
+            D3D11_MAPPED_SUBRESOURCE whole;
+            if (SUCCEEDED(ID3D11DeviceContext_Map(context, (ID3D11Resource *)full_copy, 0, D3D11_MAP_READ, 0, &whole))) {
+                char kept[MAX_PATH];
+                snprintf(kept, sizeof kept, "%s\\phase-%03d-%s.bmp", capture_save_dir, capture_phase_saved,
+                         probe_phase_names[phase]);
+                save_bmp(kept, (const uint8_t *)whole.pData, whole.RowPitch, screen_width, screen_height);
+                ID3D11DeviceContext_Unmap(context, (ID3D11Resource *)full_copy, 0);
+                fprintf(stderr, "probe: saved frame %d as %s\n", capture_frames, kept);
+                capture_phase_saved++;
+            }
+        }
         if (faulty) {
             capture_faulty++;
             capture_faulty_by_phase[phase]++;
@@ -740,10 +763,12 @@ static DWORD WINAPI capture_thread(LPVOID unused) {
                     right_strip ? "with its strip" : "WITHOUT its strip", bottom,
                     bottom_strip ? "with its strip" : "WITHOUT its strip", saved);
         } else if (capture_verbose) {
-            fprintf(stderr, "probe: frame %d presented at %.1f ms phase %s: right x=%d, bottom y=%d, both strips\n",
+            fprintf(stderr,
+                    "probe: frame %d presented at %.1f ms phase %s: right x=%d, bottom y=%d, both strips, "
+                    "green inside on the row %d px\n",
                     capture_frames,
                     (double)info.LastPresentTime.QuadPart * 1000.0 / (double)probe_frequency.QuadPart,
-                    probe_phase_names[phase], right, bottom);
+                    probe_phase_names[phase], right, bottom, green_inside);
         }
         if (area_copy != NULL) {
             judge_capture(context, area_copy, &area_box, resource, phase, 1, capture_frames,
@@ -1272,6 +1297,11 @@ int main(int argc, char **argv) {
     QueryPerformanceFrequency(&probe_frequency);
     probe_draw_ms = getenv("PROBE_DRAW_MS") != NULL ? atoi(getenv("PROBE_DRAW_MS")) : 0;
     capture_save_dir = getenv("PROBE_SAVE");
+    const char *save_phase = getenv("PROBE_SAVE_PHASE");
+    for (int named = 0; save_phase != NULL && named <= PHASE_DONE; named++) {
+        if (strcmp(save_phase, probe_phase_names[named]) == 0) capture_save_phase = named;
+    }
+    if (getenv("PROBE_SAVE_LIMIT") != NULL) capture_save_limit = atoi(getenv("PROBE_SAVE_LIMIT"));
     capture_verbose = getenv("PROBE_VERBOSE") != NULL && strcmp(getenv("PROBE_VERBOSE"), "0") != 0;
     if (capture_save_dir != NULL) CreateDirectoryA(capture_save_dir, NULL);
     int raster = getenv("PROBE_RASTER") == NULL || strcmp(getenv("PROBE_RASTER"), "0") != 0;

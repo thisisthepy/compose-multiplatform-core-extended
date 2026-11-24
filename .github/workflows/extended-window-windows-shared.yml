@@ -299,24 +299,40 @@ jobs:
       # Experiment, not gated: on windows-2025 the composition route's faulty states frames are
       # nearly all maximise (8 of 9 in run 45110766340), the new picture cut by the old
       # rectangle. A maximise is the one change here that only grows, so its frame is committed
-      # in WM_SIZE. DXC_DCOMP_GROW_FLUSH=1 waits for one composition before that commit: if the
-      # maximise faults go away, DWM composed the commit before the window's new rectangle.
+      # in WM_SIZE. DXC_DCOMP_GROW_FLUSH=1 waits for one composition before that commit. Run
+      # 45451869316 had 0 faults in 24 waited maximises against 2 in 57 without, too few to
+      # tell, and the strip judge passes a frame of the old picture in the new rectangle with
+      # the rest transparent, which the wait could make. So every maximise frame is kept
+      # (PROBE_SAVE_PHASE) and the frames with backdrop green inside the window are counted,
+      # with the wait (32 runs) and without (8 runs).
       - name: Resize probe, maximise, restore and snap, composition route waiting before a grow's commit (comparison)
         shell: bash
         run: |
-          for run in 1 2 3 4 5 6 7 8; do
-            DXC_DCOMP=1 DXC_DCOMP_GROW_FLUSH=1 PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-dcomp-growflush-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-dcomp-growflush-$run.log || true
+          for way in growflush plain; do
+            flush=$([ "$way" = growflush ] && echo 1 || echo 0)
+            runs=$([ "$way" = growflush ] && seq 1 32 || seq 1 8)
+            for run in $runs; do
+              DXC_DCOMP=1 DXC_DCOMP_GROW_FLUSH=$flush PROBE_VERBOSE=1 PROBE_SAVE_PHASE=maximise PROBE_SAVE_LIMIT=16 PROBE_SAVE="out\\frames-dcomp-$way-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-dcomp-$way-$run.log || true
+            done
           done
-          changes=0; faulty=0
-          for log in out/probe-dcomp-growflush-?.log; do
-            changes=$((changes + $(grep -c 'resize-mode: frames gpu -> cpu' "$log" || true)))
-            faulty=$((faulty + $(grep -c 'probe: FAULT' "$log" || true)))
+          for way in growflush plain; do
+            logs=$(ls out/probe-dcomp-$way-*.log)
+            changes=0; faulty=0; maximises=0; seen=0; green=0
+            for log in $logs; do
+              changes=$((changes + $(grep -c 'resize-mode: frames gpu -> cpu' "$log" || true)))
+              faulty=$((faulty + $(grep -c 'probe: FAULT' "$log" || true)))
+              maximises=$((maximises + $(grep -c 'probe: phase maximise at' "$log" || true)))
+              seen=$((seen + $(grep -c 'phase maximise: right' "$log" || true)))
+              green=$((green + $(grep 'phase maximise: right' "$log" | grep -vc 'green inside on the row 0 px' || true)))
+            done
+            by_phase=$(grep -h 'probe: phase .* composed' $logs |
+              sed -nE 's/.*phase ([a-z-]+) composed ([0-9]+) frames, ([0-9]+) faulty.*/\1 \3/p' |
+              awk '{f[$1] += $2} END {for (p in f) printf "%s=%d ", p, f[p]}' || true)
+            echo "states dcomp $way (comparison): $changes size changes, $maximises maximises, $faulty faulty frames; faulty by phase: $by_phase"
+            echo "states dcomp $way maximise frames passed by the strip judge: $seen, of them with backdrop green inside the window: $green"
+            grep -h 'phase maximise: right' $logs | grep -v 'green inside on the row 0 px' | sed 's/^/  /' | head -20 || true
           done
-          by_phase=$(grep -h 'probe: phase .* composed' out/probe-dcomp-growflush-?.log |
-            sed -nE 's/.*phase ([a-z-]+) composed ([0-9]+) frames, ([0-9]+) faulty.*/\1 \3/p' |
-            awk '{f[$1] += $2} END {for (p in f) printf "%s=%d ", p, f[p]}' || true)
-          echo "states dcomp grow-flush (comparison): $changes size changes, $faulty faulty frames; faulty by phase: $by_phase"
-          grep -h 'dcomp: grow ' out/probe-dcomp-growflush-?.log | sed -nE 's/.*(DwmFlush|no DwmFlush) ([0-9.]+) ms.*/\1 \2/p' | sort | uniq -c | head -5 || true
+          grep -h 'dcomp: grow ' out/probe-dcomp-growflush-*.log | sed -nE 's/.*(DwmFlush|no DwmFlush) ([0-9]+)\.[0-9]+ ms.*/\1 \2 ms/p' | sort | uniq -c || true
 
       # The gate is the composition route's, which brings the size and the picture to the screen
       # in one commit. It fails above 2 % of its size changes (5 of 247): runs 44659612997 to
