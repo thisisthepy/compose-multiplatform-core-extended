@@ -428,7 +428,9 @@ class RenderPhasesTest {
             scaleGestureFactor = 2.0f
         )
 
-        assertTrue(scene.hasInvalidations())
+        // The handler only changes a plain var, so the event makes no invalidation of its own:
+        // asserting one depended on when the EDT's GlobalSnapshotManager sent apply notifications
+        // (flaky). Upstream dropped it in JetBrains/compose-multiplatform-core#3130.
         assertNotEquals(1f, scale)
     }
 
