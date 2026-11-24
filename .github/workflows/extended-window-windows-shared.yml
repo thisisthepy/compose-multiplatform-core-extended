@@ -302,10 +302,11 @@ jobs:
       # maximise frames on the 2025 compositor, so a gate of zero would fail by chance there,
       # while a regression to one fault on every restore or snap (69 %) cannot pass.
       #
-      # The GDI route is printed beside it and not gated: it is the route issue #223 is about,
-      # where a size change is several steps (the rectangle, the copy, the child's show, the
-      # present) that DWM can compose between, and it keeps that (11 and 81 of 247 in run
-      # 44666182474).
+      # The GDI route's strips are printed beside it and not gated: it is the route issue #223 is
+      # about, where a size change is several steps (the rectangle, the copy, the child's show,
+      # the present) that DWM can compose between, and it keeps that (11 and 81 of 247 in run
+      # 44666182474). The GDI route, the default, is gated on the bounds judge instead
+      # (bounds_gate, at the end of this step).
       - name: Resize probe, maximise, restore and snap
         shell: bash
         run: |
@@ -349,15 +350,54 @@ jobs:
           done
           printf '%s' "$summary"
           # The bounds judge (win32_resize_probe.c): frames that are neither the state before nor
-          # the state after their change, which the strips pass. Report-only until its rate on
-          # both routes and runners is known.
+          # the state after their change, which the strips pass. Printed for both routes, and a
+          # gate on the GDI route, the default (bounds_gate below).
           bounds() { # <logs...>: the bounds judge summed over the logs
             grep -h 'probe: bounds judge:' "$@" | sed -nE 's/.*judge: ([0-9]+) of ([0-9]+) frames[^;]*;(.*)/\1 \2 \3/p' |
               awk '{o += $1; j += $2; for (i = 3; i <= NF; i++) { split($i, kv, "="); f[kv[1]] += kv[2] } }
                    END {printf "%d of %d frames neither before nor after;", o, j; for (p in f) printf " %s=%d", p, f[p]; print ""}'
           }
+          # The GDI route's gate on the bounds judge, in two parts, per kind of change (a change is
+          # a "probe: phase <name> at" line):
+          # - maximise and restore: at most 5 % of those changes. Fork-train-8 (45476012676)
+          #   showed 0 of 114 on windows-2022 and 1 of 114 on windows-2025, and #302's runs none.
+          #   A route that shows one wrong frame on every maximise, as drawing after the size
+          #   with a 30 ms frame or the parked return do (3 in 3 in their comparison logs), has
+          #   57 or more and cannot pass.
+          # - left-half and back (snaps): at most 75 % of those changes. These are issue 223's
+          #   residual on this route and vary from run to run: 4 of 114 on windows-2022, 38 and
+          #   60 of 114 on windows-2025. The limit only catches a wrong frame on every snap.
+          # It also needs 500 judged frames, so the route cannot pass by judging nothing.
+          bounds_gate() { # <route> <logs...>: prints the line, returns 1 if the gate fails
+            local route=$1; shift
+            local judged mr_bad snap_bad mr_changes snap_changes mr_limit snap_limit failed=0
+            read -r judged mr_bad snap_bad <<<"$(grep -h 'probe: bounds judge:' "$@" |
+              sed -nE 's/.*judge: [0-9]+ of ([0-9]+) frames[^;]*;(.*)/\1 \2/p' |
+              awk '{j += $1; for (i = 2; i <= NF; i++) { split($i, kv, "=")
+                     if (kv[1] == "maximise" || kv[1] == "restore") mr += kv[2]
+                     else if (kv[1] == "left-half" || kv[1] == "back") sn += kv[2] } }
+                   END {print j + 0, mr + 0, sn + 0}')"
+            mr_changes=$(cat "$@" | grep -cE 'probe: phase (maximise|restore) at' || true)
+            snap_changes=$(cat "$@" | grep -cE 'probe: phase (left-half|back) at' || true)
+            mr_limit=$(( (mr_changes * 5 + 99) / 100 ))
+            snap_limit=$(( snap_changes * 3 / 4 ))
+            echo "resize probe states $route bounds (the gate): $judged frames judged; maximise and restore: $mr_bad wrong frames in $mr_changes changes (limit $mr_limit); left-half and back: $snap_bad in $snap_changes (limit $snap_limit)"
+            if [ "$judged" -lt 500 ]; then
+              echo "$route: the bounds judge judged $judged frames, expected at least 500" >&2; failed=1
+            fi
+            if [ "$mr_bad" -gt "$mr_limit" ]; then
+              echo "$route: $mr_bad frames on maximise and restore are neither the state before nor after, more than 5 % of $mr_changes changes ($mr_limit)" >&2; failed=1
+            fi
+            if [ "$snap_bad" -gt "$snap_limit" ]; then
+              echo "$route: $snap_bad frames on left-half and back are neither the state before nor after, more than 75 % of $snap_changes changes ($snap_limit)" >&2; failed=1
+            fi
+            return $failed
+          }
           for route in dcomp gdi; do
-            echo "resize probe states $route bounds (report-only, not gated yet): $(bounds out/probe-$route-states-?.log out/probe-$route-states-??.log out/probe-$route-states-30ms-?.log)"
+            if [ "$route" = gdi ]; then
+              bounds_gate $route out/probe-$route-states-?.log out/probe-$route-states-??.log out/probe-$route-states-30ms-?.log || status=1
+            fi
+            echo "resize probe states $route bounds$([ "$route" = gdi ] || echo ' (comparison, not gated)'): $(bounds out/probe-$route-states-?.log out/probe-$route-states-??.log out/probe-$route-states-30ms-?.log)"
             grep -h 'probe: BOUNDS' out/probe-$route-states-*.log | sed -nE 's/.*phase ([a-z-]+): picture (.*), before.*/\1 \2/p' | sort | uniq -c | sort -rn | head -8 | sed 's/^/  /' || true
           done
           for route in dcomp gdi; do
