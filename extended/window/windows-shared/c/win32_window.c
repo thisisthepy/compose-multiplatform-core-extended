@@ -3450,6 +3450,11 @@ static void dxc_raster_copy(void) {
 enum { DXC_COMP_COMMIT_ORDER, DXC_COMP_COMMIT_AHEAD, DXC_COMP_COMMIT_WM_SIZE };
 static const char *const dxc_comp_commit_names[] = {"order", "ahead", "wmsize"};
 static int dxc_comp_commit_mode;
+// DXC_DCOMP_GROW_FLUSH=1, an experiment read by the fork's windows-shared CI only: a size that
+// only grows (a maximise) waits for one composition (DwmFlush) in WM_SIZE before its commit.
+// It tells whether the maximise frame the probe finds faulty on windows-2025 (the new picture
+// cut by the old rectangle) is DWM composing the commit before the window's new rectangle.
+static int dxc_comp_grow_flush;
 // How a frame committed ahead of a smaller rectangle is waited for (DXC_DCOMP_SHRINK_WAIT):
 // commit, the default: until DWM has taken the commit (WaitForCommitCompletion), so it is
 // composed no later than the rectangle sent after it; flush: that and one composition
@@ -3963,6 +3968,16 @@ static int dxc_raster_present(int32_t width, int32_t height) {
         // of DPI). DXC_RESIZE_SWAPCHAIN=0 names a GDI copy and has no meaning here.
         if (dxc_sizing.dragging) {
             return 0;
+        }
+        int grows_only = width >= dxc_presented_width && height >= dxc_presented_height &&
+                         (width > dxc_presented_width || height > dxc_presented_height);
+        if (dxc_comp_grow_flush && grows_only) {
+            LARGE_INTEGER flush_started;
+            QueryPerformanceCounter(&flush_started);
+            int flushed = dxc_dwm_flush();
+            fprintf(stderr, "compose-rust: dcomp: grow %dx%d -> %dx%d, %s %.2f ms before the commit in WM_SIZE\n",
+                    (int)dxc_presented_width, (int)dxc_presented_height, (int)width, (int)height,
+                    flushed ? "DwmFlush" : "no DwmFlush", dxc_elapsed_ms(flush_started));
         }
         LARGE_INTEGER copy_started;
         QueryPerformanceCounter(&copy_started);
@@ -7074,6 +7089,8 @@ static int32_t dxc_open_window(
         for (int named = 0; commit_at != NULL && named < 3; named++) {
             if (strcmp(commit_at, dxc_comp_commit_names[named]) == 0) dxc_comp_commit_mode = named;
         }
+        const char *grow_flush = getenv("DXC_DCOMP_GROW_FLUSH");
+        dxc_comp_grow_flush = grow_flush != NULL && strcmp(grow_flush, "1") == 0;
         const char *drag_rule = getenv("DXC_DCOMP_DRAG_RULE");
         dxc_comp_drag_rule = drag_rule != NULL && strcmp(drag_rule, "1") == 0;
         const char *wait_for = getenv("DXC_DCOMP_SHRINK_WAIT");
