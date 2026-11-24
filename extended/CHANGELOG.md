@@ -3,6 +3,24 @@
 The upstream changelogs under `compose/` stay upstream's. This one is for the modules this fork
 adds: the window modules, the design systems, the skiko scripts and the packaging templates.
 
+## Unreleased
+
+### Packaging templates (`extended/packaging`)
+
+- **Change.** The templates now hold what compose-rust's packagers ship, because those packagers
+  fill them (compose-rust FR-22.6 criterion 11) and may only add to what a template renders.
+  `metadata-map.md` says the rule.
+  - `flatpak-manifest.json.in` is the part every Flathub manifest has: no `dir` sources, which
+    Flathub refuses. The payload (archives by URL and SHA-256, a patchelf module, the window's
+    socket, the icons) is the packager's addition. The runtime default is 25.08.
+  - `application.manifest.in` carries `asInvoker` beside the DPI awareness and no
+    identity or description: it is the one manifest every Windows executable built on
+    compose-rust carries, so it has no placeholder.
+  - `AppxManifest.xml.in` takes `{{identity_name}}` (the Store's reserved name),
+    `{{arch}}`, `{{language}}` and `{{background_color}}` (default `transparent`).
+  - `app.metainfo.xml.in` takes `{{summary}}`, `{{developer_id}}` and
+    `{{metadata_license}}`; `app.desktop.in`'s `Comment=` is `{{summary}}`.
+
 ## 1.11.1-ext.6 (2026-11-23)
 
 ### Window modules (`org.thisisthepy.compose.window`)
