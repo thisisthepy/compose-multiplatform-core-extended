@@ -96,7 +96,9 @@ fun Project.configureJetBrainsCapabilityResolution() {
         }
 
         configuration.resolutionStrategy.capabilitiesResolution.all { details ->
-            if (JetBrainsPublication.isAndroidXGroup(details.capability.group)) {
+            if (JetBrainsPublication.isAndroidXGroup(details.capability.group) ||
+                JetBrainsPublication.isJetBrainsUpstreamGroup(details.capability.group)
+            ) {
                 details.selectPreferredAndroidXCandidate()
             }
         }
@@ -111,12 +113,20 @@ fun Project.configureRedirectionCapability() {
     val redirection = artifactRedirection() ?: return
     if (redirection.targetNames.isEmpty()) return
 
+    val upstreamGroup = JetBrainsPublication.jetBrainsUpstreamGroupFor(path)
+
     // Configure resolution strategy to handle all capability conflicts
     configurations.configureEach { configuration ->
         if (configuration.isCanBeConsumed) {
             // It's important to declare the implicit capability explicitly because once you define
             // any explicit capability, all capabilities must be declared, including the implicit one.
             configuration.outgoing.capability("$group:$name:$version")
+
+            // Add the upstream JetBrains capability so transitive external JetBrains artifacts
+            // (for example org.jetbrains.compose.ui:ui pulled in by navigationevent-compose)
+            // conflict with and resolve to this fork's local project instead of duplicating it
+            // on the classpath.
+            configuration.outgoing.capability("$upstreamGroup:$name:$version")
 
             // Add the androidx.* capability in addition to the implicit project capability
             val redirectedVersion = redirection.versionForConfigurationOrDefault(configuration.name)
@@ -129,8 +139,11 @@ internal fun Project.publishedRedirectionCapabilities(): Set<String> {
     val redirection = artifactRedirection() ?: return emptySet()
     if (redirection.targetNames.isEmpty()) return emptySet()
 
+    val upstreamGroup = JetBrainsPublication.jetBrainsUpstreamGroupFor(path)
+
     return buildSet {
         add("$group:$name:$version")
+        add("$upstreamGroup:$name:$version")
         add("${redirection.groupId}:$name:${redirection.defaultVersion}")
         redirection.targetVersions.values.forEach { redirectedVersion ->
             add("${redirection.groupId}:$name:$redirectedVersion")

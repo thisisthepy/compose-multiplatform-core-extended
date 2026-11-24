@@ -28,11 +28,18 @@ SAMPLE = {
     "category_mac": "public.app-category.utilities",
     "category_xdg": "Utility;",
     "license": "LicenseRef-proprietary",
-    "runtime_version": "24.08",
+    "runtime_version": "25.08",
     "app_id": "Hello",
     "min_windows": "10.0.17763.0",
     "max_windows_tested": "10.0.26100.0",
     "min_macos": "13.0",
+    "summary": "A hello app",
+    "developer_id": "dev.example",
+    "metadata_license": "CC0-1.0",
+    "identity_name": "dev.example.hello",
+    "arch": "x64",
+    "language": "en-us",
+    "background_color": "transparent",
 }
 
 REQUIRED = {
@@ -40,8 +47,10 @@ REQUIRED = {
     "app.desktop.in": ["name", "executable", "identifier"],
     "app.metainfo.xml.in": ["identifier", "name", "version", "description", "executable"],
     "flatpak-manifest.json.in": ["identifier", "executable"],
-    "AppxManifest.xml.in": ["identifier", "name", "version4", "description", "executable"],
-    "application.manifest.in": ["identifier", "version4"],
+    "AppxManifest.xml.in": ["identity_name", "name", "version4", "description", "executable"],
+    # The manifest every Windows executable carries (DPI awareness, asInvoker). It is the
+    # same for every application, so it has no placeholder.
+    "application.manifest.in": [],
 }
 
 PLACEHOLDER = re.compile(r"\{\{([a-z0-9_]+)\}\}")

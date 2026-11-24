@@ -114,7 +114,44 @@ class DesktopParagraphTest {
 
                     val lineHeightInPx = fontSizeInPx * lineHeightMultiplier
                     assertThat(box.top).isEqualToWithTolerance(lineHeightInPx)
-                    assertThat(box.bottom).isEqualToWithTolerance(lineHeightInPx + maxOf(fontSizeInPx, lineHeightInPx))
+                    // Trim.None keeps HeightMode.ALL even when lineHeight <= fontSize (CSS half-leading).
+                    assertThat(box.bottom).isEqualToWithTolerance(lineHeightInPx * 2)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun getBoundingBox_lineHeight_trimBoth() {
+        with(defaultDensity) {
+            val text = "abc\ndef"
+            val fontSize = 20.sp
+            val fontSizeInPx = fontSize.toPx()
+
+            for (lineHeightMultiplier in listOf(0.1f, 0.5f, 1f)) {
+                val paragraph = simpleParagraph(
+                    text = text,
+                    style = TextStyle(
+                        fontSize = fontSize,
+                        lineHeight = fontSize * lineHeightMultiplier,
+                        lineHeightStyle = LineHeightStyle(
+                            alignment = Alignment.Top,
+                            trim = Trim.Both
+                        )
+                    )
+                )
+
+                val lineStart = paragraph.getLineStart(1)
+                val lineEnd = paragraph.getLineEnd(1)
+                for (i in lineStart..lineEnd - 1) {
+                    val position = i - lineStart
+                    val box = paragraph.getBoundingBox(i)
+                    assertThat(box.left).isEqualToWithTolerance(position * fontSizeInPx)
+                    assertThat(box.right).isEqualToWithTolerance((position + 1) * fontSizeInPx)
+
+                    val lineHeightInPx = fontSizeInPx * lineHeightMultiplier
+                    assertThat(box.top).isEqualToWithTolerance(lineHeightInPx)
+                    assertThat(box.bottom).isEqualToWithTolerance(lineHeightInPx + fontSizeInPx)
                 }
             }
         }

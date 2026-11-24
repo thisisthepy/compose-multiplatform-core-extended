@@ -3,6 +3,7 @@ package org.thisisthepy.compose.window.graalvm.windows
 import org.graalvm.nativeimage.CurrentIsolate
 import org.graalvm.nativeimage.IsolateThread
 import org.graalvm.nativeimage.StackValue
+import org.graalvm.nativeimage.UnmanagedMemory
 import org.graalvm.nativeimage.c.function.CFunction
 import org.graalvm.nativeimage.c.function.CFunctionPointer
 import org.graalvm.nativeimage.c.type.CCharPointer
@@ -10,7 +11,10 @@ import org.graalvm.nativeimage.c.type.CFloatPointer
 import org.graalvm.nativeimage.c.type.CIntPointer
 import org.graalvm.nativeimage.c.type.CTypeConversion
 import org.graalvm.word.Pointer
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import org.graalvm.word.WordFactory
+import org.thisisthepy.compose.window.AccessibleAction
 import org.thisisthepy.compose.window.AccessibleElement
 import org.thisisthepy.compose.window.FrameClock
 import org.thisisthepy.compose.window.DoubleClick
@@ -111,6 +115,9 @@ private external fun doubleClickMillisNative(): Long
 
 @CFunction("dxc_native_set_accessibility")
 private external fun setAccessibility(elements: Pointer?, count: Int, window: Pointer?)
+
+@CFunction("dxc_native_take_accessibility_argument")
+private external fun takeAccessibilityArgumentNative(out: Pointer?, capacity: Int): Int
 
 @CFunction("dxc_native_set_edit_menu")
 private external fun setEditMenuNative(window: Pointer?, flags: Int)
@@ -336,27 +343,95 @@ private const val WINDOW_STRUCT_BYTES = 40
 /**
  * Hands the platform what the window would tell a reader who cannot see it.
  *
- * Written into stack storage and copied on the other side. The elements are few, they
+ * Written into memory of our own and copied on the other side. The elements are few, they
  * change when the screen changes rather than when a frame is drawn, and the alternative
- * is the platform asking across threads at a moment nobody chose.
+ * is the platform asking across threads at a moment nobody chose. On the heap rather than
+ * the stack: a full tree is over a hundred kilobytes.
  */
 fun Win32GraalWindow.describeTo(elements: List<AccessibleElement>) {
+    val bytes = encodeWin32Elements(elements)
+    val count = bytes.size / ELEMENT_BYTES
+    if (count == 0) {
+        setAccessibility(WordFactory.nullPointer(), 0, WordFactory.pointer(window))
+        return
+    }
+    val records = UnmanagedMemory.malloc<Pointer>(bytes.size)
+    try {
+        CTypeConversion.asByteBuffer(records, bytes.size).put(bytes)
+        setAccessibility(records, count, WordFactory.pointer(window))
+    } finally {
+        UnmanagedMemory.free(records)
+    }
+}
+
+/**
+ * The records `struct dxc_element` lays out (windows-shared's header), at most
+ * [MAX_ELEMENTS] of them, in the machine's byte order. Plain bytes, so a test on any JVM
+ * reads what the window will.
+ */
+internal fun encodeWin32Elements(elements: List<AccessibleElement>): ByteArray {
     val capped = if (elements.size > MAX_ELEMENTS) elements.take(MAX_ELEMENTS) else elements
-    val records = StackValue.get<Pointer>(MAX_ELEMENTS * ELEMENT_BYTES)
+    val buffer = ByteBuffer.allocate(capped.size * ELEMENT_BYTES).order(ByteOrder.LITTLE_ENDIAN)
     for ((index, element) in capped.withIndex()) {
         val at = index * ELEMENT_BYTES
-        records.writeInt(at, element.role)
-        records.writeFloat(at + 4, element.x)
-        records.writeFloat(at + 8, element.y)
-        records.writeFloat(at + 12, element.width)
-        records.writeFloat(at + 16, element.height)
-        val bytes = win32LabelBytes(element.label)
-        for (offset in bytes.indices) {
-            records.writeByte(at + ELEMENT_LABEL_OFFSET + offset, bytes[offset])
-        }
-        records.writeByte(at + ELEMENT_LABEL_OFFSET + bytes.size, ZERO)
+        buffer.putInt(at, element.role)
+        buffer.putFloat(at + 4, element.x)
+        buffer.putFloat(at + 8, element.y)
+        buffer.putFloat(at + 12, element.width)
+        buffer.putFloat(at + 16, element.height)
+        putText(buffer, at + ELEMENT_LABEL_OFFSET, win32LabelBytes(element.label))
+        buffer.putInt(at + ELEMENT_ID_OFFSET, element.id)
+        buffer.putInt(at + ELEMENT_ID_OFFSET + 4, element.parentId)
+        buffer.putInt(at + ELEMENT_ID_OFFSET + 8, element.states)
+        buffer.putInt(at + ELEMENT_ID_OFFSET + 12, element.actions)
+        buffer.putInt(at + ELEMENT_FLAGS_OFFSET, win32ElementFlags(element))
+        buffer.putFloat(at + ELEMENT_RANGE_OFFSET, element.rangeMin ?: 0f)
+        buffer.putFloat(at + ELEMENT_RANGE_OFFSET + 4, element.rangeMax ?: 0f)
+        buffer.putFloat(at + ELEMENT_RANGE_OFFSET + 8, element.rangeValue ?: 0f)
+        putText(buffer, at + ELEMENT_VALUE_OFFSET, win32FittedBytes(element.value.orEmpty(), VALUE_BYTES))
+        putText(buffer, at + ELEMENT_HINT_OFFSET, win32LabelBytes(element.hint.orEmpty()))
     }
-    setAccessibility(records, capped.size, WordFactory.pointer(window))
+    return buffer.array()
+}
+
+/** Which optional parts the record carries: a value, a range (all three numbers), a hint. */
+internal fun win32ElementFlags(element: AccessibleElement): Int {
+    var flags = 0
+    if (element.value != null) flags = flags or ELEMENT_HAS_VALUE
+    if (element.rangeMin != null && element.rangeMax != null && element.rangeValue != null) {
+        flags = flags or ELEMENT_HAS_RANGE
+    }
+    if (element.hint != null) flags = flags or ELEMENT_HAS_HINT
+    return flags
+}
+
+// The buffer starts zeroed, so the byte after the text already ends it.
+private fun putText(buffer: ByteBuffer, at: Int, bytes: ByteArray) {
+    for (offset in bytes.indices) buffer.put(at + offset, bytes[offset])
+}
+
+/**
+ * The new value of the oldest SET_VALUE request a reader made that has not been read, or
+ * empty when there is none. Asked once with room for most values and again with the room
+ * the window says a longer one needs.
+ */
+private fun takeAccessibilityArgument(): String {
+    var capacity = 1024
+    while (true) {
+        val buffer = UnmanagedMemory.malloc<Pointer>(capacity)
+        try {
+            val length = takeAccessibilityArgumentNative(buffer, capacity)
+            if (length < 0) return ""
+            if (length <= capacity) {
+                val bytes = ByteArray(length)
+                CTypeConversion.asByteBuffer(buffer, length).get(bytes)
+                return String(bytes, Charsets.UTF_8)
+            }
+            capacity = length
+        } finally {
+            UnmanagedMemory.free(buffer)
+        }
+    }
 }
 
 /**
@@ -378,7 +453,7 @@ private fun drainWindowEvents(): List<WindowEvent> {
             bytes[length] = byte
             length++
         }
-        events.add(
+        val event =
             win32Event(
                 WindowEvent(
                     kind = record.readInt(0),
@@ -391,7 +466,15 @@ private fun drainWindowEvents(): List<WindowEvent> {
                     text = if (length == 0) "" else String(bytes, 0, length, Charsets.UTF_8),
                     timeMillis = record.readLong(EVENT_TIME_OFFSET),
                 ),
-            ),
+            )
+        // A reader's new value is kept beside the event, since it can be longer than the
+        // event's text, and is read here in the same order.
+        events.add(
+            if (event.kind == WindowEvent.ACCESSIBILITY_ACTION && event.codePoint == AccessibleAction.SET_VALUE) {
+                event.copy(text = takeAccessibilityArgument())
+            } else {
+                event
+            },
         )
     }
     return events
@@ -422,16 +505,29 @@ private const val EVENT_STRUCT_BYTES = 136
  * before it reaches the scene, so what is here is what is on screen.
  */
 private const val MAX_ELEMENTS = 256
-private const val ELEMENT_LABEL_OFFSET = 20
-private const val ELEMENT_BYTES = 116
+// Where `struct dxc_element`'s fields are; windows-shared's C test asserts the same numbers.
+internal const val ELEMENT_LABEL_OFFSET = 20
+internal const val ELEMENT_ID_OFFSET = 116
+internal const val ELEMENT_FLAGS_OFFSET = 132
+internal const val ELEMENT_RANGE_OFFSET = 136
+internal const val ELEMENT_VALUE_OFFSET = 148
+internal const val ELEMENT_HINT_OFFSET = 404
+internal const val ELEMENT_BYTES = 500
+internal const val ELEMENT_HAS_VALUE = 1 shl 0
+internal const val ELEMENT_HAS_RANGE = 1 shl 1
+internal const val ELEMENT_HAS_HINT = 1 shl 2
 private const val ZERO: Byte = 0
 private const val TEXT_BYTES = 96
+internal const val VALUE_BYTES = 256
 
 /** Fits a label in the native record without cutting a UTF-8 character in half. */
-internal fun win32LabelBytes(label: String): ByteArray {
-    val bytes = label.toByteArray(Charsets.UTF_8)
-    if (bytes.size < TEXT_BYTES) return bytes
-    var length = TEXT_BYTES - 1
+internal fun win32LabelBytes(label: String): ByteArray = win32FittedBytes(label, TEXT_BYTES)
+
+/** [text] as UTF-8 that fits [capacity] bytes with its terminating zero, cut before a character. */
+internal fun win32FittedBytes(text: String, capacity: Int): ByteArray {
+    val bytes = text.toByteArray(Charsets.UTF_8)
+    if (bytes.size < capacity) return bytes
+    var length = capacity - 1
     while (length > 0 && (bytes[length].toInt() and 0xC0) == 0x80) {
         length--
     }

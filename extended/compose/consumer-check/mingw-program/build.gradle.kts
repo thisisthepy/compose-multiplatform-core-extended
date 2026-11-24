@@ -7,9 +7,9 @@
 //
 // Usage (Windows, with MSVC installed):
 //   gradle -p extended/compose/consumer-check/mingw-program linkReleaseExecutableMingwX64 \
-//       [-PforkVersion=1.11.1-ext.5]
+//       [-PforkVersion=1.11.1-ext.6]
 //   build/bin/mingwX64/releaseExecutable/mingw-program.exe
-val forkVersion = providers.gradleProperty("forkVersion").orNull ?: "1.11.1-ext.5"
+val forkVersion = providers.gradleProperty("forkVersion").orNull ?: "1.11.1-ext.6"
 
 plugins {
     kotlin("multiplatform") version "2.3.20"
