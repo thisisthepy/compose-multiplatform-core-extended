@@ -3450,11 +3450,21 @@ static void dxc_raster_copy(void) {
 enum { DXC_COMP_COMMIT_ORDER, DXC_COMP_COMMIT_AHEAD, DXC_COMP_COMMIT_WM_SIZE };
 static const char *const dxc_comp_commit_names[] = {"order", "ahead", "wmsize"};
 static int dxc_comp_commit_mode;
-// DXC_DCOMP_GROW_FLUSH=1, an experiment read by the fork's windows-shared CI only: a size that
-// only grows (a maximise) waits for one composition (DwmFlush) in WM_SIZE before its commit.
-// It tells whether the maximise frame the probe finds faulty on windows-2025 (the new picture
-// cut by the old rectangle) is DWM composing the commit before the window's new rectangle.
-static int dxc_comp_grow_flush;
+// DXC_DCOMP_GROW, an experiment read by the fork's windows-shared CI only, for a size that only
+// grows (a maximise) on the composition route, whose commit in WM_SIZE DWM sometimes composes
+// before the window's new rectangle (fork #302): before that commit,
+//  flush (also DXC_DCOMP_GROW_FLUSH=1): wait for one composition (DwmFlush);
+//  bounds: wait until DWMWA_EXTENDED_FRAME_BOUNDS no longer reports the rectangle it reported
+//          in WM_NCCALCSIZE (at most 50 ms), in case it answers from what DWM has taken;
+//  clock:  wait for the compositor clock's next tick (DCompositionWaitForCompositorClock,
+//          Windows 11), so the rectangle sent before WM_SIZE and the commit are both pending
+//          for the same composition.
+// Unset: the commit is made at once, as before.
+enum { DXC_COMP_GROW_NOW, DXC_COMP_GROW_FLUSH, DXC_COMP_GROW_BOUNDS, DXC_COMP_GROW_CLOCK };
+static const char *const dxc_comp_grow_names[] = {"now", "flush", "bounds", "clock"};
+static int dxc_comp_grow_mode;
+static RECT dxc_comp_grow_bounds_before;
+static int dxc_comp_grow_bounds_known;
 // How a frame committed ahead of a smaller rectangle is waited for (DXC_DCOMP_SHRINK_WAIT):
 // commit, the default: until DWM has taken the commit (WaitForCommitCompletion), so it is
 // composed no later than the rectangle sent after it; flush: that and one composition
@@ -3961,6 +3971,61 @@ static void dxc_comp_raster_copy(void) {
     }
 }
 
+typedef HRESULT(WINAPI *dxc_dwm_get_attribute_fn)(HWND, DWORD, PVOID, DWORD);
+typedef DWORD(WINAPI *dxc_wait_clock_fn)(UINT, const HANDLE *, DWORD);
+
+/** DWMWA_EXTENDED_FRAME_BOUNDS (9) of the window, by number; zero when it could not be read. */
+static int dxc_comp_frame_bounds(HWND window, RECT *out) {
+    static int looked_up;
+    static dxc_dwm_get_attribute_fn get_attribute;
+    if (!looked_up) {
+        looked_up = 1;
+        HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
+        if (dwm != NULL) get_attribute = (dxc_dwm_get_attribute_fn)(void *)GetProcAddress(dwm, "DwmGetWindowAttribute");
+    }
+    return get_attribute != NULL && SUCCEEDED(get_attribute(window, 9, out, sizeof *out));
+}
+
+/** Waits as DXC_DCOMP_GROW says before a grow's commit, and logs what the wait took. */
+static void dxc_comp_grow_wait(int32_t width, int32_t height) {
+    LARGE_INTEGER started;
+    QueryPerformanceCounter(&started);
+    const char *what = "";
+    char detail[96] = "";
+    if (dxc_comp_grow_mode == DXC_COMP_GROW_FLUSH) {
+        what = dxc_dwm_flush() ? "DwmFlush" : "no DwmFlush";
+    } else if (dxc_comp_grow_mode == DXC_COMP_GROW_BOUNDS) {
+        RECT now = {0};
+        int polls = 0, changed = 0, read = 0;
+        while (dxc_comp_grow_bounds_known && dxc_elapsed_ms(started) < 50.0) {
+            read = dxc_comp_frame_bounds(dxc_window, &now);
+            polls++;
+            if (!read || !EqualRect(&now, &dxc_comp_grow_bounds_before)) {
+                changed = read;
+                break;
+            }
+            Sleep(1);
+        }
+        what = changed ? "frame bounds changed" : "frame bounds unchanged";
+        snprintf(detail, sizeof detail, " after %d polls, now %ld,%ld-%ld,%ld", polls, now.left, now.top, now.right,
+                 now.bottom);
+    } else if (dxc_comp_grow_mode == DXC_COMP_GROW_CLOCK) {
+        static int looked_up;
+        static dxc_wait_clock_fn wait_clock;
+        if (!looked_up) {
+            looked_up = 1;
+            HMODULE dcomp = LoadLibraryW(L"dcomp.dll");
+            if (dcomp != NULL) wait_clock = (dxc_wait_clock_fn)(void *)GetProcAddress(dcomp, "DCompositionWaitForCompositorClock");
+        }
+        DWORD waited = wait_clock != NULL ? wait_clock(0, NULL, 50) : WAIT_FAILED;
+        what = wait_clock == NULL ? "no compositor clock" : waited == WAIT_TIMEOUT ? "clock timed out" : "clock ticked";
+    }
+    dxc_comp_grow_bounds_known = 0;
+    fprintf(stderr, "compose-rust: dcomp: grow %dx%d -> %dx%d, %s: %s %.2f ms before the commit in WM_SIZE%s\n",
+            (int)dxc_presented_width, (int)dxc_presented_height, (int)width, (int)height,
+            dxc_comp_grow_names[dxc_comp_grow_mode], what, dxc_elapsed_ms(started), detail);
+}
+
 static int dxc_raster_present(int32_t width, int32_t height) {
     if (dxc_on_comp) {
         // A step of a drag goes through dxc_raster_copy, whose composition sink is the same
@@ -3971,14 +4036,7 @@ static int dxc_raster_present(int32_t width, int32_t height) {
         }
         int grows_only = width >= dxc_presented_width && height >= dxc_presented_height &&
                          (width > dxc_presented_width || height > dxc_presented_height);
-        if (dxc_comp_grow_flush && grows_only) {
-            LARGE_INTEGER flush_started;
-            QueryPerformanceCounter(&flush_started);
-            int flushed = dxc_dwm_flush();
-            fprintf(stderr, "compose-rust: dcomp: grow %dx%d -> %dx%d, %s %.2f ms before the commit in WM_SIZE\n",
-                    (int)dxc_presented_width, (int)dxc_presented_height, (int)width, (int)height,
-                    flushed ? "DwmFlush" : "no DwmFlush", dxc_elapsed_ms(flush_started));
-        }
+        if (dxc_comp_grow_mode != DXC_COMP_GROW_NOW && grows_only) dxc_comp_grow_wait(width, height);
         LARGE_INTEGER copy_started;
         QueryPerformanceCounter(&copy_started);
         if (!dxc_comp_present_bitmap(width, height)) {
@@ -4493,6 +4551,9 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
                     both_held ? ", the frame both rectangles hold committed first" : "");
         }
         return;
+    }
+    if (dxc_on_comp && dxc_comp_grow_mode == DXC_COMP_GROW_BOUNDS) {
+        dxc_comp_grow_bounds_known = dxc_comp_frame_bounds(window, &dxc_comp_grow_bounds_before);
     }
     int ready = drawn && hidden &&
                 (dxc_surface_return == DXC_SURFACE_RETURN_NCCALC || dxc_surface_return == DXC_SURFACE_RETURN_STAGED ||
@@ -7090,7 +7151,12 @@ static int32_t dxc_open_window(
             if (strcmp(commit_at, dxc_comp_commit_names[named]) == 0) dxc_comp_commit_mode = named;
         }
         const char *grow_flush = getenv("DXC_DCOMP_GROW_FLUSH");
-        dxc_comp_grow_flush = grow_flush != NULL && strcmp(grow_flush, "1") == 0;
+        const char *grow = getenv("DXC_DCOMP_GROW");
+        dxc_comp_grow_mode = grow_flush != NULL && strcmp(grow_flush, "1") == 0 ? DXC_COMP_GROW_FLUSH
+                                                                                 : DXC_COMP_GROW_NOW;
+        for (int named = 0; grow != NULL && named < 4; named++) {
+            if (strcmp(grow, dxc_comp_grow_names[named]) == 0) dxc_comp_grow_mode = named;
+        }
         const char *drag_rule = getenv("DXC_DCOMP_DRAG_RULE");
         dxc_comp_drag_rule = drag_rule != NULL && strcmp(drag_rule, "1") == 0;
         const char *wait_for = getenv("DXC_DCOMP_SHRINK_WAIT");
