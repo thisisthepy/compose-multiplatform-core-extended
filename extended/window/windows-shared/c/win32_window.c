@@ -3517,6 +3517,25 @@ static int dxc_comp_drag_rule;
 enum { DXC_COMP_DRAG_SIZED, DXC_COMP_DRAG_ORDER };
 static const char *const dxc_comp_drag_names[] = {"sized", "order"};
 static int dxc_comp_drag_mode;
+// DXC_DCOMP_STATES: how a size change outside a drag (maximise, restore, a snap, a SetWindowPos)
+// reaches the screen on the composition route.
+//
+// sized, the default: as DSA's window does (app_window/window.rs WM_WINDOWPOSCHANGING, then
+// compositor/present.rs view_resized in WM_SIZE): the frame of the new size is drawn and written
+// ahead in WM_NCCALCSIZE, nothing is committed before the rectangle, and WM_SIZE commits it.
+// The rectangle and the commit are still two changes to DWM and can land a composition apart
+// (DSA's docs/RESEARCH.md says the same of its own); the backing (win32_dcomp.cpp) shows the
+// frame's edge colour, not the desktop, where a grown rectangle is composed before its frame.
+//
+// order: as before. A pure shrink (a restore) was committed first and waited for, and a change
+// that grows one side and shrinks the other (a snap and back) committed and waited for the frame
+// both rectangles hold first. Both were composed at the old origin in the old rectangle, so
+// nearly every restore and snap showed one frame that is neither the state before nor after
+// (the probe's bounds judge, fork-train-8: restore 56 and 57 of 57, left-half and back about
+// 60 of 57 each, on both runners). Kept for comparing the two.
+enum { DXC_COMP_STATES_SIZED, DXC_COMP_STATES_ORDER };
+static const char *const dxc_comp_states_names[] = {"sized", "order"};
+static int dxc_comp_states_mode;
 // DXC_DCOMP_DRAG_NO_TAKEN_WAIT=1: a drag step skips WaitForCommitCompletion before it writes,
 // for measuring one wait a step (with DXC_DCOMP_SURFACES=3). Off by default.
 static int dxc_comp_drag_no_taken_wait;
@@ -4469,7 +4488,11 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     // the issue-245 strip judge that had favoured it cannot see that fault. So no step of a drag
     // is committed first, and the frame both rectangles hold is not used inside a drag either.
     int drag_sized = dxc_on_comp && dragging && dxc_comp_drag_mode == DXC_COMP_DRAG_SIZED;
-    if (dxc_on_comp && !drag_sized && dxc_comp_commit_mode == DXC_COMP_COMMIT_ORDER && shrinks && grows) {
+    // A change outside a drag in the route's own order (dxc_comp_states_mode): nothing committed
+    // before the rectangle either, neither the frame both rectangles hold nor a shrink.
+    int states_sized = dxc_on_comp && !dragging && dxc_comp_states_mode == DXC_COMP_STATES_SIZED;
+    if (dxc_on_comp && !drag_sized && !states_sized && dxc_comp_commit_mode == DXC_COMP_COMMIT_ORDER && shrinks &&
+        grows) {
         int shown_first = dxc_comp_frame_first_steps;
         dxc_comp_show_both_hold(width, height, now_width, now_height);
         both_held = dxc_comp_frame_first_steps != shown_first;
@@ -4564,7 +4587,7 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     int flush_wanted = dxc_on_comp ? dxc_comp_commit_mode == DXC_COMP_COMMIT_AHEAD
                                    : (dxc_raster_present_off || dxc_predraw_flush || hidden);
     int flushed = drawn && flush_wanted ? dxc_dwm_flush() : 0;
-    if (staged) dxc_comp_commit_ahead(shrinks && !grows);
+    if (staged && !states_sized) dxc_comp_commit_ahead(shrinks && !grows);
     fprintf(stderr,
             "compose-rust: resize-mode: drew %dx%d before the window took it (%s%s, draw %.2f ms, %s %.2f ms, at %.1f ms)\n",
             (int)width, (int)height, drawn ? "waiting for WM_SIZE" : "not drawn",
@@ -7149,6 +7172,14 @@ static int32_t dxc_open_window(
         const char *drag_way = getenv("DXC_DCOMP_DRAG");
         dxc_comp_drag_mode = drag_way != NULL && strcmp(drag_way, "order") == 0 ? DXC_COMP_DRAG_ORDER
                                                                                : DXC_COMP_DRAG_SIZED;
+        const char *states_way = getenv("DXC_DCOMP_STATES");
+        dxc_comp_states_mode = states_way != NULL && strcmp(states_way, "order") == 0 ? DXC_COMP_STATES_ORDER
+                                                                                     : DXC_COMP_STATES_SIZED;
+        fprintf(stderr, "compose-rust: dcomp: other size changes reach the screen %s (DXC_DCOMP_STATES=%s)\n",
+                dxc_comp_states_mode == DXC_COMP_STATES_SIZED
+                    ? "the same way: the frame written ahead, the rectangle, the commit in WM_SIZE"
+                    : "by size: a shrink, or the frame both rectangles hold, committed first and waited for",
+                dxc_comp_states_names[dxc_comp_states_mode]);
         const char *no_taken_wait = getenv("DXC_DCOMP_DRAG_NO_TAKEN_WAIT");
         dxc_comp_drag_no_taken_wait = no_taken_wait != NULL && strcmp(no_taken_wait, "1") == 0;
         fprintf(stderr, "compose-rust: dcomp: drag steps reach the screen %s (DXC_DCOMP_DRAG=%s%s)\n",
