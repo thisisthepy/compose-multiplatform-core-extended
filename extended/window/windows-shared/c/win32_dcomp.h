@@ -73,6 +73,13 @@ int dxc_dcomp_commit(dxc_dcomp *comp);
  */
 int dxc_dcomp_set_backing(dxc_dcomp *comp, uint32_t bgra);
 
+/**
+ * Stretches the frame the visual shows into a view of view_width x view_height, keeping its
+ * proportions and centring it, as DSA's window shows its last frame until one of the new size
+ * comes (DXC_DCOMP_STATES=dsa). Takes effect at the next commit; the next frame drawn
+ * (dxc_dcomp_begin_draw) is shown at 1:1 again. Zero on success.
+ */
+int dxc_dcomp_stretch_shown(dxc_dcomp *comp, int32_t view_width, int32_t view_height);
 /** Waits until DWM has taken the last commit (IDCompositionDevice::WaitForCommitCompletion). */
 void dxc_dcomp_wait(dxc_dcomp *comp);
 

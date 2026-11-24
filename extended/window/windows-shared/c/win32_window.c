@@ -3533,8 +3533,14 @@ static int dxc_comp_drag_mode;
 // nearly every restore and snap showed one frame that is neither the state before nor after
 // (the probe's bounds judge, fork-train-8: restore 56 and 57 of 57, left-half and back about
 // 60 of 57 each, on both runners). Kept for comparing the two.
-enum { DXC_COMP_STATES_SIZED, DXC_COMP_STATES_ORDER };
-static const char *const dxc_comp_states_names[] = {"sized", "order"};
+//
+// dsa: DSA's whole path, for measuring against it on the same runner with the same judges.
+// Nothing is drawn ahead; WM_SIZE commits the frame on screen stretched into the new view and
+// centred (dxc_dcomp_stretch_shown, DSA's shown_frame_placement), waits for DWM to take it
+// (WaitForCommitCompletion, as DSA's view_resized), and the frame of the new size follows as
+// the next frame drawn.
+enum { DXC_COMP_STATES_SIZED, DXC_COMP_STATES_ORDER, DXC_COMP_STATES_DSA };
+static const char *const dxc_comp_states_names[] = {"sized", "order", "dsa"};
 static int dxc_comp_states_mode;
 // DXC_DCOMP_DRAG_NO_TAKEN_WAIT=1: a drag step skips WaitForCommitCompletion before it writes,
 // for measuring one wait a step (with DXC_DCOMP_SURFACES=3). Off by default.
@@ -4197,6 +4203,21 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
     if (width == dxc_presented_width && height == dxc_presented_height) {
         return;
     }
+    // DSA's way (DXC_DCOMP_STATES=dsa), outside a drag: the frame on screen stretched into the
+    // new view, committed and waited for here; the frame of the new size is the next one drawn.
+    if (dxc_on_comp && !dxc_sizing.dragging && dxc_comp_states_mode == DXC_COMP_STATES_DSA && dxc_comp != NULL &&
+        dxc_comp_presented && dxc_dcomp_stretch_shown(dxc_comp, width, height) == 0) {
+        LARGE_INTEGER stretch_started;
+        QueryPerformanceCounter(&stretch_started);
+        int committed = dxc_dcomp_commit(dxc_comp);
+        if (committed == 0) dxc_dcomp_wait(dxc_comp);
+        fprintf(stderr,
+                "compose-rust: resize-mode: shown frame stretched into %dx%d in WM_SIZE (DXC_DCOMP_STATES=dsa, commit %d, "
+                "%.2f ms, at %.1f ms)\n",
+                (int)width, (int)height, committed, dxc_elapsed_ms(stretch_started), dxc_now_ms());
+        if (dxc_window != NULL) InvalidateRect(dxc_window, NULL, FALSE);
+        return;
+    }
     LARGE_INTEGER started;
     QueryPerformanceCounter(&started);
     dxc_resize_target_width = width;
@@ -4458,6 +4479,10 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     int32_t width = (int32_t)(client->right - client->left);
     int32_t height = (int32_t)(client->bottom - client->top);
     int dragging = dxc_sizing.dragging;
+    // DSA's way (DXC_DCOMP_STATES=dsa): nothing is drawn ahead of a change outside a drag.
+    if (dxc_on_comp && !dragging && dxc_comp_states_mode == DXC_COMP_STATES_DSA) {
+        return;
+    }
     if (dragging) {
         if (!dxc_resize_drag_predraw_wanted(&dxc_sizing, dxc_raster_enabled, dxc_drawing, !dxc_drag_predraw_off,
                                             width, height, (int32_t)(now.right - now.left),
@@ -7173,11 +7198,16 @@ static int32_t dxc_open_window(
         dxc_comp_drag_mode = drag_way != NULL && strcmp(drag_way, "order") == 0 ? DXC_COMP_DRAG_ORDER
                                                                                : DXC_COMP_DRAG_SIZED;
         const char *states_way = getenv("DXC_DCOMP_STATES");
-        dxc_comp_states_mode = states_way != NULL && strcmp(states_way, "order") == 0 ? DXC_COMP_STATES_ORDER
-                                                                                     : DXC_COMP_STATES_SIZED;
+        dxc_comp_states_mode = DXC_COMP_STATES_SIZED;
+        for (int named = 0; states_way != NULL && named < 3; named++) {
+            if (strcmp(states_way, dxc_comp_states_names[named]) == 0) dxc_comp_states_mode = named;
+        }
         fprintf(stderr, "compose-rust: dcomp: other size changes reach the screen %s (DXC_DCOMP_STATES=%s)\n",
                 dxc_comp_states_mode == DXC_COMP_STATES_SIZED
                     ? "the same way: the frame written ahead, the rectangle, the commit in WM_SIZE"
+                : dxc_comp_states_mode == DXC_COMP_STATES_DSA
+                    ? "as DSA's window: nothing drawn ahead, the shown frame stretched into the new view and "
+                      "committed in WM_SIZE and waited for, then the frame of the new size"
                     : "by size: a shrink, or the frame both rectangles hold, committed first and waited for",
                 dxc_comp_states_names[dxc_comp_states_mode]);
         const char *no_taken_wait = getenv("DXC_DCOMP_DRAG_NO_TAKEN_WAIT");
