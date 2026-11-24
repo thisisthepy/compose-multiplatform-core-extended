@@ -14,7 +14,7 @@ env:
 
 jobs:
   check-public-api:
-    runs-on: macos-15-xlarge
+    runs-on: macos-15
     name: Check Public API
     steps:
       - name: Checkout Repository
