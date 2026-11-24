@@ -349,6 +349,18 @@ jobs:
             fi
           done
           printf '%s' "$summary"
+          # The bounds judge (win32_resize_probe.c): frames that are neither the state before nor
+          # the state after their change, which the strips pass. Report-only until its rate on
+          # both routes and runners is known.
+          bounds() { # <logs...>: the bounds judge summed over the logs
+            grep -h 'probe: bounds judge:' "$@" | sed -nE 's/.*judge: ([0-9]+) of ([0-9]+) frames[^;]*;(.*)/\1 \2 \3/p' |
+              awk '{o += $1; j += $2; for (i = 3; i <= NF; i++) { split($i, kv, "="); f[kv[1]] += kv[2] } }
+                   END {printf "%d of %d frames neither before nor after;", o, j; for (p in f) printf " %s=%d", p, f[p]; print ""}'
+          }
+          for route in dcomp gdi; do
+            echo "resize probe states $route bounds (report-only, not gated yet): $(bounds out/probe-$route-states-?.log out/probe-$route-states-??.log out/probe-$route-states-30ms-?.log)"
+            grep -h 'probe: BOUNDS' out/probe-$route-states-*.log | sed -nE 's/.*phase ([a-z-]+): picture (.*), before.*/\1 \2/p' | sort | uniq -c | sort -rn | head -8 | sed 's/^/  /' || true
+          done
           for route in dcomp gdi; do
             grep -h 'compose-rust: metrics memory probe-idle' out/probe-$route-states-1.log | sed "s/^/  $route /" || true
           done
