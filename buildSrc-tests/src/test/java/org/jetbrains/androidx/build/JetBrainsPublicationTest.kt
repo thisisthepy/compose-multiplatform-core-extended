@@ -19,6 +19,7 @@ package org.jetbrains.androidx.build
 import java.io.File
 import java.util.Properties
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -120,6 +121,41 @@ class JetBrainsPublicationTest {
                 "collection",
             ),
         )
+    }
+
+    @Test
+    fun everyPublishedProjectHasAnUpstreamJetBrainsGroupThatMapsBack() {
+        assertEquals(
+            "org.jetbrains.compose.ui",
+            JetBrainsPublication.jetBrainsUpstreamGroupFor(":compose:ui:ui"),
+        )
+        assertEquals(
+            "org.jetbrains.androidx.navigationevent",
+            JetBrainsPublication.jetBrainsUpstreamGroupFor(":navigationevent:navigationevent-compose"),
+        )
+        assertEquals(
+            "org.jetbrains.compose.annotation-internal",
+            JetBrainsPublication.jetBrainsUpstreamGroupFor(":annotation:annotation"),
+        )
+        assertEquals(
+            "org.jetbrains.compose.collection-internal",
+            JetBrainsPublication.jetBrainsUpstreamGroupFor(":collection:collection"),
+        )
+        for (path in JetBrainsPublication.projectPathToComponent.keys) {
+            val upstreamGroup = JetBrainsPublication.jetBrainsUpstreamGroupFor(path)
+            val name = path.substringAfterLast(":")
+            assertTrue(
+                "$upstreamGroup is not recognized as an upstream JetBrains group",
+                JetBrainsPublication.isJetBrainsUpstreamGroup(upstreamGroup),
+            )
+            assertEquals(
+                "$upstreamGroup:$name does not map back to $path",
+                path,
+                JetBrainsPublication.projectPathForCoordinates(upstreamGroup, name),
+            )
+        }
+        assertFalse(JetBrainsPublication.isJetBrainsUpstreamGroup("org.thisisthepy.compose.ui"))
+        assertFalse(JetBrainsPublication.isJetBrainsUpstreamGroup("androidx.compose.ui"))
     }
 
     /**

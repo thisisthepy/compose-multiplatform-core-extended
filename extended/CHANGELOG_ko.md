@@ -5,6 +5,23 @@
 
 ## 출시 전
 
+### 패키징 템플릿 (`extended/packaging`)
+
+- **바뀐 것.** 템플릿이 compose-rust 패키저가 실제로 내보내는 것을 담습니다. 그 패키저들이 템플릿을
+  채우고(compose-rust FR-22.6 기준 11) 템플릿이 채운 것에 더하기만 할 수 있기 때문입니다. 규칙은
+  `metadata-map.md`에 있습니다.
+  - `flatpak-manifest.json.in`은 모든 Flathub 매니페스트에 공통인 부분입니다. Flathub가 받지 않는
+    `dir` 소스가 없고, 페이로드(URL과 SHA-256의 압축 파일, patchelf 모듈, 창의 소켓, 아이콘)는
+    패키저가 더합니다. 런타임 기본값은 25.08입니다.
+  - `application.manifest.in`은 DPI 인식과 함께 `asInvoker`를 담고 앱 정보와 설명은 담지 않습니다.
+    compose-rust로 만든 모든 Windows 실행 파일이 같은 매니페스트를 담으므로 자리표시자가 없습니다.
+  - `AppxManifest.xml.in`은 `{{identity_name}}`(스토어가 예약한 이름), `{{arch}}`, `{{language}}`,
+    `{{background_color}}`(기본 `transparent`)를 받습니다.
+  - `app.metainfo.xml.in`은 `{{summary}}`, `{{developer_id}}`, `{{metadata_license}}`를 받고,
+    `app.desktop.in`의 `Comment=`는 `{{summary}}`입니다.
+
+## 1.11.1-ext.6 (2026-11-23)
+
 ### 배포
 
 - Maven Central 릴리스에서 tvOS, watchOS, Kotlin/JS 를 뺍니다(`CENTRAL_SKIP_TARGETS`. `all_targets` 를 켜고
