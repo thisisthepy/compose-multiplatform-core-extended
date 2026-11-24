@@ -61,6 +61,14 @@ struct dxc_dcomp {
     // The size the visual is clipped to, as last given to it.
     int32_t clip_width;
     int32_t clip_height;
+    // On Windows 11, the device is the desktop device of an interop compositor
+    // (make_synchronized_device), and partner6 is its IDCompositionDesktopDevicePartner6, whose
+    // SynchronizedCommit carries a window's resize token: DWM then holds the window's new
+    // rectangle until the commit with the frame of that size, so the two reach the screen in one
+    // composition. NULL where that device could not be made: the device is then
+    // DCompositionCreateDevice2's and commits are plain. why_plain says why.
+    IUnknown *partner6;
+    const char *why_plain;
 };
 
 namespace {
@@ -105,10 +113,144 @@ void release_tree(dxc_dcomp *comp) {
 
 void release_device(dxc_dcomp *comp) {
     release_tree(comp);
+    release(comp->partner6);
     release(comp->device);
 }
 
+// The interop compositor (fork #175's spike, compose-rust #364/#365; raddebugger#1033 for a
+// plain Win32 window). All of it is private or WinRT: looked up at run time, interfaces by IID
+// and the one private method by vtable slot, so a machine without any piece answers "plain".
+const GUID iid_factory_partner = {0x22118adf, 0x23f1, 0x4801, {0xbc, 0xfa, 0x66, 0xcb, 0xf4, 0x8c, 0xc5, 0x1b}};
+const GUID iid_compositor = {0xb403ca50, 0x7f8c, 0x4e83, {0x98, 0x5f, 0xcc, 0x45, 0x06, 0x00, 0x36, 0xd8}};
+const GUID iid_device_partner6 = {0xe01eb649, 0x787e, 0x4560, {0xb3, 0x98, 0x0d, 0xe7, 0xa2, 0x06, 0x5d, 0x8b}};
+// Slots 0-2 IUnknown, 3-5 IInspectable: IInteropCompositorFactoryPartner::CreateInteropCompositor.
+const int slot_create_interop_compositor = 6;
+// IDCompositionDesktopDevicePartner6::SynchronizedCommit(HANDLE), as the spike calls it.
+const int slot_synchronized_commit = 69;
+// Windows 11's first build. Windows 10 and Server 2022 (20348) take the plain device.
+const DWORD synchronized_min_build = 22000;
+
+typedef HRESULT(STDMETHODCALLTYPE *create_interop_compositor_fn)(void *self, void *device, void *callback,
+                                                                 const GUID *iid, void **out);
+typedef HRESULT(STDMETHODCALLTYPE *synchronized_commit_fn)(void *self, HANDLE token);
+typedef HRESULT(WINAPI *ro_initialize_fn)(int type);
+typedef HRESULT(WINAPI *ro_get_activation_factory_fn)(void *class_id, const GUID *iid, void **factory);
+typedef HRESULT(WINAPI *windows_create_string_fn)(const WCHAR *text, UINT32 length, void **string);
+typedef HRESULT(WINAPI *windows_delete_string_fn)(void *string);
+struct dispatcher_queue_options {
+    DWORD size;
+    int thread_type;
+    int apartment_type;
+};
+typedef HRESULT(WINAPI *create_dispatcher_queue_fn)(dispatcher_queue_options options, void **controller);
+
+void *vtable_slot(void *object, int slot) { return (*static_cast<void ***>(object))[slot]; }
+
+DWORD os_build() {
+    typedef LONG(WINAPI * rtl_get_version_fn)(OSVERSIONINFOW *);
+    OSVERSIONINFOW version = {};
+    version.dwOSVersionInfoSize = sizeof version;
+    rtl_get_version_fn get =
+        reinterpret_cast<rtl_get_version_fn>(reinterpret_cast<void *>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion")));
+    return get != nullptr && get(&version) == 0 ? version.dwBuildNumber : 0;
+}
+
+// The device of an interop compositor, with its Partner6. False, with why_plain set, where any
+// piece is missing or refuses; nothing is left behind then.
+bool make_synchronized_device(dxc_dcomp *comp) {
+    const char *asked = getenv("DXC_DCOMP_SYNC");
+    if (asked != nullptr && strcmp(asked, "0") == 0) {
+        comp->why_plain = "DXC_DCOMP_SYNC=0";
+        return false;
+    }
+    if (os_build() < synchronized_min_build) {
+        comp->why_plain = "this Windows is older than Windows 11 (build 22000)";
+        return false;
+    }
+    HMODULE combase = LoadLibraryW(L"combase.dll");
+    HMODULE messaging = LoadLibraryW(L"CoreMessaging.dll");
+    ro_initialize_fn ro_initialize =
+        combase ? reinterpret_cast<ro_initialize_fn>(reinterpret_cast<void *>(GetProcAddress(combase, "RoInitialize"))) : nullptr;
+    ro_get_activation_factory_fn get_factory =
+        combase ? reinterpret_cast<ro_get_activation_factory_fn>(
+                      reinterpret_cast<void *>(GetProcAddress(combase, "RoGetActivationFactory")))
+                : nullptr;
+    windows_create_string_fn create_string =
+        combase ? reinterpret_cast<windows_create_string_fn>(
+                      reinterpret_cast<void *>(GetProcAddress(combase, "WindowsCreateString")))
+                : nullptr;
+    windows_delete_string_fn delete_string =
+        combase ? reinterpret_cast<windows_delete_string_fn>(
+                      reinterpret_cast<void *>(GetProcAddress(combase, "WindowsDeleteString")))
+                : nullptr;
+    create_dispatcher_queue_fn create_queue =
+        messaging ? reinterpret_cast<create_dispatcher_queue_fn>(
+                        reinterpret_cast<void *>(GetProcAddress(messaging, "CreateDispatcherQueueController")))
+                  : nullptr;
+    if (!ro_initialize || !get_factory || !create_string || !delete_string || !create_queue) {
+        comp->why_plain = "combase or CoreMessaging lacks a function it needs";
+        return false;
+    }
+    // RO_INIT_SINGLETHREADED; S_FALSE or RPC_E_CHANGED_MODE: already initialized on this thread.
+    HRESULT initialized = ro_initialize(0);
+    if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE) {
+        comp->why_plain = "RoInitialize failed";
+        return false;
+    }
+    // A dispatcher queue on this thread (DQTYPE_THREAD_CURRENT, DQTAT_COM_STA), as the compositor
+    // needs one; kept for the life of the process, as the spike does.
+    static void *queue;
+    if (queue == nullptr) {
+        dispatcher_queue_options options = {sizeof(dispatcher_queue_options), 2, 2};
+        if (FAILED(create_queue(options, &queue))) {
+            comp->why_plain = "CreateDispatcherQueueController failed";
+            return false;
+        }
+    }
+    static const WCHAR class_name[] = L"Windows.UI.Composition.Compositor";
+    void *name = nullptr;
+    if (FAILED(create_string(class_name, static_cast<UINT32>(sizeof class_name / sizeof(WCHAR) - 1), &name))) {
+        comp->why_plain = "WindowsCreateString failed";
+        return false;
+    }
+    void *factory = nullptr;
+    HRESULT got = get_factory(name, &iid_factory_partner, &factory);
+    delete_string(name);
+    if (FAILED(got) || factory == nullptr) {
+        comp->why_plain = "the interop compositor factory is missing";
+        return false;
+    }
+    void *compositor = nullptr;
+    HRESULT made = reinterpret_cast<create_interop_compositor_fn>(vtable_slot(factory, slot_create_interop_compositor))(
+        factory, nullptr, nullptr, &iid_compositor, &compositor);
+    static_cast<IUnknown *>(factory)->Release();
+    if (FAILED(made) || compositor == nullptr) {
+        comp->why_plain = "CreateInteropCompositor failed";
+        return false;
+    }
+    IDCompositionDesktopDevice *device = nullptr;
+    IUnknown *partner6 = nullptr;
+    HRESULT desktop = static_cast<IUnknown *>(compositor)->QueryInterface(__uuidof(IDCompositionDesktopDevice),
+                                                                          reinterpret_cast<void **>(&device));
+    HRESULT partner = static_cast<IUnknown *>(compositor)->QueryInterface(iid_device_partner6,
+                                                                          reinterpret_cast<void **>(&partner6));
+    static_cast<IUnknown *>(compositor)->Release();
+    if (FAILED(desktop) || FAILED(partner) || device == nullptr || partner6 == nullptr) {
+        release(device);
+        release(partner6);
+        comp->why_plain = FAILED(desktop) ? "the interop compositor is no IDCompositionDesktopDevice"
+                                          : "the interop compositor has no IDCompositionDesktopDevicePartner6";
+        return false;
+    }
+    comp->device = device;
+    comp->partner6 = partner6;
+    return true;
+}
+
 bool make_device(dxc_dcomp *comp) {
+    if (make_synchronized_device(comp)) {
+        return true;
+    }
     create_device2_fn create = create_device2();
     if (create == nullptr) {
         return false;
@@ -383,6 +525,26 @@ extern "C" int dxc_dcomp_end_draw(dxc_dcomp *comp, void *texture) {
         }
     }
     return 0;
+}
+
+extern "C" const char *dxc_dcomp_synchronized(dxc_dcomp *comp) {
+    if (comp == nullptr) return "there is no composition device";
+    return comp->partner6 != nullptr ? nullptr : (comp->why_plain != nullptr ? comp->why_plain : "the device is plain");
+}
+
+extern "C" int dxc_dcomp_commit_synchronized(dxc_dcomp *comp, HANDLE token) {
+    if (comp == nullptr || comp->partner6 == nullptr || comp->visual == nullptr) {
+        return dxc_dcomp_commit(comp);
+    }
+    HRESULT committed =
+        reinterpret_cast<synchronized_commit_fn>(vtable_slot(comp->partner6, slot_synchronized_commit))(comp->partner6, token);
+    if (SUCCEEDED(committed)) {
+        comp->shown = comp->next;
+        return 0;
+    }
+    fprintf(stderr, "compose-rust: dcomp: SynchronizedCommit failed with 0x%08lx, committing plainly\n",
+            static_cast<unsigned long>(committed));
+    return dxc_dcomp_commit(comp);
 }
 
 extern "C" int dxc_dcomp_commit(dxc_dcomp *comp) {

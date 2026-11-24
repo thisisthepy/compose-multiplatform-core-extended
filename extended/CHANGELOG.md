@@ -25,6 +25,18 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
+- **Fix.** On Windows 11, the Windows window's DirectComposition route (`DXC_DCOMP=1`) brings a
+  size change's rectangle and its frame to the screen in one composition. The route's device is
+  now an interop compositor's. Each size change's frame is committed with the window's resize
+  token (`SynchronizedCommit`, user32's private resize synchronization, as fork #175's spike and
+  Windows' own XAML do), so DWM holds the new rectangle until the frame of its size comes. Before,
+  the two were separate changes to DWM and could land a composition apart: a maximise, restore
+  or snap could show the frame at the wrong size or origin, or the desktop through the window.
+  Every piece is private and looked up at run time. Where one is missing, or on Windows 10 and
+  Server 2022, the route commits plainly as before, and the log says why
+  (`compose-rust: dcomp: synchronized commit off because ...`). `DXC_DCOMP_SYNC=0` asks for the
+  plain commits. (#223)
+
 - **Fix.** On the Windows window's DirectComposition route (`DXC_DCOMP=1`), a maximise, restore
   or snap now reaches the screen as DSA's window does: the frame of the new size is drawn and
   written ahead, nothing is committed before the window's rectangle, and `WM_SIZE` commits it.

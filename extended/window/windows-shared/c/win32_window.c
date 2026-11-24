@@ -316,6 +316,17 @@ struct DxcWin {
     int comp_presented;
     int comp_commit_failed;
     int comp_first_show_logged;
+    // The synchronized commit (Windows 11; dxc_comp_sync_start): whether it is on for this window,
+    // the hidden zero-size child that makes Windows issue resize tokens, the token of the size
+    // change in progress, whether the commit of that change waits for the posted
+    // DXC_WM_SYNC_COMMIT, and counts for the closing line.
+    int comp_sync_on;
+    HWND comp_sync_child;
+    HANDLE comp_sync_token;
+    int comp_sync_pending;
+    long comp_sync_changes;
+    long comp_sync_tokens;
+    long comp_sync_commits;
     // The Direct3D 11 device the surface is written with. Native (comp_native): a device of its
     // own on the same adapter, made with D3D11CreateDevice; the GPU frame reaches it through the
     // draw texture shared from Direct3D 12 and a shared fence (comp_fence12, comp_fence11).
@@ -480,6 +491,10 @@ struct DxcWin {
 #define dxc_comp_presented (dxc_w->comp_presented)
 #define dxc_comp_commit_failed (dxc_w->comp_commit_failed)
 #define dxc_comp_first_show_logged (dxc_w->comp_first_show_logged)
+#define dxc_comp_sync_on (dxc_w->comp_sync_on)
+#define dxc_comp_sync_child (dxc_w->comp_sync_child)
+#define dxc_comp_sync_token (dxc_w->comp_sync_token)
+#define dxc_comp_sync_pending (dxc_w->comp_sync_pending)
 #define dxc_comp_native (dxc_w->comp_native)
 #define dxc_comp_surfaces (dxc_w->comp_surfaces)
 #define dxc_comp_device (dxc_w->comp_device)
@@ -3790,6 +3805,13 @@ static int dxc_comp_show(const char *what) {
         return 0;
     }
     dxc_presents_in_change++;
+    if (dxc_comp_sync_pending) {
+        // A size change with a resize token: DWM holds the window's new rectangle until the
+        // commit that carries the token, which DXC_WM_SYNC_COMMIT makes once WM_WINDOWPOSCHANGED
+        // has returned. What was written goes with it.
+        dxc_comp_presented = 1;
+        return 1;
+    }
     int committed = dxc_dcomp_commit(dxc_comp);
     if (!dxc_comp_first_show_logged) {
         dxc_comp_first_show_logged = 1;
@@ -4270,6 +4292,128 @@ static void dxc_draw_resize(int32_t width, int32_t height) {
                 total_ms - drawn_ms, outer.left, outer.top,
                 dxc_sizing.dragging ? dxc_sizing_edge_name(dxc_drag_sizing_edge) : "none");
     }
+}
+
+// The synchronized commit on the composition route (Windows 11; the owner's go, 2026-10-26: the
+// private synchronized commit binding the frame to the window's size, with an automatic fallback
+// where a piece is missing or on Windows 10). Fork #175's spike, on this route's own device: the
+// composition unit makes that device from an interop compositor (dxc_dcomp_synchronized), and
+// here user32's private resize synchronization is turned on for the window and a hidden zero-size
+// child of it (Windows issues no token without such a child):
+//   - ordinal 2615, EnableResizeLayoutSynchronization(hwnd, enable), on both;
+//   - ordinal 2614, GetResizeDCompositionSynchronizationObject(hwnd, &token), in
+//     WM_WINDOWPOSCHANGED; it can succeed with no token, as not every change has one;
+//   - the frame of the new size, drawn ahead in WM_NCCALCSIZE or in WM_SIZE as before, is
+//     committed with the token by SynchronizedCommit from a posted message once
+//     WM_WINDOWPOSCHANGED has returned, as the spike does; DWM holds the window's new rectangle
+//     until then, so the rectangle and the frame of its size reach the screen in one composition;
+//   - ordinal 2538, LayoutCompleted(hwnd), after it.
+// Any piece missing or refused leaves this window on plain commits, which is the route as it was
+// (#266, #308), and the log says why. DXC_DCOMP_SYNC=0 asks for that, for comparison.
+#define DXC_WM_SYNC_COMMIT (WM_APP + 4)
+typedef BOOL(WINAPI *dxc_sync_enable_fn)(HWND, BOOL);
+typedef BOOL(WINAPI *dxc_sync_token_fn)(HWND, HANDLE *);
+typedef BOOL(WINAPI *dxc_sync_layout_fn)(HWND);
+static dxc_sync_enable_fn dxc_sync_enable;
+static dxc_sync_token_fn dxc_sync_get_token;
+static dxc_sync_layout_fn dxc_sync_layout_completed;
+
+static void dxc_comp_sync_start(HWND window) {
+    const char *why = dxc_dcomp_synchronized(dxc_comp);
+    if (why == NULL) {
+        HMODULE user32 = GetModuleHandleW(L"user32.dll");
+        dxc_sync_get_token = (dxc_sync_token_fn)(void *)GetProcAddress(user32, MAKEINTRESOURCEA(2614));
+        dxc_sync_enable = (dxc_sync_enable_fn)(void *)GetProcAddress(user32, MAKEINTRESOURCEA(2615));
+        dxc_sync_layout_completed = (dxc_sync_layout_fn)(void *)GetProcAddress(user32, MAKEINTRESOURCEA(2538));
+        if (dxc_sync_get_token == NULL || dxc_sync_enable == NULL || dxc_sync_layout_completed == NULL) {
+            why = "user32 lacks ordinal 2614, 2615 or 2538";
+        }
+    }
+    if (why == NULL) {
+        static int class_made;
+        if (!class_made) {
+            WNDCLASSW child_class;
+            memset(&child_class, 0, sizeof child_class);
+            child_class.lpfnWndProc = DefWindowProcW;
+            child_class.hInstance = GetModuleHandleW(NULL);
+            child_class.lpszClassName = L"ComposeRustSyncChild";
+            class_made = RegisterClassW(&child_class) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+        }
+        dxc_comp_sync_child = CreateWindowExW(0, L"ComposeRustSyncChild", L"", WS_CHILD, 0, 0, 0, 0, window, NULL,
+                                              GetModuleHandleW(NULL), NULL);
+        if (dxc_comp_sync_child == NULL) {
+            why = "the synchronization child could not be made";
+        } else if (!dxc_sync_enable(window, TRUE) || !dxc_sync_enable(dxc_comp_sync_child, TRUE)) {
+            why = "EnableResizeLayoutSynchronization was refused";
+            DestroyWindow(dxc_comp_sync_child);
+            dxc_comp_sync_child = NULL;
+        }
+    }
+    dxc_comp_sync_on = why == NULL;
+    if (why == NULL) {
+        fprintf(stderr, "compose-rust: dcomp: synchronized commit on: a size change's frame is committed with its "
+                        "resize token, DWM holds the rectangle until then\n");
+    } else {
+        fprintf(stderr, "compose-rust: dcomp: synchronized commit off because %s; commits are plain\n", why);
+    }
+}
+
+/** WM_WINDOWPOSCHANGED with a new size: takes the change's token and posts its commit. */
+static void dxc_comp_sync_on_change(HWND window, const WINDOWPOS *pos) {
+    if (!dxc_comp_sync_on || pos == NULL || (pos->flags & SWP_NOSIZE) != 0) return;
+    HANDLE token = NULL;
+    if (!dxc_sync_get_token(window, &token)) token = NULL;
+    dxc_w->comp_sync_changes++;
+    if (token == NULL) return;
+    dxc_w->comp_sync_tokens++;
+    if (dxc_comp_sync_token != NULL) CloseHandle(dxc_comp_sync_token);
+    dxc_comp_sync_token = token;
+    if (!dxc_comp_sync_pending) {
+        dxc_comp_sync_pending = PostMessageW(window, DXC_WM_SYNC_COMMIT, 0, 0) != 0;
+        if (!dxc_comp_sync_pending) {
+            CloseHandle(dxc_comp_sync_token);
+            dxc_comp_sync_token = NULL;
+        }
+    }
+}
+
+/**
+ * DXC_WM_SYNC_COMMIT: the frame of the window's size, drawn now if no change drew it, committed
+ * with the change's token, then LayoutCompleted.
+ */
+static void dxc_comp_sync_commit(HWND window) {
+    if (!dxc_comp_sync_pending) return;
+    RECT client;
+    if (GetClientRect(window, &client) && !IsIconic(window)) {
+        int32_t width = (int32_t)(client.right - client.left);
+        int32_t height = (int32_t)(client.bottom - client.top);
+        // Still pending here, so dxc_comp_show only writes; the commit below carries it.
+        if (width > 0 && height > 0) dxc_draw_resize(width, height);
+    }
+    dxc_comp_sync_pending = 0;
+    HANDLE token = dxc_comp_sync_token;
+    dxc_comp_sync_token = NULL;
+    int committed = dxc_dcomp_commit_synchronized(dxc_comp, token);
+    if (token != NULL) CloseHandle(token);
+    int laid_out = dxc_sync_layout_completed(window) ? 1 : 0;
+    dxc_w->comp_sync_commits++;
+    if (dxc_w->comp_sync_commits <= 3 || committed != 0 || !laid_out) {
+        fprintf(stderr, "compose-rust: dcomp: synchronized commit %ld: commit %d, LayoutCompleted %d (at %.1f ms)\n",
+                dxc_w->comp_sync_commits, committed, laid_out, dxc_now_ms());
+    }
+    if (committed == 0) dxc_comp_presented = 1;
+}
+
+/** The window is going: the token not committed is closed, and the counts are logged. */
+static void dxc_comp_sync_stop(void) {
+    if (dxc_comp_sync_token != NULL) CloseHandle(dxc_comp_sync_token);
+    dxc_comp_sync_token = NULL;
+    dxc_comp_sync_pending = 0;
+    if (dxc_comp_sync_on) {
+        fprintf(stderr, "compose-rust: dcomp: synchronized commit closed: %ld size changes, %ld with a token, %ld committed\n",
+                dxc_w->comp_sync_changes, dxc_w->comp_sync_tokens, dxc_w->comp_sync_commits);
+    }
+    dxc_comp_sync_on = 0;
 }
 
 /**
@@ -5282,7 +5426,9 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         break;
     case WM_WINDOWPOSCHANGED:
         // Moved or resized, by the user or by SetWindowPos. The default handler turns it into
-        // WM_MOVE and WM_SIZE.
+        // WM_MOVE and WM_SIZE. A new size's resize token is taken first, so WM_SIZE's commit
+        // waits for the one that carries it (dxc_comp_sync_on_change).
+        if (dxc_on_comp) dxc_comp_sync_on_change(window, (const WINDOWPOS *)lparam);
         dxc_w->moved_pending = 1;
         dxc_state_marks[DXC_STATE_CHANGED] = dxc_now_ms();
         if (dxc_comp_hold_active) {
@@ -5383,7 +5529,11 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         }
         DestroyWindow(window);
         return 0;
+    case DXC_WM_SYNC_COMMIT:
+        dxc_comp_sync_commit(window);
+        return 0;
     case WM_DESTROY:
+        dxc_comp_sync_stop();
         // The native views are the caller's: taken out before the window's children are
         // destroyed with it, which happens after this message (every child still exists
         // while it is handled).
@@ -7162,6 +7312,7 @@ static int32_t dxc_open_window(
         dxc_comp_surface_width = (int32_t)pixel_width;
         dxc_comp_surface_height = (int32_t)pixel_height;
         dxc_on_comp = 1;
+        dxc_comp_sync_start(window);
         const char *commit_at = getenv("DXC_DCOMP_COMMIT");
         dxc_comp_commit_mode = DXC_COMP_COMMIT_ORDER;
         for (int named = 0; commit_at != NULL && named < 3; named++) {
