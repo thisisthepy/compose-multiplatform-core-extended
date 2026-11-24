@@ -35,6 +35,22 @@ class ValidateTemplatesTest(unittest.TestCase):
         errors = vt.validate_template("app.wxs.in", wxs_text, self.mapping)
         self.assertEqual(errors, [])
 
+    def test_application_manifest_runs_as_invoker_per_monitor_v2(self) -> None:
+        manifest = (vt.TEMPLATES / "application.manifest.in").read_text(encoding="utf-8")
+        self.assertEqual(vt.validate_template("application.manifest.in", manifest, self.mapping), [])
+        elevated = manifest.replace('level="asInvoker"', 'level="requireAdministrator"')
+        errors = vt.validate_template("application.manifest.in", elevated, self.mapping)
+        self.assertTrue(any("asInvoker" in e for e in errors), f"Expected asInvoker error, got: {errors}")
+        system_aware = manifest.replace(">PerMonitorV2<", ">System<")
+        errors = vt.validate_template("application.manifest.in", system_aware, self.mapping)
+        self.assertTrue(any("PerMonitorV2" in e for e in errors), f"Expected PerMonitorV2 error, got: {errors}")
+
+    def test_appx_identity_name_is_identity_name(self) -> None:
+        # The Store may reserve a name other than the identifier; Identity Name follows it.
+        appx = (vt.TEMPLATES / "AppxManifest.xml.in").read_text(encoding="utf-8")
+        reserved = {**vt.SAMPLE, "identity_name": "ExamplePublisher.Hello"}
+        self.assertEqual(vt.validate_template("AppxManifest.xml.in", appx, self.mapping, sample=reserved), [])
+
     def test_missing_required_placeholder_fails(self) -> None:
         wxs_text = (vt.TEMPLATES / "app.wxs.in").read_text(encoding="utf-8")
         broken = wxs_text.replace("{{upgrade_code}}", "8f14e45f-ea9c-5d6b-9a3f-2c1e4b8a7d6c")

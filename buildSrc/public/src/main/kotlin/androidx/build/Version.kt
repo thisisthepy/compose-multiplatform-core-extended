@@ -39,7 +39,7 @@ data class Version(
     val forkRelease: String? = null,
     /**
      * What the fork publishes this version as, when that is not what the fields above spell. The
-     * fork ships every library line on one version (`1.11.1-ext.5`), while each line's sources
+     * fork ships every library line on one version (`1.11.1-ext.6`), while each line's sources
      * are an upstream version of their own (Material 3 is `1.11.0-alpha07`). The fields keep the
      * upstream version, so every check that asks whether a version is stable, alpha or final
      * API answers as it does upstream; [toString], which Gradle publishes, gives this.
@@ -54,19 +54,18 @@ data class Version(
         minor = Integer.parseInt(checkedMatcher(upstreamPart(versionString)).group(2)),
         patch = Integer.parseInt(checkedMatcher(upstreamPart(versionString)).group(3)),
         preRelease = checkedMatcher(upstreamPart(versionString)).group(4)?.ifEmpty { null },
+        // The number after the pre-release's kind: 7 for alpha07. Matched by prefix: the
+        // pre-release is the whole word ("alpha07"), so comparing it with the kind never matched
+        // and the iteration was always null.
         preReleaseIteration =
-            when (
-                val preRelease =
-                    checkedMatcher(upstreamPart(versionString))
-                        .group(4)
-                        ?.lowercase(Locale.getDefault())
-            ) {
-                ALPHA -> preRelease.substring(ALPHA.length).toIntOrNull()
-                BETA -> preRelease.substring(BETA.length).toIntOrNull()
-                DEV -> preRelease.substring(DEV.length).toIntOrNull()
-                RC -> preRelease.substring(RC.length).toIntOrNull()
-                else -> null
-            },
+            checkedMatcher(upstreamPart(versionString))
+                .group(4)
+                ?.lowercase(Locale.getDefault())
+                ?.let { preRelease ->
+                    listOf(ALPHA, BETA, DEV, RC)
+                        .firstOrNull { preRelease.startsWith(it) }
+                        ?.let { preRelease.substring(it.length).toIntOrNull() }
+                },
         buildMetadata = checkedMatcher(upstreamPart(versionString)).group(5)?.ifEmpty { null },
         forkRelease = forkReleaseOf(versionString),
     )

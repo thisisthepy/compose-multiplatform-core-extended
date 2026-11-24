@@ -33,7 +33,6 @@ androidXMultiplatform {
         androidResources.enable = true
     }
     desktop()
-    mingwX64()
     mac()
     ios()
     js()

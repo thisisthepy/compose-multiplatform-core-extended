@@ -25,23 +25,55 @@
 #include "win32_native_views.h"
 #include "win32_window.h"
 #include "win32_probe_judge.h"
+#include "win32_uia.h"
+#include "win32_uia_client.h"
 
 // The records the Kotlin side reads and writes by offset. A field added on one side only is
 // a reader that silently reads the wrong bytes, so the sizes are fixed here.
 _Static_assert(sizeof(struct dxc_event) == 136, "struct dxc_event is 136 bytes");
 _Static_assert(offsetof(struct dxc_event, text) == 28, "dxc_event text starts at 28");
 _Static_assert(offsetof(struct dxc_event, time_millis) == 128, "dxc_event time_millis starts at 128");
-_Static_assert(sizeof(struct dxc_element) == 116, "struct dxc_element is 116 bytes");
+_Static_assert(sizeof(struct dxc_element) == 500, "struct dxc_element is 500 bytes");
 _Static_assert(offsetof(struct dxc_element, label) == 20, "dxc_element label starts at 20");
+_Static_assert(offsetof(struct dxc_element, id) == 116, "dxc_element id starts at 116");
+_Static_assert(offsetof(struct dxc_element, parent_id) == 120, "dxc_element parent_id starts at 120");
+_Static_assert(offsetof(struct dxc_element, states) == 124, "dxc_element states starts at 124");
+_Static_assert(offsetof(struct dxc_element, actions) == 128, "dxc_element actions starts at 128");
+_Static_assert(offsetof(struct dxc_element, flags) == 132, "dxc_element flags starts at 132");
+_Static_assert(offsetof(struct dxc_element, range_min) == 136, "dxc_element range_min starts at 136");
+_Static_assert(offsetof(struct dxc_element, range_value) == 144, "dxc_element range_value starts at 144");
+_Static_assert(offsetof(struct dxc_element, value) == 148, "dxc_element value starts at 148");
+_Static_assert(offsetof(struct dxc_element, hint) == 404, "dxc_element hint starts at 404");
 _Static_assert(sizeof(struct dxc_native_window) == 5 * sizeof(void *), "five pointers");
 
 static int failures;
 
-// The toasts ask the renderer for a frame; the renderer is not part of this check.
-void compose_rust_renderer_request_frame(void) {}
-
 #define CHECK(condition) \
     do { if (!(condition)) { printf("fail: %s (line %d)\n", #condition, __LINE__); failures++; } } while (0)
+
+// EXT-WIN-13: nothing under extended/window names a renderer. The toasts wake whatever the
+// application registered with dxc_notify_set_wake when an answer arrives, and no one before.
+static int ext_win_13_wakes;
+static void ext_win_13_wake(void) { ext_win_13_wakes++; }
+
+static void ext_win_13_toasts_wake_the_registered_callback(void) {
+    char key[8];
+    int32_t value = 0;
+    // Nothing registered: the answer is queued and nothing is called.
+    dxc_notify_request_permission();
+    CHECK(ext_win_13_wakes == 0);
+    CHECK(dxc_notify_next_event(key, sizeof key, &value) == 2);  // DXC_NOTIFY_PERMISSION
+    dxc_notify_set_wake(ext_win_13_wake);
+    dxc_notify_request_permission();
+    CHECK(ext_win_13_wakes == 1);
+    CHECK(dxc_notify_next_event(key, sizeof key, &value) == 2);
+    CHECK(value == 4);  // not started: DXC_PERMISSION_UNSUPPORTED
+    dxc_notify_set_wake(NULL);
+    dxc_notify_request_permission();
+    CHECK(ext_win_13_wakes == 1);
+    CHECK(dxc_notify_next_event(key, sizeof key, &value) == 2);
+    CHECK(dxc_notify_next_event(key, sizeof key, &value) == 0);
+}
 
 // The first window's outside against the work area of its monitor (#185).
 static int placement_is(struct dxc_placement_rect r, int32_t l, int32_t t, int32_t rt, int32_t b) {
@@ -117,11 +149,12 @@ static void resize_predraw_decisions(void) {
     CHECK(dxc_resize_drag_predraw_wanted(&resize, 1, 0, 0, 616, 472, 624, 472) == 0);
     dxc_resize_end_drag(&resize);
     // The wait for a composition per step follows the compositor's generation unless asked.
+    // Every build waits unless asked not to (compose-rust#926).
     CHECK(dxc_resize_drag_flush_wanted(-1, 20348) == 1);
     CHECK(dxc_resize_drag_flush_wanted(-1, 19045) == 1);
-    CHECK(dxc_resize_drag_flush_wanted(-1, 22000) == 0);
-    CHECK(dxc_resize_drag_flush_wanted(-1, 26100) == 0);
-    CHECK(dxc_resize_drag_flush_wanted(-1, 0) == 0);
+    CHECK(dxc_resize_drag_flush_wanted(-1, 22000) == 1);
+    CHECK(dxc_resize_drag_flush_wanted(-1, 26100) == 1);
+    CHECK(dxc_resize_drag_flush_wanted(-1, 0) == 1);
     CHECK(dxc_resize_drag_flush_wanted(0, 20348) == 0);
     CHECK(dxc_resize_drag_flush_wanted(1, 26100) == 1);
 
@@ -269,16 +302,34 @@ static void caption_zones(void) {
         int32_t width = 1200;
         int32_t mid = height / 2;
         CHECK(button == 46 * dpi / 96 && height == 32 * dpi / 96);
-        CHECK(dxc_caption_zone_at(width - button / 2, mid, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_CLOSE);
-        CHECK(dxc_caption_zone_at(width - button * 3 / 2, mid, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_MAXIMISE);
-        CHECK(dxc_caption_zone_at(width - button * 5 / 2, mid, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_MINIMISE);
-        CHECK(dxc_caption_zone_at(width - button * 3 - 1, mid, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_CAPTION);
-        CHECK(dxc_caption_zone_at(width / 2, mid, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_CAPTION);
-        CHECK(dxc_caption_zone_at(width - button * 3 / 2, height, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_CLIENT);
-        CHECK(dxc_caption_zone_at(width / 2, 2, width, dpi, 8, 1, 0) == DXC_CAPTION_ZONE_TOP);
+        CHECK(dxc_caption_zone_at(width - button / 2, mid, width, dpi, 0, 8, 1, 0) == DXC_CAPTION_ZONE_CLOSE);
+        CHECK(dxc_caption_zone_at(width - button * 3 / 2, mid, width, dpi, 0, 8, 1, 0) == DXC_CAPTION_ZONE_MAXIMISE);
+        CHECK(dxc_caption_zone_at(width - button * 5 / 2, mid, width, dpi, 0, 8, 1, 0) == DXC_CAPTION_ZONE_MINIMISE);
+        CHECK(dxc_caption_zone_at(width - button * 3 - 1, mid, width, dpi, 0, 8, 1, 0) == DXC_CAPTION_ZONE_CAPTION);
+        CHECK(dxc_caption_zone_at(width / 2, mid, width, dpi, 0, 8, 1, 0) == DXC_CAPTION_ZONE_CAPTION);
+        CHECK(dxc_caption_zone_at(width - button * 3 / 2, height, width, dpi, 0, 8, 1, 0) == DXC_CAPTION_ZONE_CLIENT);
+        CHECK(dxc_caption_zone_at(width / 2, 2, width, dpi, 0, 8, 1, 0) == DXC_CAPTION_ZONE_TOP);
         // Maximised or fixed size: no top band, the buttons reach the top edge.
-        CHECK(dxc_caption_zone_at(width - button * 3 / 2, 2, width, dpi, 8, 1, 1) == DXC_CAPTION_ZONE_MAXIMISE);
-        CHECK(dxc_caption_zone_at(width / 2, 2, width, dpi, 8, 0, 0) == DXC_CAPTION_ZONE_CAPTION);
+        CHECK(dxc_caption_zone_at(width - button * 3 / 2, 2, width, dpi, 0, 8, 1, 1) == DXC_CAPTION_ZONE_MAXIMISE);
+        CHECK(dxc_caption_zone_at(width / 2, 2, width, dpi, 0, 8, 0, 0) == DXC_CAPTION_ZONE_CAPTION);
+    }
+}
+
+// FR-19.7: the caption strip is as tall as the window was configured (a Normal title bar is
+// taller than Simple's 32). A point below 32 but inside the taller strip is still caption, and
+// over the buttons still a button; 0 is the 32 point default.
+static void fr19_7_caption_height_is_the_configured_one(void) {
+    const int32_t dpis[] = {96, 144, 192};
+    for (int i = 0; i < 3; i++) {
+        int32_t dpi = dpis[i];
+        int32_t width = 1200;
+        int32_t button = dxc_caption_scale(46, dpi);
+        int32_t low = dxc_caption_scale(40, dpi);
+        CHECK(dxc_caption_zone_at(width / 2, low, width, dpi, 44, 8, 1, 0) == DXC_CAPTION_ZONE_CAPTION);
+        CHECK(dxc_caption_zone_at(width - button * 3 / 2, low, width, dpi, 44, 8, 1, 0) == DXC_CAPTION_ZONE_MAXIMISE);
+        CHECK(dxc_caption_zone_at(width / 2, low, width, dpi, 0, 8, 1, 0) == DXC_CAPTION_ZONE_CLIENT);
+        CHECK(dxc_caption_zone_at(width / 2, low, width, dpi, 32, 8, 1, 0) == DXC_CAPTION_ZONE_CLIENT);
+        CHECK(dxc_caption_zone_at(width / 2, dxc_caption_scale(44, dpi), width, dpi, 44, 8, 1, 0) == DXC_CAPTION_ZONE_CLIENT);
     }
 }
 
@@ -1901,7 +1952,267 @@ static void probe_judge_arithmetic(void) {
 }
 // probe judge checks end
 
+// ---------------------------------------------------------------------------
+// UI Automation (NFR-8, NFR-13 criterion 7)
+// ---------------------------------------------------------------------------
+
+static struct dxc_element uia_element(int32_t id, int32_t parent, int32_t role, const char *label,
+                                      float x, float y, int32_t states, int32_t actions) {
+    struct dxc_element el;
+    memset(&el, 0, sizeof el);
+    el.role = role;
+    el.x = x;
+    el.y = y;
+    el.width = 80;
+    el.height = 24;
+    strncpy_s(el.label, sizeof el.label, label, _TRUNCATE);
+    el.id = id;
+    el.parent_id = parent;
+    el.states = states;
+    el.actions = actions;
+    return el;
+}
+
+// The list becomes the tree its parent ids describe; an element whose parent is not in the list
+// is directly in the window, and siblings keep the list's order.
+static void nfr8_uia_parent_ids_make_the_tree(void) {
+    struct dxc_element els[5];
+    els[0] = uia_element(10, -1, DXC_ROLE_GROUP, "group", 0, 0, DXC_STATE_ENABLED, 0);
+    els[1] = uia_element(11, 10, DXC_ROLE_BUTTON, "one", 0, 0, DXC_STATE_ENABLED, DXC_ACTION_PRESS);
+    els[2] = uia_element(12, 10, DXC_ROLE_TEXT, "two", 0, 30, DXC_STATE_ENABLED, 0);
+    els[3] = uia_element(13, -1, DXC_ROLE_BUTTON, "three", 0, 60, DXC_STATE_ENABLED, DXC_ACTION_PRESS);
+    els[4] = uia_element(14, 99, DXC_ROLE_TEXT, "orphan", 0, 90, DXC_STATE_ENABLED, 0);
+    struct dxc_uia_links links[5];
+    dxc_uia_link(els, 5, links);
+    CHECK(links[0].parent == -1 && links[0].first_child == 1 && links[0].last_child == 2);
+    CHECK(links[1].parent == 0 && links[1].previous == -1 && links[1].next == 2);
+    CHECK(links[2].parent == 0 && links[2].previous == 1 && links[2].next == -1);
+    CHECK(links[0].next == 3 && links[3].previous == 0 && links[3].next == 4);
+    CHECK(links[4].parent == -1 && links[4].previous == 3 && links[4].next == -1);
+    CHECK(links[1].first_child == -1 && links[1].last_child == -1);
+    CHECK(dxc_uia_first_root(links, 5) == 0);
+    CHECK(dxc_uia_last_root(links, 5) == 4);
+}
+
+// Which patterns each kind of control offers.
+static void nfr8_uia_each_control_offers_its_patterns(void) {
+    struct dxc_element button = uia_element(1, -1, DXC_ROLE_BUTTON, "b", 0, 0, DXC_STATE_ENABLED, DXC_ACTION_PRESS);
+    CHECK(dxc_uia_patterns(&button) == DXC_UIA_INVOKE);
+    struct dxc_element check = uia_element(2, -1, DXC_ROLE_CHECKBOX, "c", 0, 0,
+                                           DXC_STATE_ENABLED | DXC_STATE_CHECKABLE, DXC_ACTION_PRESS);
+    CHECK(dxc_uia_patterns(&check) == DXC_UIA_TOGGLE);
+    struct dxc_element field = uia_element(3, -1, DXC_ROLE_FIELD, "f", 0, 0,
+                                           DXC_STATE_ENABLED | DXC_STATE_EDITABLE, DXC_ACTION_SET_VALUE);
+    CHECK(dxc_uia_patterns(&field) == DXC_UIA_VALUE);
+    CHECK(dxc_uia_value_settable(&field));
+    struct dxc_element shown = uia_element(4, -1, DXC_ROLE_FIELD, "r", 0, 0,
+                                           DXC_STATE_ENABLED | DXC_STATE_READ_ONLY, 0);
+    CHECK(dxc_uia_patterns(&shown) == DXC_UIA_VALUE);
+    CHECK(!dxc_uia_value_settable(&shown));
+    struct dxc_element slider = uia_element(5, -1, DXC_ROLE_SLIDER, "s", 0, 0, DXC_STATE_ENABLED,
+                                            DXC_ACTION_SET_VALUE | DXC_ACTION_INCREMENT | DXC_ACTION_DECREMENT);
+    slider.flags = DXC_ELEMENT_HAS_RANGE | DXC_ELEMENT_HAS_VALUE;
+    CHECK(dxc_uia_patterns(&slider) == DXC_UIA_RANGE_VALUE);
+    struct dxc_element tab = uia_element(6, -1, DXC_ROLE_TAB, "t", 0, 0,
+                                         DXC_STATE_ENABLED | DXC_STATE_SELECTED, DXC_ACTION_PRESS);
+    CHECK(dxc_uia_patterns(&tab) == (DXC_UIA_INVOKE | DXC_UIA_SELECTION_ITEM));
+    struct dxc_element row = uia_element(7, -1, DXC_ROLE_OUTLINE_ROW, "o", 0, 0,
+                                         DXC_STATE_ENABLED | DXC_STATE_EXPANDABLE, DXC_ACTION_PRESS);
+    CHECK(dxc_uia_patterns(&row) == (DXC_UIA_INVOKE | DXC_UIA_SELECTION_ITEM | DXC_UIA_EXPAND_COLLAPSE));
+    struct dxc_element text = uia_element(8, -1, DXC_ROLE_TEXT, "x", 0, 0, DXC_STATE_ENABLED, 0);
+    CHECK(dxc_uia_patterns(&text) == 0);
+    // A disabled field is not one a reader may write into.
+    field.states &= ~DXC_STATE_ENABLED;
+    CHECK(!dxc_uia_value_settable(&field));
+}
+
+static void nfr8_uia_states_read_as_uia_states(void) {
+    CHECK(dxc_uia_toggle_state(DXC_STATE_CHECKABLE) == DXC_UIA_TOGGLE_OFF);
+    CHECK(dxc_uia_toggle_state(DXC_STATE_CHECKABLE | DXC_STATE_CHECKED) == DXC_UIA_TOGGLE_ON);
+    CHECK(dxc_uia_toggle_state(DXC_STATE_CHECKABLE | DXC_STATE_MIXED | DXC_STATE_CHECKED) ==
+          DXC_UIA_TOGGLE_INDETERMINATE);
+    CHECK(dxc_uia_expand_state(0) == DXC_UIA_LEAF);
+    CHECK(dxc_uia_expand_state(DXC_STATE_EXPANDABLE) == DXC_UIA_COLLAPSED);
+    CHECK(dxc_uia_expand_state(DXC_STATE_EXPANDABLE | DXC_STATE_EXPANDED) == DXC_UIA_EXPANDED);
+    // The SDK's own numbers, which the rules repeat so they compile without it.
+    int sdk[4];
+    dxc_test_uia_sdk_numbers(sdk);
+    CHECK(DXC_UIA_TOGGLE_ON == sdk[0] && DXC_UIA_TOGGLE_INDETERMINATE == sdk[1]);
+    CHECK(DXC_UIA_EXPANDED == sdk[2] && DXC_UIA_LEAF == sdk[3]);
+}
+
+// Expand and Collapse use the control's own action, then a press that would change the state.
+static void nfr8_uia_expand_and_collapse_become_actions(void) {
+    struct dxc_element row = uia_element(1, -1, DXC_ROLE_OUTLINE_ROW, "r", 0, 0,
+                                         DXC_STATE_ENABLED | DXC_STATE_EXPANDABLE, DXC_ACTION_PRESS);
+    CHECK(dxc_uia_expand_action(&row, 1) == DXC_ACTION_PRESS);
+    CHECK(dxc_uia_expand_action(&row, 0) == 0);
+    row.states |= DXC_STATE_EXPANDED;
+    CHECK(dxc_uia_expand_action(&row, 1) == 0);
+    CHECK(dxc_uia_expand_action(&row, 0) == DXC_ACTION_PRESS);
+    row.actions = DXC_ACTION_EXPAND | DXC_ACTION_COLLAPSE;
+    CHECK(dxc_uia_expand_action(&row, 0) == DXC_ACTION_COLLAPSE);
+    CHECK(dxc_uia_expand_action(&row, 1) == DXC_ACTION_EXPAND);
+    struct dxc_element plain = uia_element(2, -1, DXC_ROLE_BUTTON, "p", 0, 0, DXC_STATE_ENABLED, DXC_ACTION_PRESS);
+    CHECK(dxc_uia_expand_action(&plain, 1) == 0);
+}
+
+// An element keeps its runtime id across pushes by its scene id; one without keeps it apart.
+static void nfr8_uia_runtime_ids_follow_the_scene_id(void) {
+    struct dxc_element el = uia_element(5, -1, DXC_ROLE_BUTTON, "b", 0, 0, DXC_STATE_ENABLED, 0);
+    CHECK(dxc_uia_runtime_key(&el, 0) == 6);
+    CHECK(dxc_uia_runtime_key(&el, 9) == 6);
+    el.id = -1;
+    CHECK(dxc_uia_runtime_key(&el, 3) == 0x40000003);
+    el.id = 0;
+    CHECK(dxc_uia_runtime_key(&el, 3) != 0);
+}
+
+static void nfr8_uia_focus_and_hit_test(void) {
+    struct dxc_element els[3];
+    els[0] = uia_element(1, -1, DXC_ROLE_GROUP, "g", 0, 0, DXC_STATE_ENABLED, 0);
+    els[0].width = 200;
+    els[0].height = 200;
+    els[1] = uia_element(2, 1, DXC_ROLE_BUTTON, "b", 10, 10, DXC_STATE_ENABLED, DXC_ACTION_PRESS);
+    els[2] = uia_element(3, 1, DXC_ROLE_FIELD, "f", 10, 50, DXC_STATE_ENABLED | DXC_STATE_FOCUSED, 0);
+    CHECK(dxc_uia_focused(els, 3) == 2);
+    CHECK(dxc_uia_hit(els, 3, 15, 15) == 1);
+    CHECK(dxc_uia_hit(els, 3, 150, 150) == 0);
+    CHECK(dxc_uia_hit(els, 3, 500, 5) == -1);
+    els[2].states = DXC_STATE_ENABLED;
+    CHECK(dxc_uia_focused(els, 3) == -1);
+}
+
+// A reader finds the button by its type and name and invokes it, toggles the checkbox, writes
+// into the field and the slider, and moves focus; each request reaches the window's queue as an
+// accessibility action naming the element and the action, and a new value is read beside it.
+static void nfr8_uia_reader_requests_reach_the_scene(void) {
+    if (!real_windows_ok) { printf("skip: nfr8_uia_reader_requests_reach_the_scene\n"); return; }
+    struct dxc_native_window window;
+    memset(&window, 0, sizeof window);
+    if (!open_test_window(&window, "uia")) return;
+    dxc_native_window_select(window.window);
+
+    struct dxc_element els[8];
+    els[0] = uia_element(7, -1, DXC_ROLE_BUTTON, "Save", 10, 10, DXC_STATE_ENABLED | DXC_STATE_FOCUSABLE,
+                         DXC_ACTION_PRESS | DXC_ACTION_FOCUS);
+    strncpy_s(els[0].hint, sizeof els[0].hint, "Saves the file", _TRUNCATE);
+    els[0].flags = DXC_ELEMENT_HAS_HINT;
+    els[1] = uia_element(8, -1, DXC_ROLE_CHECKBOX, "Wrap", 10, 40,
+                         DXC_STATE_ENABLED | DXC_STATE_CHECKABLE | DXC_STATE_CHECKED, DXC_ACTION_PRESS);
+    els[2] = uia_element(9, -1, DXC_ROLE_FIELD, "Name", 10, 70,
+                         DXC_STATE_ENABLED | DXC_STATE_FOCUSABLE | DXC_STATE_EDITABLE,
+                         DXC_ACTION_SET_VALUE | DXC_ACTION_FOCUS);
+    strncpy_s(els[2].value, sizeof els[2].value, "draft", _TRUNCATE);
+    els[2].flags = DXC_ELEMENT_HAS_VALUE;
+    els[3] = uia_element(10, -1, DXC_ROLE_GROUP, "Details", 100, 10, DXC_STATE_ENABLED, 0);
+    els[3].width = 200;
+    els[3].height = 100;
+    els[4] = uia_element(11, 10, DXC_ROLE_TEXT, "Inside", 110, 20, DXC_STATE_ENABLED, 0);
+    els[5] = uia_element(12, -1, DXC_ROLE_BUTTON, "Delete", 10, 100, 0, DXC_ACTION_PRESS);
+    els[6] = uia_element(13, 10, DXC_ROLE_FIELD, "Focused", 110, 50,
+                         DXC_STATE_ENABLED | DXC_STATE_FOCUSABLE | DXC_STATE_FOCUSED | DXC_STATE_EDITABLE,
+                         DXC_ACTION_SET_VALUE);
+    els[7] = uia_element(15, -1, DXC_ROLE_SLIDER, "Volume", 10, 130, DXC_STATE_ENABLED,
+                         DXC_ACTION_SET_VALUE | DXC_ACTION_INCREMENT | DXC_ACTION_DECREMENT);
+    els[7].flags = DXC_ELEMENT_HAS_RANGE;
+    els[7].range_min = 0;
+    els[7].range_max = 1;
+    els[7].range_value = 0.5f;
+    dxc_native_set_accessibility(els, 8, window.window);
+    pump_all();
+
+    struct uia_probe probe;
+    memset(&probe, 0, sizeof probe);
+    probe.window = (HWND)window.window;
+    probe.invoke = probe.toggle = probe.set_value = probe.set_range = probe.set_focus = E_FAIL;
+    HANDLE thread = CreateThread(NULL, 0, dxc_test_uia_client, &probe, 0, NULL);
+    CHECK(thread != NULL);
+    ULONGLONG deadline = GetTickCount64() + 20000;
+    while (thread != NULL && InterlockedCompareExchange(&probe.done, 0, 0) == 0 && GetTickCount64() < deadline) {
+        dxc_native_window_select(window.window);
+        dxc_native_pump(0.01);
+    }
+    CHECK(InterlockedCompareExchange(&probe.done, 0, 0) == 1);
+    if (thread != NULL) {
+        WaitForSingleObject(thread, 5000);
+        CloseHandle(thread);
+    }
+
+    CHECK(probe.found_button);
+    CHECK(probe.button_enabled);
+    CHECK(probe.help_ok);
+    CHECK(probe.invoke == S_OK);
+    CHECK(!probe.disabled_enabled);
+    CHECK(probe.disabled_refused);
+    CHECK(probe.toggle_was_on);
+    CHECK(probe.toggle == S_OK);
+    CHECK(!probe.field_read_only);
+    CHECK(probe.set_value == S_OK);
+    CHECK(probe.set_focus == S_OK);
+    CHECK(probe.range_value == 0.5 && probe.range_max == 1.0);
+    CHECK(probe.set_range == S_OK);
+    CHECK(!probe.has_invoke_on_text);
+    CHECK(probe.nested_parent_ok);
+    // Save, Wrap, Name, Details, Delete and Volume; Inside and Focused are in Details.
+    CHECK(probe.root_children == 6);
+    CHECK(probe.focused_ok);
+
+    // What the scene is asked, in the order the reader asked it. UI Automation itself also
+    // focuses an element before it invokes it or sets its value, where the element can take
+    // focus (7 and 9 here, not 8 or 15): those focus requests are passed on as they come
+    // (runs 44949827173, 44971132673: focus 7 before its press, focus 9 before its new
+    // value), so they are counted apart from the order of the reader's own requests.
+    int32_t expected_ids[] = {7, 8, 9, 15};
+    int32_t expected_actions[] = {DXC_ACTION_PRESS, DXC_ACTION_PRESS, DXC_ACTION_SET_VALUE, DXC_ACTION_SET_VALUE};
+    int seen = 0;
+    int focus_on_9 = 0;
+    int focus_elsewhere = 0;
+    char argument[512];
+    dxc_native_window_select(window.window);
+    struct dxc_event event;
+    while (dxc_native_poll_event(&event) != 0) {
+        if (event.kind != DXC_EVENT_ACCESSIBILITY_ACTION) continue;
+        if (event.code_point == DXC_ACTION_FOCUS) {
+            if (event.key_code == 9) focus_on_9++;
+            else if (event.key_code != 7) focus_elsewhere++;
+            continue;
+        }
+        if (seen < 4) {
+            CHECK(event.key_code == expected_ids[seen]);
+            CHECK(event.code_point == expected_actions[seen]);
+        }
+        if (event.code_point == DXC_ACTION_SET_VALUE) {
+            // Too small first: nothing is taken, and the answer is the room it needs. One
+            // byte is too small for either value ("0.75" is exactly four).
+            int32_t needed = dxc_native_take_accessibility_argument(argument, 1);
+            CHECK(needed > 1);
+            int32_t length = dxc_native_take_accessibility_argument(argument, (int32_t)sizeof argument - 1);
+            CHECK(length == needed);
+            if (length >= 0) argument[length] = 0;
+            if (event.key_code == 9) {
+                CHECK(strncmp(argument, "\xed\x95\x9c\xea\xb8\x80 and more", 13) == 0);
+                CHECK(length > DXC_TEXT_BYTES);
+            } else {
+                CHECK(strcmp(argument, "0.75") == 0);
+            }
+        }
+        seen++;
+    }
+    CHECK(seen == 4);
+    // The reader's own SetFocus on the field, at least, and none for an element that cannot
+    // take focus.
+    CHECK(focus_on_9 >= 1);
+    CHECK(focus_elsewhere == 0);
+    CHECK(dxc_native_take_accessibility_argument(argument, (int32_t)sizeof argument) == -1);
+
+    dxc_native_window_destroy(window.window);
+    pump_all();
+    dxc_native_window_release(window.window);
+}
+
 int main(int argc, char **argv) {
+    ext_win_13_toasts_wake_the_registered_callback();
     resize_decisions();
     resize_predraw_decisions();
     probe_judge_arithmetic();
@@ -1913,6 +2224,7 @@ int main(int argc, char **argv) {
     utf8_conversion();
     caption_zones();
     fr19_9_app_caption_decisions();
+    fr19_7_caption_height_is_the_configured_one();
     caption_pointer_crossings();
     frame_time();
     x11_names();
@@ -1924,6 +2236,12 @@ int main(int argc, char **argv) {
     fr82_dpi_size_arithmetic();
     fr81_native_view_placement_arithmetic();
     fr81_native_view_focus_reports();
+    nfr8_uia_parent_ids_make_the_tree();
+    nfr8_uia_each_control_offers_its_patterns();
+    nfr8_uia_states_read_as_uia_states();
+    nfr8_uia_expand_and_collapse_become_actions();
+    nfr8_uia_runtime_ids_follow_the_scene_id();
+    nfr8_uia_focus_and_hit_test();
     // The software adapter, for a runner with no GPU.
     _putenv("DXC_D3D12_WARP=1");
     fr19_9_app_caption_strip_is_client_area();
@@ -1938,6 +2256,7 @@ int main(int argc, char **argv) {
     fr53_activate_reports_focus();
     fr81_native_views_in_a_real_window(0);
     fr81_native_views_in_a_real_window(1);
+    nfr8_uia_reader_requests_reach_the_scene();
     fr72_filter_lines_become_dialog_patterns();
     fr72_a_dialog_that_cannot_start_answers_nothing();
     fr72_an_open_dialog_does_not_hold_the_loop_and_answers_once();

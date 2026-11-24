@@ -236,7 +236,8 @@ jobs:
           set -euo pipefail
           TASKS=$(
             ./gradlew :mpp:testWeb${{ matrix.task }} -m --console=plain --no-configuration-cache \
-              --no-daemon -Pkotlin.compiler.execution.strategy=in-process \
+              --no-daemon --no-parallel --stacktrace -Porg.gradle.workers.max=1 \
+              -Dorg.gradle.configureondemand=false -Pkotlin.compiler.execution.strategy=in-process \
               | awk '/^:.*compileTestDevelopmentExecutable/ {print $1}' \
               | tr '\n' ' '
           )
@@ -321,7 +322,8 @@ jobs:
           set -euo pipefail
           TASKS=$(
             ./gradlew :mpp:testWeb${{ matrix.task }} -m --console=plain --no-configuration-cache \
-              --no-daemon -Pkotlin.compiler.execution.strategy=in-process \
+              --no-daemon --no-parallel --stacktrace -Porg.gradle.workers.max=1 \
+              -Dorg.gradle.configureondemand=false -Pkotlin.compiler.execution.strategy=in-process \
               | awk '/^:.*compileTestDevelopmentExecutable/ {print $1}' \
               | tr '\n' ' '
           )

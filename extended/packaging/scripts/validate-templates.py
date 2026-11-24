@@ -31,12 +31,19 @@ SAMPLE = {
     "category_mac": "public.app-category.utilities",
     "category_xdg": "Utility;",
     "license": "LicenseRef-proprietary",
-    "runtime_version": "24.08",
+    "runtime_version": "25.08",
     "app_id": "Hello",
     "min_windows": "10.0.17763.0",
     "max_windows_tested": "10.0.26100.0",
     "min_macos": "13.0",
     "upgrade_code": "8f14e45f-ea9c-5d6b-9a3f-2c1e4b8a7d6c",
+    "summary": "A hello app",
+    "developer_id": "dev.example",
+    "metadata_license": "CC0-1.0",
+    "identity_name": "dev.example.hello",
+    "arch": "x64",
+    "language": "en-us",
+    "background_color": "transparent",
 }
 
 REQUIRED = {
@@ -44,8 +51,10 @@ REQUIRED = {
     "app.desktop.in": ["name", "executable", "identifier"],
     "app.metainfo.xml.in": ["identifier", "name", "version", "description", "executable"],
     "flatpak-manifest.json.in": ["identifier", "executable"],
-    "AppxManifest.xml.in": ["identifier", "name", "version4", "description", "executable"],
-    "application.manifest.in": ["identifier", "version4"],
+    "AppxManifest.xml.in": ["identity_name", "name", "version4", "description", "executable"],
+    # The manifest every Windows executable carries (DPI awareness, asInvoker). It is the
+    # same for every application, so it has no placeholder.
+    "application.manifest.in": [],
     "app.wxs.in": [
         "identifier",
         "name",
@@ -216,8 +225,8 @@ def validate_appx_manifest(name: str, rendered: str, sample: dict[str, str]) -> 
         errors.append(f"{name}: missing <Identity> element")
     else:
         identity = identities[0]
-        if identity.attrib.get("Name") != sample["identifier"]:
-            errors.append(f"{name}: Identity Name does not match identifier")
+        if identity.attrib.get("Name") != sample["identity_name"]:
+            errors.append(f"{name}: Identity Name does not match identity_name")
         version = identity.attrib.get("Version", "")
         if version != sample["version4"] or not VERSION4_RE.match(version):
             errors.append(f"{name}: Identity Version must be a 4-part version matching version4")
@@ -232,16 +241,14 @@ def validate_application_manifest(name: str, rendered: str, sample: dict[str, st
     root = ET.fromstring(rendered.encode("utf-8"))
     if _local_name(root.tag) != "assembly":
         return [f"{name}: root element must be <assembly>"]
-    identities = _find_by_local(root, "assemblyIdentity")
-    if not identities:
-        errors.append(f"{name}: missing <assemblyIdentity> element")
-    else:
-        identity = identities[0]
-        if identity.attrib.get("name") != sample["identifier"]:
-            errors.append(f"{name}: assemblyIdentity name does not match identifier")
-        version = identity.attrib.get("version", "")
-        if version != sample["version4"] or not VERSION4_RE.match(version):
-            errors.append(f"{name}: assemblyIdentity version must match version4")
+    # The manifest every Windows executable carries: no identity (it is the same for every
+    # application), run as the user who started it, per-monitor DPI aware (v2).
+    levels = _find_by_local(root, "requestedExecutionLevel")
+    if not levels or levels[0].attrib.get("level") != "asInvoker":
+        errors.append(f"{name}: requestedExecutionLevel level must be asInvoker")
+    awareness = _find_by_local(root, "dpiAwareness")
+    if not awareness or (awareness[0].text or "").strip() != "PerMonitorV2":
+        errors.append(f"{name}: dpiAwareness must be PerMonitorV2")
     return errors
 
 

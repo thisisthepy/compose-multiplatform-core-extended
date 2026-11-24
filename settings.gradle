@@ -67,22 +67,15 @@ def prebuiltsRoot = new File(
         supportRootFolder.parentFile.parentFile,
         "prebuilts"
 ).absolutePath
-def rootProjectRepositories
-
 apply from: "buildSrc/settingsScripts/out-setup.groovy"
 
 getGradle().beforeProject { project ->
     // Migrate to dependencyResolutionManagement.repositories when
-    // https://github.com/gradle/gradle/issues/17295 is fixed
-    if (project.path == ":") {
-        repos.addMavenRepositories(project.repositories)
-        rootProjectRepositories = project.repositories
-    } else {
-        // Performance optimization because it is more efficient to reuse
-        // repositories from the root project than recreate identical ones
-        // on each project
-        project.repositories.addAll(rootProjectRepositories)
-    }
+    // https://github.com/gradle/gradle/issues/17295 is fixed.
+    // Give each project its own repository instances rather than sharing the root
+    // project's mutable RepositoryHandler entries via addAll(), which can race
+    // during parallel dependency resolution in Gradle 9.
+    repos.addMavenRepositories(project.repositories)
     project.ext.supportRootFolder = supportRootFolder
     project.ext.prebuiltsRoot = prebuiltsRoot
     def checkoutRoot = new File("${buildscript.sourceFile.parent}")
