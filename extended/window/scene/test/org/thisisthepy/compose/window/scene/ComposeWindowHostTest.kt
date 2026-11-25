@@ -20,6 +20,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalCursorBlinkEnabled
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.runtime.CompositionLocalProvider
 import org.thisisthepy.compose.window.EditMenuId
 import androidx.compose.ui.unit.dp
@@ -62,6 +63,7 @@ internal class FakePlatform : WindowPlatform {
     /** Reader requests to deliver in the next pump: id, action, argument. */
     val readerAsks = ArrayList<Triple<Int, Int, String?>>()
     val readerAnswers = ArrayList<Boolean>()
+    val focusChanges = ArrayList<Boolean>()
     private var listener: WindowListener? = null
 
     override fun open(config: WindowConfig, listener: WindowListener): Boolean {
@@ -83,6 +85,8 @@ internal class FakePlatform : WindowPlatform {
             readerAnswers += listener?.onAccessibilityAction(id, action, argument) == true
         }
         readerAsks.clear()
+        for (focused in ArrayList(focusChanges)) listener?.onFocusChanged(focused)
+        focusChanges.clear()
     }
 
     override fun caption() = captionNow
@@ -355,6 +359,29 @@ class ComposeWindowHostTest {
         repeat(4) { host.turn(0) }
         assertEquals(listOf(false, false), delivered)
         assertEquals(1, clicks)
+        host.close()
+    }
+
+    @Test
+    fun window_focus_changes_reach_window_info() {
+        val platform = FakePlatform()
+        val surface = FakeSurface()
+        var focused: Boolean? = null
+        val host = host(platform, surface) {
+            focused = LocalWindowInfo.current.isWindowFocused
+            Box(Modifier.fillMaxSize())
+        }
+        assertTrue(host.open())
+        host.turn(0)
+        assertEquals(true, focused)
+
+        platform.focusChanges.add(false)
+        repeat(3) { host.turn(0) }
+        assertEquals(false, focused)
+
+        platform.focusChanges.add(true)
+        repeat(3) { host.turn(0) }
+        assertEquals(true, focused)
         host.close()
     }
 }
