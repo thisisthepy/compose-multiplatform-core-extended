@@ -4343,9 +4343,24 @@ static void dxc_comp_sync_start(HWND window) {
 static void dxc_comp_sync_on_change(HWND window, const WINDOWPOS *pos) {
     if (!dxc_comp_sync_on || pos == NULL || (pos->flags & SWP_NOSIZE) != 0) return;
     HANDLE token = NULL;
-    if (!dxc_sync_get_token(window, &token)) token = NULL;
+    SetLastError(0);
+    BOOL got = dxc_sync_get_token(window, &token);
+    DWORD error = GetLastError();
+    if (!got) token = NULL;
     dxc_w->comp_sync_changes++;
-    if (token == NULL) return;
+    if (token == NULL) {
+        // The first few, so a log shows which size changes Windows synchronizes: a drag inside
+        // the size-move loop gets a token; whether a maximise, a restore or a snap does is what
+        // this answers.
+        if (dxc_w->comp_sync_changes - dxc_w->comp_sync_tokens <= 3) {
+            fprintf(stderr,
+                    "compose-rust: dcomp: synchronized commit: no resize token for a size change to %dx%d "
+                    "(returned %d, error %lu, flags 0x%x, %s, at %.1f ms)\n",
+                    pos->cx, pos->cy, got ? 1 : 0, (unsigned long)error, pos->flags,
+                    IsZoomed(window) ? "maximised" : "not maximised", dxc_now_ms());
+        }
+        return;
+    }
     dxc_w->comp_sync_tokens++;
     if (dxc_comp_sync_token != NULL) CloseHandle(dxc_comp_sync_token);
     dxc_comp_sync_token = token;

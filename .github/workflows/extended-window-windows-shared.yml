@@ -436,6 +436,9 @@ jobs:
           for way in on off; do
             grep -h 'compose-rust: dcomp: synchronized commit o[nf]' out/probe-dcomp-sync-$way-1.log | head -1 | sed "s/^/  $way: /" || true
             grep -h 'compose-rust: dcomp: synchronized commit closed' out/probe-dcomp-sync-$way-?.log | head -2 | sed "s/^/  $way: /" || true
+            # Which size changes Windows gave no resize token (the first three per run).
+            grep -h 'compose-rust: dcomp: synchronized commit: no resize token' out/probe-dcomp-sync-$way-?.log | head -6 | sed "s/^/  $way: /" || true
+            echo "  $way: $(cat out/probe-dcomp-sync-$way-?.log | grep -c 'compose-rust: dcomp: synchronized commit [0-9]' || true) commit lines logged (the first three per window)"
             line="synchronized commit $way:"
             for phases in maximise restore 'left-half|back'; do
               read -r wrong changes <<<"$(judged $way "$phases")"
