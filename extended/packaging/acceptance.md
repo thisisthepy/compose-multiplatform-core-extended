@@ -27,14 +27,21 @@ and this file is wrong. Changing what the project promises is done in compose-ru
 | Flatpak | the manifest is valid JSON with `id` equal to the identifier; `appstreamcli validate` passes on the metainfo; `desktop-file-validate` passes; `flatpak-builder` builds it |
 | `.exe` installer (Velopack) | `vpk pack` exits 0; the output holds `Setup.exe`, a `*-full.nupkg`, a `releases.*.json` feed and, when a previous release is supplied, a `*-delta.nupkg`; the package id equals the identifier and the version equals the app version; the installed app starts from the Start menu shortcut |
 | `.msix` | `AppxManifest.xml` is well-formed; `Identity Name` equals `{{identity_name}}` (the identifier, unless the Store reserved another name) and `Version` is the four part version; `makeappx pack` succeeds; the four logo assets named in the manifest exist; the Windows App Certification Kit passes on a machine that has it; it is built unsigned and the install instructions (developer mode, or re-sign with a test certificate) ship with it |
-| `.msi` | on hold |
+| `.msi` | on hold for build integration; `app.wxs.in` template is well-formed WiX XML with `Product` `Name`, `Version`, `Manufacturer`, `UpgradeCode`, `ARPPRODUCTICON`, `ARPCOMMENTS`, and the executable `<File>` |
 
 ## Template checks (run in CI by this repository)
 
-- Every template that is XML is well-formed once placeholders are replaced with sample values.
+- Every template that is XML (including `Info.plist.in`, `app.metainfo.xml.in`,
+  `AppxManifest.xml.in`, `application.manifest.in`, and `app.wxs.in`) is well-formed once
+  placeholders are replaced with sample values.
+- Format-level syntax and acceptance checks pass for plist (`Info.plist.in`), XDG desktop
+  entry (`app.desktop.in`), Flatpak JSON (`flatpak-manifest.json.in`), AppStream metainfo
+  (`app.metainfo.xml.in`), MSIX (`AppxManifest.xml.in`), Win32 assembly manifest
+  (`application.manifest.in`), WiX (`app.wxs.in`), and Debian control syntax.
 - Every template contains the placeholders its format needs (identifier, name, version
   and the executable where the format names one).
-- No placeholder in a template is missing from `metadata-map.md`.
+- No placeholder in a template is missing from `metadata-map.md`, and no unexpanded
+  placeholder delimiters remain after rendering.
 
 ## Needs a human on real hardware
 
