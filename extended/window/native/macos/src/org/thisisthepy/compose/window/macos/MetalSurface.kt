@@ -238,6 +238,29 @@ class MetalSurface {
         }
     }
 
+    /** How many times [purgeGpuResources] emptied the cache, for measuring. */
+    var gpuPurges = 0
+        private set
+
+    /**
+     * Gives back what Skia's GPU resource cache holds that no frame is using: the textures and
+     * buffers it keeps so the next frame need not make them again. The next frame that needs
+     * them makes them again, once.
+     *
+     * The skiko this fork uses (0.144.6) has no purge call on [DirectContext]; Skia's own
+     * `purgeUnlockedResources` is not bound. Setting the cache's limit makes Skia purge what
+     * it can until the cache is under the new limit (`GrResourceCache::setLimit`), so the
+     * limit is set to nothing and put back. Resources a frame in flight still refers to are
+     * not purgeable and stay.
+     */
+    fun purgeGpuResources() {
+        if (closed) return
+        val limit = context.resourceCacheLimit
+        context.resourceCacheLimit = 0L
+        context.resourceCacheLimit = limit
+        gpuPurges++
+    }
+
     private var closed = false
 
     fun close() {

@@ -25,6 +25,9 @@ jobs:
       - name: check-local.py and publish-local.sh --list
         run: extended/compose/tests/check-local.test.sh
 
+      - name: retry-network.sh
+        run: extended/compose/tests/retry-network.test.sh
+
       - name: republish-skiko-mingw.py
         run: extended/skiko/tests/republish-skiko-mingw.test.sh
 
