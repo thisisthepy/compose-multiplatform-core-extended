@@ -23,8 +23,8 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
-- **Fix.** On Windows 11, the Windows window's DirectComposition route (`DXC_DCOMP=1`) brings a
-  size change's rectangle and its frame to the screen in one composition. The route's device is
+- **Fix.** On Windows 11, the Windows window's DirectComposition route (`DXC_DCOMP=1`) brings an
+  edge drag's rectangle and its frame to the screen in one composition. The route's device is
   now an interop compositor's. Each size change's frame is committed with the window's resize
   token (`SynchronizedCommit`, user32's private resize synchronization, as fork #175's spike and
   Windows' own XAML do), so DWM holds the new rectangle until the frame of its size comes. Before,
