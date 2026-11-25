@@ -29,6 +29,9 @@ jobs:
       - name: check-local.py and publish-local.sh --list
         run: extended/compose/tests/check-local.test.sh
 
+      - name: retry-network.sh
+        run: extended/compose/tests/retry-network.test.sh
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

@@ -84,6 +84,7 @@ class AppKitWindowPlatform : WindowPlatform {
         val opened = openNativeWindow(config.title, config.width, config.height) ?: return false
         window = opened
         this.listener = listener
+        closeAnswered = false
         lastTheme = systemTheme()
         lastScale = opened.measure().scale
         openedAtMillis = System.currentTimeMillis()
@@ -115,6 +116,13 @@ class AppKitWindowPlatform : WindowPlatform {
         val listening = isAccessibilityActive()
         if (listening && !readerWasListening) requestFrame()
         readerWasListening = listening
+        if (!closeAnswered && takeWindowCloseRequested()) {
+            if (sink.onCloseRequested()) {
+                closeAnswered = true
+                close()
+                return
+            }
+        }
         if (isWindowClosed() && !closeAnswered) {
             closeAnswered = true
             sink.onCloseRequested()
@@ -288,8 +296,10 @@ class AppKitWindowPlatform : WindowPlatform {
     val macosTitleBar: MacosTitleBar get() = titleBar
 
     override fun close() {
+        val current = window
         window = null
         listener = null
+        current?.close()
     }
 
     companion object {

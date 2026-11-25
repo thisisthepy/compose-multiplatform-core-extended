@@ -1517,7 +1517,7 @@ public final class androidx/compose/ui/text/platform/FontLoader : androidx/compo
 
 public final class androidx/compose/ui/text/platform/LoadedFont : androidx/compose/ui/text/platform/PlatformFont {
 	public static final field $stable I
-	public synthetic fun <init> (Ljava/lang/String;Lkotlin/jvm/functions/Function0;Landroidx/compose/ui/text/font/FontWeight;ILandroidx/compose/ui/text/font/FontVariation$Settings;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Lkotlin/jvm/functions/Function0;Landroidx/compose/ui/text/font/FontWeight;ILandroidx/compose/ui/text/font/FontVariation$Settings;Lorg/jetbrains/skia/Data;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Ljava/lang/String;Lkotlin/jvm/functions/Function0;Landroidx/compose/ui/text/font/FontWeight;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getData ()[B
@@ -1541,8 +1541,10 @@ public final class androidx/compose/ui/text/platform/PlatformFont_skikoKt {
 	public static synthetic fun Font-MuC2MFs$default (Ljava/lang/String;Lkotlin/jvm/functions/Function0;Landroidx/compose/ui/text/font/FontWeight;ILandroidx/compose/ui/text/font/FontVariation$Settings;ILjava/lang/Object;)Landroidx/compose/ui/text/font/Font;
 	public static synthetic fun Font-MuC2MFs$default (Ljava/lang/String;[BLandroidx/compose/ui/text/font/FontWeight;ILandroidx/compose/ui/text/font/FontVariation$Settings;ILjava/lang/Object;)Landroidx/compose/ui/text/font/Font;
 	public static final fun Font-wCLgNak (Ljava/lang/String;Lkotlin/jvm/functions/Function0;Landroidx/compose/ui/text/font/FontWeight;I)Landroidx/compose/ui/text/font/Font;
+	public static final fun Font-wCLgNak (Ljava/lang/String;Lorg/jetbrains/skia/Data;Landroidx/compose/ui/text/font/FontWeight;I)Landroidx/compose/ui/text/font/Font;
 	public static final fun Font-wCLgNak (Ljava/lang/String;[BLandroidx/compose/ui/text/font/FontWeight;I)Landroidx/compose/ui/text/font/Font;
 	public static synthetic fun Font-wCLgNak$default (Ljava/lang/String;Lkotlin/jvm/functions/Function0;Landroidx/compose/ui/text/font/FontWeight;IILjava/lang/Object;)Landroidx/compose/ui/text/font/Font;
+	public static synthetic fun Font-wCLgNak$default (Ljava/lang/String;Lorg/jetbrains/skia/Data;Landroidx/compose/ui/text/font/FontWeight;IILjava/lang/Object;)Landroidx/compose/ui/text/font/Font;
 	public static synthetic fun Font-wCLgNak$default (Ljava/lang/String;[BLandroidx/compose/ui/text/font/FontWeight;IILjava/lang/Object;)Landroidx/compose/ui/text/font/Font;
 	public static final fun Typeface (Lorg/jetbrains/skia/Typeface;Ljava/lang/String;)Landroidx/compose/ui/text/font/Typeface;
 	public static synthetic fun Typeface$default (Lorg/jetbrains/skia/Typeface;Ljava/lang/String;ILjava/lang/Object;)Landroidx/compose/ui/text/font/Typeface;
