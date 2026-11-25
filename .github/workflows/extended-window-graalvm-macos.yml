@@ -13,6 +13,9 @@ permissions:
   contents: read
 
 env:
+  # Amper's Maven Central is Google's mirror of it in place of repo1.maven.org, which answers
+  # runners that share an address with 429 Too Many Requests (fork-train-16: graalvm-linux, scene).
+  KOTLIN_DEFAULT_MAVEN_CENTRAL_URL: https://maven-central.storage-download.googleapis.com/maven2
   # Google's mirror of Maven Central, asked before Central by buildSrc/repos.gradle: Central
   # answers runners that share an address with 429 Too Many Requests (fork-train-16).
   COMPOSE_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2

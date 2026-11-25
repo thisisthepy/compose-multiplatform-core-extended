@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Checks that every workflow running this fork's Gradle build names the Maven mirror
-# (COMPOSE_MAVEN_MIRROR, which buildSrc/repos.gradle asks before Maven Central) in its own
+# (COMPOSE_MAVEN_MIRROR, which buildSrc/repos.gradle asks before Maven Central), and every one
+# running the Kotlin toolchain (Amper: ./kotlin, kotlin.bat) points its Maven Central at it
+# (KOTLIN_DEFAULT_MAVEN_CENTRAL_URL, which Amper reads in place of repo1.maven.org), in its own
 # top-level env. A workflow called with workflow_call does not inherit its caller's env, so each
 # one says it itself. Nothing is built.
 set -euo pipefail
@@ -30,8 +32,19 @@ for workflow in "$workflows"/*.yml; do
 done
 [[ $checked -gt 0 ]] || fail "no workflow under $workflows runs the Gradle build"
 
+runs_amper='\./kotlin\b|kotlin\.bat'
+amper=0
+for workflow in "$workflows"/*.yml; do
+    grep -qE "$runs_amper" "$workflow" || continue
+    amper=$((amper + 1))
+    if ! top_level_env "$workflow" | grep -qE '^  KOTLIN_DEFAULT_MAVEN_CENTRAL_URL: *[^ ]'; then
+        fail "$(basename "$workflow") runs the Kotlin toolchain and does not set KOTLIN_DEFAULT_MAVEN_CENTRAL_URL in its top-level env"
+    fi
+done
+[[ $amper -gt 0 ]] || fail "no workflow under $workflows runs the Kotlin toolchain"
+
 if [[ $failures -gt 0 ]]; then
     echo "$failures failed" >&2
     exit 1
 fi
-echo "ok: $checked workflows"
+echo "ok: $checked Gradle and $amper Kotlin toolchain workflows"
