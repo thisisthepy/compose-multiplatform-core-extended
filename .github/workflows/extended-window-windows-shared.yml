@@ -27,10 +27,11 @@ jobs:
       matrix:
         os: [windows-2022, windows-2025]
     runs-on: ${{ matrix.os }}
-    # The probe steps run on both routes, the DirectComposition one and the GDI one. 80: the
-    # judged drags (four modes three runs, seven modes two runs, on two routes) add 52 probe
-    # runs, the 200 % run on windows-2025 22 more, and the lag probe script 8.
-    timeout-minutes: 80
+    # The probe steps run on both routes, the DirectComposition one and the GDI one. 90: the
+    # judged drags (four modes three runs, seven modes two runs, on two routes, and two
+    # comparison ways of the composition route one run a mode) add 74 probe runs, the 200 % run
+    # on windows-2025 22 more, and the lag probe script 8.
+    timeout-minutes: 90
     defaults:
       run:
         shell: cmd
@@ -386,8 +387,8 @@ jobs:
       # gated: waiting for a composition before every step (fix/926, the pace cost the owner
       # accepted) merges fast moves, and fork-train-4 (45064211320) had GDI covering 43 to 100 %
       # with 1 faulty frame of 809 judged. The
-      # DirectComposition route is printed, not gated: it is expected to be red until its fix
-      # lands, and that fix's PR turns it into a gate. Not asserted here either way.
+      # DirectComposition route is printed, not gated, with two comparison ways beside it; its
+      # gate comes in its own PR once a run shows its order and backing under 2 %.
       #
       # WARP (these runners) waits for a composition in BeginDraw, about 20 ms a step, so a step
       # here takes as long as a composition and the see-through fault is rarer than on a real
@@ -397,13 +398,31 @@ jobs:
         shell: bash
         run: |
           modes="drag-left drag-top drag-topleft drag-fast drag-right drag-bottom drag-bottomright drag-topright drag-bottomleft drag-mixed drag-slow"
-          for route in gdi dcomp; do
-            flag=$([ "$route" = gdi ] && echo 0 || echo 1)
+          # Beside the two routes, two other ways of the composition route, by its switches
+          # (printed, one run a mode):
+          #   dcomp               the route's own order (DXC_DCOMP_DRAG=sized, the default): every
+          #                       step the frame written, a composition waited for, the rectangle,
+          #                       the commit in WM_SIZE; the backing behind the frame
+          #   dcomp-nobacking     the same without the backing (DXC_DCOMP_BACKING=0): what the
+          #                       backing changes, see-through against the frame's edge colour
+          #   dcomp-order         the order before: a step that shrinks committed first and waited
+          #                       for, one that grows committed after, no wait before a step
+          routes="gdi dcomp dcomp-nobacking dcomp-order"
+          switches() { # <route>: the environment that gives it
+            case "$1" in
+              gdi) echo "DXC_DCOMP=0" ;;
+              dcomp) echo "DXC_DCOMP=1" ;;
+              dcomp-nobacking) echo "DXC_DCOMP=1 DXC_DCOMP_BACKING=0" ;;
+              dcomp-order) echo "DXC_DCOMP=1 DXC_DCOMP_DRAG=order" ;;
+            esac
+          }
+          for route in $routes; do
             for mode in $modes; do
               runs="1 2 3"
               case $mode in drag-left|drag-top|drag-topleft|drag-fast) ;; *) runs="1 2" ;; esac
+              case $route in gdi|dcomp) ;; *) runs="1" ;; esac
               for run in $runs; do
-                DXC_DCOMP=$flag DXC_REPORT_LATENCY=1 PROBE_SAVE="out\\frames-judge-$route-$mode-$run" ./out/win32_resize_probe.exe $mode > out/judge-$route-$mode-$run.log 2>&1 || true
+                env $(switches $route) DXC_REPORT_LATENCY=1 PROBE_SAVE="out\\frames-judge-$route-$mode-$run" ./out/win32_resize_probe.exe $mode > out/judge-$route-$mode-$run.log 2>&1 || true
               done
             done
           done
@@ -414,11 +433,12 @@ jobs:
           field() { # <regex with one group> <line>
             sed -nE "s/$1/\1/p" <<<"$2"
           }
-          echo "judged drags, 3 runs each: mode, route, composed frames in the drag, judged, faulty anchor, faulty see-through (of them: frame of another size, size unreadable), worst shift px, widest see-through px"
-          printf '%-13s %-6s %9s %7s %13s %18s %10s %10s %12s\n' mode route composed judged anchor see-through other-size unreadable worst-shift
+          echo "judged drags (gdi and dcomp 3 runs of the first four modes, 2 of the others; comparisons 1): mode, route, composed frames in the drag, judged, faulty anchor, faulty see-through (of them: frame of another size, size unreadable), worst shift px, widest see-through px"
+          printf '%-13s %-18s %9s %7s %13s %18s %10s %10s %12s\n' mode route composed judged anchor see-through other-size unreadable worst-shift
           gdi_judged=0 gdi_faulty=0
+          rm -f out/judge-totals.txt
           for mode in $modes; do
-            for route in gdi dcomp; do
+            for route in $routes; do
               composed=0 judged=0 anchor=0 see=0 other=0 unreadable=0 worst=0 widest=0 available=yes
               for log in out/judge-$route-$mode-?.log; do
                 line=$(grep -h "probe: phase $mode composed" "$log" | head -1 || true)
@@ -440,11 +460,14 @@ jobs:
                 if [ "$w" -gt "$widest" ]; then widest=$w; fi
               done
               if [ "$available" = no ]; then
-                printf '%-13s %-6s %9s %7s %13s %18s %10s %10s %12s\n' "$mode" "$route" "$composed" n/a n/a n/a n/a n/a n/a
+                printf '%-13s %-18s %9s %7s %13s %18s %10s %10s %12s\n' "$mode" "$route" "$composed" n/a n/a n/a n/a n/a n/a
                 echo "judged $mode $route: not available on this build"
               else
-                printf '%-13s %-6s %9s %7s %13s %18s %10s %10s %12s\n' "$mode" "$route" "$composed" "$judged" "$anchor" "$see" "$other" "$unreadable" "$worst (see-through $widest)"
+                printf '%-13s %-18s %9s %7s %13s %18s %10s %10s %12s\n' "$mode" "$route" "$composed" "$judged" "$anchor" "$see" "$other" "$unreadable" "$worst (see-through $widest)"
                 echo "judged $mode $route: composed=$composed judged=$judged anchor_faulty=$anchor see_through_faulty=$see other_size=$other unreadable=$unreadable worst_shift_px=$worst widest_see_through_px=$widest"
+              fi
+              if [ "$available" != no ]; then
+                echo "$route $judged $((anchor > see ? anchor : see))" >> out/judge-totals.txt
               fi
               # How far the dragged sides followed the pointer, over the mode's runs (printed for
               # both routes; gated on GDI below). Each run's own line follows.
@@ -500,8 +523,16 @@ jobs:
             echo "judged gdi (the gate): $gdi_faulty faulty of $gdi_judged judged frames, limit 2 %"
             test "$((gdi_faulty * 50))" -le "$gdi_judged" || { echo "gdi: $gdi_faulty faulty of $gdi_judged judged frames in the judged drags, above 2 %" >&2; status=1; }
           fi
-          echo "The GDI route above is gated (2 % of its judged frames over all modes, where the judges are available, and every drag ending within 2 px of where the pointer let go). The DirectComposition route is printed, not gated: it is expected to be red until the fix lands (the fix PR turns it into a gate)."
-          for route in gdi dcomp; do
+          echo "The GDI route above is gated (2 % of its judged frames over all modes, where the judges are available, and every drag ending within 2 px of where the pointer let go). The DirectComposition rows are printed, not gated; dcomp-nobacking and dcomp-order are comparisons."
+          echo "judged drags, every mode together: route, faulty frames of judged frames"
+          for route in $routes; do
+            awk -v r="$route" '$1 == r { j += $2; f += $3 } END { if (j > 0) printf "judged total %s: %d faulty of %d judged (%.1f %%)\n", r, f, j, 100 * f / j }' out/judge-totals.txt 2>/dev/null || true
+          done
+          for route in $routes; do
+            grep -h 'dcomp: drag timing' out/judge-$route-drag-topleft-1.log | head -2 | sed "s/^/  $route drag-topleft /" || true
+            grep -h 'dcomp: backing under the frame' out/judge-$route-drag-right-1.log | head -1 | sed "s/^/  $route /" || true
+          done
+          for route in gdi dcomp dcomp-order; do
             echo "first judged faults, $route (run 1 of each mode):"
             for mode in $modes; do
               grep -h 'probe: calibrated at rest\|probe: calibration:\|edge: pressed at\|sides moved over\|pace moves' out/judge-$route-$mode-1.log | head -6 | sed "s/^/  $mode /" || true

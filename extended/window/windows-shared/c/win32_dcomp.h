@@ -9,7 +9,8 @@
 // void* or a plain int.
 //
 // One dxc_dcomp per window: the device, the target on the window, one visual, and the
-// visual's content, a virtual surface. A surface, not a swapchain: what is drawn into a
+// visual's content, a virtual surface; under that visual, a backing of one colour
+// (dxc_dcomp_set_backing). A surface, not a swapchain: what is drawn into a
 // surface, the surface's size and the visual's clip all reach the screen with the commit
 // that follows, as one change, where a swapchain's present reaches DWM on its own and can
 // land a composition before or after the commit that sizes it.
@@ -63,6 +64,14 @@ int dxc_dcomp_end_draw(dxc_dcomp *comp, void *texture);
  * failed too. Every failure is logged with its HRESULT.
  */
 int dxc_dcomp_commit(dxc_dcomp *comp);
+
+/**
+ * Sets the colour of the backing behind the frame (BGRA as the frame's bitmap; alpha is made
+ * opaque), shown wherever the window's rectangle reaches past the frame on screen. Takes effect
+ * at the next commit, with the frame. Filled again only when the colour changes. Zero on
+ * success, 1 with no backing (DXC_DCOMP_BACKING=0, or it could not be made), 2 on a failed fill.
+ */
+int dxc_dcomp_set_backing(dxc_dcomp *comp, uint32_t bgra);
 
 /** Waits until DWM has taken the last commit (IDCompositionDevice::WaitForCommitCompletion). */
 void dxc_dcomp_wait(dxc_dcomp *comp);

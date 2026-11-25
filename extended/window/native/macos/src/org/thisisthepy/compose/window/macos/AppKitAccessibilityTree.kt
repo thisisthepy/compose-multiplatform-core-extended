@@ -4,6 +4,7 @@ package org.thisisthepy.compose.window.macos
 
 import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.CValue
+import kotlinx.cinterop.useContents
 import kotlin.native.ref.WeakReference
 import org.thisisthepy.compose.window.AccessibleAction
 import org.thisisthepy.compose.window.AccessibleElement
@@ -42,9 +43,11 @@ import platform.Foundation.numberWithDouble
  * with the element's id and an [AccessibleAction] value, on the thread AppKit asks on, which
  * is the window's. Its answer is what AppKit is told.
  *
- * Positions are window points from the top left of [view], which counts down from its top
- * left as the scene does, and each one is turned into screen coordinates when it is asked
- * for, so a window that moved answers with where its controls are now.
+ * Positions are window points from the top left of [view], counting down as the scene does,
+ * whether or not [view] is flipped (the window hands its unflipped backdrop, which is the
+ * reader's parent of the top elements). Each one is turned into screen coordinates when it is
+ * asked for, through [axScreenRect], so a window that moved answers with where its controls
+ * are now.
  */
 class AppKitAccessibilityTree(
     view: NSView,
@@ -116,21 +119,50 @@ class AppKitAccessibilityTree(
     }
 
     internal fun frameOf(element: AccessibleElement): CValue<CGRect> {
-        val local = CGRectMake(
-            element.x.toDouble(),
-            element.y.toDouble(),
-            element.width.toDouble(),
-            element.height.toDouble(),
-        )
-        val host = view.get() ?: return local
-        val inWindow = host.convertRect(local, toView = null)
-        return host.window?.convertRectToScreen(inWindow) ?: inWindow
+        val x = element.x.toDouble()
+        val y = element.y.toDouble()
+        val width = element.width.toDouble()
+        val height = element.height.toDouble()
+        val host = view.get() ?: return CGRectMake(x, y, width, height)
+        // The view's own rectangle on the screen, which AppKit gives the same way for a flipped
+        // view and an unflipped one. Converting the element's rectangle itself through the view
+        // would read its y from the bottom when the view is not flipped.
+        val inWindow = host.convertRect(host.bounds, toView = null)
+        val onScreen = host.window?.convertRectToScreen(inWindow) ?: inWindow
+        val rect = onScreen.useContents {
+            axScreenRect(x, y, width, height, origin.x, origin.y, size.height)
+        }
+        return CGRectMake(rect.x, rect.y, rect.width, rect.height)
     }
 
     private fun post(target: Any, notification: String?) {
         if (notification != null) NSAccessibilityPostNotification(target, notification)
     }
 }
+
+/** A rectangle in AppKit's screen coordinates, in points. */
+internal data class AxScreenRect(val x: Double, val y: Double, val width: Double, val height: Double)
+
+/**
+ * Where AppKit is told a control is: screen points from the bottom left of the primary display,
+ * y counting up, which is what `accessibilityFrame` answers in. AppKit turns it into the top
+ * left `AXPosition` a reader sees by taking it from the primary display's height.
+ *
+ * [x], [y], [width] and [height] are where the scene drew the control, in points from the top
+ * left of the window's content, y counting down. [contentX], [contentY] and [contentHeight] are
+ * the content's rectangle on the screen in AppKit's coordinates, so [contentY] is its bottom
+ * edge; on a display above the primary one it is past the primary's height, below it negative.
+ * Points are the same at 1x and 2x: the backing scale does not enter.
+ */
+internal fun axScreenRect(
+    x: Double,
+    y: Double,
+    width: Double,
+    height: Double,
+    contentX: Double,
+    contentY: Double,
+    contentHeight: Double,
+): AxScreenRect = AxScreenRect(contentX + x, contentY + contentHeight - y - height, width, height)
 
 /**
  * One control as AppKit's accessibility sees it. Every answer is read from the last
