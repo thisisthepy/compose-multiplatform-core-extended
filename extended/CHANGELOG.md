@@ -28,8 +28,9 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   now an interop compositor's. Each size change's frame is committed with the window's resize
   token (`SynchronizedCommit`, user32's private resize synchronization, as fork #175's spike and
   Windows' own XAML do), so DWM holds the new rectangle until the frame of its size comes. Before,
-  the two were separate changes to DWM and could land a composition apart: a maximise, restore
-  or snap could show the frame at the wrong size or origin, or the desktop through the window.
+  the two were separate changes to DWM and could land a composition apart. Windows hands out the
+  token for a drag's size-move loop only; a maximise or a restore gets none, so those still reach
+  the screen as before (#319).
   Every piece is private and looked up at run time. Where one is missing, or on Windows 10 and
   Server 2022, the route commits plainly as before, and the log says why
   (`compose-rust: dcomp: synchronized commit off because ...`). `DXC_DCOMP_SYNC=0` asks for the
