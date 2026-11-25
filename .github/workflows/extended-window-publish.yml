@@ -17,6 +17,9 @@ permissions:
   contents: read
 
 env:
+  # Google's mirror of Maven Central, asked before Central by buildSrc/repos.gradle: Central
+  # answers runners that share an address with 429 Too Many Requests (fork-train-16).
+  COMPOSE_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2
   # Retry transient dependency download failures (TLS handshake resets, timeouts) with
   # backoff. These are JVM system properties read by Gradle's repository transport, so
   # they must reach the daemon and Amper's JVMs; JAVA_TOOL_OPTIONS is inherited by all.
