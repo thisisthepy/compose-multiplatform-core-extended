@@ -19,7 +19,7 @@ env:
 
 jobs:
   compose-native-publish:
-    runs-on: macos-15-xlarge
+    runs-on: macos-15
     name: Dry Run Compose Publish Darwin + Native Linux
     steps:
       - name: Checkout Repository
