@@ -27,12 +27,21 @@ import org.gradle.api.Project
 import org.gradle.api.tasks.bundling.Zip
 import org.gradle.jvm.tasks.Jar
 import org.gradle.kotlin.dsl.withType
+import org.jetbrains.androidx.build.JetBrainsPublication
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import org.jetbrains.kotlin.gradle.tasks.CInteropProcess
 
 /** Adds license file to published JAR, AAR, and Klib artifacts. */
 internal fun Project.addLicensesToPublishedArtifacts(license: License) {
-    val groupSubdir = androidXExtension.mavenGroup?.group!!.replace('.', '/')
+    // In this fork: the license goes under the coordinate the library is published as
+    // (org.thisisthepy.compose.*), not under its androidx group. A fork module that redirects a
+    // target to androidx ships next to Google's jar of the same library, which keeps its license
+    // at META-INF/androidx/..., so one path came twice into every classpath, ProGuard run and
+    // uber jar (compose-multiplatform-extended#78). extended/compose/check-local.py checks it.
+    val publishedGroup = project.group.toString()
+    val groupSubdir =
+        (if (publishedGroup.startsWith(JetBrainsPublication.FORK_GROUP_PREFIX)) publishedGroup
+        else androidXExtension.mavenGroup?.group!!).replace('.', '/')
     val projectSubdir = File(groupSubdir, project.name)
     val licenseFile = licenseUrlToLicenseFile[license.url]
 
