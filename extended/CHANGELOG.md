@@ -37,17 +37,6 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   (`compose-rust: dcomp: synchronized commit off because ...`). `DXC_DCOMP_SYNC=0` asks for the
   plain commits. (#223)
 
-- **Fix.** On the Windows window's DirectComposition route (`DXC_DCOMP=1`), a maximise, restore
-  or snap now reaches the screen as DSA's window does: the frame of the new size is drawn and
-  written ahead, nothing is committed before the window's rectangle, and `WM_SIZE` commits it.
-  Before, a restore was committed first and waited for, and a snap (one side growing, the other
-  shrinking) first committed a frame of the size both rectangles hold. Both were composed at the
-  old origin inside the old rectangle, so nearly every restore and snap showed one frame that was
-  neither the window before nor after, with the desktop beside it. The rectangle and the commit
-  are still two changes to DWM; where they land a composition apart, the backing behind the frame
-  shows the frame's edge colour, not the desktop. `DXC_DCOMP_STATES=order` keeps the earlier
-  order. (#223)
-
 - **Fix.** On the Windows window's DirectComposition route (`DXC_DCOMP=1`), every step of an
   edge drag now waits for DWM to take the step before, writes the frame, waits for a
   composition, then takes the rectangle and commits in `WM_SIZE`; nothing is committed before

@@ -407,51 +407,6 @@ jobs:
           done
           exit $status
 
-      # The composition route's maximise, restore and snap in DSA's order (DXC_DCOMP_STATES=sized,
-      # the default: nothing committed before the rectangle, the commit in WM_SIZE) against the
-      # order before (DXC_DCOMP_STATES=order: a restore committed first and waited for, a snap's
-      # frame both rectangles hold committed first), eight runs each, judged by the bounds judge.
-      # The order before showed nearly every restore and snap as one frame that is neither the
-      # state before nor after (fork-train-8). The gate is on what that order caused, restore and
-      # the snaps: DSA's order shows at most half the order before's wrong frames there, in the
-      # same job. Maximise is printed: its fault is the rectangle and the commit landing a
-      # composition apart in either order, which only the synchronized commit removes.
-      - name: Resize probe, maximise, restore and snap, composition route in DSA's order
-        shell: bash
-        run: |
-          for way in sized order; do
-            for run in 1 2 3 4 5 6 7 8; do
-              DXC_DCOMP=1 DXC_DCOMP_STATES=$way PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-dcomp-states-$way-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-dcomp-states-way-$way-$run.log || true
-            done
-          done
-          judged() { # <way> <phases regex>: wrong frames in those phases, and their changes
-            local logs=(out/probe-dcomp-states-way-$1-?.log)
-            for log in "${logs[@]}"; do
-              grep -q 'probe: verdict' "$log" || { echo "$log has no verdict: the probe did not finish" >&2; exit 1; }
-            done
-            local wrong changes
-            wrong=$(grep -h 'probe: bounds judge:' "${logs[@]}" | sed -nE 's/.*judge: [0-9]+ of [0-9]+ frames[^;]*;(.*)/\1/p' |
-              awk -v want="^($2)$" '{for (i = 1; i <= NF; i++) { split($i, kv, "="); if (kv[1] ~ want) w += kv[2] } } END {print w + 0}')
-            changes=$(cat "${logs[@]}" | grep -cE "probe: phase ($2) at" || true)
-            echo "$wrong $changes"
-          }
-          status=0
-          for way in sized order; do
-            grep -h 'compose-rust: dcomp: other size changes' out/probe-dcomp-states-way-$way-1.log | head -1 || true
-            read -r max_wrong max_changes <<<"$(judged $way maximise)"
-            read -r rs_wrong rs_changes <<<"$(judged $way 'restore|left-half|back')"
-            echo "composition route, DXC_DCOMP_STATES=$way: maximise $max_wrong wrong frames in $max_changes changes; restore and snaps $rs_wrong in $rs_changes"
-            grep -h 'probe: BOUNDS' out/probe-dcomp-states-way-$way-?.log | sed -nE 's/.*phase ([a-z-]+): picture (.*), before.*/\1 \2/p' | sort | uniq -c | sort -rn | head -6 | sed 's/^/  /' || true
-          done
-          read -r sized_wrong sized_changes <<<"$(judged sized 'restore|left-half|back')"
-          read -r order_wrong order_changes <<<"$(judged order 'restore|left-half|back')"
-          if [ "$sized_changes" -lt 60 ] || [ "$order_changes" -lt 60 ]; then
-            echo "expected at least 60 restores and snaps each way, counted $sized_changes and $order_changes" >&2; status=1
-          elif [ $((sized_wrong * 2)) -gt "$order_wrong" ]; then
-            echo "DSA's order: $sized_wrong wrong frames on restore and snaps, more than half the order before's $order_wrong" >&2; status=1
-          fi
-          exit $status
-
       # The synchronized commit (Windows 11): the composition route's device is an interop
       # compositor's, and a size change's frame is committed with the window's resize token, so DWM
       # holds the new rectangle until the frame of its size comes (DXC_DCOMP_SYNC, on unless 0).
