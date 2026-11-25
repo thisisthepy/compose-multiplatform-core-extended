@@ -37,8 +37,9 @@ jobs:
       - name: Check Public API
         id: check
         run: |
+          # --continue: every module's check, not the first failure only, so one run shows all.
           ./gradlew jbApiCheck \
-            --no-daemon --stacktrace
+            --no-daemon --stacktrace --continue
 
       # What the dumps should be for this tree, so a change to the API (or to the targets a
       # module has) is fixed by applying the patch rather than by a local build of every target.
