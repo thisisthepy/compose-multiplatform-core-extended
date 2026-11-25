@@ -78,6 +78,7 @@ class MetalWindowSurface(private val window: MacosWindow) : WindowSurface {
                     surface.close()
                     target.close()
                 }
+                window.frameDrawn()
                 val elapsed = begun.elapsedNow().inWholeNanoseconds
                 window.onFrameRendered?.invoke(elapsed)
                 window.onFrameDrawn?.invoke(width, height)
