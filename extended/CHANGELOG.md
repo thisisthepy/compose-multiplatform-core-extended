@@ -71,6 +71,14 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   (`axScreenRect`), whatever the parent view's flip. The GraalVM window converts through its
   own flipped view and was right. (DarkPyonix/compose-rust#937)
 
+- **Feature.** Entry menus as the operating system's own on macOS (compose-rust FR-33.2): common
+  `PopupMenuEntry` (item with label, shortcut text, enabled, checked and an optional picture;
+  separator; submenu) and the line form both macOS paths read (`encodePopupMenu`). The Kotlin/Native
+  window builds and pops up an `NSMenu` under the anchor with `MacosPopupMenu.show` (answers the
+  chosen path; `close` takes it down); the GraalVM window does the same from the lines
+  (`dxc_native_popup_menu`, `showPopupMenu`). A shortcut is text at a right-aligned tab stop, never a
+  key equivalent; enabled state is the entry's (`autoenablesItems` off). Both paths describe their
+  `NSMenu` the same way (`describePopupMenu`), and their tests compare it.
 - **Change.** The Windows window's toasts no longer call `compose_rust_renderer_request_frame`,
   a renderer's symbol every application had to define (EXT-WIN-13). An application gives
   `dxc_notify_set_wake` the function to call when an answer arrives, from any thread; nothing is

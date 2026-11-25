@@ -393,6 +393,47 @@ static void check_right_click_menus(NSWindow *window, void *view_pointer) {
     while (dxc_native_poll_event(&event)) {}
 }
 
+// FR-33.2 (compose-rust): the entry menu this window builds from common's lines holds the entries
+// as common's describePopupMenu says (the same text the Kotlin/Native window's test reads from
+// its NSMenu, so the two paths agree), and choosing an item answers its path.
+static void check_popup_menu(void) {
+    NSString *lines =
+        @"I\t0\t1\t0\t0\tOpen\tCtrl+O\n"
+         "I\t0\t0\t0\t-1\tSave as\tCtrl+Shift+S\n"
+         "S\t0\t0\t0\t-1\t\t\n"
+         "I\t0\t1\t1\t-1\tWrap lines\t\n"
+         "M\t0\t1\t0\t-1\tRecent\t\n"
+         "I\t1\t1\t0\t-1\ta.txt\t\n"
+         "S\t1\t0\t0\t-1\t\t\n"
+         "I\t1\t1\t0\t1\tb.txt\t\n"
+         "M\t0\t0\t0\t-1\tEmpty\t\n";
+    uint8_t icons[2 * 2 * 4 * 2];
+    memset(icons, 0xFF, sizeof icons);
+    int32_t sizes[] = {2, 2, 2, 2};
+    DxcPopupTarget *target = [[DxcPopupTarget alloc] init];
+    NSMenu *menu = dxc_popup_menu_build(lines, icons, sizes, 2, 2.0, target);
+    NSMutableString *described = [NSMutableString string];
+    dxc_popup_menu_describe(menu, 0, described);
+    NSString *expected =
+        @"item \"Open\" shortcut=\"Ctrl+O\" enabled=true checked=false icon=true\n"
+         "item \"Save as\" shortcut=\"Ctrl+Shift+S\" enabled=false checked=false icon=false\n"
+         "separator\n"
+         "item \"Wrap lines\" shortcut=\"\" enabled=true checked=true icon=false\n"
+         "submenu \"Recent\" enabled=true icon=false\n"
+         "  item \"a.txt\" shortcut=\"\" enabled=true checked=false icon=false\n"
+         "  separator\n"
+         "  item \"b.txt\" shortcut=\"\" enabled=true checked=false icon=true\n"
+         "submenu \"Empty\" enabled=false icon=false\n";
+    CHECK([described isEqualToString:expected], "the menu is\n%s", described.UTF8String);
+    CHECK([menu itemAtIndex:0].keyEquivalent.length == 0, "a shortcut is text, never a registered key");
+    CHECK([menu itemAtIndex:0].image.size.width == 1.0, "a 2 px icon at 2x is 1 point wide");
+    CHECK(!menu.autoenablesItems, "enabled is the entry's, not AppKit's guess");
+    [menu performActionForItemAtIndex:3];
+    CHECK([target.chosen isEqualToString:@"3"], "choosing the fourth entry answers \"3\", not %s", target.chosen.UTF8String);
+    [[menu itemAtIndex:4].submenu performActionForItemAtIndex:2];
+    CHECK([target.chosen isEqualToString:@"4/2"], "choosing b.txt answers \"4/2\", not %s", target.chosen.UTF8String);
+}
+
 static void *vresize_test_view;
 static int vresize_draw_calls;
 static float vresize_min_bar_height;
@@ -537,6 +578,7 @@ int main(void) {
         check_function_keys(windows[0], opened[0].view);
         check_editing_shortcuts(windows[0], opened[0].view);
         check_right_click_menus(windows[0], opened[0].view);
+        check_popup_menu();
         check_layer_resize_sync(opened[0].view);
         check_one_step_vertical_resize_title_bar(windows[0], opened[0].view);
         for (int index = 0; index < 3; index++) [windows[index] orderOut:nil];
