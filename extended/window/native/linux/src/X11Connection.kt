@@ -65,6 +65,7 @@ internal class X11Connection private constructor(val display: CPointer<Display>)
     val targets = XInternAtom(display, "TARGETS", 0)
     val transfer = XInternAtom(display, "COMPOSE_WINDOW_TRANSFER", 0)
     val frameExtents = XInternAtom(display, "_NET_FRAME_EXTENTS", 0)
+    val netWmName = XInternAtom(display, "_NET_WM_NAME", 0)
     private val supportingCheck = XInternAtom(display, "_NET_SUPPORTING_WM_CHECK", 0)
 
     /**

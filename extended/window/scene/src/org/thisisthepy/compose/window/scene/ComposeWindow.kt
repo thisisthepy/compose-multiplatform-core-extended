@@ -130,6 +130,7 @@ class ComposeWindowHost(
     private var frames: WindowFrames? = null
     private var theme by mutableStateOf(SystemTheme.Light)
     private var caption by mutableStateOf(WindowCaption.None)
+    private var windowFocused by mutableStateOf(true)
     private var density = 1f
     private val semantics = SceneSemantics()
     private val back = SceneBackInput()
@@ -181,6 +182,12 @@ class ComposeWindowHost(
             return true
         }
 
+        override fun onFocusChanged(focused: Boolean) {
+            if (windowFocused == focused) return
+            windowFocused = focused
+            requestFrame()
+        }
+
         override fun onAccessibilityAction(id: Int, action: Int, argument: String?): Boolean {
             val done = semantics.perform(id, action, argument)
             requestFrame()
@@ -213,7 +220,14 @@ class ComposeWindowHost(
             density = Density(measured.scale, textScale),
             size = size,
             coroutineContext = work,
-            platformContext = ScenePlatformContext({ size }, textInput, semantics, platform.doubleClickMillis, back),
+            platformContext = ScenePlatformContext(
+                size = { size },
+                textInput = textInput,
+                semanticsOwnerListener = semantics,
+                doubleClickMillis = platform.doubleClickMillis,
+                back = back,
+                focused = { windowFocused },
+            ),
         )
         val cursorBlink = !isIdleSoakEnabled()
         created.setContent {

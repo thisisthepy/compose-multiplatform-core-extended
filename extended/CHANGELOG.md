@@ -25,6 +25,24 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Window modules (`org.thisisthepy.compose.window`)
 
+- **Feature.** Entry menus as Windows' own popup menu (compose-rust FR-33.2, the Windows part):
+  `dxc_native_popup_menu` builds a Win32 menu from common's `encodePopupMenu` lines
+  (`win32_popup_menu.h`) and puts it up with `TrackPopupMenuEx` below the anchor, keeping the anchor
+  uncovered (`TPMPARAMS.rcExclude`), and answers the chosen path; `dxc_native_popup_menu_close` takes
+  it down (`EndMenu`). The shortcut is text after a tab, which Windows lines up itself, never an
+  accelerator; an ampersand is shown, not a mnemonic; pictures are 32-bit premultiplied bitmaps.
+  Reached from the Kotlin/Native window as `Win32PopupMenu.show`/`close` and from the GraalVM window
+  as `Win32GraalWindow.showPopupMenu`/`closePopupMenu`, the same C on both paths.
+
+- **Feature.** Entry menus as the operating system's own on macOS (compose-rust FR-33.2): common
+  `PopupMenuEntry` (item with label, shortcut text, enabled, checked and an optional picture;
+  separator; submenu) and the line form both macOS paths read (`encodePopupMenu`). The Kotlin/Native
+  window builds and pops up an `NSMenu` under the anchor with `MacosPopupMenu.show` (answers the
+  chosen path; `close` takes it down); the GraalVM window does the same from the lines
+  (`dxc_native_popup_menu`, `showPopupMenu`). A shortcut is text at a right-aligned tab stop, never a
+  key equivalent; enabled state is the entry's (`autoenablesItems` off). Both paths describe their
+  `NSMenu` the same way (`describePopupMenu`), and their tests compare it.
+
 - **Fix.** On the Windows window's DirectComposition route (`DXC_DCOMP=1`), every step of an
   edge drag now waits for DWM to take the step before, writes the frame, waits for a
   composition, then takes the rectangle and commits in `WM_SIZE`; nothing is committed before

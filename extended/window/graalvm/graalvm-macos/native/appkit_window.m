@@ -612,10 +612,16 @@ static NSMenu *dxc_text_menu(id target) {
 
 /** True once the window has been closed, so the renderer knows to stop. */
 static atomic_bool dxc_window_closed;
+/** True when the user asked to close the window and the listener has not answered yet. */
+static atomic_bool dxc_window_close_requested;
 static atomic_bool dxc_window_key = true;
 
 int32_t dxc_native_window_closed(void) {
     return atomic_load(&dxc_window_closed) ? 1 : 0;
+}
+
+int32_t dxc_native_window_take_close_requested(void) {
+    return atomic_exchange(&dxc_window_close_requested, false) ? 1 : 0;
 }
 
 // Hears the close button, which is the system's and not ours to draw or to wire up.
@@ -623,6 +629,11 @@ int32_t dxc_native_window_closed(void) {
 @end
 
 @implementation DxcWindowDelegate
+- (BOOL)windowShouldClose:(NSWindow *)sender {
+    (void)sender;
+    atomic_store(&dxc_window_close_requested, true);
+    return NO;
+}
 - (void)windowWillClose:(NSNotification *)notification {
     atomic_store(&dxc_window_closed, true);
 }
@@ -1428,6 +1439,8 @@ int32_t dxc_native_window_open(
 
         // Held past this scope. The window owns the view, and the renderer owns the
         // window until it closes it.
+        atomic_store(&dxc_window_closed, false);
+        atomic_store(&dxc_window_close_requested, false);
         out->window = (__bridge_retained void *)window;
         out->view = (__bridge_retained void *)view;
         out->device = (__bridge_retained void *)device;
@@ -1437,6 +1450,44 @@ int32_t dxc_native_window_open(
     }
     });
     return status;
+}
+
+/** Closes the native window and releases the retained AppKit and Metal handles. */
+void dxc_native_window_close(
+    void *window_pointer,
+    void *view_pointer,
+    void *device_pointer,
+    void *queue_pointer,
+    void *layer_pointer
+) {
+    dxc_on_main(^{
+    @autoreleasepool {
+        if (window_pointer != NULL) {
+            NSWindow *window = (__bridge_transfer NSWindow *)window_pointer;
+            window.delegate = nil;
+            [window orderOut:nil];
+            [window close];
+        }
+        if (view_pointer != NULL) {
+            NSView *view = (__bridge_transfer NSView *)view_pointer;
+            (void)view;
+        }
+        if (layer_pointer != NULL) {
+            CAMetalLayer *layer = (__bridge_transfer CAMetalLayer *)layer_pointer;
+            (void)layer;
+        }
+        if (queue_pointer != NULL) {
+            id<MTLCommandQueue> queue = (__bridge_transfer id<MTLCommandQueue>)queue_pointer;
+            (void)queue;
+        }
+        if (device_pointer != NULL) {
+            id<MTLDevice> device = (__bridge_transfer id<MTLDevice>)device_pointer;
+            (void)device;
+        }
+        atomic_store(&dxc_window_closed, true);
+        atomic_store(&dxc_window_close_requested, false);
+    }
+    });
 }
 
 /**
@@ -1863,6 +1914,209 @@ int32_t dxc_native_context_menu(void *view_pointer, const char *items) {
         [menu popUpMenuPositioningItem:nil atLocation:local inView:view];
     });
     return dxc_menu_chosen;
+}
+
+// ---------------------------------------------------------------------------
+// Entry menus as the system's own (compose-rust FR-33.2)
+// ---------------------------------------------------------------------------
+//
+// The same menus the Kotlin/Native window puts up (MacosPopupMenu.kt), read from the lines
+// common's encodePopupMenu writes: one per entry, depth first, `kind depth enabled checked icon
+// label shortcut` separated by tabs; `I` an item, `S` a separator, `M` a submenu whose children
+// follow one level deeper. A shortcut is text after a right-aligned tab stop, never a key
+// equivalent. Each item carries its path ("2/0") as its represented object.
+
+@interface DxcPopupTarget : NSObject
+@property(nonatomic, copy) NSString *chosen;
+- (void)choose:(NSMenuItem *)item;
+@end
+
+@implementation DxcPopupTarget
+- (void)choose:(NSMenuItem *)item { self.chosen = item.representedObject; }
+@end
+
+static NSMenu *dxc_popup_open_menu;
+
+/** An entry's picture: [width] by [height] premultiplied RGBA pixels, as an image of its size in points. */
+static NSImage *dxc_popup_icon(const uint8_t *rgba, int32_t width, int32_t height, double scale) {
+    NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+                                                                    pixelsWide:width
+                                                                    pixelsHigh:height
+                                                                 bitsPerSample:8
+                                                               samplesPerPixel:4
+                                                                      hasAlpha:YES
+                                                                      isPlanar:NO
+                                                                colorSpaceName:NSDeviceRGBColorSpace
+                                                                   bytesPerRow:width * 4
+                                                                  bitsPerPixel:32];
+    if (rep == nil || rep.bitmapData == NULL) return nil;
+    memcpy(rep.bitmapData, rgba, (size_t)width * height * 4);
+    NSSize size = NSMakeSize(width / scale, height / scale);
+    rep.size = size;
+    NSImage *image = [[NSImage alloc] initWithSize:size];
+    [image addRepresentation:rep];
+    return image;
+}
+
+/**
+ * The NSMenu for [lines]. [icons] holds the pictures one after the other, [sizes] their width
+ * and height in pairs, [scale] the pixels a point. Every item calls [target].
+ */
+static NSMenu *dxc_popup_menu_build(NSString *lines, const uint8_t *icons, const int32_t *sizes, int32_t icon_count,
+                                    double scale, DxcPopupTarget *target) {
+    NSArray<NSString *> *rows = [lines componentsSeparatedByString:@"\n"];
+    NSFont *font = [NSFont menuFontOfSize:0];
+    // One right-aligned tab stop past the widest label, a gap and the widest shortcut, so every
+    // shortcut ends at the same trailing edge and none runs into its label.
+    CGFloat widest = 0, widestShortcut = 0;
+    for (NSString *row in rows) {
+        NSArray<NSString *> *f = [row componentsSeparatedByString:@"\t"];
+        if (f.count < 7 || [f[0] isEqualToString:@"S"]) continue;
+        CGFloat width = [f[5] sizeWithAttributes:@{NSFontAttributeName : font}].width;
+        if (width > widest) widest = width;
+        CGFloat shortcut = [f[6] sizeWithAttributes:@{NSFontAttributeName : font}].width;
+        if (shortcut > widestShortcut) widestShortcut = shortcut;
+    }
+    NSMutableParagraphStyle *style = [[NSMutableParagraphStyle alloc] init];
+    style.tabStops = @[ [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentRight
+                                                         location:widest + 32 + widestShortcut
+                                                          options:@{}] ];
+    // Where each icon starts in [icons].
+    NSMutableArray<NSNumber *> *offsets = [NSMutableArray array];
+    size_t at = 0;
+    for (int32_t index = 0; index < icon_count; index++) {
+        [offsets addObject:@(at)];
+        at += (size_t)sizes[index * 2] * sizes[index * 2 + 1] * 4;
+    }
+    NSMenu *root = [[NSMenu alloc] initWithTitle:@""];
+    root.autoenablesItems = NO;
+    NSMutableArray<NSMenu *> *menus = [NSMutableArray arrayWithObject:root];
+    NSMutableArray<NSNumber *> *counts = [NSMutableArray arrayWithObject:@0];
+    NSMutableArray<NSNumber *> *prefix = [NSMutableArray array];
+    for (NSString *row in rows) {
+        NSArray<NSString *> *f = [row componentsSeparatedByString:@"\t"];
+        if (f.count < 7) continue;
+        NSUInteger depth = (NSUInteger)f[1].integerValue;
+        if (depth + 1 > menus.count) continue;
+        while (menus.count > depth + 1) {
+            [menus removeLastObject];
+            [counts removeLastObject];
+            [prefix removeLastObject];
+        }
+        NSInteger index = counts[depth].integerValue;
+        counts[depth] = @(index + 1);
+        NSMenu *menu = menus[depth];
+        NSMutableArray<NSString *> *parts = [NSMutableArray array];
+        for (NSNumber *number in prefix) [parts addObject:number.stringValue];
+        [parts addObject:[NSString stringWithFormat:@"%ld", (long)index]];
+        NSString *path = [parts componentsJoinedByString:@"/"];
+        NSString *kind = f[0];
+        BOOL enabled = f[2].integerValue != 0;
+        NSInteger icon = f[4].integerValue;
+        NSImage *image = nil;
+        if (icon >= 0 && icon < icon_count) {
+            image = dxc_popup_icon(icons + offsets[icon].unsignedLongValue, sizes[icon * 2], sizes[icon * 2 + 1], scale);
+        }
+        if ([kind isEqualToString:@"S"]) {
+            [menu addItem:[NSMenuItem separatorItem]];
+        } else if ([kind isEqualToString:@"I"]) {
+            NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:f[5] action:@selector(choose:) keyEquivalent:@""];
+            if (f[6].length > 0) {
+                NSString *text = [NSString stringWithFormat:@"%@\t%@", f[5], f[6]];
+                item.attributedTitle = [[NSAttributedString alloc]
+                    initWithString:text
+                        attributes:@{NSFontAttributeName : font, NSParagraphStyleAttributeName : style}];
+            }
+            item.target = target;
+            item.enabled = enabled;
+            item.state = f[3].integerValue != 0 ? NSControlStateValueOn : NSControlStateValueOff;
+            item.image = image;
+            item.representedObject = path;
+            [menu addItem:item];
+        } else if ([kind isEqualToString:@"M"]) {
+            NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:f[5] action:nil keyEquivalent:@""];
+            item.enabled = enabled;
+            item.image = image;
+            [menu addItem:item];
+            if (enabled) {
+                NSMenu *children = [[NSMenu alloc] initWithTitle:f[5]];
+                children.autoenablesItems = NO;
+                item.submenu = children;
+                [menus addObject:children];
+                [counts addObject:@0];
+                while (prefix.count > depth) [prefix removeLastObject];
+                [prefix addObject:@(index)];
+            }
+        }
+    }
+    return root;
+}
+
+/** [menu] as common's describePopupMenu writes entries, for the check that both paths agree. */
+static void dxc_popup_menu_describe(NSMenu *menu, NSUInteger depth, NSMutableString *out) {
+    NSString *indent = [@"" stringByPaddingToLength:depth * 2 withString:@" " startingAtIndex:0];
+    for (NSMenuItem *item in menu.itemArray) {
+        if (item.separatorItem) {
+            [out appendFormat:@"%@separator\n", indent];
+            continue;
+        }
+        NSString *text = item.attributedTitle != nil ? item.attributedTitle.string : item.title;
+        NSRange tab = [text rangeOfString:@"\t"];
+        NSString *label = tab.location == NSNotFound ? text : [text substringToIndex:tab.location];
+        NSString *shortcut = tab.location == NSNotFound ? @"" : [text substringFromIndex:tab.location + 1];
+        BOOL submenu = item.hasSubmenu || item.action == nil;
+        if (submenu) {
+            [out appendFormat:@"%@submenu \"%@\" enabled=%@ icon=%@\n", indent, label, item.enabled ? @"true" : @"false",
+                              item.image != nil ? @"true" : @"false"];
+            if (item.submenu != nil) dxc_popup_menu_describe(item.submenu, depth + 1, out);
+        } else {
+            [out appendFormat:@"%@item \"%@\" shortcut=\"%@\" enabled=%@ checked=%@ icon=%@\n", indent, label, shortcut,
+                              item.enabled ? @"true" : @"false",
+                              item.state == NSControlStateValueOn ? @"true" : @"false",
+                              item.image != nil ? @"true" : @"false"];
+        }
+    }
+}
+
+/**
+ * Puts an entry menu up on [view_pointer] under the anchor ([x], [y], [width], [height] in the
+ * window's pixels from the top of its content; [rtl] puts its right edge on the anchor's) and
+ * answers when it closes: the chosen path ("2/0") written to [out] with its length, 0 for a menu
+ * closed with nothing chosen, -1 where nothing could be put up.
+ */
+int32_t dxc_native_popup_menu(void *view_pointer, const char *lines, const uint8_t *icons, const int32_t *icon_sizes,
+                              int32_t icon_count, float x, float y, float width, float height, int32_t rtl, char *out,
+                              int32_t capacity) {
+    if (view_pointer == NULL || lines == NULL || out == NULL || capacity <= 0) return -1;
+    NSView *view = (__bridge NSView *)view_pointer;
+    NSString *text = [NSString stringWithUTF8String:lines];
+    __block int32_t written = -1;
+    dxc_on_main(^{
+        double scale = view.window != nil ? view.window.backingScaleFactor : 1.0;
+        DxcPopupTarget *target = [[DxcPopupTarget alloc] init];
+        NSMenu *menu = dxc_popup_menu_build(text, icons, icon_sizes, icon_count, scale, target);
+        if (menu.numberOfItems == 0) return;
+        menu.minimumWidth = width / scale;
+        if (rtl) menu.userInterfaceLayoutDirection = NSUserInterfaceLayoutDirectionRightToLeft;
+        double left = (rtl ? x + width : x) / scale;
+        double bottom = (y + height) / scale;
+        NSPoint at = NSMakePoint(left, view.isFlipped ? bottom : view.frame.size.height - bottom);
+        dxc_popup_open_menu = menu;
+        [menu popUpMenuPositioningItem:nil atLocation:at inView:view];
+        dxc_popup_open_menu = nil;
+        const char *chosen = target.chosen != nil ? target.chosen.UTF8String : "";
+        size_t length = strlen(chosen);
+        if (length >= (size_t)capacity) length = (size_t)capacity - 1;
+        memcpy(out, chosen, length);
+        out[length] = 0;
+        written = (int32_t)length;
+    });
+    return written;
+}
+
+/** Takes an open entry menu down from the application's side; dxc_native_popup_menu then answers 0. */
+void dxc_native_popup_menu_close(void) {
+    dxc_on_main(^{ [dxc_popup_open_menu cancelTracking]; });
 }
 
 /*
