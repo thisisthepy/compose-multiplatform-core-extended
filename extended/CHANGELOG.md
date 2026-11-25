@@ -70,6 +70,14 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   the content's rectangle on the screen with the control placed from its top
   (`axScreenRect`), whatever the parent view's flip. The GraalVM window converts through its
   own flipped view and was right. (DarkPyonix/compose-rust#937)
+- **Feature.** Entry menus as Windows' own popup menu (compose-rust FR-33.2, the Windows part):
+  `dxc_native_popup_menu` builds a Win32 menu from common's `encodePopupMenu` lines
+  (`win32_popup_menu.h`) and puts it up with `TrackPopupMenuEx` below the anchor, keeping the anchor
+  uncovered (`TPMPARAMS.rcExclude`), and answers the chosen path; `dxc_native_popup_menu_close` takes
+  it down (`EndMenu`). The shortcut is text after a tab, which Windows lines up itself, never an
+  accelerator; an ampersand is shown, not a mnemonic; pictures are 32-bit premultiplied bitmaps.
+  Reached from the Kotlin/Native window as `Win32PopupMenu.show`/`close` and from the GraalVM window
+  as `Win32GraalWindow.showPopupMenu`/`closePopupMenu`, the same C on both paths.
 
 - **Feature.** Entry menus as the operating system's own on macOS (compose-rust FR-33.2): common
   `PopupMenuEntry` (item with label, shortcut text, enabled, checked and an optional picture;
@@ -79,6 +87,7 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   (`dxc_native_popup_menu`, `showPopupMenu`). A shortcut is text at a right-aligned tab stop, never a
   key equivalent; enabled state is the entry's (`autoenablesItems` off). Both paths describe their
   `NSMenu` the same way (`describePopupMenu`), and their tests compare it.
+
 - **Change.** The Windows window's toasts no longer call `compose_rust_renderer_request_frame`,
   a renderer's symbol every application had to define (EXT-WIN-13). An application gives
   `dxc_notify_set_wake` the function to call when an answer arrives, from any thread; nothing is

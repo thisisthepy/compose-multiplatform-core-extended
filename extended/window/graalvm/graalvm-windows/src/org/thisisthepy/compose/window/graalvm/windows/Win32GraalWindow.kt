@@ -85,6 +85,25 @@ private external fun pumpEvents(seconds: Double)
 @CFunction("dxc_native_window_closed")
 private external fun windowClosed(): Int
 
+@CFunction("dxc_native_popup_menu")
+private external fun nativePopupMenu(
+    window: Pointer?,
+    lines: CCharPointer?,
+    icons: CCharPointer?,
+    iconSizes: CIntPointer?,
+    iconCount: Int,
+    x: Float,
+    y: Float,
+    width: Float,
+    height: Float,
+    rtl: Int,
+    out: CCharPointer?,
+    capacity: Int,
+): Int
+
+@CFunction("dxc_native_popup_menu_close")
+private external fun nativePopupMenuClose()
+
 @CFunction("dxc_native_set_cursor")
 private external fun setCursorShape(shape: Int)
 
@@ -209,6 +228,53 @@ class Win32GraalWindow internal constructor(
      * shortcut it is named after, Control and X, C, V or A, as on the Kotlin/Native window
      * (`Win32WindowPlatform.setEditMenu`).
      */
+
+    /**
+     * Puts an entry menu up as Windows' own (compose-rust FR-33.2) under [anchor] (client pixels)
+     * and answers the chosen item's path, or null for a menu closed with nothing chosen. The same
+     * C as the Kotlin/Native window (dxc_native_popup_menu), so both paths put up the same menu.
+     */
+    fun showPopupMenu(
+        entries: List<org.thisisthepy.compose.window.PopupMenuEntry>,
+        anchor: org.thisisthepy.compose.window.PopupMenuAnchor,
+    ): List<Int>? {
+        if (entries.isEmpty()) return null
+        val lines = org.thisisthepy.compose.window.encodePopupMenu(entries)
+        val pixels = ByteArray(lines.icons.sumOf { it.rgba.size }.coerceAtLeast(1))
+        var at = 0
+        for (icon in lines.icons) {
+            icon.rgba.copyInto(pixels, at)
+            at += icon.rgba.size
+        }
+        val sizes = org.graalvm.nativeimage.UnmanagedMemory.malloc<CIntPointer>(8 * lines.icons.size.coerceAtLeast(1))
+        lines.icons.forEachIndexed { index, icon ->
+            sizes.write(index * 2, icon.width)
+            sizes.write(index * 2 + 1, icon.height)
+        }
+        val text = CTypeConversion.toCString(lines.text)
+        val icons = CTypeConversion.toCBytes(pixels)
+        val capacity = 1024
+        val out = org.graalvm.nativeimage.UnmanagedMemory.malloc<CCharPointer>(capacity)
+        try {
+            val length = nativePopupMenu(
+                WordFactory.pointer(window), text.get(), icons.get(), sizes, lines.icons.size,
+                anchor.x, anchor.y, anchor.width, anchor.height, if (anchor.rightToLeft) 1 else 0, out, capacity,
+            )
+            if (length <= 0) return null
+            val bytes = ByteArray(length)
+            CTypeConversion.asByteBuffer(out, length).get(bytes)
+            return org.thisisthepy.compose.window.decodePopupMenuPath(String(bytes, Charsets.UTF_8))
+        } finally {
+            org.graalvm.nativeimage.UnmanagedMemory.free(out)
+            org.graalvm.nativeimage.UnmanagedMemory.free(sizes)
+            icons.close()
+            text.close()
+        }
+    }
+
+    /** Takes an open entry menu down from the application's side; [showPopupMenu] then answers null. */
+    fun closePopupMenu() = nativePopupMenuClose()
+
     fun setEditMenu(state: EditMenuState?) = setEditMenuNative(WordFactory.pointer(window), win32EditMenuFlags(state))
 
     /**

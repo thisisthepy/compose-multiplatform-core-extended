@@ -73,6 +73,7 @@
 #include "win32_caption.h"
 #include "win32_multi.h"
 #include "win32_placement.h"
+#include "win32_popup_menu.h"
 #include "win32_scheme.h"
 #include "win32_edit_menu.h"
 #include "win32_dpi.h"
@@ -6663,6 +6664,70 @@ int32_t dxc_native_context_menu(void *window_pointer, const char *items) {
     }
     DestroyMenu(menu);
     return chosen;
+}
+
+// The entry menu up now, which dxc_native_popup_menu_close takes down: TrackPopupMenuEx runs the
+// menu's own loop on this thread, and a frame drawn meanwhile may remove the node it belongs to.
+static HMENU dxc_popup_open;
+
+/**
+ * Puts an entry menu up as Windows' own (compose-rust FR-33.2) and answers when it closes.
+ *
+ * [lines] are common's encodePopupMenu lines; [icons] the pictures one after the other, premultiplied
+ * RGBA, [icon_sizes] their width and height in pairs. The menu opens below the anchor ([x], [y],
+ * [width], [height] in the window's client pixels), at its left edge, or its right edge for [rtl],
+ * and keeps the anchor uncovered (TPMPARAMS.rcExclude). The keyboard, Narrator, placement at the
+ * screen's edge and dismissal are Windows'. The chosen path ("2/0") is written to [out] and its
+ * length answered; 0 is a menu closed with nothing chosen, -1 one that could not be put up.
+ */
+int32_t dxc_native_popup_menu(void *window_pointer, const char *lines, const uint8_t *icons,
+                              const int32_t *icon_sizes, int32_t icon_count, float x, float y, float width,
+                              float height, int32_t rtl, char *out, int32_t capacity) {
+    HWND window = window_pointer != NULL ? (HWND)window_pointer : dxc_window;
+    if (window == NULL || lines == NULL || out == NULL || capacity <= 0) return -1;
+    out[0] = 0;
+    struct dxc_popup_menu *menu = dxc_popup_menu_build(lines, icons, icon_sizes, icon_count);
+    if (menu == NULL) return -1;
+    if (GetMenuItemCount(menu->root) <= 0) {
+        dxc_popup_menu_free(menu);
+        return -1;
+    }
+    POINT top_left = {(LONG)x, (LONG)y};
+    POINT bottom_right = {(LONG)(x + width), (LONG)(y + height)};
+    ClientToScreen(window, &top_left);
+    ClientToScreen(window, &bottom_right);
+    TPMPARAMS params;
+    memset(&params, 0, sizeof params);
+    params.cbSize = sizeof params;
+    params.rcExclude.left = top_left.x;
+    params.rcExclude.top = top_left.y;
+    params.rcExclude.right = bottom_right.x;
+    params.rcExclude.bottom = bottom_right.y;
+    UINT flags = TPM_RETURNCMD | TPM_NONOTIFY | TPM_TOPALIGN | TPM_VERTICAL |
+                 (rtl ? TPM_RIGHTALIGN | TPM_LAYOUTRTL : TPM_LEFTALIGN);
+    // Without the window in front the menu does not close when the reader clicks elsewhere;
+    // the posted message lets it finish closing (KB135788).
+    SetForegroundWindow(window);
+    dxc_popup_open = menu->root;
+    UINT command = (UINT)TrackPopupMenuEx(menu->root, flags, rtl ? bottom_right.x : top_left.x, bottom_right.y, window,
+                                          &params);
+    dxc_popup_open = NULL;
+    PostMessageW(window, WM_NULL, 0, 0);
+    int32_t written = 0;
+    if (command >= 1 && command <= (UINT)menu->count) {
+        size_t length = strlen(menu->paths[command]);
+        if (length >= (size_t)capacity) length = (size_t)capacity - 1;
+        memcpy(out, menu->paths[command], length);
+        out[length] = 0;
+        written = (int32_t)length;
+    }
+    dxc_popup_menu_free(menu);
+    return written;
+}
+
+/** Takes an open entry menu down from the application's side; dxc_native_popup_menu then answers 0. */
+void dxc_native_popup_menu_close(void) {
+    if (dxc_popup_open != NULL) EndMenu();
 }
 
 /*
