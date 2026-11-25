@@ -5,7 +5,9 @@
 #
 # Gradle gives up on a download that dl.google.com or Central drops mid handshake
 # ("Remote host terminated the handshake", "Could not GET ..."), and on a hosted runner that
-# can end a 45 minute build. Running the same command again in the same job keeps what is
+# can end a 45 minute build. Central also answers 429 Too Many Requests when runners share an
+# address, and a plugin the portal did not answer for comes back as "could not resolve plugin
+# artifact", with no HTTP error named (fork-train-10, while the same lookup passed elsewhere). Running the same command again in the same job keeps what is
 # already built and downloaded, so the second attempt goes straight to what failed.
 # Only a failure whose output names a network error is retried, up to RETRY_NETWORK_ATTEMPTS
 # attempts in all (default 3), RETRY_NETWORK_WAIT seconds apart times the attempt (default 30).
@@ -13,7 +15,7 @@
 set -uo pipefail
 attempts="${RETRY_NETWORK_ATTEMPTS:-3}"
 wait_seconds="${RETRY_NETWORK_WAIT:-30}"
-pattern='Remote host terminated the handshake|Could not GET|Could not HEAD|Could not download|Connection reset|Connect timed out|Read timed out|SocketTimeoutException|UnknownHostException|Temporary failure in name resolution|502 Bad Gateway|503 Service Unavailable|504 Gateway Time-out'
+pattern='Remote host terminated the handshake|Could not GET|Could not HEAD|Could not download|Connection reset|Connect timed out|Read timed out|SocketTimeoutException|UnknownHostException|Temporary failure in name resolution|502 Bad Gateway|503 Service Unavailable|504 Gateway Time-out|429 from server|Too Many Requests|could not resolve plugin artifact'
 log="$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/retry-network.XXXXXX")"
 trap 'rm -f "$log"' EXIT
 attempt=1
