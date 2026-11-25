@@ -23,6 +23,13 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ### Publishing
 
+- **Fix.** The fork's jars keep their license under the coordinate they are published as
+  (`META-INF/org/thisisthepy/compose/<library>/LICENSE.txt`), not under the library's androidx
+  group. A module that redirects to androidx (`runtime-desktop`, which holds only that license
+  and depends on `androidx.compose.runtime:runtime`) put the same entry on the classpath as
+  Google's jar, and ProGuard and uber jars met it twice. `extended/compose/check-local.py`
+  now fails on a fork jar with anything under `META-INF/androidx/`. (#315)
+
 - **Fix.** A desktop application gets one skiko-awt, this fork's. JetBrains' natives
   (`org.jetbrains.skiko:skiko-awt-runtime-<target>`), which `desktop-jvm-<target>` and the fork's
   skiko-awt name, each depend on `org.jetbrains.skiko:skiko-awt`, so the same classes were on
