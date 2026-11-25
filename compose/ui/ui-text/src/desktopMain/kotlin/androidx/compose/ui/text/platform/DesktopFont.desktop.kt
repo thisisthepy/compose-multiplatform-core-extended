@@ -207,7 +207,7 @@ internal actual fun loadTypeface(font: Font): SkTypeface {
     val typeface = when (font) {
         is ResourceFont -> typefaceResource(font.name)
         is FileFont -> FontMgr.default.makeFromFile(font.file.toString())
-        is LoadedFont -> FontMgr.default.makeFromData(Data.makeFromBytes(font.getData()))
+        is LoadedFont -> FontMgr.default.makeFromData(font.skiaData())
         is SystemFont -> FontMgr.default.matchFamilyStyle(font.identity, font.skFontStyle)
     } ?: (FontMgr.default.legacyMakeTypeface(font.identity, font.skFontStyle)
         ?: error("loadTypeface legacyMakeTypeface failed"))

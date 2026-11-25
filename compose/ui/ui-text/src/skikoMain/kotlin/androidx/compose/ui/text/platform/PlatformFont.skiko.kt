@@ -15,6 +15,7 @@
  */
 package androidx.compose.ui.text.platform
 
+import org.jetbrains.skia.Data as SkData
 import org.jetbrains.skia.Typeface as SkTypeface
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.ExpireAfterAccessCache
@@ -91,6 +92,7 @@ class LoadedFont internal constructor(
     override val weight: FontWeight,
     override val style: FontStyle,
     override val variationSettings: FontVariation.Settings = FontVariation.Settings(weight, style),
+    internal val skData: SkData? = null,
 ) : PlatformFont() {
 
     constructor(
@@ -177,6 +179,45 @@ fun Font(
     style: FontStyle = FontStyle.Normal,
     variationSettings: FontVariation.Settings = FontVariation.Settings(weight, style)
 ): Font = LoadedFont(identity, getData, weight, style, variationSettings)
+
+/**
+ * Creates a Font from font file data Skia already holds.
+ *
+ * Every typeface loaded for this font refers to [data] instead of a copy of it, so the file
+ * is held in memory once, however many times the font is loaded. The other factories hand
+ * Skia a byte array, which Skia copies on every load while the array stays alive in the
+ * Kotlin heap as well.
+ *
+ * [data] must stay open for as long as the font is in use.
+ *
+ * @param identity Unique identity for a font. Used internally to distinguish fonts.
+ * @param data Skia data holding the font file.
+ * @param weight The weight of the font. The system uses this to match a font to a font request
+ * that is given in a [androidx.compose.ui.text.SpanStyle].
+ * @param style The style of the font, normal or italic. The system uses this to match a font to a
+ * font request that is given in a [androidx.compose.ui.text.SpanStyle].
+ *
+ * @see FontFamily
+ */
+fun Font(
+    identity: String,
+    data: SkData,
+    weight: FontWeight = FontWeight.Normal,
+    style: FontStyle = FontStyle.Normal
+): Font = LoadedFont(
+    identity = identity,
+    getData = { data.bytes },
+    weight = weight,
+    style = style,
+    variationSettings = FontVariation.Settings(),
+    skData = data,
+)
+
+/**
+ * The font file as Skia data: the data the font was made from, shared rather than copied,
+ * or else a copy of the bytes [LoadedFont.getData] returns.
+ */
+internal fun LoadedFont.skiaData(): SkData = skData ?: SkData.makeFromBytes(getData())
 
 private class SkiaBackedTypeface(
     alias: String?,
