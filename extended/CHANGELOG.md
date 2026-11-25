@@ -21,8 +21,6 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   - `app.metainfo.xml.in` takes `{{summary}}`, `{{developer_id}}` and
     `{{metadata_license}}`; `app.desktop.in`'s `Comment=` is `{{summary}}`.
 
-## 1.11.1-ext.6 (2026-11-23)
-
 ### Window modules (`org.thisisthepy.compose.window`)
 
 - **Fix.** On Windows 11, the Windows window's DirectComposition route (`DXC_DCOMP=1`) brings a
@@ -77,6 +75,10 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   the content's rectangle on the screen with the control placed from its top
   (`axScreenRect`), whatever the parent view's flip. The GraalVM window converts through its
   own flipped view and was right. (DarkPyonix/compose-rust#937)
+
+## 1.11.1-ext.6 (2026-11-23)
+
+### Window modules (`org.thisisthepy.compose.window`)
 
 - **Change.** The Windows window's toasts no longer call `compose_rust_renderer_request_frame`,
   a renderer's symbol every application had to define (EXT-WIN-13). An application gives
