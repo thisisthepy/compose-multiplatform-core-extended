@@ -75,6 +75,22 @@ def addMavenRepositories(RepositoryHandler handler) {
                 includeGroup("org.jetbrains.skiko")
             }
         }
+        // A mirror of Maven Central to ask first, for a CI that Central answers with 429 Too
+        // Many Requests when runners share an address. COMPOSE_MAVEN_MIRROR is one URL, or
+        // several separated by spaces or commas (a URL has a colon, so not File.pathSeparator).
+        // It is read here, so the build's own buildscript blocks (buildSrc/shared.gradle) take
+        // it as well, which no init script reaches; METALAVA_REPO above is split on the path
+        // separator and so cannot take a URL. What the mirror does not have falls through to
+        // the repositories below.
+        def mavenMirror = System.getenv("COMPOSE_MAVEN_MIRROR")
+        if (mavenMirror != null) {
+            for (mirrorUrl in mavenMirror.split("[\\s,]+")) {
+                if (mirrorUrl.isEmpty()) continue
+                handler.maven {
+                    url = mirrorUrl
+                }
+            }
+        }
         handler.mavenCentral()
         handler.google {
             content {

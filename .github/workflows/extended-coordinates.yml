@@ -20,6 +20,10 @@ jobs:
           sparse-checkout: |
             extended/compose
             extended/skiko
+            buildSrc/repos.gradle
+            gradlew
+            gradle/wrapper
+          sparse-checkout-cone-mode: false
           filter: blob:none
 
       - name: check-local.py and publish-local.sh --list
@@ -27,6 +31,14 @@ jobs:
 
       - name: retry-network.sh
         run: extended/compose/tests/retry-network.test.sh
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: The Maven mirror in buildSrc/repos.gradle
+        run: extended/compose/tests/maven-mirror.test.sh
 
       - name: republish-skiko-mingw.py
         run: extended/skiko/tests/republish-skiko-mingw.test.sh
