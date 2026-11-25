@@ -3,6 +3,7 @@
 package org.thisisthepy.compose.window.linux
 
 import kotlin.test.Test
+import org.thisisthepy.compose.window.SystemTheme
 import org.thisisthepy.compose.window.WindowConfig
 import org.thisisthepy.compose.window.WindowEvent
 import org.thisisthepy.compose.window.WindowListener
@@ -232,6 +233,97 @@ class X11WindowTest {
             XChangeProperty(display, root, RESOURCE_MANAGER, XA_STRING_ATOM, 8, PropModeReplace, data, bytes.size)
         }
         XFlush(display)
+    }
+
+    @Test
+    fun utf8_title_sets_net_wm_name_property() {
+        if (getenv("DISPLAY")?.toKString().isNullOrEmpty()) return
+        val initialTitle = "창 제목 테스트"
+        val updatedTitle = "새 제목 123"
+        val window = assertNotNull(openWindow(initialTitle, 320, 240))
+        val peer = assertNotNull(XOpenDisplay(null))
+        try {
+            val netWmName = XInternAtom(peer, "_NET_WM_NAME", 0)
+            val utf8String = XInternAtom(peer, "UTF8_STRING", 0)
+            assertEquals(initialTitle, windowPropertyUtf8(peer, window.windowId, netWmName, utf8String))
+            window.setTitle(updatedTitle)
+            assertEquals(updatedTitle, windowPropertyUtf8(peer, window.windowId, netWmName, utf8String))
+        } finally {
+            window.close()
+            XCloseDisplay(peer)
+        }
+    }
+
+    @Test
+    fun theme_change_notifies_listener_on_pump() {
+        if (getenv("DISPLAY")?.toKString().isNullOrEmpty()) return
+        val before = getenv("GTK_THEME")?.toKString()
+        val heard = mutableListOf<SystemTheme>()
+        val listener = object : WindowListener {
+            override fun onEvent(event: WindowEvent) {}
+            override fun onThemeChanged(theme: SystemTheme) {
+                heard += theme
+            }
+        }
+        val window = X11Window()
+        try {
+            setenv("GTK_THEME", "Adwaita", 1)
+            assertTrue(window.open(WindowConfig("theme", 200, 120), listener))
+            assertEquals(SystemTheme.Light, window.systemTheme())
+            window.pump(0)
+            assertTrue(heard.isEmpty())
+
+            setenv("GTK_THEME", "Adwaita:dark", 1)
+            window.pump(0)
+            assertEquals(listOf(SystemTheme.Dark), heard)
+
+            setenv("GTK_THEME", "Adwaita", 1)
+            window.pump(0)
+            assertEquals(listOf(SystemTheme.Dark, SystemTheme.Light), heard)
+        } finally {
+            window.close()
+            if (before == null) unsetenv("GTK_THEME") else setenv("GTK_THEME", before, 1)
+        }
+    }
+
+    @Test
+    fun transparent_window_opens_without_error() {
+        if (getenv("DISPLAY")?.toKString().isNullOrEmpty()) return
+        val window = X11Window()
+        val listener = object : WindowListener {
+            override fun onEvent(event: WindowEvent) {}
+        }
+        try {
+            assertTrue(window.open(WindowConfig("transparent", 240, 160, transparent = true), listener))
+            assertTrue(window.measure().width > 0 && window.measure().height > 0)
+        } finally {
+            window.close()
+        }
+    }
+
+    private fun windowPropertyUtf8(
+        display: CPointer<Display>,
+        window: Window,
+        property: Atom,
+        typeAtom: Atom,
+    ): String? = memScoped {
+        val type = alloc<ULongVar>()
+        val format = alloc<IntVar>()
+        val count = alloc<ULongVar>()
+        val remaining = alloc<ULongVar>()
+        val data = alloc<CPointerVar<UByteVar>>()
+        val status = XGetWindowProperty(
+            display, window, property, 0, 1024, 0, typeAtom,
+            type.ptr, format.ptr, count.ptr, remaining.ptr, data.ptr,
+        )
+        val bytes = data.value
+        val text = if (status == 0 && bytes != null && format.value == 8 && count.value > 0uL) {
+            bytes.reinterpret<ByteVar>().readBytes(count.value.toInt()).decodeToString()
+        } else {
+            null
+        }
+        if (bytes != null) XFree(bytes)
+        text
     }
 
     private fun openWindow(title: String, width: Int, height: Int): X11Window? {

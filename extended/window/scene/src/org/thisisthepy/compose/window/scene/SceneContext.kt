@@ -26,11 +26,15 @@ import org.thisisthepy.compose.window.DoubleClick
 /**
  * The window a scene is in, as far as Compose needs to know.
  *
- * Focus is reported as held, because a window that never says so leaves a text field
- * drawing no caret: the field is told the window it sits in is not the one being typed at.
+ * Focus starts as held and tracks [org.thisisthepy.compose.window.WindowListener.onFocusChanged],
+ * so a window that loses focus hides its text caret and one that never sends focus notices
+ * keeps drawing it.
  */
-internal class SceneWindowInfo(private val size: () -> IntSize) : WindowInfo {
-    override val isWindowFocused: Boolean get() = true
+internal class SceneWindowInfo(
+    private val size: () -> IntSize,
+    private val focused: () -> Boolean = { true },
+) : WindowInfo {
+    override val isWindowFocused: Boolean get() = focused()
     override val containerSize: IntSize get() = size()
 }
 
@@ -99,10 +103,12 @@ internal class ScenePlatformContext(
     doubleClickMillis: Long = DoubleClick.DEFAULT_MILLIS,
     /** Where Escape goes when the scene did not take it. */
     back: SceneBackInput = SceneBackInput(),
+    /** Whether the host window currently holds keyboard focus. */
+    focused: () -> Boolean = { true },
 ) : PlatformContext {
     override val architectureComponentsOwner: PlatformArchitectureComponentsOwner = SceneArchitectureComponents(back)
     override val viewConfiguration: ViewConfiguration = SceneViewConfiguration(doubleClickMillis)
-    override val windowInfo: WindowInfo = SceneWindowInfo(size)
+    override val windowInfo: WindowInfo = SceneWindowInfo(size, focused)
     override val inputModeManager: InputModeManager = SceneInputModeManager()
 
     override suspend fun startInputMethod(request: PlatformTextInputMethodRequest): Nothing =

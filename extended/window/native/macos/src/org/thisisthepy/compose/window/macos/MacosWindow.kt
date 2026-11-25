@@ -72,6 +72,7 @@ import platform.AppKit.NSVisualEffectState
 import platform.AppKit.NSVisualEffectView
 import platform.AppKit.NSWindow
 import platform.AppKit.NSWindowCloseButton
+import platform.AppKit.NSWindowStyleMaskBorderless
 import platform.AppKit.NSWindowStyleMaskClosable
 import platform.AppKit.NSWindowStyleMaskFullSizeContentView
 import platform.AppKit.NSWindowStyleMaskMiniaturizable
@@ -135,6 +136,12 @@ class MacosWindow(
      * the primary screen, y down. Null centres the first window and cascades the ones after it.
      */
     val topLeft: Pair<Int, Int>? = null,
+    /** Whether the user can resize the window. */
+    val resizable: Boolean = true,
+    /** Whether the window has the system's frame and title bar. */
+    val decorated: Boolean = true,
+    /** Whether the window composites behind-window translucency rather than an opaque fill. */
+    val transparent: Boolean = false,
 ) {
     private var measured = IntSize(width, height)
     private var isTheKeyWindow by mutableStateOf(true)
@@ -369,9 +376,7 @@ class MacosWindow(
 
     val window = object : NSWindow(
         contentRect = NSMakeRect(0.0, 0.0, width.toDouble(), height.toDouble()),
-        styleMask = NSWindowStyleMaskTitled or NSWindowStyleMaskMiniaturizable or
-            NSWindowStyleMaskClosable or NSWindowStyleMaskResizable or
-            (if (chrome.fullSizeContentView) NSWindowStyleMaskFullSizeContentView else 0uL),
+        styleMask = macosWindowStyleMask(resizable, decorated, chrome.fullSizeContentView),
         backing = NSBackingStoreBuffered,
         defer = true,
     ) {
@@ -886,8 +891,16 @@ class MacosWindow(
         window.setTitle(name)
         applyChrome(window, chrome)
         installContent(window, backdrop, view)
-        window.opaque = false
-        window.backgroundColor = NSColor.clearColor
+        if (transparent) {
+            backdrop.state = NSVisualEffectState.NSVisualEffectStateFollowsWindowActiveState
+            window.opaque = false
+            window.backgroundColor = NSColor.clearColor
+            metal.layer.opaque = false
+        } else {
+            backdrop.state = NSVisualEffectState.NSVisualEffectStateInactive
+            window.opaque = true
+            metal.layer.opaque = true
+        }
 
         view.wantsLayer = true
         view.layerContentsRedrawPolicy = NSViewLayerContentsRedrawDuringViewResize
@@ -1247,6 +1260,21 @@ class MacosWindow(
 class MenuShortcut(private val run: () -> Unit) : platform.darwin.NSObject() {
     @kotlinx.cinterop.ObjCAction
     fun perform() = run()
+}
+
+/** Builds the AppKit window style mask for [resizable], [decorated] and [fullSizeContentView]. */
+internal fun macosWindowStyleMask(
+    resizable: Boolean,
+    decorated: Boolean,
+    fullSizeContentView: Boolean,
+): ULong {
+    val base = if (decorated) {
+        NSWindowStyleMaskTitled or NSWindowStyleMaskMiniaturizable or NSWindowStyleMaskClosable or
+            (if (fullSizeContentView) NSWindowStyleMaskFullSizeContentView else 0uL)
+    } else {
+        NSWindowStyleMaskBorderless
+    }
+    return if (resizable) base or NSWindowStyleMaskResizable else base
 }
 
 /** A rectangle the size of the window's content, at the origin of its parent. */
