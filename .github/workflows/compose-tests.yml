@@ -56,7 +56,7 @@ jobs:
         if: always()
 
   compose-ios-tests:
-    runs-on: macos-15-xlarge
+    runs-on: macos-15
     name: Compose iOS Tests
     env:
       GRADLE_OPTS: -Xmx12g -Dorg.gradle.daemon=false
@@ -71,7 +71,8 @@ jobs:
         uses: ./.github/actions/setup-xcode
 
       - name: Run iOS Tests
-        timeout-minutes: 15
+        # 15 on upstream's macos-15-xlarge; the fork runs on macos-15 (3 cores, 7 GB).
+        timeout-minutes: 90
         run: |
           ./gradlew testIos \
             --no-daemon --stacktrace
@@ -83,7 +84,7 @@ jobs:
         if: always()
 
   compose-ios-utils-tests:
-    runs-on: macos-15-xlarge
+    runs-on: macos-15
     name: Compose iOS Utils Tests
     env:
       GRADLE_OPTS: -Xmx12g -Dorg.gradle.daemon=false
@@ -98,7 +99,8 @@ jobs:
         uses: ./.github/actions/setup-xcode
 
       - name: Run iOS Utils Tests
-        timeout-minutes: 15
+        # 15 on upstream's macos-15-xlarge; the fork runs on macos-15 (3 cores, 7 GB).
+        timeout-minutes: 45
         shell: bash
         working-directory: compose/ui/ui-uikit/src/iosMain/objc/CMPUIKitUtils
         run: |
@@ -116,7 +118,7 @@ jobs:
           path: compose/ui/ui-uikit/src/iosMain/objc/CMPUIKitUtils/TestResults.xcresult
 
   compose-ios-instrumented-tests:
-    runs-on: macos-15-xlarge
+    runs-on: macos-15
     strategy:
       fail-fast: false
       matrix:
@@ -183,7 +185,8 @@ jobs:
           xcrun simctl shutdown all
 
       - name: Run iOS Instrumented Tests
-        timeout-minutes: 30
+        # 30 on upstream's macos-15-xlarge; the fork runs on macos-15 (3 cores, 7 GB).
+        timeout-minutes: 120
         shell: bash
         working-directory: compose/ui/ui/src/uikitInstrumentedTest/launcher
         run: |
