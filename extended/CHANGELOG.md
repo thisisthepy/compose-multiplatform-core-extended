@@ -36,6 +36,15 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   (`compose-rust: dcomp: synchronized commit off because ...`). `DXC_DCOMP_SYNC=0` asks for the
   plain commits. (#223)
 
+- **Fix.** On the Windows window's DirectComposition route (`DXC_DCOMP=1`), a maximise shows the
+  maximised frame with the maximised rectangle. The frame drawn for the new size in
+  `WM_NCCALCSIZE` is now committed there, after a wait for a composition, and the rectangle
+  follows microseconds later as the message returns, so both land in one composition. Before, it
+  was committed in `WM_SIZE`, after the rectangle with a draw in between, and a composition there
+  showed the old frame in the maximised rectangle (15 of 24 maximises on windows-2025). A
+  maximise gets no resize token, so the synchronized commit cannot hold it. `DXC_DCOMP_GROW=wmsize`
+  keeps the commit in `WM_SIZE`. (#319)
+
 - **Feature.** Entry menus as Windows' own popup menu (compose-rust FR-33.2, the Windows part):
   `dxc_native_popup_menu` builds a Win32 menu from common's `encodePopupMenu` lines
   (`win32_popup_menu.h`) and puts it up with `TrackPopupMenuEx` below the anchor, keeping the anchor
