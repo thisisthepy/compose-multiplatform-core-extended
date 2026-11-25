@@ -488,6 +488,55 @@ jobs:
           fi
           exit $status
 
+      # A maximise on the composition route (#319). Windows gives a maximise no resize token, so
+      # the synchronized commit above cannot hold its rectangle; instead the frame of the
+      # maximised size, drawn in WM_NCCALCSIZE, is committed there after a wait for a
+      # composition, and the rectangle follows as the message returns, in the same composition
+      # (DXC_DCOMP_GROW=ahead, the default). DXC_DCOMP_GROW=wmsize, the commit in WM_SIZE after
+      # the rectangle, runs beside it: it showed 15 wrong frames in 24 maximises (fork-train-16).
+      # On both runners the default must show at most 5 % wrong maximise frames by the bounds
+      # judge over 8 runs.
+      - name: Resize probe, maximise on the composition route, the frame committed with its rectangle
+        shell: bash
+        run: |
+          for way in ahead wmsize; do
+            for run in 1 2 3 4 5 6 7 8; do
+              DXC_DCOMP=1 DXC_DCOMP_GROW=$way PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-dcomp-grow-$way-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-dcomp-grow-$way-$run.log || true
+            done
+          done
+          for log in out/probe-dcomp-grow-*-?.log; do
+            grep -q 'probe: verdict' "$log" || { echo "$log has no verdict: the probe did not finish" >&2; exit 1; }
+          done
+          judged() { # <way> <phases regex>: wrong frames in those phases, and their changes
+            local logs=(out/probe-dcomp-grow-$1-?.log) wrong changes
+            wrong=$(grep -h 'probe: bounds judge:' "${logs[@]}" | sed -nE 's/.*judge: [0-9]+ of [0-9]+ frames[^;]*;(.*)/\1/p' |
+              awk -v want="^($2)$" '{for (i = 1; i <= NF; i++) { split($i, kv, "="); if (kv[1] ~ want) w += kv[2] } } END {print w + 0}')
+            changes=$(cat "${logs[@]}" | grep -cE "probe: phase ($2) at" || true)
+            echo "$wrong $changes"
+          }
+          for way in ahead wmsize; do
+            grep -h 'compose-rust: dcomp: a size change that grows' out/probe-dcomp-grow-$way-1.log | head -1 | sed "s/^/  $way: /" || true
+            line="DXC_DCOMP_GROW=$way:"
+            for phases in maximise restore 'left-half|back'; do
+              read -r wrong changes <<<"$(judged $way "$phases")"
+              line="$line ${phases//|/+} $wrong of $changes;"
+            done
+            echo "$line"
+            grep -h 'probe: BOUNDS' out/probe-dcomp-grow-$way-?.log | sed -nE 's/.*phase ([a-z-]+): picture (.*), before.*/\1 \2/p' | sort | uniq -c | sort -rn | head -6 | sed 's/^/  /' || true
+          done
+          status=0
+          grep -q 'is committed with its rectangle' out/probe-dcomp-grow-ahead-1.log || {
+            echo "DXC_DCOMP_GROW=ahead did not say it commits a growth with its rectangle" >&2; status=1
+          }
+          read -r wrong changes <<<"$(judged ahead maximise)"
+          limit=$(( (changes * 5 + 99) / 100 ))
+          if [ "$changes" -lt 20 ]; then
+            echo "maximise: expected at least 20 changes, counted $changes" >&2; status=1
+          elif [ "$wrong" -gt "$limit" ]; then
+            echo "maximise: $wrong wrong frames with the frame committed with its rectangle, more than 5 % of $changes ($limit)" >&2; status=1
+          fi
+          exit $status
+
       # Issue 223, the two faults the owner saw on a real GPU on the DirectComposition route and
       # the probe above cannot see (it drags the right edge only, slowly, and reads a see-through
       # margin as a smaller window): the picture sliding when the left or top edge moves the
