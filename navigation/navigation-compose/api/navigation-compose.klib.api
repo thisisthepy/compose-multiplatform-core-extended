@@ -5,7 +5,7 @@
 // - Show manifest properties: true
 // - Show declarations: true
 
-// Library unique name: <org.jetbrains.androidx.navigation:navigation-compose>
+// Library unique name: <org.thisisthepy.compose.androidx.navigation:navigation-compose>
 final class androidx.navigation.compose/ComposeNavigator : androidx.navigation/Navigator<androidx.navigation.compose/ComposeNavigator.Destination> { // androidx.navigation.compose/ComposeNavigator|null[0]
     constructor <init>() // androidx.navigation.compose/ComposeNavigator.<init>|<init>(){}[0]
 

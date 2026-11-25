@@ -5,7 +5,7 @@
 // - Show manifest properties: true
 // - Show declarations: true
 
-// Library unique name: <org.jetbrains.compose.material3.adaptive:adaptive-navigation>
+// Library unique name: <org.thisisthepy.compose.material3.adaptive:adaptive-navigation>
 abstract interface <#A: kotlin/Any?> androidx.compose.material3.adaptive.navigation/ThreePaneScaffoldNavigator { // androidx.compose.material3.adaptive.navigation/ThreePaneScaffoldNavigator|null[0]
     abstract val currentDestination // androidx.compose.material3.adaptive.navigation/ThreePaneScaffoldNavigator.currentDestination|{}currentDestination[0]
         abstract fun <get-currentDestination>(): androidx.compose.material3.adaptive.layout/ThreePaneScaffoldDestinationItem<#A>? // androidx.compose.material3.adaptive.navigation/ThreePaneScaffoldNavigator.currentDestination.<get-currentDestination>|<get-currentDestination>(){}[0]

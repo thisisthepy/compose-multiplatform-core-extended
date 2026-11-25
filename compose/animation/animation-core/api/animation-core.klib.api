@@ -1,11 +1,11 @@
 // Klib ABI Dump
-// Targets: [iosArm64, iosSimulatorArm64, js, macosArm64, wasmJs]
+// Targets: [iosArm64, iosSimulatorArm64, js, linuxArm64, linuxX64, macosArm64, mingwX64, wasmJs]
 // Rendering settings:
 // - Signature version: 2
 // - Show manifest properties: true
 // - Show declarations: true
 
-// Library unique name: <org.jetbrains.compose.animation:animation-core>
+// Library unique name: <org.thisisthepy.compose.animation:animation-core>
 open annotation class androidx.compose.animation.core/ExperimentalAnimatableApi : kotlin/Annotation { // androidx.compose.animation.core/ExperimentalAnimatableApi|null[0]
     constructor <init>() // androidx.compose.animation.core/ExperimentalAnimatableApi.<init>|<init>(){}[0]
 }
