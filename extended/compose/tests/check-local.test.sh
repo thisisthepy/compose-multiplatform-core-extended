@@ -56,6 +56,23 @@ printf '{"variants":[{"name":"linuxX64ApiElements-published","dependencies":[%s]
 out="$(python3 -I "$compose/check-local.py" "$roots" || true)"
 grep -q "ui-text:1.11.1-ext.1 is not published" <<< "$out" || fail "a built target's missing dependency is not reported"
 
+# A jar of this fork that keeps its license where Google's jar of the same library keeps its own
+# (META-INF/androidx/...): the two land on one classpath (a fork module that redirects to
+# androidx depends on Google's), and ProGuard and an uber jar meet the same entry twice.
+jar_with() { # <repo> <group path> <artifact> <version> <entry>
+    local dir="$1/$2/$3/$4"
+    mkdir -p "$dir"
+    python3 -I -c 'import sys, zipfile; z = zipfile.ZipFile(sys.argv[1], "w"); z.writestr(sys.argv[2], "license"); z.close()' \
+        "$dir/$3-$4.jar" "$5"
+}
+licenses="$work/licenses"
+module "$licenses" org/thisisthepy/compose/runtime runtime-desktop 1.11.1-ext.1 ""
+jar_with "$licenses" org/thisisthepy/compose/runtime runtime-desktop 1.11.1-ext.1 META-INF/org/thisisthepy/compose/runtime/runtime/LICENSE.txt
+python3 -I "$compose/check-local.py" "$licenses" >/dev/null || fail "a license under the fork's own path is reported"
+jar_with "$licenses" org/thisisthepy/compose/runtime runtime-desktop 1.11.1-ext.1 META-INF/androidx/compose/runtime/runtime/LICENSE.txt
+out="$(python3 -I "$compose/check-local.py" "$licenses" || true)"
+grep -q "META-INF/androidx/compose/runtime/runtime/LICENSE.txt, where androidx's own jar" <<< "$out" || fail "a license at androidx's path is not reported"
+
 echo "publish-local.sh --list"
 
 tasks="$("$compose/publish-local.sh" --list macosArm64)"
