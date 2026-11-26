@@ -31,13 +31,16 @@ import org.thisisthepy.compose.window.macosCornerRadius
 import platform.AppKit.NSApplication
 import platform.AppKit.NSWindow
 import platform.AppKit.NSWindowCloseButton
+import platform.AppKit.NSWindowDidExitFullScreenNotification
 import platform.AppKit.NSWindowMiniaturizeButton
 import platform.AppKit.NSWindowStyleMaskFullSizeContentView
 import platform.AppKit.NSWindowTitleHidden
 import platform.AppKit.NSWindowTitleVisible
+import platform.AppKit.NSWindowWillEnterFullScreenNotification
 import platform.AppKit.NSWindowZoomButton
 import platform.Foundation.NSDate
 import platform.Foundation.NSDefaultRunLoopMode
+import platform.Foundation.NSNotificationCenter
 import platform.Foundation.NSProcessInfo
 import platform.Foundation.NSRunLoop
 import platform.Foundation.dateWithTimeIntervalSinceNow
@@ -127,6 +130,25 @@ class MacosWindowPlatformChromeTest {
             assertTrue(normal.cornerRadius > simple.cornerRadius, "macOS $macosMajor rounds Normal more")
         }
     }
+
+    @Test
+    fun fr19_4_full_screen_hides_the_toolbar_and_restores_the_windowed_caption() =
+        opened(WindowConfig("fullscreen-caption", 480, 320)) { platform, window ->
+            val toolbar = assertNotNull(window.toolbar)
+            val notifications = NSNotificationCenter.defaultCenter
+            val windowed = platform.caption()
+            assertTrue(toolbar.visible)
+            assertTrue(windowed.height > 0f)
+
+            // Use the public AppKit notifications without switching the test runner's Space.
+            notifications.postNotificationName(NSWindowWillEnterFullScreenNotification, window)
+            assertEquals(false, toolbar.visible)
+            assertEquals(WindowCaption.None, platform.caption())
+
+            notifications.postNotificationName(NSWindowDidExitFullScreenNotification, window)
+            assertTrue(toolbar.visible)
+            assertEquals(windowed, platform.caption())
+        }
 
     @Test
     fun fr19_4_the_system_chrome_draws_its_title_and_reports_no_caption() =
