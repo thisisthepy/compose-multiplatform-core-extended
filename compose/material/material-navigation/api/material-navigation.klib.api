@@ -5,7 +5,7 @@
 // - Show manifest properties: true
 // - Show declarations: true
 
-// Library unique name: <org.jetbrains.compose.material:material-navigation>
+// Library unique name: <org.thisisthepy.compose.material:material-navigation>
 final class androidx.compose.material.navigation/BottomSheetNavigator : androidx.navigation/Navigator<androidx.compose.material.navigation/BottomSheetNavigator.Destination> { // androidx.compose.material.navigation/BottomSheetNavigator|null[0]
     constructor <init>(androidx.compose.material/ModalBottomSheetState) // androidx.compose.material.navigation/BottomSheetNavigator.<init>|<init>(androidx.compose.material.ModalBottomSheetState){}[0]
 

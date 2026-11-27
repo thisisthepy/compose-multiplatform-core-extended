@@ -5,7 +5,7 @@
 // - Show manifest properties: true
 // - Show declarations: true
 
-// Library unique name: <org.jetbrains.compose.material3.adaptive:adaptive-layout>
+// Library unique name: <org.thisisthepy.compose.material3.adaptive:adaptive-layout>
 final enum class androidx.compose.material3.adaptive.layout/DockedEdge : kotlin/Enum<androidx.compose.material3.adaptive.layout/DockedEdge> { // androidx.compose.material3.adaptive.layout/DockedEdge|null[0]
     enum entry Bottom // androidx.compose.material3.adaptive.layout/DockedEdge.Bottom|null[0]
     enum entry End // androidx.compose.material3.adaptive.layout/DockedEdge.End|null[0]
