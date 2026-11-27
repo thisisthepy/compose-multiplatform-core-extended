@@ -1,13 +1,14 @@
 // Klib ABI Dump
-// Targets: [iosArm64, iosSimulatorArm64, js, macosArm64, wasmJs]
-// Alias: apple => [iosArm64, iosSimulatorArm64, macosArm64]
+// Targets: [iosArm64, iosSimulatorArm64, js, linuxArm64, linuxX64, macosArm64, mingwX64, wasmJs]
+// Alias: native => [iosArm64, iosSimulatorArm64, linuxArm64, linuxX64, macosArm64, mingwX64]
+// Alias: linux => [linuxArm64, linuxX64]
 // Alias: ios => [iosArm64, iosSimulatorArm64]
 // Rendering settings:
 // - Signature version: 2
 // - Show manifest properties: true
 // - Show declarations: true
 
-// Library unique name: <org.jetbrains.compose.ui:ui>
+// Library unique name: <org.thisisthepy.compose.ui:ui>
 open annotation class androidx.compose.ui.graphics.vector/VectorComposable : kotlin/Annotation { // androidx.compose.ui.graphics.vector/VectorComposable|null[0]
     constructor <init>() // androidx.compose.ui.graphics.vector/VectorComposable.<init>|<init>(){}[0]
 }
@@ -977,6 +978,9 @@ abstract interface androidx.compose.ui.platform/AccessibilityManager { // androi
 
 abstract interface androidx.compose.ui.platform/Clipboard { // androidx.compose.ui.platform/Clipboard|null[0]
     abstract val nativeClipboard // androidx.compose.ui.platform/Clipboard.nativeClipboard|{}nativeClipboard[0]
+        // Targets: [linux, mingwX64]
+        abstract fun <get-nativeClipboard>(): androidx.compose.ui.platform/NativeClipboard // androidx.compose.ui.platform/Clipboard.nativeClipboard.<get-nativeClipboard>|<get-nativeClipboard>(){}[0]
+
         // Targets: [ios]
         abstract fun <get-nativeClipboard>(): platform.UIKit/UIPasteboard // androidx.compose.ui.platform/Clipboard.nativeClipboard.<get-nativeClipboard>|<get-nativeClipboard>(){}[0]
 
@@ -992,6 +996,9 @@ abstract interface androidx.compose.ui.platform/Clipboard { // androidx.compose.
 
 abstract interface androidx.compose.ui.platform/ClipboardManager { // androidx.compose.ui.platform/ClipboardManager|null[0]
     open val nativeClipboard // androidx.compose.ui.platform/ClipboardManager.nativeClipboard|{}nativeClipboard[0]
+        // Targets: [linux, mingwX64]
+        open fun <get-nativeClipboard>(): androidx.compose.ui.platform/NativeClipboard // androidx.compose.ui.platform/ClipboardManager.nativeClipboard.<get-nativeClipboard>|<get-nativeClipboard>(){}[0]
+
         // Targets: [ios]
         open fun <get-nativeClipboard>(): platform.UIKit/UIPasteboard // androidx.compose.ui.platform/ClipboardManager.nativeClipboard.<get-nativeClipboard>|<get-nativeClipboard>(){}[0]
 
@@ -2134,7 +2141,7 @@ final class androidx.compose.ui.platform/ClipEntry { // androidx.compose.ui.plat
     final val clipMetadata // androidx.compose.ui.platform/ClipEntry.clipMetadata|{}clipMetadata[0]
         final fun <get-clipMetadata>(): androidx.compose.ui.platform/ClipMetadata // androidx.compose.ui.platform/ClipEntry.clipMetadata.<get-clipMetadata>|<get-clipMetadata>(){}[0]
 
-    // Targets: [apple]
+    // Targets: [native]
     final object Companion // androidx.compose.ui.platform/ClipEntry.Companion|null[0]
 
     // Targets: [js, wasmJs]
@@ -3715,6 +3722,8 @@ final object androidx.compose.ui.semantics/SemanticsProperties { // androidx.com
         final fun <get-FillableData>(): androidx.compose.ui.semantics/SemanticsPropertyKey<androidx.compose.ui.autofill/FillableData> // androidx.compose.ui.semantics/SemanticsProperties.FillableData.<get-FillableData>|<get-FillableData>(){}[0]
     final val Focused // androidx.compose.ui.semantics/SemanticsProperties.Focused|{}Focused[0]
         final fun <get-Focused>(): androidx.compose.ui.semantics/SemanticsPropertyKey<kotlin/Boolean> // androidx.compose.ui.semantics/SemanticsProperties.Focused.<get-Focused>|<get-Focused>(){}[0]
+    final val HasPopup // androidx.compose.ui.semantics/SemanticsProperties.HasPopup|{}HasPopup[0]
+        final fun <get-HasPopup>(): androidx.compose.ui.semantics/SemanticsPropertyKey<kotlin/Boolean> // androidx.compose.ui.semantics/SemanticsProperties.HasPopup.<get-HasPopup>|<get-HasPopup>(){}[0]
     final val Heading // androidx.compose.ui.semantics/SemanticsProperties.Heading|{}Heading[0]
         final fun <get-Heading>(): androidx.compose.ui.semantics/SemanticsPropertyKey<kotlin/Unit> // androidx.compose.ui.semantics/SemanticsProperties.Heading.<get-Heading>|<get-Heading>(){}[0]
     final val HideFromAccessibility // androidx.compose.ui.semantics/SemanticsProperties.HideFromAccessibility|{}HideFromAccessibility[0]
@@ -4124,6 +4133,9 @@ final var androidx.compose.ui.semantics/fillableData // androidx.compose.ui.sema
 final var androidx.compose.ui.semantics/focused // androidx.compose.ui.semantics/focused|@androidx.compose.ui.semantics.SemanticsPropertyReceiver{}focused[0]
     final fun (androidx.compose.ui.semantics/SemanticsPropertyReceiver).<get-focused>(): kotlin/Boolean // androidx.compose.ui.semantics/focused.<get-focused>|<get-focused>@androidx.compose.ui.semantics.SemanticsPropertyReceiver(){}[0]
     final fun (androidx.compose.ui.semantics/SemanticsPropertyReceiver).<set-focused>(kotlin/Boolean) // androidx.compose.ui.semantics/focused.<set-focused>|<set-focused>@androidx.compose.ui.semantics.SemanticsPropertyReceiver(kotlin.Boolean){}[0]
+final var androidx.compose.ui.semantics/hasPopup // androidx.compose.ui.semantics/hasPopup|@androidx.compose.ui.semantics.SemanticsPropertyReceiver{}hasPopup[0]
+    final fun (androidx.compose.ui.semantics/SemanticsPropertyReceiver).<get-hasPopup>(): kotlin/Boolean // androidx.compose.ui.semantics/hasPopup.<get-hasPopup>|<get-hasPopup>@androidx.compose.ui.semantics.SemanticsPropertyReceiver(){}[0]
+    final fun (androidx.compose.ui.semantics/SemanticsPropertyReceiver).<set-hasPopup>(kotlin/Boolean) // androidx.compose.ui.semantics/hasPopup.<set-hasPopup>|<set-hasPopup>@androidx.compose.ui.semantics.SemanticsPropertyReceiver(kotlin.Boolean){}[0]
 final var androidx.compose.ui.semantics/horizontalScrollAxisRange // androidx.compose.ui.semantics/horizontalScrollAxisRange|@androidx.compose.ui.semantics.SemanticsPropertyReceiver{}horizontalScrollAxisRange[0]
     final fun (androidx.compose.ui.semantics/SemanticsPropertyReceiver).<get-horizontalScrollAxisRange>(): androidx.compose.ui.semantics/ScrollAxisRange // androidx.compose.ui.semantics/horizontalScrollAxisRange.<get-horizontalScrollAxisRange>|<get-horizontalScrollAxisRange>@androidx.compose.ui.semantics.SemanticsPropertyReceiver(){}[0]
     final fun (androidx.compose.ui.semantics/SemanticsPropertyReceiver).<set-horizontalScrollAxisRange>(androidx.compose.ui.semantics/ScrollAxisRange) // androidx.compose.ui.semantics/horizontalScrollAxisRange.<set-horizontalScrollAxisRange>|<set-horizontalScrollAxisRange>@androidx.compose.ui.semantics.SemanticsPropertyReceiver(androidx.compose.ui.semantics.ScrollAxisRange){}[0]
@@ -4591,6 +4603,19 @@ final inline fun androidx.compose.ui.platform/debugInspectorInfo(crossinline kot
 final suspend fun (androidx.compose.ui.node/DelegatableNode).androidx.compose.ui.relocation/bringIntoView(kotlin/Function0<androidx.compose.ui.geometry/Rect?>? = ...) // androidx.compose.ui.relocation/bringIntoView|bringIntoView@androidx.compose.ui.node.DelegatableNode(kotlin.Function0<androidx.compose.ui.geometry.Rect?>?){}[0]
 final suspend fun (androidx.compose.ui.platform/PlatformTextInputModifierNode).androidx.compose.ui.platform/establishTextInputSession(kotlin.coroutines/SuspendFunction1<androidx.compose.ui.platform/PlatformTextInputSessionScope, kotlin/Nothing>): kotlin/Nothing // androidx.compose.ui.platform/establishTextInputSession|establishTextInputSession@androidx.compose.ui.platform.PlatformTextInputModifierNode(kotlin.coroutines.SuspendFunction1<androidx.compose.ui.platform.PlatformTextInputSessionScope,kotlin.Nothing>){}[0]
 
+// Targets: [linux, mingwX64]
+final class androidx.compose.ui.platform/NativeClipboard { // androidx.compose.ui.platform/NativeClipboard|null[0]
+    final fun clear() // androidx.compose.ui.platform/NativeClipboard.clear|clear(){}[0]
+    final fun readText(): kotlin/String? // androidx.compose.ui.platform/NativeClipboard.readText|readText(){}[0]
+    final fun writeText(kotlin/String) // androidx.compose.ui.platform/NativeClipboard.writeText|writeText(kotlin.String){}[0]
+}
+
+// Targets: [linux, mingwX64]
+final val androidx.compose.ui.platform/androidx_compose_ui_platform_NativeClipboard$stableprop // androidx.compose.ui.platform/androidx_compose_ui_platform_NativeClipboard$stableprop|#static{}androidx_compose_ui_platform_NativeClipboard$stableprop[0]
+
+// Targets: [linux, mingwX64]
+final fun androidx.compose.ui.platform/androidx_compose_ui_platform_NativeClipboard$stableprop_getter(): kotlin/Int // androidx.compose.ui.platform/androidx_compose_ui_platform_NativeClipboard$stableprop_getter|androidx_compose_ui_platform_NativeClipboard$stableprop_getter(){}[0]
+
 // Targets: [ios]
 abstract interface androidx.compose.ui.uikit/ComposeUIViewControllerDelegate { // androidx.compose.ui.uikit/ComposeUIViewControllerDelegate|null[0]
     open val preferredStatusBarStyle // androidx.compose.ui.uikit/ComposeUIViewControllerDelegate.preferredStatusBarStyle|{}preferredStatusBarStyle[0]
@@ -4906,6 +4931,26 @@ final fun androidx.compose.ui.window/androidx_compose_ui_window_KeyboardModeStat
 // Targets: [js, wasmJs]
 final fun androidx.compose.ui.window/androidx_compose_ui_window_KeyboardModeState_Virtual$stableprop_getter(): kotlin/Int // androidx.compose.ui.window/androidx_compose_ui_window_KeyboardModeState_Virtual$stableprop_getter|androidx_compose_ui_window_KeyboardModeState_Virtual$stableprop_getter(){}[0]
 
+// Targets: [linux]
+final class androidx.compose.ui.input.pointer/LinuxCursor : androidx.compose.ui.input.pointer/PointerIcon { // androidx.compose.ui.input.pointer/LinuxCursor|null[0]
+    constructor <init>(kotlin/String) // androidx.compose.ui.input.pointer/LinuxCursor.<init>|<init>(kotlin.String){}[0]
+
+    final val name // androidx.compose.ui.input.pointer/LinuxCursor.name|{}name[0]
+        final fun <get-name>(): kotlin/String // androidx.compose.ui.input.pointer/LinuxCursor.name.<get-name>|<get-name>(){}[0]
+
+    final fun component1(): kotlin/String // androidx.compose.ui.input.pointer/LinuxCursor.component1|component1(){}[0]
+    final fun copy(kotlin/String = ...): androidx.compose.ui.input.pointer/LinuxCursor // androidx.compose.ui.input.pointer/LinuxCursor.copy|copy(kotlin.String){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // androidx.compose.ui.input.pointer/LinuxCursor.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // androidx.compose.ui.input.pointer/LinuxCursor.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // androidx.compose.ui.input.pointer/LinuxCursor.toString|toString(){}[0]
+}
+
+// Targets: [linux]
+final val androidx.compose.ui.input.pointer/androidx_compose_ui_input_pointer_LinuxCursor$stableprop // androidx.compose.ui.input.pointer/androidx_compose_ui_input_pointer_LinuxCursor$stableprop|#static{}androidx_compose_ui_input_pointer_LinuxCursor$stableprop[0]
+
+// Targets: [linux]
+final fun androidx.compose.ui.input.pointer/androidx_compose_ui_input_pointer_LinuxCursor$stableprop_getter(): kotlin/Int // androidx.compose.ui.input.pointer/androidx_compose_ui_input_pointer_LinuxCursor$stableprop_getter|androidx_compose_ui_input_pointer_LinuxCursor$stableprop_getter(){}[0]
+
 // Targets: [macosArm64]
 abstract interface androidx.compose.ui.window/WindowScope { // androidx.compose.ui.window/WindowScope|null[0]
     abstract val window // androidx.compose.ui.window/WindowScope.window|{}window[0]
@@ -4924,3 +4969,23 @@ final fun androidx.compose.ui.platform/androidx_compose_ui_platform_MacosTextInp
 
 // Targets: [macosArm64]
 final fun androidx.compose.ui.window/Window(kotlin/String = ..., androidx.compose.ui.unit/DpSize = ..., kotlin/Function3<androidx.compose.ui.window/WindowScope, androidx.compose.runtime/Composer, kotlin/Int, kotlin/Unit>) // androidx.compose.ui.window/Window|Window(kotlin.String;androidx.compose.ui.unit.DpSize;kotlin.Function3<androidx.compose.ui.window.WindowScope,androidx.compose.runtime.Composer,kotlin.Int,kotlin.Unit>){}[0]
+
+// Targets: [mingwX64]
+final class androidx.compose.ui.input.pointer/WindowsCursor : androidx.compose.ui.input.pointer/PointerIcon { // androidx.compose.ui.input.pointer/WindowsCursor|null[0]
+    constructor <init>(kotlin/Int) // androidx.compose.ui.input.pointer/WindowsCursor.<init>|<init>(kotlin.Int){}[0]
+
+    final val id // androidx.compose.ui.input.pointer/WindowsCursor.id|{}id[0]
+        final fun <get-id>(): kotlin/Int // androidx.compose.ui.input.pointer/WindowsCursor.id.<get-id>|<get-id>(){}[0]
+
+    final fun component1(): kotlin/Int // androidx.compose.ui.input.pointer/WindowsCursor.component1|component1(){}[0]
+    final fun copy(kotlin/Int = ...): androidx.compose.ui.input.pointer/WindowsCursor // androidx.compose.ui.input.pointer/WindowsCursor.copy|copy(kotlin.Int){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // androidx.compose.ui.input.pointer/WindowsCursor.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // androidx.compose.ui.input.pointer/WindowsCursor.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // androidx.compose.ui.input.pointer/WindowsCursor.toString|toString(){}[0]
+}
+
+// Targets: [mingwX64]
+final val androidx.compose.ui.input.pointer/androidx_compose_ui_input_pointer_WindowsCursor$stableprop // androidx.compose.ui.input.pointer/androidx_compose_ui_input_pointer_WindowsCursor$stableprop|#static{}androidx_compose_ui_input_pointer_WindowsCursor$stableprop[0]
+
+// Targets: [mingwX64]
+final fun androidx.compose.ui.input.pointer/androidx_compose_ui_input_pointer_WindowsCursor$stableprop_getter(): kotlin/Int // androidx.compose.ui.input.pointer/androidx_compose_ui_input_pointer_WindowsCursor$stableprop_getter|androidx_compose_ui_input_pointer_WindowsCursor$stableprop_getter(){}[0]

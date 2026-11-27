@@ -31,7 +31,35 @@ jobs:
       - name: Setup Xcode
         uses: ./.github/actions/setup-xcode
 
-      - name: Check Public API
+      # The fork compiles Compose for mingwX64 too, against a skiko that skiko does not publish
+      # for it. Only the Kotlin half is needed to compile (and dump) a klib's API; it goes to the
+      # local Maven repository, which the build reads skiko from first (buildSrc/repos.gradle).
+      - name: skiko for mingwX64, the Kotlin half
         run: |
+          ./extended/compose/retry-network.sh \
+            ./extended/skiko/build-skiko-mingw.sh "$RUNNER_TEMP/skiko-mingw" --kotlin-only
+
+      - name: Check Public API
+        id: check
+        run: |
+          # --continue: every module's check, not the first failure only, so one run shows all.
           ./gradlew jbApiCheck \
-            --no-daemon --stacktrace
+            --no-daemon --stacktrace --continue
+
+      # What the dumps should be for this tree, so a change to the API (or to the targets a
+      # module has) is fixed by applying the patch rather than by a local build of every target.
+      - name: Write the dumps this tree gives
+        if: failure() && steps.check.outcome == 'failure'
+        run: |
+          ./gradlew jbApiDump --no-daemon --stacktrace --continue || true
+          git add -A -- ':(glob)**/api/**' ':(glob)**/bcv/**'
+          git diff --cached --binary > "$RUNNER_TEMP/api-dumps.patch"
+          git diff --cached --stat | tail -1
+
+      - name: Upload the dumps
+        if: failure() && steps.check.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-dumps
+          path: ${{ runner.temp }}/api-dumps.patch
+          if-no-files-found: ignore
