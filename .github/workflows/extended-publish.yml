@@ -102,11 +102,12 @@ env:
     -Dorg.gradle.internal.repository.initial.backoff=1000
     -Dorg.gradle.internal.http.connectionTimeout=120000
     -Dorg.gradle.internal.http.socketTimeout=120000
-  # Targets built and left out of the bundle (fork owner, 2026-11-21). They were 3,810 of the
-  # 17,844 files 1.11.1-ext.5 uploaded. Every python-multiplatform developer pulls this fork from
-  # Central, so a target is cut only when none of them can need it. all_targets publishes them.
+  # Targets built and left out of the bundle (fork owner, 2026-11-21). With js they were 3,810
+  # of the 17,844 files 1.11.1-ext.5 uploaded. The fork is a drop-in for upstream Compose
+  # Multiplatform (#325), so no target upstream publishes the UI stack for is left out:
+  # extended/publish/check_skip_targets.py fails the plan job on one. all_targets publishes them.
   CENTRAL_SKIP_TARGETS: >-
-    tvosArm64 tvosSimulatorArm64 watchosArm64 watchosArm32 watchosSimulatorArm64 js
+    tvosArm64 tvosSimulatorArm64 watchosArm64 watchosArm32 watchosSimulatorArm64
   # Every coordinate the bundle must carry. The check also follows every dependency and
   # variant the bundle names, so this list is the roots, not the closure.
   REQUIRED: >-
@@ -173,6 +174,12 @@ jobs:
 
       - name: Test the target check
         run: python3 -I extended/publish/tests/check_targets_test.py
+
+      - name: Test the skipped-targets check
+        run: python3 -I extended/publish/tests/check_skip_targets_test.py
+
+      - name: A release leaves out no target of the Compose UI stack
+        run: python3 -I extended/publish/check_skip_targets.py .github/workflows/extended-publish.yml
 
       - name: Work out the mode, the ref and the version
         id: plan

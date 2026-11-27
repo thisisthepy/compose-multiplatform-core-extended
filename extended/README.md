@@ -420,11 +420,12 @@ it, and uploaded nowhere.
 Sonatype counts every file and byte a namespace uploads in a month, and a version on Central is
 never replaced, so a release carries what its consumers use, not everything the build makes:
 
-- The targets in the workflow's `CENTRAL_SKIP_TARGETS` (tvOS, watchOS and Kotlin/JS; Wasm stays)
-  are built, because the libraries' shared metadata names them, and left out of the bundle
+- The targets in the workflow's `CENTRAL_SKIP_TARGETS` (tvOS and watchOS) are built, because the libraries' shared metadata names them, and left out of the bundle
   (`central_bundle.py stage --skip-target`); the roots then list only the targets that are
   there, so a consumer on a left-out target is told the module does not support it. A dispatch
-  with `all_targets` publishes every target.
+  with `all_targets` publishes every target. No target upstream publishes the UI stack for is
+  ever left out, Kotlin/JS and Wasm included, since the fork is a drop-in for upstream Compose
+  Multiplatform: `extended/publish/check_skip_targets.py` fails the plan job on one.
 - Each file gets the `.md5` and `.sha1` Central requires and its `.asc`, not the optional
   `.sha256` and `.sha512` (`central_bundle.py sign --all-checksums` writes them).
 - Javadoc jars are empty, as Central allows; sources jars are the real ones.
