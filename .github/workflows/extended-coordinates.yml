@@ -49,6 +49,9 @@ jobs:
       - name: Every workflow running the Gradle build names the Maven mirror
         run: extended/compose/tests/ci-mirror.test.sh
 
+      - name: The web test compiles retry a call the network failed
+        run: extended/compose/tests/web-compile-retry.test.sh
+
       - name: republish-skiko-mingw.py
         run: extended/skiko/tests/republish-skiko-mingw.test.sh
 
