@@ -83,6 +83,25 @@ class MacosRunnersTest(unittest.TestCase):
             self.assertIn(cell, found, f"{cell} is not a macOS cell of a full CI run")
             self.assertEqual(found[cell], INTEL, f"{cell} only compiles, links or publishes")
 
+    def test_compile_only_jobs_select_the_xcode(self):
+        # The Intel image's default Xcode is 16.4, whose iOS SDK lacks what the UIKit code uses
+        # (UIViewLayoutRegion, iOS 26): fork-train-20, Design systems (iosArm64).
+        for workflow, job_id, _ in sorted(COMPILE_ONLY, key=str):
+            with open(os.path.join(WORKFLOWS, workflow), encoding="utf-8") as f:
+                job = yaml.safe_load(f)["jobs"][job_id]
+            uses = [step.get("uses", "") for step in job.get("steps", [])]
+            self.assertIn("./.github/actions/setup-xcode", uses, f"{workflow} {job_id} selects no Xcode")
+
+    def test_setup_xcode_caches_only_on_arm64(self):
+        # irgaly/xcode-cache ships its native module for darwin-arm64 only: on Intel it fails
+        # with "Cannot find module '../lib/node-v137-darwin-x64/nanoutimes.node'" (fork-train-20).
+        action = os.path.join(WORKFLOWS, "..", "actions", "setup-xcode", "action.yml")
+        with open(action, encoding="utf-8") as f:
+            steps = yaml.safe_load(f)["runs"]["steps"]
+        for step in steps:
+            if "xcode-cache" in step.get("uses", ""):
+                self.assertIn("runner.arch == 'ARM64'", step.get("if", ""), "the DerivedData cache runs on Intel")
+
     def test_arm64_cells_within_budget(self):
         arm64 = [c for c in macos_cells() if c[3] != INTEL]
         listing = "\n".join(f"  {f} {j} {p or ''} {label}" for f, j, p, label in arm64)

@@ -95,6 +95,13 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      # The Intel image's default Xcode is 16.4, whose iOS SDK lacks what the UIKit code uses
+      # (UIViewLayoutRegion, iOS 26; fork-train-20). The arm64 cells run on macos-latest, whose
+      # default Xcode has it.
+      - name: Select the Xcode the build uses (Intel)
+        if: matrix.runs-on == 'macos-15-intel'
+        uses: ./.github/actions/setup-xcode
+
       - name: The version line
         run: scripts/check-version.sh
 
