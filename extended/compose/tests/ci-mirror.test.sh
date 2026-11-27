@@ -22,6 +22,8 @@ top_level_env() {
     awk '/^env:/ { inside = 1; next } inside && /^[^ #]/ { inside = 0 } inside { print }' "$1"
 }
 
+plugin_portal='https://plugins.gradle.org/m2'
+
 echo "ci mirror"
 checked=0
 for workflow in "$workflows"/*.yml; do
@@ -29,6 +31,11 @@ for workflow in "$workflows"/*.yml; do
     checked=$((checked + 1))
     if ! top_level_env "$workflow" | grep -qE '^  COMPOSE_MAVEN_MIRROR: *[^ ]'; then
         fail "$(basename "$workflow") runs the Gradle build and does not set COMPOSE_MAVEN_MIRROR in its top-level env"
+    # Google's copy of Central lacks some plugin artifacts (org.spdx:spdx-gradle-plugin:0.6.0,
+    # which buildSrc needs), and Gradle stops at Central when Central answers 429. The Gradle
+    # Plugin Portal comes second in the list and holds those artifacts.
+    elif ! top_level_env "$workflow" | grep -E '^  COMPOSE_MAVEN_MIRROR:' | grep -qF "$plugin_portal"; then
+        fail "$(basename "$workflow") sets COMPOSE_MAVEN_MIRROR without $plugin_portal"
     fi
 done
 [[ $checked -gt 0 ]] || fail "no workflow under $workflows runs the Gradle build"

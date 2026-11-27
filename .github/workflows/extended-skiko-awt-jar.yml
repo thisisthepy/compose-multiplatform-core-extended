@@ -11,7 +11,7 @@ env:
   # Google's mirror of Maven Central, put in Central's place in skiko's own Gradle build
   # (extended/skiko/maven-mirror.init.gradle): Central answers runners that share an address with
   # 429 Too Many Requests (fork-train-18).
-  COMPOSE_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2
+  COMPOSE_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2 https://plugins.gradle.org/m2
 
 jobs:
   build:
