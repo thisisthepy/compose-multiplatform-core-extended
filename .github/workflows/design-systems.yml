@@ -43,9 +43,9 @@ jobs:
             compose: iosSimulatorArm64
             test: true
           # The device slice is linked, never run: running it needs a signed app on real
-          # hardware.
+          # hardware. So it needs no arm64 Mac (extended/compose/tests/macos_runners_test.py).
           - platform: iosArm64
-            runs-on: macos-latest
+            runs-on: macos-15-intel
             compose: iosArm64
             test: false
           - platform: macosArm64
