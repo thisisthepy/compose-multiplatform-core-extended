@@ -25,6 +25,9 @@ focused like any other node.
 
 ### Out of scope
 
+- The web target. compose-rust and dioxus-compose on the web would use an `<iframe>`, which needs
+  none of this module.
+
 - Building any application UI in HTML. The rule above stands.
 - A browser: no tabs, history UI, downloads UI or extensions. Those are the caller's to build if
   it wants them.
@@ -94,7 +97,7 @@ data class WebViewConfig(
     val url: String? = null,                       // or html below
     val html: String? = null,
     val baseUrl: String? = null,                   // for html
-    val schemes: Map<String, WebResourceHandler> = emptyMap(),   // app://, ember://: §6.4
+    val schemes: Map<String, WebResourceHandler> = emptyMap(),   // app://, ember://: below
     val documentStartScripts: List<String> = emptyList(),        // injected before page scripts
     val profileDirectory: String? = null,          // cookies, storage; null = ephemeral
     val transparentBackground: Boolean = false,
@@ -113,7 +116,7 @@ interface WebView {
     /** Runs [script] in the page's main frame; the result is the JSON of its value. */
     fun evaluateJavaScript(script: String, onResult: (Result<String>) -> Unit)
 
-    /** Host → page: delivered as a `message` event on `window.chrome.webview`-like shim (§6.3). */
+    /** Host → page: delivered as a `message` event through the page-side shim (§6.6). */
     fun postMessage(json: String)
 
     fun setZoom(factor: Double)
@@ -137,7 +140,47 @@ interface WebViewListener {
     fun onFocusLeaving(direction: FocusDirection) {}   // Tab past the last element (§5)
     fun onProcessGone(reason: String) {}           // web content process crashed or was killed
 }
+
+/**
+ * Answers requests for one custom scheme (`app://…`). The answer may come later and from any
+ * thread: the handler keeps [reply] and calls it once, when the application has the bytes (for
+ * the thin client, after a round trip to the server; for compose-rust, when the Host answers the
+ * request id it was sent). A request the page abandoned (navigated away, view destroyed) is
+ * reported through [WebResourceRequest.onCancelled] and its reply is then ignored.
+ */
+fun interface WebResourceHandler {
+    fun handle(request: WebResourceRequest, reply: WebResourceReply)
+}
+
+class WebResourceRequest(
+    val url: String,
+    val method: String,
+    val headers: Map<String, String>,
+    val body: ByteArray?,
+) {
+    /** Called on the window's thread if the page stops waiting before the reply. */
+    var onCancelled: (() -> Unit)? = null
+}
+
+/** Called once. Thread-safe: the backend carries the answer to the view's thread. */
+interface WebResourceReply {
+    fun respond(status: Int, headers: Map<String, String>, body: ByteArray)
+    fun fail()                                     // answered as a network error
+}
 ```
+
+Each backend can take a deferred answer:
+- **WKWebView:** `WKURLSchemeTask` is answered whenever the handler is ready (the task is kept
+  until `didFinish`; `stopURLSchemeTask` is the cancellation).
+- **WebView2:** `WebResourceRequested` takes `GetDeferral()`; the response is set and the
+  deferral completed later.
+- **WebKitGTK:** `WebKitURISchemeRequest` is finished later with `webkit_uri_scheme_request_finish`
+  (or `_finish_error`).
+- **Android:** `shouldInterceptRequest` runs on a worker thread of WebView's, which waits for the
+  reply. A reply that never comes is a request that hangs, as in a browser.
+
+The navigation decision ([WebViewListener.onNavigationStarting]) stays synchronous: every backend
+asks it synchronously, and compose-rust's Host decides it in its handler.
 
 Threading: every call and every callback is on the thread that pumps the window, as with
 `NativeViews`. The backends marshal from their own threads (WebView2 completion handlers, GTK
