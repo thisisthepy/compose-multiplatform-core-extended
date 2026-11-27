@@ -240,8 +240,10 @@ jobs:
       - name: Compile web test executables
         run: |
           set -euo pipefail
+          # retry-network.sh runs a call the network failed again. It passes Gradle's output on,
+          # stderr included, and awk keeps only the lines that name a compile task.
           TASKS=$(
-            ./gradlew :mpp:testWeb${{ matrix.task }} -m --console=plain --no-configuration-cache \
+            ./extended/compose/retry-network.sh ./gradlew :mpp:testWeb${{ matrix.task }} -m --console=plain --no-configuration-cache \
               --no-daemon --no-parallel --stacktrace -Porg.gradle.workers.max=1 \
               -Dorg.gradle.configureondemand=false -Pkotlin.compiler.execution.strategy=in-process \
               | awk '/^:.*compileTestDevelopmentExecutable/ {print $1}' \
@@ -249,7 +251,7 @@ jobs:
           )
 
           if [ -n "$TASKS" ]; then
-            ./gradlew $TASKS \
+            ./extended/compose/retry-network.sh ./gradlew $TASKS \
               --no-daemon --stacktrace --no-parallel --no-configuration-cache \
               -Dorg.gradle.jvmargs="-Xmx12g -XX:+UseParallelGC" \
               -Porg.gradle.workers.max=1 -Pkotlin.compiler.execution.strategy=in-process
@@ -326,8 +328,10 @@ jobs:
       - name: Compile web test executables
         run: |
           set -euo pipefail
+          # retry-network.sh runs a call the network failed again. It passes Gradle's output on,
+          # stderr included, and awk keeps only the lines that name a compile task.
           TASKS=$(
-            ./gradlew :mpp:testWeb${{ matrix.task }} -m --console=plain --no-configuration-cache \
+            ./extended/compose/retry-network.sh ./gradlew :mpp:testWeb${{ matrix.task }} -m --console=plain --no-configuration-cache \
               --no-daemon --no-parallel --stacktrace -Porg.gradle.workers.max=1 \
               -Dorg.gradle.configureondemand=false -Pkotlin.compiler.execution.strategy=in-process \
               | awk '/^:.*compileTestDevelopmentExecutable/ {print $1}' \
@@ -335,7 +339,7 @@ jobs:
           )
 
           if [ -n "$TASKS" ]; then
-            ./gradlew $TASKS \
+            ./extended/compose/retry-network.sh ./gradlew $TASKS \
               --no-daemon --stacktrace --no-parallel --no-configuration-cache \
               -Dorg.gradle.jvmargs="-Xmx12g -XX:+UseParallelGC" \
               -Porg.gradle.workers.max=1 -Pkotlin.compiler.execution.strategy=in-process
