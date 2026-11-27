@@ -74,6 +74,9 @@ jobs:
             d=$(dirname "$f")
             while [ "$d" != "." ] && [ ! -f "$d/build.gradle" ] && [ ! -f "$d/build.gradle.kts" ]; do d=$(dirname "$d"); done
             [ "$d" = "." ] && continue
+            # A compatibility stub's directory is not its own project (as below, for a
+            # build-wide change): a dump changed there names no task to check.
+            case "$d" in *-compatibility-stub) continue ;; esac
             ls "$d"/api/desktop/*.api >/dev/null 2>&1 || continue
             t=":$(echo "$d" | tr / :):desktopApiCheck"
             case " $tasks " in *" $t "*) ;; *) tasks="$tasks $t" ;; esac

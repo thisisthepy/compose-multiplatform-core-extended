@@ -5,7 +5,7 @@
 // - Show manifest properties: true
 // - Show declarations: true
 
-// Library unique name: <org.jetbrains.compose.material3.adaptive:adaptive-navigation3>
+// Library unique name: <org.thisisthepy.compose.material3.adaptive:adaptive-navigation3>
 sealed interface androidx.compose.material3.adaptive.navigation3/ListDetailSceneScope { // androidx.compose.material3.adaptive.navigation3/ListDetailSceneScope|null[0]
     abstract val scaffoldTransitionScope // androidx.compose.material3.adaptive.navigation3/ListDetailSceneScope.scaffoldTransitionScope|{}scaffoldTransitionScope[0]
         abstract fun <get-scaffoldTransitionScope>(): androidx.compose.material3.adaptive.layout/PaneScaffoldTransitionScope<androidx.compose.material3.adaptive.layout/ThreePaneScaffoldRole, androidx.compose.material3.adaptive.layout/ThreePaneScaffoldValue> // androidx.compose.material3.adaptive.navigation3/ListDetailSceneScope.scaffoldTransitionScope.<get-scaffoldTransitionScope>|<get-scaffoldTransitionScope>(){}[0]

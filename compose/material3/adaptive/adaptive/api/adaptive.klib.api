@@ -5,7 +5,7 @@
 // - Show manifest properties: true
 // - Show declarations: true
 
-// Library unique name: <org.jetbrains.compose.material3.adaptive:adaptive>
+// Library unique name: <org.thisisthepy.compose.material3.adaptive:adaptive>
 open annotation class androidx.compose.material3.adaptive/ExperimentalMaterial3AdaptiveApi : kotlin/Annotation { // androidx.compose.material3.adaptive/ExperimentalMaterial3AdaptiveApi|null[0]
     constructor <init>() // androidx.compose.material3.adaptive/ExperimentalMaterial3AdaptiveApi.<init>|<init>(){}[0]
 }

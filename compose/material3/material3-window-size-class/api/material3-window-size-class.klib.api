@@ -5,7 +5,7 @@
 // - Show manifest properties: true
 // - Show declarations: true
 
-// Library unique name: <org.jetbrains.compose.material3:material3-window-size-class>
+// Library unique name: <org.thisisthepy.compose.material3:material3-window-size-class>
 open annotation class androidx.compose.material3.windowsizeclass/ExperimentalMaterial3WindowSizeClassApi : kotlin/Annotation { // androidx.compose.material3.windowsizeclass/ExperimentalMaterial3WindowSizeClassApi|null[0]
     constructor <init>() // androidx.compose.material3.windowsizeclass/ExperimentalMaterial3WindowSizeClassApi.<init>|<init>(){}[0]
 }

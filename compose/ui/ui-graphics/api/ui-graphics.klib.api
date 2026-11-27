@@ -1,11 +1,11 @@
 // Klib ABI Dump
-// Targets: [iosArm64, iosSimulatorArm64, js, macosArm64, wasmJs]
+// Targets: [iosArm64, iosSimulatorArm64, js, linuxArm64, linuxX64, macosArm64, mingwX64, wasmJs]
 // Rendering settings:
 // - Signature version: 2
 // - Show manifest properties: true
 // - Show declarations: true
 
-// Library unique name: <org.jetbrains.compose.ui:ui-graphics>
+// Library unique name: <org.thisisthepy.compose.ui:ui-graphics>
 open annotation class androidx.compose.ui.graphics.drawscope/DrawScopeMarker : kotlin/Annotation { // androidx.compose.ui.graphics.drawscope/DrawScopeMarker|null[0]
     constructor <init>() // androidx.compose.ui.graphics.drawscope/DrawScopeMarker.<init>|<init>(){}[0]
 }

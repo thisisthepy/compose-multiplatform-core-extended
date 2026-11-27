@@ -5,7 +5,7 @@
 // - Show manifest properties: true
 // - Show declarations: true
 
-// Library unique name: <org.jetbrains.androidx.navigation:navigation-runtime>
+// Library unique name: <org.thisisthepy.compose.androidx.navigation:navigation-runtime>
 open annotation class androidx.navigation/NavDeepLinkSaveStateControl : kotlin/Annotation { // androidx.navigation/NavDeepLinkSaveStateControl|null[0]
     constructor <init>() // androidx.navigation/NavDeepLinkSaveStateControl.<init>|<init>(){}[0]
 }

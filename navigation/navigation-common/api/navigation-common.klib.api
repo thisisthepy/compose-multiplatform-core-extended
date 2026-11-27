@@ -5,7 +5,7 @@
 // - Show manifest properties: true
 // - Show declarations: true
 
-// Library unique name: <org.jetbrains.androidx.navigation:navigation-common>
+// Library unique name: <org.thisisthepy.compose.androidx.navigation:navigation-common>
 open annotation class androidx.navigation/NavDeepLinkDsl : kotlin/Annotation { // androidx.navigation/NavDeepLinkDsl|null[0]
     constructor <init>() // androidx.navigation/NavDeepLinkDsl.<init>|<init>(){}[0]
 }

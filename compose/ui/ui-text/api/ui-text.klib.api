@@ -1,12 +1,12 @@
 // Klib ABI Dump
-// Targets: [iosArm64, iosSimulatorArm64, js, macosArm64, wasmJs]
+// Targets: [iosArm64, iosSimulatorArm64, js, linuxArm64, linuxX64, macosArm64, mingwX64, wasmJs]
 // Alias: ios => [iosArm64, iosSimulatorArm64]
 // Rendering settings:
 // - Signature version: 2
 // - Show manifest properties: true
 // - Show declarations: true
 
-// Library unique name: <org.jetbrains.compose.ui:ui-text>
+// Library unique name: <org.thisisthepy.compose.ui:ui-text>
 open annotation class androidx.compose.ui.text/ExperimentalTextApi : kotlin/Annotation { // androidx.compose.ui.text/ExperimentalTextApi|null[0]
     constructor <init>() // androidx.compose.ui.text/ExperimentalTextApi.<init>|<init>(){}[0]
 }

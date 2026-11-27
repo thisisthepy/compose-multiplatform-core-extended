@@ -1,12 +1,13 @@
 // Klib ABI Dump
-// Targets: [iosArm64, iosSimulatorArm64, js, macosArm64, wasmJs]
+// Targets: [iosArm64, iosSimulatorArm64, js, linuxArm64, linuxX64, macosArm64, mingwX64, wasmJs]
 // Alias: apple => [iosArm64, iosSimulatorArm64, macosArm64]
+// Alias: linux => [linuxArm64, linuxX64]
 // Rendering settings:
 // - Signature version: 2
 // - Show manifest properties: true
 // - Show declarations: true
 
-// Library unique name: <org.jetbrains.compose.material3:material3>
+// Library unique name: <org.thisisthepy.compose.material3:material3>
 open annotation class androidx.compose.material3/ExperimentalMaterial3Api : kotlin/Annotation { // androidx.compose.material3/ExperimentalMaterial3Api|null[0]
     constructor <init>() // androidx.compose.material3/ExperimentalMaterial3Api.<init>|<init>(){}[0]
 }
@@ -94,26 +95,26 @@ abstract interface androidx.compose.material3/AppBarColumnScope : androidx.compo
 abstract interface androidx.compose.material3/AppBarRowScope : androidx.compose.material3/AppBarScope // androidx.compose.material3/AppBarRowScope|null[0]
 
 abstract interface androidx.compose.material3/DatePickerFormatter { // androidx.compose.material3/DatePickerFormatter|null[0]
+    // Targets: [js, linux, mingwX64, wasmJs]
+    abstract fun formatDate(kotlin/Long?, androidx.compose.ui.text.intl/Locale, kotlin/Boolean = ...): kotlin/String? // androidx.compose.material3/DatePickerFormatter.formatDate|formatDate(kotlin.Long?;androidx.compose.ui.text.intl.Locale;kotlin.Boolean){}[0]
+
+    // Targets: [js, linux, mingwX64, wasmJs]
+    abstract fun formatMonthYear(kotlin/Long?, androidx.compose.ui.text.intl/Locale): kotlin/String? // androidx.compose.material3/DatePickerFormatter.formatMonthYear|formatMonthYear(kotlin.Long?;androidx.compose.ui.text.intl.Locale){}[0]
+
     // Targets: [apple]
     abstract fun formatDate(kotlin/Long?, platform.Foundation/NSLocale, kotlin/Boolean = ...): kotlin/String? // androidx.compose.material3/DatePickerFormatter.formatDate|formatDate(kotlin.Long?;platform.Foundation.NSLocale;kotlin.Boolean){}[0]
 
     // Targets: [apple]
     abstract fun formatMonthYear(kotlin/Long?, platform.Foundation/NSLocale): kotlin/String? // androidx.compose.material3/DatePickerFormatter.formatMonthYear|formatMonthYear(kotlin.Long?;platform.Foundation.NSLocale){}[0]
-
-    // Targets: [js, wasmJs]
-    abstract fun formatDate(kotlin/Long?, androidx.compose.ui.text.intl/Locale, kotlin/Boolean = ...): kotlin/String? // androidx.compose.material3/DatePickerFormatter.formatDate|formatDate(kotlin.Long?;androidx.compose.ui.text.intl.Locale;kotlin.Boolean){}[0]
-
-    // Targets: [js, wasmJs]
-    abstract fun formatMonthYear(kotlin/Long?, androidx.compose.ui.text.intl/Locale): kotlin/String? // androidx.compose.material3/DatePickerFormatter.formatMonthYear|formatMonthYear(kotlin.Long?;androidx.compose.ui.text.intl.Locale){}[0]
 }
 
 abstract interface androidx.compose.material3/DatePickerState { // androidx.compose.material3/DatePickerState|null[0]
     abstract val locale // androidx.compose.material3/DatePickerState.locale|{}locale[0]
+        // Targets: [js, linux, mingwX64, wasmJs]
+        abstract fun <get-locale>(): androidx.compose.ui.text.intl/Locale // androidx.compose.material3/DatePickerState.locale.<get-locale>|<get-locale>(){}[0]
+
         // Targets: [apple]
         abstract fun <get-locale>(): platform.Foundation/NSLocale // androidx.compose.material3/DatePickerState.locale.<get-locale>|<get-locale>(){}[0]
-
-        // Targets: [js, wasmJs]
-        abstract fun <get-locale>(): androidx.compose.ui.text.intl/Locale // androidx.compose.material3/DatePickerState.locale.<get-locale>|<get-locale>(){}[0]
     abstract val selectableDates // androidx.compose.material3/DatePickerState.selectableDates|{}selectableDates[0]
         abstract fun <get-selectableDates>(): androidx.compose.material3/SelectableDates // androidx.compose.material3/DatePickerState.selectableDates.<get-selectableDates>|<get-selectableDates>(){}[0]
     abstract val yearRange // androidx.compose.material3/DatePickerState.yearRange|{}yearRange[0]
@@ -132,11 +133,11 @@ abstract interface androidx.compose.material3/DatePickerState { // androidx.comp
 
 abstract interface androidx.compose.material3/DateRangePickerState { // androidx.compose.material3/DateRangePickerState|null[0]
     abstract val locale // androidx.compose.material3/DateRangePickerState.locale|{}locale[0]
+        // Targets: [js, linux, mingwX64, wasmJs]
+        abstract fun <get-locale>(): androidx.compose.ui.text.intl/Locale // androidx.compose.material3/DateRangePickerState.locale.<get-locale>|<get-locale>(){}[0]
+
         // Targets: [apple]
         abstract fun <get-locale>(): platform.Foundation/NSLocale // androidx.compose.material3/DateRangePickerState.locale.<get-locale>|<get-locale>(){}[0]
-
-        // Targets: [js, wasmJs]
-        abstract fun <get-locale>(): androidx.compose.ui.text.intl/Locale // androidx.compose.material3/DateRangePickerState.locale.<get-locale>|<get-locale>(){}[0]
     abstract val selectableDates // androidx.compose.material3/DateRangePickerState.selectableDates|{}selectableDates[0]
         abstract fun <get-selectableDates>(): androidx.compose.material3/SelectableDates // androidx.compose.material3/DateRangePickerState.selectableDates.<get-selectableDates>|<get-selectableDates>(){}[0]
     abstract val selectedEndDateMillis // androidx.compose.material3/DateRangePickerState.selectedEndDateMillis|{}selectedEndDateMillis[0]
@@ -3302,14 +3303,14 @@ final fun androidx.compose.material3/ripple(androidx.compose.ui.graphics/ColorPr
 final fun androidx.compose.material3/ripple(kotlin/Boolean = ..., androidx.compose.ui.unit/Dp = ..., androidx.compose.ui.graphics/Color = ...): androidx.compose.foundation/IndicationNodeFactory // androidx.compose.material3/ripple|ripple(kotlin.Boolean;androidx.compose.ui.unit.Dp;androidx.compose.ui.graphics.Color){}[0]
 final fun androidx.compose.material3/shouldUsePrecisionPointerComponentSizing(): kotlin/Boolean // androidx.compose.material3/shouldUsePrecisionPointerComponentSizing|shouldUsePrecisionPointerComponentSizing(){}[0]
 
+// Targets: [js, linux, mingwX64, wasmJs]
+final fun androidx.compose.material3/DatePickerState(androidx.compose.ui.text.intl/Locale, kotlin/Long? = ..., kotlin/Long? = ..., kotlin.ranges/IntRange = ..., androidx.compose.material3/DisplayMode = ..., androidx.compose.material3/SelectableDates = ...): androidx.compose.material3/DatePickerState // androidx.compose.material3/DatePickerState|DatePickerState(androidx.compose.ui.text.intl.Locale;kotlin.Long?;kotlin.Long?;kotlin.ranges.IntRange;androidx.compose.material3.DisplayMode;androidx.compose.material3.SelectableDates){}[0]
+
+// Targets: [js, linux, mingwX64, wasmJs]
+final fun androidx.compose.material3/DateRangePickerState(androidx.compose.ui.text.intl/Locale, kotlin/Long? = ..., kotlin/Long? = ..., kotlin/Long? = ..., kotlin.ranges/IntRange = ..., androidx.compose.material3/DisplayMode = ..., androidx.compose.material3/SelectableDates = ...): androidx.compose.material3/DateRangePickerState // androidx.compose.material3/DateRangePickerState|DateRangePickerState(androidx.compose.ui.text.intl.Locale;kotlin.Long?;kotlin.Long?;kotlin.Long?;kotlin.ranges.IntRange;androidx.compose.material3.DisplayMode;androidx.compose.material3.SelectableDates){}[0]
+
 // Targets: [apple]
 final fun androidx.compose.material3/DatePickerState(platform.Foundation/NSLocale, kotlin/Long? = ..., kotlin/Long? = ..., kotlin.ranges/IntRange = ..., androidx.compose.material3/DisplayMode = ..., androidx.compose.material3/SelectableDates = ...): androidx.compose.material3/DatePickerState // androidx.compose.material3/DatePickerState|DatePickerState(platform.Foundation.NSLocale;kotlin.Long?;kotlin.Long?;kotlin.ranges.IntRange;androidx.compose.material3.DisplayMode;androidx.compose.material3.SelectableDates){}[0]
 
 // Targets: [apple]
 final fun androidx.compose.material3/DateRangePickerState(platform.Foundation/NSLocale, kotlin/Long? = ..., kotlin/Long? = ..., kotlin/Long? = ..., kotlin.ranges/IntRange = ..., androidx.compose.material3/DisplayMode = ..., androidx.compose.material3/SelectableDates = ...): androidx.compose.material3/DateRangePickerState // androidx.compose.material3/DateRangePickerState|DateRangePickerState(platform.Foundation.NSLocale;kotlin.Long?;kotlin.Long?;kotlin.Long?;kotlin.ranges.IntRange;androidx.compose.material3.DisplayMode;androidx.compose.material3.SelectableDates){}[0]
-
-// Targets: [js, wasmJs]
-final fun androidx.compose.material3/DatePickerState(androidx.compose.ui.text.intl/Locale, kotlin/Long? = ..., kotlin/Long? = ..., kotlin.ranges/IntRange = ..., androidx.compose.material3/DisplayMode = ..., androidx.compose.material3/SelectableDates = ...): androidx.compose.material3/DatePickerState // androidx.compose.material3/DatePickerState|DatePickerState(androidx.compose.ui.text.intl.Locale;kotlin.Long?;kotlin.Long?;kotlin.ranges.IntRange;androidx.compose.material3.DisplayMode;androidx.compose.material3.SelectableDates){}[0]
-
-// Targets: [js, wasmJs]
-final fun androidx.compose.material3/DateRangePickerState(androidx.compose.ui.text.intl/Locale, kotlin/Long? = ..., kotlin/Long? = ..., kotlin/Long? = ..., kotlin.ranges/IntRange = ..., androidx.compose.material3/DisplayMode = ..., androidx.compose.material3/SelectableDates = ...): androidx.compose.material3/DateRangePickerState // androidx.compose.material3/DateRangePickerState|DateRangePickerState(androidx.compose.ui.text.intl.Locale;kotlin.Long?;kotlin.Long?;kotlin.Long?;kotlin.ranges.IntRange;androidx.compose.material3.DisplayMode;androidx.compose.material3.SelectableDates){}[0]
