@@ -49,9 +49,9 @@ jobs:
             compose: iosSimulatorArm64
             test: true
           # The device slice is linked, never run: running it needs a signed app on real
-          # hardware.
+          # hardware. So it needs no arm64 Mac (extended/compose/tests/macos_runners_test.py).
           - platform: iosArm64
-            runs-on: macos-latest
+            runs-on: macos-15-intel
             compose: iosArm64
             test: false
           - platform: macosArm64
@@ -94,6 +94,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+
+      # The Intel image's default Xcode is 16.4, whose iOS SDK lacks what the UIKit code uses
+      # (UIViewLayoutRegion, iOS 26; fork-train-20). The arm64 cells run on macos-latest, whose
+      # default Xcode has it.
+      - name: Select the Xcode the build uses (Intel)
+        if: matrix.runs-on == 'macos-15-intel'
+        uses: ./.github/actions/setup-xcode
 
       - name: The version line
         run: scripts/check-version.sh

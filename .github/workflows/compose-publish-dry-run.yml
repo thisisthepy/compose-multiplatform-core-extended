@@ -22,7 +22,9 @@ env:
 
 jobs:
   compose-native-publish:
-    runs-on: macos-15
+    # Compiles and publishes to a local repository only: on the x86_64 image, which has the Xcode setup-xcode selects (26.3). The
+    # arm64 runners are kept for what runs an arm64 binary (extended/compose/tests/macos_runners_test.py).
+    runs-on: macos-15-intel
     name: Dry Run Compose Publish Darwin + Native Linux
     steps:
       - name: Checkout Repository
