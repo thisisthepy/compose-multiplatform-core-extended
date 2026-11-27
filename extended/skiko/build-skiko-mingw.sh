@@ -44,6 +44,10 @@ SKIA_URL="https://github.com/JetBrains/skia/releases/download/$SKIA_RELEASE/Skia
 CENTRAL="https://repo1.maven.org/maven2/org/jetbrains/skiko/skiko/$PUBLISHED_AS"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# skiko's own Gradle build asks Maven Central itself; in CI, COMPOSE_MAVEN_MIRROR puts the
+# mirror in Central's place first (maven-mirror.init.gradle).
+mirror_init=()
+if [[ -n "${COMPOSE_MAVEN_MIRROR:-}" ]]; then mirror_init=(--init-script "$HERE/maven-mirror.init.gradle"); fi
 
 die() {
     echo "error: $1" >&2
@@ -88,7 +92,7 @@ done
 # for every other target with one that knows only this one.
 (
     cd "$checkout/skiko"
-    ./gradlew --no-daemon --quiet publishMingwX64PublicationToMavenLocal \
+    ./gradlew --no-daemon --quiet ${mirror_init[@]+"${mirror_init[@]}"} publishMingwX64PublicationToMavenLocal \
         -Pskiko.native.mingw.enabled=true -Pskiko.awt.enabled=false \
         -Pdeploy.version="$PUBLISHED_AS" -Pdeploy.release=true
 )

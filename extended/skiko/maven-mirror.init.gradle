@@ -1,0 +1,44 @@
+// An init script for skiko's own Gradle build (build-skiko-*.sh), which declares Maven Central
+// itself and does not read COMPOSE_MAVEN_MIRROR the way this repository's buildSrc/repos.gradle
+// does. Central answers 429 Too Many Requests when runners share an address, and a 429 stops
+// the resolution there: the repositories after Central are never asked (fork-train-18,
+// static-archive on ubuntu-latest).
+//
+// Every repository that is Maven Central becomes the mirror (COMPOSE_MAVEN_MIRROR, the first
+// URL when it names several), in its place, and Central is added again after it, for what the
+// mirror does not have. That holds for the plugin repositories, the
+// settings' and the projects' repositories and the buildscript blocks, of skiko and of its
+// buildSrc and included builds, which each run this script.
+// Nothing happens without COMPOSE_MAVEN_MIRROR.
+
+def mirrorUrl = (System.getenv("COMPOSE_MAVEN_MIRROR") ?: "").split("[\\s,]+").find { !it.isEmpty() }
+if (mirrorUrl == null) return
+
+def centralHosts = ["repo.maven.apache.org", "repo1.maven.org"] as Set
+def fallbackName = "MavenCentralAfterMirror"
+
+def mirrorCentral = { RepositoryHandler handler ->
+    handler.withType(MavenArtifactRepository).all { repository ->
+        if (repository.name == fallbackName) return
+        def asked = repository.url
+        if (asked == null || !(asked.host in centralHosts)) return
+        def centralUrl = asked.toString()
+        repository.url = mirrorUrl
+        // In this closure a local named url would shadow the repository's property.
+        handler.maven { fallback ->
+            fallback.name = fallbackName
+            fallback.url = centralUrl
+        }
+    }
+}
+
+beforeSettings { settings ->
+    mirrorCentral(settings.pluginManagement.repositories)
+    mirrorCentral(settings.buildscript.repositories)
+    mirrorCentral(settings.dependencyResolutionManagement.repositories)
+}
+
+beforeProject { project ->
+    mirrorCentral(project.buildscript.repositories)
+    mirrorCentral(project.repositories)
+}
