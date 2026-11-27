@@ -151,6 +151,25 @@ class MacosWindowPlatformChromeTest {
         }
 
     @Test
+    fun fr19_4_failed_full_screen_entry_restores_the_toolbar_and_windowed_caption() =
+        opened(WindowConfig("failed-fullscreen-entry", 480, 320)) { platform, window ->
+            val toolbar = assertNotNull(window.toolbar)
+            val delegate = assertNotNull(window.delegate as? MacosWindowDelegate)
+            val windowed = platform.caption()
+            assertTrue(toolbar.visible)
+            assertTrue(windowed.height > 0f)
+
+            NSNotificationCenter.defaultCenter.postNotificationName(NSWindowWillEnterFullScreenNotification, window)
+            assertEquals(false, toolbar.visible)
+            assertEquals(WindowCaption.None, platform.caption())
+
+            // AppKit sends the failure to the window delegate with the window as its argument.
+            delegate.windowDidFailToEnterFullScreen(window)
+            assertTrue(toolbar.visible)
+            assertEquals(windowed, platform.caption())
+        }
+
+    @Test
     fun fr19_4_the_system_chrome_draws_its_title_and_reports_no_caption() =
         opened(WindowConfig("system", 480, 320, chrome = WindowChrome.System)) { platform, window ->
             assertEquals(NSWindowTitleVisible, window.titleVisibility)

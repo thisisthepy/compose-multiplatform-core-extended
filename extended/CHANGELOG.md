@@ -5,6 +5,12 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ## Unreleased
 
+### Window modules (`org.thisisthepy.compose.window`)
+
+- **Fix.** The macOS Kotlin/Native full-size window hides its toolbar and clears the caption
+  in full screen, removing the opaque band above the content. It restores the previous toolbar
+  visibility and windowed caption when full screen ends or AppKit cannot enter it. (#323)
+
 ### Packaging templates (`extended/packaging`)
 
 - **Change.** The templates now hold what compose-rust's packagers ship, because those packagers
