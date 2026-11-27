@@ -12,7 +12,11 @@ runs:
         sudo xcode-select -s /Applications/Xcode_26.3.app
         /usr/bin/xcodebuild -version
 
+    # irgaly/xcode-cache ships its native module for darwin-arm64 only; on an Intel runner it
+    # fails ("Cannot find module '../lib/node-v137-darwin-x64/nanoutimes.node'", fork-train-20).
+    # The cache only saves time, so Intel goes without it.
     - name: Cache Xcode DerivedData
+      if: runner.arch == 'ARM64'
       uses: irgaly/xcode-cache@v1
       with:
         key: xcode-cache-deriveddata-${{ github.sha }}
