@@ -11,7 +11,17 @@ pluginManagement {
         }
          */
         if (true /* In JetBrains Fork */) {
-            mavenCentral()
+            mavenCentral {
+                // What Central does not have (buildSrc/repos.gradle, notOnMavenCentral, which
+                // is not applied yet here): a 429 from Central would end the lookup of
+                // com.android.settings before Google's Maven is asked (fork-train-18).
+                content {
+                    excludeGroupByRegex("androidx(\\..*)?")
+                    excludeGroupByRegex("com\\.android(\\..*)?")
+                    excludeModule("com.gradle", "develocity-gradle-plugin")
+                    excludeModule("com.gradle", "common-custom-user-data-gradle-plugin")
+                }
+            }
             google()
             maven {
                 url = "https://plugins.gradle.org/m2/"

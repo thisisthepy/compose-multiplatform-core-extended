@@ -15,7 +15,11 @@ mkdir -p "$up"
 echo jar > "$up/skiko-awt-0.144.6.jar"
 echo sha > "$up/skiko-awt-0.144.6.jar.sha1"
 cat > "$up/skiko-awt-0.144.6.pom" <<'XML'
-<project><groupId>org.jetbrains.skiko</groupId><artifactId>skiko-awt</artifactId><version>0.144.6</version></project>
+<project><groupId>org.jetbrains.skiko</groupId><artifactId>skiko-awt</artifactId><version>0.144.6</version><dependencies><dependency>
+  <groupId>org.jetbrains.skiko</groupId>
+  <artifactId>skiko-awt-runtime-macos-arm64</artifactId>
+  <version>0.144.6</version>
+</dependency></dependencies></project>
 XML
 cat > "$up/skiko-awt-0.144.6.module" <<'JSON'
 {"component":{"url":"../../skiko/0.144.6/skiko-0.144.6.module","group":"org.jetbrains.skiko","module":"skiko-awt","version":"0.144.6"},
@@ -39,6 +43,16 @@ for v in m["variants"]:
     assert v["capabilities"] == own, v
 runtime = m["variants"][1]["dependencies"][0]
 assert runtime["group"] == "org.jetbrains.skiko" and runtime["version"]["requires"] == "0.144.6", runtime
+PY
+python3 -I - "$out/skiko-awt-$V.module" <<'PY' || fail "the natives must not bring JetBrains' skiko-awt back"
+import json, sys
+runtime = json.load(open(sys.argv[1]))["variants"][1]["dependencies"][0]
+assert {"group": "org.jetbrains.skiko", "module": "skiko-awt"} in runtime.get("excludes", []), runtime
+PY
+python3 -I - "$out/skiko-awt-$V.pom" <<'PY' || fail "the pom's natives must exclude JetBrains' skiko-awt"
+import re, sys
+t = open(sys.argv[1]).read()
+assert re.search(r"<artifactId>skiko-awt-runtime-macos-arm64</artifactId>\s*<version>0.144.6</version>\s*<exclusions>\s*<exclusion>\s*<groupId>org.jetbrains.skiko</groupId>\s*<artifactId>skiko-awt</artifactId>", t), t
 PY
 python3 -I "$skiko/republish-skiko-awt.py" "$up" "$work/x" 0.144.6 g $V extra > /dev/null 2>&1 && fail "the retired capability-version argument is accepted"
 
@@ -67,6 +81,21 @@ cat > "$ui/ui-desktop-$V.pom" <<XML
 XML
 cp "$ui/ui-desktop-$V.module" "$native/ui-linuxx64-$V.module"
 cp "$ui/ui-desktop-$V.pom" "$native/ui-linuxx64-$V.pom"
+# The desktop module of a target (desktop-jvm-macos-arm64) names the natives directly.
+jvm="$repo/org/thisisthepy/compose/desktop/desktop-jvm-macos-arm64/$V"
+mkdir -p "$jvm"
+cat > "$jvm/desktop-jvm-macos-arm64-$V.module" <<JSON
+{"variants":[{"name":"jvmmacos-arm64RuntimeElements-published","dependencies":[
+  {"group":"org.jetbrains.skiko","module":"skiko-awt-runtime-macos-arm64","version":{"requires":"0.144.6"}},
+  {"group":"org.thisisthepy.compose.desktop","module":"desktop","version":{"requires":"$V"}}]}]}
+JSON
+cat > "$jvm/desktop-jvm-macos-arm64-$V.pom" <<XML
+<project><dependencies><dependency>
+  <groupId>org.jetbrains.skiko</groupId>
+  <artifactId>skiko-awt-runtime-macos-arm64</artifactId>
+  <version>0.144.6</version>
+</dependency></dependencies></project>
+XML
 python3 -I "$skiko/repoint-desktop-skiko.py" "$repo" --require > /dev/null || fail "a repository with a desktop module is refused"
 python3 -I - "$ui/ui-desktop-$V.module" <<'PY' || fail "the desktop module must depend on the fork's skiko-awt"
 import json, sys
@@ -80,6 +109,16 @@ t = open(sys.argv[1]).read()
 assert "<artifactId>skiko-awt</artifactId>\n  <version>0.144.6" not in t, t
 assert re.search(r"<groupId>org.jetbrains.skiko</groupId>\s*<artifactId>skiko-awt-runtime-macos-arm64</artifactId>\s*<version>0.144.6</version>", t), t
 assert re.search(r"<groupId>org.thisisthepy.compose.skiko</groupId>\s*<artifactId>skiko-awt</artifactId>\s*<version>1.11.1-ext.2</version>", t), t
+PY
+python3 -I - "$jvm/desktop-jvm-macos-arm64-$V.module" "$ui/ui-desktop-$V.pom" "$jvm/desktop-jvm-macos-arm64-$V.pom" <<'PY' || fail "a dependency on the natives must exclude JetBrains' skiko-awt"
+import json, re, sys
+deps = json.load(open(sys.argv[1]))["variants"][0]["dependencies"]
+assert deps[0]["module"] == "skiko-awt-runtime-macos-arm64" and deps[0]["group"] == "org.jetbrains.skiko", deps[0]
+assert {"group": "org.jetbrains.skiko", "module": "skiko-awt"} in deps[0].get("excludes", []), deps[0]
+assert "excludes" not in deps[1], deps[1]
+for pom in sys.argv[2:]:
+    t = open(pom).read()
+    assert re.search(r"<artifactId>skiko-awt-runtime-macos-arm64</artifactId>\s*<version>0.144.6</version>\s*<exclusions>\s*<exclusion>\s*<groupId>org.jetbrains.skiko</groupId>\s*<artifactId>skiko-awt</artifactId>", t), (pom, t)
 PY
 grep -q '"org.jetbrains.skiko"' "$native/ui-linuxx64-$V.module" || fail "a Kotlin/Native module was changed"
 grep -q '<groupId>org.jetbrains.skiko</groupId>' "$native/ui-linuxx64-$V.pom" || fail "a Kotlin/Native pom was changed"

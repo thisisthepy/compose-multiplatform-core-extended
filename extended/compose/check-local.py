@@ -17,6 +17,10 @@ printed with the file that shows it:
 3. Nothing under org.jetbrains.compose or org.jetbrains.androidx carries a version of this
    fork (-ext.<N>). An artifact at JetBrains' coordinates that JetBrains did not build is one
    a consumer cannot tell from the real thing.
+4. No jar of this fork keeps a file under META-INF/androidx/, where Google's jar of the same
+   library keeps its license. A module of this fork that redirects to androidx depends on
+   Google's jar, so both land on one classpath, and ProGuard and an uber jar meet the same
+   entry twice.
 
 Exits 1 if anything failed, 0 otherwise.
 """
@@ -25,6 +29,7 @@ import json
 import os
 import re
 import sys
+import zipfile
 
 FORK = "org.thisisthepy.compose"
 # The window modules are built by Amper and checked by their own workflows, and skiko-awt is
@@ -137,6 +142,23 @@ def main():
                         f"{dep_group}:{dep_module}:{dep_version} is JetBrains' copy of a module this fork "
                         f"publishes, named by {path}"
                     )
+
+    for directory, _, files in os.walk(fork_root):
+        for name in files:
+            if not name.endswith(".jar") or name.endswith(("-sources.jar", "-javadoc.jar")):
+                continue
+            path = os.path.join(directory, name)
+            group, _, _ = coordinates_of(repository, path)
+            if group.startswith(OWN_VERSIONED):
+                continue
+            try:
+                with zipfile.ZipFile(path) as jar:
+                    entries = [entry for entry in jar.namelist() if entry.startswith("META-INF/androidx/")]
+            except zipfile.BadZipFile:
+                problems.append(f"{path} is not a jar")
+                continue
+            for entry in entries:
+                problems.append(f"{path} keeps {entry}, where androidx's own jar of that library keeps its own")
 
     for jetbrains in ("org.jetbrains.compose", "org.jetbrains.androidx"):
         root = os.path.join(repository, *jetbrains.split("."))
