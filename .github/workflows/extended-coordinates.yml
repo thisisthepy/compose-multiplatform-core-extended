@@ -25,6 +25,8 @@ jobs:
           sparse-checkout: |
             extended/compose
             extended/skiko
+            extended/publish-local-all.sh
+            extended/window/scripts
             buildSrc/repos.gradle
             gradlew
             gradle/wrapper
