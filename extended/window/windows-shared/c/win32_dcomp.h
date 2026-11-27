@@ -73,6 +73,18 @@ int dxc_dcomp_commit(dxc_dcomp *comp);
  */
 int dxc_dcomp_set_backing(dxc_dcomp *comp, uint32_t bgra);
 
+/**
+ * NULL when the device is an interop compositor's whose commits can carry a window's resize token
+ * (Windows 11), so DWM holds the window's new rectangle until the frame of that size is committed;
+ * otherwise why not (DXC_DCOMP_SYNC=0, an older Windows, a missing piece), and every commit is plain.
+ */
+const char *dxc_dcomp_synchronized(dxc_dcomp *comp);
+/**
+ * Commits what is pending together with token, a resize token from user32's
+ * GetResizeDCompositionSynchronizationObject (NULL commits plainly through the same call). Falls
+ * back to dxc_dcomp_commit where the device is plain or the call fails. As dxc_dcomp_commit.
+ */
+int dxc_dcomp_commit_synchronized(dxc_dcomp *comp, HANDLE token);
 /** Waits until DWM has taken the last commit (IDCompositionDevice::WaitForCommitCompletion). */
 void dxc_dcomp_wait(dxc_dcomp *comp);
 
