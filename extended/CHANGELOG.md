@@ -21,9 +21,20 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   - `app.metainfo.xml.in` takes `{{summary}}`, `{{developer_id}}` and
     `{{metadata_license}}`; `app.desktop.in`'s `Comment=` is `{{summary}}`.
 
-## 1.11.1-ext.6 (2026-11-23)
-
 ### Window modules (`org.thisisthepy.compose.window`)
+
+- **Fix.** On Windows 11, the Windows window's DirectComposition route (`DXC_DCOMP=1`) brings an
+  edge drag's rectangle and its frame to the screen in one composition. The route's device is
+  now an interop compositor's. Each size change's frame is committed with the window's resize
+  token (`SynchronizedCommit`, user32's private resize synchronization, as fork #175's spike and
+  Windows' own XAML do), so DWM holds the new rectangle until the frame of its size comes. Before,
+  the two were separate changes to DWM and could land a composition apart. Windows hands out the
+  token for a drag's size-move loop only; a maximise or a restore gets none, so those still reach
+  the screen as before (#319).
+  Every piece is private and looked up at run time. Where one is missing, or on Windows 10 and
+  Server 2022, the route commits plainly as before, and the log says why
+  (`compose-rust: dcomp: synchronized commit off because ...`). `DXC_DCOMP_SYNC=0` asks for the
+  plain commits. (#223)
 
 - **Feature.** Entry menus as Windows' own popup menu (compose-rust FR-33.2, the Windows part):
   `dxc_native_popup_menu` builds a Win32 menu from common's `encodePopupMenu` lines
@@ -65,6 +76,10 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   the content's rectangle on the screen with the control placed from its top
   (`axScreenRect`), whatever the parent view's flip. The GraalVM window converts through its
   own flipped view and was right. (DarkPyonix/compose-rust#937)
+
+## 1.11.1-ext.6 (2026-11-23)
+
+### Window modules (`org.thisisthepy.compose.window`)
 
 - **Change.** The Windows window's toasts no longer call `compose_rust_renderer_request_frame`,
   a renderer's symbol every application had to define (EXT-WIN-13). An application gives
