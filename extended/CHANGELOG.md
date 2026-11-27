@@ -5,6 +5,15 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
 
 ## Unreleased
 
+### Publishing
+
+- **Fix.** Releases on Maven Central carry Kotlin/JS again (#325). 1.11.1-ext.6 left `js` out
+  (`CENTRAL_SKIP_TARGETS`), so a Kotlin/JS consumer of the fork got "No matching variant", and
+  the Gradle plugin's 12 JS integration tests failed. The fork is a drop-in for upstream Compose
+  Multiplatform, so `extended/publish/check_skip_targets.py` now fails the publish workflow's
+  plan when a release would leave out a target upstream publishes the UI stack for (desktop,
+  macosArm64, iosArm64, iosSimulatorArm64, js, wasmJs). tvOS and watchOS stay left out.
+
 ### Packaging templates (`extended/packaging`)
 
 - **Change.** The templates now hold what compose-rust's packagers ship, because those packagers

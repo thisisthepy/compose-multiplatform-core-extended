@@ -5,6 +5,15 @@
 
 ## 출시 전
 
+### 배포
+
+- **고친 것.** Maven Central 릴리스에 Kotlin/JS 를 다시 담습니다(#325). 1.11.1-ext.6 은 `js` 를 뺐으므로
+  (`CENTRAL_SKIP_TARGETS`) Kotlin/JS 소비자는 "No matching variant" 를 받았고, Gradle 플러그인의 JS 통합
+  테스트 12개가 실패했습니다. 이 포크는 업스트림 Compose Multiplatform 을 그대로 대신하므로, 업스트림이
+  UI 스택을 내는 타깃(desktop, macosArm64, iosArm64, iosSimulatorArm64, js, wasmJs)을 릴리스가 빼면
+  `extended/publish/check_skip_targets.py` 가 배포 워크플로의 계획 단계를 실패시킵니다. tvOS, watchOS 는
+  그대로 뺍니다.
+
 ### 패키징 템플릿 (`extended/packaging`)
 
 - **바뀐 것.** 템플릿이 compose-rust 패키저가 실제로 내보내는 것을 담습니다. 그 패키저들이 템플릿을

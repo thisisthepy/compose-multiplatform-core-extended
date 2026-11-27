@@ -390,10 +390,13 @@ kotlin {
 Sonatype 는 네임스페이스가 한 달에 올리는 파일 수와 바이트를 모두 세고, Central 의 버전은 바꿀 수
 없습니다. 그래서 릴리스에는 빌드가 만드는 전부가 아니라 소비자가 쓰는 것만 담습니다.
 
-- 워크플로의 `CENTRAL_SKIP_TARGETS` 에 있는 타깃(tvOS, watchOS, Kotlin/JS. Wasm 은 남습니다)은
+- 워크플로의 `CENTRAL_SKIP_TARGETS` 에 있는 타깃(tvOS, watchOS)은
   라이브러리의 공유 메타데이터가 이름을 부르므로 빌드는 하되 번들에서 뺍니다
   (`central_bundle.py stage --skip-target`). 루트도 남은 타깃만 나열하므로, 뺀 타깃의 소비자는 모듈이
   그 타깃을 지원하지 않는다는 안내를 받습니다. `all_targets` 를 켜고 수동 실행하면 모든 타깃을 냅니다.
+  이 포크는 업스트림 Compose Multiplatform 을 그대로 대신하므로, 업스트림이 UI 스택을 내는 타깃은
+  Kotlin/JS 와 Wasm 을 포함해 하나도 빼지 않습니다. 빼면 `extended/publish/check_skip_targets.py` 가 배포
+  계획 단계를 실패시킵니다.
 - 파일마다 Central 이 요구하는 `.md5`, `.sha1` 과 `.asc` 만 붙이고, 선택인 `.sha256`, `.sha512` 는
   붙이지 않습니다(`central_bundle.py sign --all-checksums` 가 붙입니다).
 - Javadoc jar 는 Central 이 허용하는 대로 비어 있고, sources jar 는 실제 소스입니다.
