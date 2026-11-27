@@ -496,19 +496,26 @@ jobs:
       #   in the maximised rectangle is one (wmsize: 15 of 24 maximises, fork-train-16);
       # - the strips: a frame without the strip at the window's right or bottom edge; the
       #   maximised frame cut to the old rectangle is one (ahead: 57 of 57, fork-train-17).
-      # ahead and wmsize are the two orders; ahead-noflush and wmsize-flush move the commit
-      # within a composition interval, to measure where it lands with its rectangle.
+      # ahead and wmsize are the two orders. Run 45939620888 measured two more timings
+      # (ahead-noflush, wmsize-flush): commits before the rectangle were cut on every maximise
+      # on both runners; after it, windows-2022 showed no wrong frame, and windows-2025 the old
+      # picture at its old origin a few pixels larger, as an animation's first frame would be.
+      # So each order also runs with DWM's transitions off for the window
+      # (DXC_DCOMP_TRANSITIONS=0, the "notrans" ways), and the window says whether the
+      # system animates a maximise.
       # On both runners the default way must show at most 5 % wrong maximise frames by each
       # judge. The step runs when an earlier gate failed, so a red default is still measured.
       - name: Resize probe, maximise on the composition route, the frame committed with its rectangle
         if: ${{ !cancelled() }}
         shell: bash
         run: |
-          ways="ahead wmsize ahead-noflush wmsize-flush"
+          ways="ahead wmsize ahead-notrans wmsize-notrans"
           default=ahead
           for way in $ways; do
+            grow=${way%-notrans}
+            transitions=$([ "$grow" = "$way" ] && echo 1 || echo 0)
             for run in 1 2 3 4 5 6 7 8; do
-              DXC_DCOMP=1 DXC_DCOMP_GROW=$way PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-dcomp-grow-$way-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-dcomp-grow-$way-$run.log || true
+              DXC_DCOMP=1 DXC_DCOMP_GROW=$grow DXC_DCOMP_TRANSITIONS=$transitions PROBE_VERBOSE=1 PROBE_SAVE="out\\frames-dcomp-grow-$way-$run" ./out/win32_resize_probe.exe states 2>&1 | tee out/probe-dcomp-grow-$way-$run.log || true
             done
           done
           for log in out/probe-dcomp-grow-*-?.log; do
@@ -524,7 +531,7 @@ jobs:
             echo "$wrong $faulty $changes"
           }
           for way in $ways; do
-            grep -h 'compose-rust: dcomp: a size change that grows' out/probe-dcomp-grow-$way-1.log | head -1 | sed "s/^/  $way: /" || true
+            grep -h -e 'compose-rust: dcomp: a size change that grows' -e 'compose-rust: dcomp: the system animates' out/probe-dcomp-grow-$way-1.log | head -2 | sed "s/^/  $way: /" || true
             line="DXC_DCOMP_GROW=$way:"
             for phases in maximise restore 'left-half|back'; do
               read -r wrong faulty changes <<<"$(judged $way "$phases")"
@@ -536,9 +543,14 @@ jobs:
           done
           status=0
           for way in $ways; do
-            grep -q "(DXC_DCOMP_GROW=$way)" out/probe-dcomp-grow-$way-1.log || {
-              echo "DXC_DCOMP_GROW=$way was not taken: the window did not name it" >&2; status=1
+            grep -q "(DXC_DCOMP_GROW=${way%-notrans})" out/probe-dcomp-grow-$way-1.log || {
+              echo "DXC_DCOMP_GROW=${way%-notrans} was not taken: the window did not name it" >&2; status=1
             }
+            if [ "$way" != "${way%-notrans}" ]; then
+              grep -q "transitions for the window: off" out/probe-dcomp-grow-$way-1.log || {
+                echo "$way: DWM's transitions were not turned off for the window" >&2; status=1
+              }
+            fi
           done
           read -r wrong faulty changes <<<"$(judged $default maximise)"
           limit=$(( (changes * 5 + 99) / 100 ))

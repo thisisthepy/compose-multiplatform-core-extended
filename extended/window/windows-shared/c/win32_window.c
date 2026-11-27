@@ -2826,6 +2826,39 @@ static int dxc_apply_color_scheme(HWND window) {
 }
 
 /**
+ * On the composition route: says whether Windows animates a maximise (the system's minimise and
+ * maximise animation, SPI_GETANIMATION), and with DXC_DCOMP_TRANSITIONS=0 turns DWM's
+ * transitions off for the window (DWMWA_TRANSITIONS_FORCEDISABLED). The wrong maximise frame on
+ * windows-2025 is the old picture at its old origin, a few pixels larger (x 8-638 y 1-478 for
+ * x 8-631 y 1-471), as an animation's first frame would be, and windows-2022 shows none with the
+ * same commit (#319, run 45939620888). For measuring whether the animation is what the judge sees.
+ */
+static void dxc_comp_transitions(HWND window) {
+    ANIMATIONINFO animation;
+    memset(&animation, 0, sizeof animation);
+    animation.cbSize = sizeof animation;
+    int animates = SystemParametersInfoW(SPI_GETANIMATION, sizeof animation, &animation, 0) ? animation.iMinAnimate : -1;
+    const char *asked = getenv("DXC_DCOMP_TRANSITIONS");
+    int off = asked != NULL && strcmp(asked, "0") == 0;
+    int taken = 0;
+    if (off) {
+        static dxc_dwm_set_attribute_fn set_attribute;
+        if (set_attribute == NULL) {
+            HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
+            if (dwm != NULL) {
+                set_attribute = (dxc_dwm_set_attribute_fn)(void *)GetProcAddress(dwm, "DwmSetWindowAttribute");
+            }
+        }
+        BOOL disabled = TRUE;
+        // DWMWA_TRANSITIONS_FORCEDISABLED
+        taken = set_attribute != NULL && SUCCEEDED(set_attribute(window, 3, &disabled, sizeof disabled));
+    }
+    fprintf(stderr, "compose-rust: dcomp: the system animates a maximise: %s; DWM's transitions for the window: %s\n",
+            animates < 0 ? "unknown" : animates ? "yes" : "no",
+            !off ? "as the system has them" : taken ? "off (DXC_DCOMP_TRANSITIONS=0)" : "asked off, refused");
+}
+
+/**
  * Makes the selected window resizable or not after it opened. The style and the caption's
  * hit test both read the option, so the frame and the top resize band change together.
  * 0 when no window is selected.
@@ -7409,6 +7442,7 @@ static int32_t dxc_open_window(
         dxc_comp_surface_height = (int32_t)pixel_height;
         dxc_on_comp = 1;
         dxc_comp_sync_start(window);
+        dxc_comp_transitions(window);
         const char *commit_at = getenv("DXC_DCOMP_COMMIT");
         dxc_comp_commit_mode = DXC_COMP_COMMIT_ORDER;
         for (int named = 0; commit_at != NULL && named < 3; named++) {

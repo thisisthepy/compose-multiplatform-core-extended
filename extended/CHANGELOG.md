@@ -44,9 +44,13 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
     showed the maximised frame cut to the old rectangle on every maximise (fork-train-17).
   - `wmsize` commits in `WM_SIZE`, after the rectangle. It showed the old frame in the maximised
     rectangle on 15 of 24 maximises (fork-train-16).
-  - `ahead-noflush` and `wmsize-flush` move the commit within a composition interval, to
-    measure where the commit lands in its rectangle's composition.
-  The Windows workflow judges each way by the bounds judge and the strips.
+  - `ahead-noflush` and `wmsize-flush` move the commit within a composition interval. Every
+    commit before the rectangle was cut; after it, windows-2022 showed no wrong frame and
+    windows-2025 the old picture a few pixels larger, as an animation's first frame would be
+    (run 45939620888).
+  `DXC_DCOMP_TRANSITIONS=0` turns DWM's transitions off for the window, for measuring that, and
+  the window says whether the system animates a maximise. The Windows workflow judges each way,
+  with and without transitions, by the bounds judge and the strips.
 
 - **Feature.** Entry menus as Windows' own popup menu (compose-rust FR-33.2, the Windows part):
   `dxc_native_popup_menu` builds a Win32 menu from common's `encodePopupMenu` lines
