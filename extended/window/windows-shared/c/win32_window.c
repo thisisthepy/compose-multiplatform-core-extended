@@ -3472,9 +3472,20 @@ enum { DXC_COMP_COMMIT_ORDER, DXC_COMP_COMMIT_AHEAD, DXC_COMP_COMMIT_WM_SIZE };
 // the two, and a composition in it showed the old frame in the maximised rectangle (15 of 24
 // maximises, fork-train-16). A maximise gets no resize token for the synchronized commit to hold
 // its rectangle with (#319).
-enum { DXC_COMP_GROW_AHEAD, DXC_COMP_GROW_WM_SIZE };
-static const char *const dxc_comp_grow_names[] = {"ahead", "wmsize"};
+// ahead put the frame on screen a composition before its rectangle on every maximise of
+// fork-train-17 (45600583758: the maximised frame cut to the old rectangle, 57 of 57), and
+// wmsize the rectangle a composition before its frame on most: the two reach DWM by separate
+// ways, the rectangle the slower. Two more ways, for measuring where between the two a commit
+// lands in its rectangle's composition (#319's second candidate, the frame held back until the
+// rectangle is taken): ahead-noflush commits ahead without the wait for a composition first, at
+// whatever point of the interval the change comes; wmsize-flush commits in WM_SIZE, after the
+// rectangle, once one composition has passed (DwmFlush).
+enum { DXC_COMP_GROW_AHEAD, DXC_COMP_GROW_WM_SIZE, DXC_COMP_GROW_AHEAD_NO_FLUSH, DXC_COMP_GROW_WM_SIZE_FLUSH };
+static const char *const dxc_comp_grow_names[] = {"ahead", "wmsize", "ahead-noflush", "wmsize-flush"};
 static int dxc_comp_grow_mode;
+// A growth outside a drag staged in WM_NCCALCSIZE whose commit in WM_SIZE waits for a
+// composition first (DXC_DCOMP_GROW=wmsize-flush).
+static int dxc_comp_grow_flush_pending;
 static const char *const dxc_comp_commit_names[] = {"order", "ahead", "wmsize"};
 static int dxc_comp_commit_mode;
 // How a frame committed ahead of a smaller rectangle is waited for (DXC_DCOMP_SHRINK_WAIT):
@@ -3905,12 +3916,17 @@ static int dxc_comp_present_bitmap(int32_t width, int32_t height) {
     int staged = dxc_comp_staged_width == width && dxc_comp_staged_height == height &&
                  dxc_sizing.fitted_width == width && dxc_sizing.fitted_height == height;
     int committed = staged && dxc_comp_staged_committed;
+    int flush_first = staged && dxc_comp_grow_flush_pending;
     dxc_comp_staged_width = 0;
     dxc_comp_staged_height = 0;
     dxc_comp_staged_committed = 0;
+    dxc_comp_grow_flush_pending = 0;
     if (committed) {
         return 1;
     }
+    // DXC_DCOMP_GROW=wmsize-flush: the rectangle went to DWM as WM_SIZE was sent; one composition
+    // passes before the frame follows it.
+    if (flush_first) dxc_dwm_flush();
     if (!(staged || dxc_comp_upload_bitmap(width, height))) {
         return 0;
     }
@@ -4738,9 +4754,12 @@ static void dxc_predraw_resize(HWND window, const RECT *client) {
     // composition route, before its commit.
     // A growth (a maximise) committed with its rectangle (DXC_DCOMP_GROW=ahead): at the start of
     // a composition interval, so the commit and the rectangle after it land in one composition.
-    int grow_ahead = dxc_on_comp && staged && grows && !shrinks && dxc_comp_commit_mode == DXC_COMP_COMMIT_ORDER &&
-                     dxc_comp_grow_mode == DXC_COMP_GROW_AHEAD;
-    int flush_wanted = dxc_on_comp ? dxc_comp_commit_mode == DXC_COMP_COMMIT_AHEAD || grow_ahead
+    int pure_growth = dxc_on_comp && staged && grows && !shrinks && dxc_comp_commit_mode == DXC_COMP_COMMIT_ORDER;
+    int grow_ahead = pure_growth && (dxc_comp_grow_mode == DXC_COMP_GROW_AHEAD ||
+                                     dxc_comp_grow_mode == DXC_COMP_GROW_AHEAD_NO_FLUSH);
+    dxc_comp_grow_flush_pending = pure_growth && dxc_comp_grow_mode == DXC_COMP_GROW_WM_SIZE_FLUSH;
+    int flush_wanted = dxc_on_comp ? dxc_comp_commit_mode == DXC_COMP_COMMIT_AHEAD ||
+                                         (grow_ahead && dxc_comp_grow_mode == DXC_COMP_GROW_AHEAD)
                                    : (dxc_raster_present_off || dxc_predraw_flush || hidden);
     int flushed = drawn && flush_wanted ? dxc_dwm_flush() : 0;
     if (staged) dxc_comp_commit_ahead(shrinks && !grows, grow_ahead);
@@ -5231,6 +5250,7 @@ static LRESULT dxc_window_message(HWND window, UINT message, WPARAM wparam, LPAR
         dxc_comp_staged_width = 0;
         dxc_comp_staged_height = 0;
         dxc_comp_staged_committed = 0;
+        dxc_comp_grow_flush_pending = 0;
         if (dxc_external_drag) {
             // The window's side of an external drag: how many sizes it drew. None is a
             // failure of the drag, not a pass.
@@ -7395,13 +7415,18 @@ static int32_t dxc_open_window(
             if (strcmp(commit_at, dxc_comp_commit_names[named]) == 0) dxc_comp_commit_mode = named;
         }
         const char *grow_at = getenv("DXC_DCOMP_GROW");
-        dxc_comp_grow_mode = grow_at != NULL && strcmp(grow_at, "wmsize") == 0 ? DXC_COMP_GROW_WM_SIZE
-                                                                               : DXC_COMP_GROW_AHEAD;
+        dxc_comp_grow_mode = DXC_COMP_GROW_AHEAD;
+        for (int named = 0; grow_at != NULL && named < 4; named++) {
+            if (strcmp(grow_at, dxc_comp_grow_names[named]) == 0) dxc_comp_grow_mode = named;
+        }
+        static const char *const grow_ways[] = {
+            "with its rectangle: a composition waited for, the frame committed, then the rectangle",
+            "in WM_SIZE, after the rectangle",
+            "with its rectangle: the frame committed, then the rectangle, with no wait first",
+            "in WM_SIZE, after the rectangle and one composition",
+        };
         fprintf(stderr, "compose-rust: dcomp: a size change that grows, outside a drag, is committed %s (DXC_DCOMP_GROW=%s)\n",
-                dxc_comp_grow_mode == DXC_COMP_GROW_AHEAD
-                    ? "with its rectangle: a composition waited for, the frame committed, then the rectangle"
-                    : "in WM_SIZE, after the rectangle",
-                dxc_comp_grow_names[dxc_comp_grow_mode]);
+                grow_ways[dxc_comp_grow_mode], dxc_comp_grow_names[dxc_comp_grow_mode]);
         const char *drag_rule = getenv("DXC_DCOMP_DRAG_RULE");
         dxc_comp_drag_rule = drag_rule != NULL && strcmp(drag_rule, "1") == 0;
         const char *drag_way = getenv("DXC_DCOMP_DRAG");

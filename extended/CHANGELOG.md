@@ -36,14 +36,17 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   (`compose-rust: dcomp: synchronized commit off because ...`). `DXC_DCOMP_SYNC=0` asks for the
   plain commits. (#223)
 
-- **Fix.** On the Windows window's DirectComposition route (`DXC_DCOMP=1`), a maximise shows the
-  maximised frame with the maximised rectangle. The frame drawn for the new size in
-  `WM_NCCALCSIZE` is now committed there, after a wait for a composition, and the rectangle
-  follows microseconds later as the message returns, so both land in one composition. Before, it
-  was committed in `WM_SIZE`, after the rectangle with a draw in between, and a composition there
-  showed the old frame in the maximised rectangle (15 of 24 maximises on windows-2025). A
-  maximise gets no resize token, so the synchronized commit cannot hold it. `DXC_DCOMP_GROW=wmsize`
-  keeps the commit in `WM_SIZE`. (#319)
+- **Work in progress (#319).** On the Windows window's DirectComposition route (`DXC_DCOMP=1`),
+  a maximise still shows one wrong frame. The frame and the rectangle reach DWM by separate ways,
+  and Windows gives a maximise no resize token for the synchronized commit to hold the rectangle
+  with. `DXC_DCOMP_GROW` chooses when a growth outside a drag is committed:
+  - `ahead` commits in `WM_NCCALCSIZE`, after a wait for a composition, before the rectangle. It
+    showed the maximised frame cut to the old rectangle on every maximise (fork-train-17).
+  - `wmsize` commits in `WM_SIZE`, after the rectangle. It showed the old frame in the maximised
+    rectangle on 15 of 24 maximises (fork-train-16).
+  - `ahead-noflush` and `wmsize-flush` move the commit within a composition interval, to
+    measure where the commit lands in its rectangle's composition.
+  The Windows workflow judges each way by the bounds judge and the strips.
 
 - **Feature.** Entry menus as Windows' own popup menu (compose-rust FR-33.2, the Windows part):
   `dxc_native_popup_menu` builds a Win32 menu from common's `encodePopupMenu` lines
