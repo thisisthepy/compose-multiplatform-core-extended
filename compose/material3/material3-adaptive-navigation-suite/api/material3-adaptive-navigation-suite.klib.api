@@ -5,7 +5,7 @@
 // - Show manifest properties: true
 // - Show declarations: true
 
-// Library unique name: <org.jetbrains.compose.material3:material3-adaptive-navigation-suite>
+// Library unique name: <org.thisisthepy.compose.material3:material3-adaptive-navigation-suite>
 open annotation class androidx.compose.material3.adaptive.navigationsuite/ExperimentalMaterial3AdaptiveNavigationSuiteApi : kotlin/Annotation { // androidx.compose.material3.adaptive.navigationsuite/ExperimentalMaterial3AdaptiveNavigationSuiteApi|null[0]
     constructor <init>() // androidx.compose.material3.adaptive.navigationsuite/ExperimentalMaterial3AdaptiveNavigationSuiteApi.<init>|<init>(){}[0]
 }
