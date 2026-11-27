@@ -36,6 +36,10 @@ set -euo pipefail
 UPSTREAM="https://github.com/JetBrains/skiko.git"
 REVISION="9a5b398bb2044fff7e7a84fbfd6f4b803e4427c0"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# skiko's own Gradle build asks Maven Central itself; in CI, COMPOSE_MAVEN_MIRROR puts the
+# mirror in Central's place first (maven-mirror.init.gradle).
+mirror_init=()
+if [[ -n "${COMPOSE_MAVEN_MIRROR:-}" ]]; then mirror_init=(--init-script "$HERE/maven-mirror.init.gradle"); fi
 
 die() {
     echo "error: $1" >&2
@@ -124,7 +128,7 @@ echo "==> compiling skiko's JVM bindings for $platform (Skia is downloaded prebu
     cd "$checkout/skiko"
     # skiko's CompileSkikoCppTask logs compiler stderr at WARN level, so --quiet would hide
     # compiler errors on failure.
-    ./gradlew --no-daemon --console=plain "${tasks[@]}"
+    ./gradlew --no-daemon --console=plain ${mirror_init[@]+"${mirror_init[@]}"} "${tasks[@]}"
 )
 
 out="$WORK/out/$platform"

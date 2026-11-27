@@ -13,8 +13,9 @@ failures=0
 fail() { echo "  FAIL: $1" >&2; failures=$((failures + 1)); }
 
 # What runs the fork's Gradle build: the wrapper, the scripts that call it, the action that
-# publishes the fork's Compose with it.
-runs_gradle='gradlew|publish-local\.sh|actions/fork-compose|buildsrc-tests\.sh|retry-network\.sh'
+# publishes the fork's Compose with it, and the scripts that build skiko with skiko's own
+# Gradle, which take the mirror through extended/skiko/maven-mirror.init.gradle.
+runs_gradle='gradlew|publish-local\.sh|actions/fork-compose|buildsrc-tests\.sh|retry-network\.sh|build-skiko-[a-z-]+\.sh'
 
 # The top-level env block: from "env:" at column 0 to the next line at column 0.
 top_level_env() {
