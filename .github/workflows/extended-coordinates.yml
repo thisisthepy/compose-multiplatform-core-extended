@@ -29,6 +29,7 @@ jobs:
             gradlew
             gradle/wrapper
             .github/workflows
+            .github/actions
           sparse-checkout-cone-mode: false
           filter: blob:none
 
