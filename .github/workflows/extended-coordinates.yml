@@ -38,6 +38,11 @@ jobs:
       - name: retry-network.sh
         run: extended/compose/tests/retry-network.test.sh
 
+      # ci.yml's macOS arm64 cells against their budget, and the compile-only jobs on Intel
+      # (PyYAML is the runner's system python3-yaml).
+      - name: macOS runners
+        run: python3 -I extended/compose/tests/macos_runners_test.py
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
