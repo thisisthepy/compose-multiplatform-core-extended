@@ -323,6 +323,29 @@ class MacosWindow(
 
     val caption = mutableStateOf(WindowCaption.None)
 
+    private var fullScreen = false
+    private var windowedToolbarVisibility: Boolean? = null
+
+    internal fun beginFullScreen() {
+        if (!chrome.fullSizeContentView || fullScreen) return
+        fullScreen = true
+        // AppKit draws an opaque toolbar band in full screen even when our toolbar is empty
+        // and the windowed title bar is transparent. Hide it before AppKit lays out the Space.
+        window.toolbar?.let { toolbar ->
+            windowedToolbarVisibility = toolbar.visible
+            toolbar.visible = false
+        }
+        updateCaption(WindowCaption.None)
+    }
+
+    internal fun endFullScreen() {
+        if (!fullScreen) return
+        fullScreen = false
+        windowedToolbarVisibility?.let { window.toolbar?.visible = it }
+        windowedToolbarVisibility = null
+        measureCaption()
+    }
+
     /**
      * Reads the caption off the window as it is now, and asks for a frame when it changed.
      *
@@ -336,6 +359,8 @@ class MacosWindow(
      * one transaction the layer shows the first.
      */
     internal fun measureCaption() {
+        // AppKit still returns the button objects and their frames while they are off screen.
+        if (fullScreen) return
         // A frame set without displaying leaves the title bar where it was until the window
         // is next laid out, and the rect with it.
         window.layoutIfNeeded()
@@ -349,8 +374,12 @@ class MacosWindow(
             zoomMaxX = zoom?.frame?.useContents { origin.x + size.width },
             cornerRadius = systemCornerRadius(chrome),
         ) ?: return
-        if (measured == caption.value) return
-        caption.value = measured
+        updateCaption(measured)
+    }
+
+    private fun updateCaption(next: WindowCaption) {
+        if (next == caption.value) return
+        caption.value = next
         // Content that reads the strip is laid out again by the next frame, so there has to
         // be one: a window that is not being resized draws nothing until something asks.
         requestFrame()

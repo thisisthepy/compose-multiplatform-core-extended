@@ -68,6 +68,18 @@ internal class MacosWindowDelegate(private val owner: MacosWindow) : NSObject(),
         owner.backingChanged()
     }
 
+    override fun windowWillEnterFullScreen(notification: NSNotification) {
+        owner.beginFullScreen()
+    }
+
+    override fun windowDidExitFullScreen(notification: NSNotification) {
+        owner.endFullScreen()
+    }
+
+    override fun windowDidFailToEnterFullScreen(window: NSWindow) {
+        owner.endFullScreen()
+    }
+
     // Moves and resizes arrive in steps; the platform reports one per pump turn.
     override fun windowDidMove(notification: NSNotification) {
         owner.movedPending = true
