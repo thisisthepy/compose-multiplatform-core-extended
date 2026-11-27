@@ -1,7 +1,6 @@
 # The OS webview host (design, for review)
 
-Status: **design only, no code.** For the owner's review on 2026-11-28 at 13:00. Tracked in the
-fork's issue "OS webview host in the window modules".
+Status: **design only, no code.** For the owner's review on 2026-11-28 at 13:00. Tracked in #332.
 
 ## 1. What and why
 
