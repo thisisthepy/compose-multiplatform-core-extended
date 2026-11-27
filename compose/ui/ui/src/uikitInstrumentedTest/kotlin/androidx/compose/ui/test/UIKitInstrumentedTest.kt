@@ -210,8 +210,19 @@ internal class UIKitInstrumentedTest(
     private val screen = UIScreen.mainScreen()
     val density = Density(density = screen.scale.toFloat())
     val appDelegate = MockAppDelegate()
+    // How far the keyboard reaches up from the screen's bottom edge: the screen's height less the
+    // keyboard's top edge, as ComposeSceneKeyboardOffsetManager computes the IME inset. Not the
+    // frame's height: on iOS 26 a docked keyboard's frame can end a pixel short of the screen's
+    // bottom (a third of a point on a 3x iPhone, half on a 2x iPad; JetBrains #3576 allows 0.5),
+    // and the content follows the top edge.
     val keyboardHeight: Dp get() =
-        KeyboardVisibilityListener.keyboardFrame.useContents { size.height.dp }
+        KeyboardVisibilityListener.keyboardFrame.useContents {
+            if (size.height <= 0.0) {
+                0.dp
+            } else {
+                (screen.bounds.useContents { size.height } - origin.y).coerceAtLeast(0.0).dp
+            }
+        }
     val screenBounds: DpRect get() = screen.bounds().asDpRect()
     val screenSize: DpSize get() = screenBounds.size
     val safeDrawingRect: DpRect get() = screenBounds.let { rect ->

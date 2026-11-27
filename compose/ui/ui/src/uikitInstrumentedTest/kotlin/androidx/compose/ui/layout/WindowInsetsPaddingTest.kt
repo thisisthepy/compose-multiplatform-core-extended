@@ -50,10 +50,13 @@ import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toDpRect
+import androidx.compose.ui.uikit.utils.CMPLayoutRegion
+import androidx.compose.ui.uikit.utils.CMPLayoutRegionAdaptivityAxisVertical
 import androidx.compose.ui.viewinterop.UIKitView
 import androidx.compose.ui.window.ComposeUIView
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlinx.cinterop.CValue
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.useContents
 import org.jetbrains.skiko.OS
@@ -64,6 +67,8 @@ import platform.UIKit.UIInterfaceOrientationMaskLandscapeLeft
 import platform.UIKit.UIInterfaceOrientationMaskLandscapeRight
 import platform.UIKit.UIUserInterfaceIdiomPad
 import platform.UIKit.UIColor
+import platform.UIKit.UIEdgeInsets
+import platform.UIKit.UIView
 
 class WindowInsetsPaddingTest {
     @Test
@@ -112,7 +117,7 @@ class WindowInsetsPaddingTest {
         assertEquals(
             DpRect(
                 DpOffset.Zero, size = DpSize(
-                    screenSize.width - viewController.view.safeAreaInsets.useContents { right }.dp,
+                    screenSize.width - viewController.view.safeAreaLayoutRegionInsets.useContents { right }.dp,
                     screenSize.height
                 )
             ),
@@ -140,7 +145,7 @@ class WindowInsetsPaddingTest {
             }
         }
 
-        val xOffset = viewController.view.safeAreaInsets.useContents { left }.dp
+        val xOffset = viewController.view.safeAreaLayoutRegionInsets.useContents { left }.dp
 
         assertEquals(
             DpRect(
@@ -271,3 +276,12 @@ class WindowInsetsPaddingTest {
 private fun InnerContent(modifier: Modifier, state: MutableState<Boolean>) {
     Box(modifier) { state.value = true }
 }
+
+// Since iOS 26 the display cutout the insets follow is the safe area's layout region with its
+// corners adapted, which a landscape screen's rounded corners push further in than
+// safeAreaInsets (JetBrains #3625, ported).
+@OptIn(ExperimentalForeignApi::class)
+private val UIView.safeAreaLayoutRegionInsets: CValue<UIEdgeInsets>
+    get() = CMPLayoutRegion
+        .safeAreaWithCornerAdaptation(CMPLayoutRegionAdaptivityAxisVertical)
+        .edgeInsetsInView(this)

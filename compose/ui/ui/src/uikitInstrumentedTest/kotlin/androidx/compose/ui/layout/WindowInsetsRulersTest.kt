@@ -16,6 +16,8 @@
 
 package androidx.compose.ui.layout
 
+import androidx.compose.ui.uikit.utils.CMPLayoutRegion
+import androidx.compose.ui.uikit.utils.CMPLayoutRegionAdaptivityAxisVertical
 import androidx.collection.mutableObjectListOf
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -233,5 +235,12 @@ class WindowInsetsRulersTest {
         IntSize(screenSize.width.roundToPx(), screenSize.height.roundToPx())
     }
 
-    private val UIView.safeAreaPlatformInsets: PlatformInsets get() = safeAreaInsets.toPlatformInsets(density)
+    // Since iOS 26 the display cutout the rulers follow is the safe area's layout region with its
+    // corners adapted, which a landscape screen's rounded corners push further in than
+    // safeAreaInsets (JetBrains #3625, ported).
+    private val UIView.safeAreaPlatformInsets: PlatformInsets
+        get() = CMPLayoutRegion
+            .safeAreaWithCornerAdaptation(CMPLayoutRegionAdaptivityAxisVertical)
+            .edgeInsetsInView(this)
+            .toPlatformInsets(density)
 }
