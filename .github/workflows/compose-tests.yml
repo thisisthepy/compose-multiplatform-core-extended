@@ -241,11 +241,13 @@ jobs:
         run: |
           set -euo pipefail
           # retry-network.sh runs a call the network failed again. It passes Gradle's output on,
-          # stderr included, and awk keeps only the lines that name a compile task.
+          # stderr included; tee puts it in the log as well (fork-train-21 failed here three times
+          # with nothing shown), and awk keeps only the lines that name a compile task.
           TASKS=$(
             ./extended/compose/retry-network.sh ./gradlew :mpp:testWeb${{ matrix.task }} -m --console=plain --no-configuration-cache \
               --no-daemon --no-parallel --stacktrace -Porg.gradle.workers.max=1 \
               -Dorg.gradle.configureondemand=false -Pkotlin.compiler.execution.strategy=in-process \
+              | tee /dev/stderr \
               | awk '/^:.*compileTestDevelopmentExecutable/ {print $1}' \
               | tr '\n' ' '
           )
@@ -329,11 +331,13 @@ jobs:
         run: |
           set -euo pipefail
           # retry-network.sh runs a call the network failed again. It passes Gradle's output on,
-          # stderr included, and awk keeps only the lines that name a compile task.
+          # stderr included; tee puts it in the log as well (fork-train-21 failed here three times
+          # with nothing shown), and awk keeps only the lines that name a compile task.
           TASKS=$(
             ./extended/compose/retry-network.sh ./gradlew :mpp:testWeb${{ matrix.task }} -m --console=plain --no-configuration-cache \
               --no-daemon --no-parallel --stacktrace -Porg.gradle.workers.max=1 \
               -Dorg.gradle.configureondemand=false -Pkotlin.compiler.execution.strategy=in-process \
+              | tee /dev/stderr \
               | awk '/^:.*compileTestDevelopmentExecutable/ {print $1}' \
               | tr '\n' ' '
           )

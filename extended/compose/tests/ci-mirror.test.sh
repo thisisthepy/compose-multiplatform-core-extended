@@ -33,10 +33,18 @@ for workflow in "$workflows"/*.yml; do
 done
 [[ $checked -gt 0 ]] || fail "no workflow under $workflows runs the Gradle build"
 
-runs_amper='\./kotlin\b|kotlin\.bat'
+# The toolchain directly, or a script of this repository that runs it (publish-local-all.sh,
+# publish-native-linux.sh: fork-train-21's Linux publish asked repo1.maven.org itself and got
+# 429). The scripts are found, not listed, so a new one is counted too.
+repo="$(cd "$workflows/../.." && pwd)"
+amper_scripts="$(cd "$repo" && grep -rlE '\./kotlin\b|kotlin\.bat' --include='*.sh' --include='*.ps1' extended 2>/dev/null \
+    | grep -v '/tests/' | xargs -n1 basename 2>/dev/null | sed 's/\./\\./g' | paste -sd'|' - || true)"
+runs_amper='\./kotlin\b|kotlin\.bat'${amper_scripts:+"|$amper_scripts"}
+[[ -n "$amper_scripts" ]] || fail "no script under extended runs the Kotlin toolchain (is the checkout sparse?)"
 amper=0
 for workflow in "$workflows"/*.yml; do
-    grep -qE "$runs_amper" "$workflow" || continue
+    # A line that is a path alone (a sparse-checkout entry) names a script, it does not run it.
+    grep -vE '^[[:space:]]*[A-Za-z0-9_./-]+[[:space:]]*$' "$workflow" | grep -qE "$runs_amper" || continue
     amper=$((amper + 1))
     if ! top_level_env "$workflow" | grep -qE '^  KOTLIN_DEFAULT_MAVEN_CENTRAL_URL: *[^ ]'; then
         fail "$(basename "$workflow") runs the Kotlin toolchain and does not set KOTLIN_DEFAULT_MAVEN_CENTRAL_URL in its top-level env"
