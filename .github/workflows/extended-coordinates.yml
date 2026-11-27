@@ -23,7 +23,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: |
-            .github/workflows
             extended/compose
             extended/skiko
             buildSrc/repos.gradle
