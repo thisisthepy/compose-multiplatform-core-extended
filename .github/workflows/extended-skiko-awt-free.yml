@@ -13,7 +13,7 @@ env:
   # Google's mirror of Maven Central, put in Central's place in skiko's own Gradle build
   # (extended/skiko/maven-mirror.init.gradle): Central answers runners that share an address with
   # 429 Too Many Requests (fork-train-18).
-  COMPOSE_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2
+  COMPOSE_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2 https://plugins.gradle.org/m2
   SKIKO_VERSION: 0.144.6
   KOTLIN_VERSION: 2.2.20
   COROUTINES_VERSION: 1.10.2
@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir libs
-          central="${COMPOSE_MAVEN_MIRROR:-https://repo1.maven.org/maven2}"
+          mirror="${COMPOSE_MAVEN_MIRROR:-https://repo1.maven.org/maven2}"; central="${mirror%% *}"
           curl -fsSL -o libs/skiko-awt.jar "$central/org/jetbrains/skiko/skiko-awt/$SKIKO_VERSION/skiko-awt-$SKIKO_VERSION.jar"
           curl -fsSL -o libs/skiko-runtime.jar "$central/org/jetbrains/skiko/skiko-awt-runtime-linux-x64/$SKIKO_VERSION/skiko-awt-runtime-linux-x64-$SKIKO_VERSION.jar"
           curl -fsSL -o libs/kotlin-stdlib.jar "$central/org/jetbrains/kotlin/kotlin-stdlib/$KOTLIN_VERSION/kotlin-stdlib-$KOTLIN_VERSION.jar"
@@ -79,7 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir libs
-          central="${COMPOSE_MAVEN_MIRROR:-https://repo1.maven.org/maven2}"
+          mirror="${COMPOSE_MAVEN_MIRROR:-https://repo1.maven.org/maven2}"; central="${mirror%% *}"
           curl -fsSL -o libs/skiko-awt.jar "$central/org/jetbrains/skiko/skiko-awt/$SKIKO_VERSION/skiko-awt-$SKIKO_VERSION.jar"
           curl -fsSL -o libs/skiko-runtime.jar "$central/org/jetbrains/skiko/skiko-awt-runtime-windows-x64/$SKIKO_VERSION/skiko-awt-runtime-windows-x64-$SKIKO_VERSION.jar"
           curl -fsSL -o libs/kotlin-stdlib.jar "$central/org/jetbrains/kotlin/kotlin-stdlib/$KOTLIN_VERSION/kotlin-stdlib-$KOTLIN_VERSION.jar"

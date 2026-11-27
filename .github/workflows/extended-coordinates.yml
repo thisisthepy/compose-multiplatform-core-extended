@@ -12,7 +12,7 @@ permissions:
 env:
   # Google's mirror of Maven Central, asked before Central by buildSrc/repos.gradle: Central
   # answers runners that share an address with 429 Too Many Requests (fork-train-16).
-  COMPOSE_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2
+  COMPOSE_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2 https://plugins.gradle.org/m2
 
 jobs:
   scripts:
@@ -48,6 +48,9 @@ jobs:
 
       - name: Every workflow running the Gradle build names the Maven mirror
         run: extended/compose/tests/ci-mirror.test.sh
+
+      - name: Every xcodebuild on an iOS Simulator names it by id
+        run: extended/compose/tests/ios-simulator.test.sh
 
       - name: The web test compiles retry a call the network failed
         run: extended/compose/tests/web-compile-retry.test.sh

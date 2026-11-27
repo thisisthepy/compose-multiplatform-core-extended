@@ -5,7 +5,7 @@ on:
 env:
   # Google's mirror of Maven Central, asked before Central by buildSrc/repos.gradle: Central
   # answers runners that share an address with 429 Too Many Requests (fork-train-16).
-  COMPOSE_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2
+  COMPOSE_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2 https://plugins.gradle.org/m2
   # Retry transient dependency download failures (TLS handshake resets, timeouts) with
   # backoff. These are JVM system properties read by Gradle's repository transport, so
   # they must reach the daemon and Amper's JVMs; JAVA_TOOL_OPTIONS is inherited by all.
@@ -106,12 +106,23 @@ jobs:
         timeout-minutes: 45
         shell: bash
         working-directory: compose/ui/ui-uikit/src/iosMain/objc/CMPUIKitUtils
+        # By id, on the iOS 18.6 runtime the instrumented tests use: a name alone means the
+        # newest runtime, which some macos-15 images lack an iPhone 16 on (fork-train-22).
         run: |
+          SIMULATOR_ID=$(xcrun simctl list devices available -j | jq -r '
+            .devices | to_entries[]
+            | select(.key | (contains("18.6") or contains("18-6")))
+            | .value[] | select(.name == "iPhone 16") | .udid' | head -n 1)
+          if [ -z "$SIMULATOR_ID" ]; then
+            echo "No iPhone 16 on iOS 18.6; available:" >&2
+            xcrun simctl list devices available >&2
+            exit 1
+          fi
           xcodebuild test \
             -resultBundlePath TestResults.xcresult \
             -scheme CMPUIKitUtilsTests \
             -project CMPUIKitUtils.xcodeproj \
-            -destination 'platform=iOS Simulator,name=iPhone 16'
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID"
 
       - name: Upload Test Results
         uses: actions/upload-artifact@v4
