@@ -88,10 +88,13 @@ def addMavenRepositories(RepositoryHandler handler) {
                 if (mirrorUrl.isEmpty()) continue
                 handler.maven {
                     url = mirrorUrl
+                    content(repos.notOnMavenCentral)
                 }
             }
         }
-        handler.mavenCentral()
+        handler.mavenCentral {
+            content(repos.notOnMavenCentral)
+        }
         handler.google {
             content {
                 includeGroupByRegex("androidx.*")
@@ -123,6 +126,19 @@ def addMavenRepositories(RepositoryHandler handler) {
             }
         }
     }
+}
+
+// What Maven Central does not have, kept from being asked there and from its mirror: AndroidX
+// and the Android tools are on Google's Maven only, and the Develocity plugins on the Gradle
+// plugin portal only. A 429 Too Many Requests from Central ends a resolution there, so the
+// repository that has the module is never asked (fork-train-18: androidx.annotation:annotation-js,
+// com.gradle:develocity-gradle-plugin, androidx.build.gradle.gcpbuildcache:gcpbuildcache).
+// settings.gradle's pluginManagement keeps the same list.
+ext.repos.notOnMavenCentral = { content ->
+    content.excludeGroupByRegex("androidx(\\..*)?")
+    content.excludeGroupByRegex("com\\.android(\\..*)?")
+    content.excludeModule("com.gradle", "develocity-gradle-plugin")
+    content.excludeModule("com.gradle", "common-custom-user-data-gradle-plugin")
 }
 
 ext.repos.addMavenRepositories = this.&addMavenRepositories
