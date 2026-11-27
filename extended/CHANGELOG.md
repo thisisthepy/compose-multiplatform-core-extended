@@ -21,6 +21,17 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   - `app.metainfo.xml.in` takes `{{summary}}`, `{{developer_id}}` and
     `{{metadata_license}}`; `app.desktop.in`'s `Comment=` is `{{summary}}`.
 
+### Publishing
+
+- **Fix.** The fork's jars keep their license under the coordinate they are published as
+  (`META-INF/org/thisisthepy/compose/<library>/LICENSE.txt`), not under the library's androidx
+  group. A module that redirects to androidx (`runtime-desktop`, which holds only that license
+  and depends on `androidx.compose.runtime:runtime`) put the same entry on the classpath as
+  Google's jar, and ProGuard and uber jars met it twice. `extended/compose/check-local.py`
+  now fails on a fork jar with anything under `META-INF/androidx/`. (#315)
+
+## 1.11.1-ext.6 (2026-11-23)
+
 ### Window modules (`org.thisisthepy.compose.window`)
 
 - **Fix.** On Windows 11, the Windows window's DirectComposition route (`DXC_DCOMP=1`) brings an

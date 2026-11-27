@@ -75,7 +75,26 @@ def addMavenRepositories(RepositoryHandler handler) {
                 includeGroup("org.jetbrains.skiko")
             }
         }
-        handler.mavenCentral()
+        // A mirror of Maven Central to ask first, for a CI that Central answers with 429 Too
+        // Many Requests when runners share an address. COMPOSE_MAVEN_MIRROR is one URL, or
+        // several separated by spaces or commas (a URL has a colon, so not File.pathSeparator).
+        // It is read here, so the build's own buildscript blocks (buildSrc/shared.gradle) take
+        // it as well, which no init script reaches; METALAVA_REPO above is split on the path
+        // separator and so cannot take a URL. What the mirror does not have falls through to
+        // the repositories below.
+        def mavenMirror = System.getenv("COMPOSE_MAVEN_MIRROR")
+        if (mavenMirror != null) {
+            for (mirrorUrl in mavenMirror.split("[\\s,]+")) {
+                if (mirrorUrl.isEmpty()) continue
+                handler.maven {
+                    url = mirrorUrl
+                    content(repos.notOnMavenCentral)
+                }
+            }
+        }
+        handler.mavenCentral {
+            content(repos.notOnMavenCentral)
+        }
         handler.google {
             content {
                 includeGroupByRegex("androidx.*")
@@ -107,6 +126,19 @@ def addMavenRepositories(RepositoryHandler handler) {
             }
         }
     }
+}
+
+// What Maven Central does not have, kept from being asked there and from its mirror: AndroidX
+// and the Android tools are on Google's Maven only, and the Develocity plugins on the Gradle
+// plugin portal only. A 429 Too Many Requests from Central ends a resolution there, so the
+// repository that has the module is never asked (fork-train-18: androidx.annotation:annotation-js,
+// com.gradle:develocity-gradle-plugin, androidx.build.gradle.gcpbuildcache:gcpbuildcache).
+// settings.gradle's pluginManagement keeps the same list.
+ext.repos.notOnMavenCentral = { content ->
+    content.excludeGroupByRegex("androidx(\\..*)?")
+    content.excludeGroupByRegex("com\\.android(\\..*)?")
+    content.excludeModule("com.gradle", "develocity-gradle-plugin")
+    content.excludeModule("com.gradle", "common-custom-user-data-gradle-plugin")
 }
 
 ext.repos.addMavenRepositories = this.&addMavenRepositories
