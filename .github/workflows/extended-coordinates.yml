@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # Google's mirror of Maven Central, asked before Central by buildSrc/repos.gradle: Central
+  # answers runners that share an address with 429 Too Many Requests (fork-train-16).
+  COMPOSE_MAVEN_MIRROR: https://maven-central.storage-download.googleapis.com/maven2
+
 jobs:
   scripts:
     name: Publish and check scripts
@@ -20,6 +25,11 @@ jobs:
           sparse-checkout: |
             extended/compose
             extended/skiko
+            buildSrc/repos.gradle
+            gradlew
+            gradle/wrapper
+            .github/workflows
+          sparse-checkout-cone-mode: false
           filter: blob:none
 
       - name: check-local.py and publish-local.sh --list
@@ -27,6 +37,17 @@ jobs:
 
       - name: retry-network.sh
         run: extended/compose/tests/retry-network.test.sh
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: The Maven mirror in buildSrc/repos.gradle
+        run: extended/compose/tests/maven-mirror.test.sh
+
+      - name: Every workflow running the Gradle build names the Maven mirror
+        run: extended/compose/tests/ci-mirror.test.sh
 
       - name: republish-skiko-mingw.py
         run: extended/skiko/tests/republish-skiko-mingw.test.sh

@@ -17,6 +17,10 @@ fork's skiko-awt no longer claims JetBrains' coordinate as a capability (Amper r
 variant with one), so nothing else makes them one library. Kotlin/Native and web modules are
 not touched: they use skiko's klib and wasm artifacts, not skiko-awt.
 
+Every module, not only the -desktop ones (desktop-jvm-<target> names the natives directly),
+also has each dependency on JetBrains' natives exclude org.jetbrains.skiko:skiko-awt, which the
+natives depend on (#317).
+
 --require fails when no desktop module was found, for a caller that has published them.
 """
 
@@ -31,20 +35,55 @@ ARTIFACT = "skiko-awt"
 UPSTREAM_MODULES = ("skiko", "skiko-awt")
 
 
+# JetBrains' natives (org.jetbrains.skiko:skiko-awt-runtime-<target>) each depend on
+# org.jetbrains.skiko:skiko-awt. Next to this fork's skiko-awt that is skiko's classes twice on a
+# class path: ProGuard and uber jars stop on the duplicates, and a JVM loads whichever comes first
+# (#317). Every dependency on the natives excludes it; Gradle drops a module only when every path
+# to it does.
+NATIVES_PREFIX = "skiko-awt-runtime"
+NATIVES_EXCLUSION = {"group": "org.jetbrains.skiko", "module": "skiko-awt"}
+
+
+def exclude_jetbrains_skiko_awt_from_natives(metadata):
+    """Adds the exclusion to a .module's dependencies on the natives; True if it changed any."""
+    touched = False
+    for variant in metadata.get("variants", []):
+        for dependency in variant.get("dependencies", []):
+            if dependency.get("group") == "org.jetbrains.skiko" and dependency.get("module", "").startswith(NATIVES_PREFIX):
+                excludes = dependency.setdefault("excludes", [])
+                if NATIVES_EXCLUSION not in excludes:
+                    excludes.append(dict(NATIVES_EXCLUSION))
+                    touched = True
+    return touched
+
+
+def exclude_jetbrains_skiko_awt_from_natives_pom(text):
+    """The same for a .pom's <dependency> blocks on the natives that have no <exclusions> yet."""
+    def edit(match):
+        block = match.group(0)
+        if "<exclusions>" in block:
+            return block
+        return re.sub(r"(<version>[^<]*</version>)",
+                      r"\1<exclusions><exclusion><groupId>org.jetbrains.skiko</groupId>"
+                      r"<artifactId>skiko-awt</artifactId></exclusion></exclusions>", block, count=1)
+    return re.sub(r"<dependency>(?:(?!</dependency>).)*?<groupId>org\.jetbrains\.skiko</groupId>\s*"
+                  r"<artifactId>" + NATIVES_PREFIX + r"[^<]*</artifactId>(?:(?!</dependency>).)*?</dependency>",
+                  edit, text, flags=re.S)
+
+
 def repoint(repository):
     base = os.path.join(repository, "org", "thisisthepy", "compose")
     changed = []
     for directory, _, files in os.walk(base):
         version = os.path.basename(directory)
         artifact = os.path.basename(os.path.dirname(directory))
-        if not artifact.endswith("-desktop"):
-            continue
+        desktop = artifact.endswith("-desktop")
         for name in files:
             path = os.path.join(directory, name)
             if name.endswith(".module"):
                 metadata = json.load(open(path, encoding="utf-8"))
-                touched = False
-                for variant in metadata.get("variants", []):
+                touched = exclude_jetbrains_skiko_awt_from_natives(metadata)
+                for variant in metadata.get("variants", []) if desktop else []:
                     for dependency in variant.get("dependencies", []):
                         if dependency.get("group") == UPSTREAM_GROUP and dependency.get("module") in UPSTREAM_MODULES:
                             dependency.update({"group": GROUP, "module": ARTIFACT, "version": {"requires": version}})
@@ -56,8 +95,11 @@ def repoint(repository):
                 text = open(path, encoding="utf-8").read()
                 pattern = re.compile(
                     r"<groupId>" + re.escape(UPSTREAM_GROUP) + r"</groupId>(\s*)<artifactId>skiko(?:-awt)?</artifactId>(\s*)<version>[^<]*</version>")
-                new = pattern.sub(lambda m: f"<groupId>{GROUP}</groupId>{m.group(1)}<artifactId>{ARTIFACT}</artifactId>"
-                                            f"{m.group(2)}<version>{version}</version>", text)
+                new = text
+                if desktop:
+                    new = pattern.sub(lambda m: f"<groupId>{GROUP}</groupId>{m.group(1)}<artifactId>{ARTIFACT}</artifactId>"
+                                                f"{m.group(2)}<version>{version}</version>", new)
+                new = exclude_jetbrains_skiko_awt_from_natives_pom(new)
                 if new != text:
                     open(path, "w", encoding="utf-8").write(new)
                     changed.append(path)

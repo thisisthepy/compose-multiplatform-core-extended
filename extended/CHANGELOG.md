@@ -21,6 +21,25 @@ adds: the window modules, the design systems, the skiko scripts and the packagin
   - `app.metainfo.xml.in` takes `{{summary}}`, `{{developer_id}}` and
     `{{metadata_license}}`; `app.desktop.in`'s `Comment=` is `{{summary}}`.
 
+### Publishing
+
+- **Fix.** The fork's jars keep their license under the coordinate they are published as
+  (`META-INF/org/thisisthepy/compose/<library>/LICENSE.txt`), not under the library's androidx
+  group. A module that redirects to androidx (`runtime-desktop`, which holds only that license
+  and depends on `androidx.compose.runtime:runtime`) put the same entry on the classpath as
+  Google's jar, and ProGuard and uber jars met it twice. `extended/compose/check-local.py`
+  now fails on a fork jar with anything under `META-INF/androidx/`. (#315)
+
+- **Fix.** A desktop application gets one skiko-awt, this fork's. JetBrains' natives
+  (`org.jetbrains.skiko:skiko-awt-runtime-<target>`), which `desktop-jvm-<target>` and the fork's
+  skiko-awt name, each depend on `org.jetbrains.skiko:skiko-awt`, so the same classes were on
+  every desktop class path twice: ProGuard and uber jars stopped on the duplicates, and a JVM
+  loaded whichever came first. Every dependency on the natives now excludes it, in the `.module`
+  and the `.pom` (`repoint-desktop-skiko.py` for every module, `republish-skiko-awt.py` for
+  skiko-awt itself). (#317)
+
+## 1.11.1-ext.6 (2026-11-23)
+
 ### Window modules (`org.thisisthepy.compose.window`)
 
 - **Fix.** On Windows 11, the Windows window's DirectComposition route (`DXC_DCOMP=1`) brings an

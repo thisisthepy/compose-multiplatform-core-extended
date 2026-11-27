@@ -33,6 +33,10 @@ PUBLISHED_GROUP="org.thisisthepy.compose.skiko"
 PUBLISHED_AS="1.11.1-ext.6"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# skiko's own Gradle build asks Maven Central itself; in CI, COMPOSE_MAVEN_MIRROR puts the
+# mirror in Central's place first (maven-mirror.init.gradle).
+mirror_init=()
+if [[ -n "${COMPOSE_MAVEN_MIRROR:-}" ]]; then mirror_init=(--init-script "$HERE/maven-mirror.init.gradle"); fi
 
 die() {
     echo "error: $1" >&2
@@ -67,7 +71,7 @@ staging="$WORK/staging"
 rm -rf "$staging"
 (
     cd "$checkout/skiko"
-    ./gradlew --no-daemon --quiet publishAwtPublicationToMavenLocal \
+    ./gradlew --no-daemon --quiet ${mirror_init[@]+"${mirror_init[@]}"} publishAwtPublicationToMavenLocal \
         -Pdeploy.version="$UPSTREAM_VERSION" -Pdeploy.release=true \
         "-Dmaven.repo.local=$staging"
 )
